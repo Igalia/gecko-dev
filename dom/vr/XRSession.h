@@ -68,8 +68,7 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
   XRRenderState* RenderState();
   XRInputSourceArray* InputSources();
   Nullable<float> GetFrameRate();
-  void GetSupportedFrameRates(JSContext* aJSContext,
-                              JS::MutableHandle<JSObject*> aRetval);
+  void GetSupportedFrameRates(JSContext* aJSContext, JS::MutableHandle<JSObject*> aRetval);
 
   // WebIDL Methods
   void UpdateRenderState(const XRRenderStateInit& aNewState, ErrorResult& aRv);
@@ -79,8 +78,7 @@ class XRSession final : public DOMEventTargetHelper, public nsARefreshObserver {
                                 mozilla::ErrorResult& aError);
   void CancelAnimationFrame(int32_t aHandle, mozilla::ErrorResult& aError);
   already_AddRefed<Promise> End(ErrorResult& aRv);
-  already_AddRefed<Promise> UpdateTargetFrameRate(float aRate,
-                                                  ErrorResult& aRv);
+  already_AddRefed<Promise> UpdateTargetFrameRate(float aRate, ErrorResult& aRv);
 
   // WebIDL Events
   IMPL_EVENT_HANDLER(end);

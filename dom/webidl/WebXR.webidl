@@ -52,7 +52,7 @@ interface XRSession : EventTarget {
   [NewObject]
   Promise<XRReferenceSpace> requestReferenceSpace(XRReferenceSpaceType type);
   [NewObject]
-  Promise<undefined> updateTargetFrameRate(float rate);
+  Promise<void> updateTargetFrameRate(float rate);
 
   [Throws]
   long requestAnimationFrame(XRFrameRequestCallback callback);

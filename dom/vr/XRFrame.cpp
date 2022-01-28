@@ -81,12 +81,7 @@ already_AddRefed<XRViewerPose> XRFrame::GetViewerPose(
     headTransform.SetRotationFromQuaternion(viewerOrientation);
     headTransform.PostTranslate(viewerPosition);
 
-    gfx::Matrix4x4Double originTransform;
-    originTransform.SetRotationFromQuaternion(
-        aReferenceSpace.GetEffectiveOriginOrientation().Inverse());
-    originTransform.PreTranslate(-aReferenceSpace.GetEffectiveOriginPosition());
-
-    headTransform *= originTransform;
+    headTransform *= aReferenceSpace.GetEffectiveOriginTransform().Inverse();
 
     viewerPose = mSession->PooledViewerPose(headTransform, emulatedPosition);
 
@@ -156,13 +151,9 @@ already_AddRefed<XRPose> XRFrame::GetPose(const XRSpace& aSpace,
   // TODO (Bug 1616393) - Check if poses must be limited:
   // https://immersive-web.github.io/webxr/#poses-must-be-limited
 
-  const bool emulatedPosition = aSpace.IsPositionEmulated();
-  gfx::Matrix4x4Double base;
-  base.SetRotationFromQuaternion(
-      aBaseSpace.GetEffectiveOriginOrientation().Inverse());
-  base.PreTranslate(-aBaseSpace.GetEffectiveOriginPosition());
+  const bool emulatedPosition = aSpace.IsPositionEmulated() || aBaseSpace.IsPositionEmulated();
 
-  gfx::Matrix4x4Double matrix = aSpace.GetEffectiveOriginTransform() * base;
+  gfx::Matrix4x4Double matrix = aSpace.GetEffectiveOriginTransform() * aBaseSpace.GetEffectiveOriginTransform().Inverse();
 
   RefPtr<XRRigidTransform> transform = new XRRigidTransform(mParent, matrix);
   RefPtr<XRPose> pose = new XRPose(mParent, transform, emulatedPosition);

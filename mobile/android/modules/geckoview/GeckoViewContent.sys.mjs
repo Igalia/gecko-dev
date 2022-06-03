@@ -159,7 +159,8 @@ export class GeckoViewContent extends GeckoViewModule {
         this.sendToAllChildren(aEvent, aData);
         break;
       case "GeckoView:SetActive":
-        this.browser.docShellIsActive = !!aData.active;
+        if (this.browser.docShellIsActive != !!aData.active)
+          this.browser.docShellIsActive = !!aData.active;
         break;
       case "GeckoView:SetFocused":
         if (aData.focused) {

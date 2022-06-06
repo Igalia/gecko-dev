@@ -6049,6 +6049,7 @@ void nsGlobalWindowOuter::FinalClose() {
   // complete _two_ round-trips to the event loop before the call to
   // ReallyCloseWindow. This allows setTimeout handlers that are set after
   // FinalClose() is called to run before the window is torn down.
+  /*
   nsCOMPtr<nsPIDOMWindowInner> entryWindow =
       do_QueryInterface(GetEntryGlobal());
   bool indirect = entryWindow && entryWindow->GetOuterWindow() == this;
@@ -6057,6 +6058,7 @@ void nsGlobalWindowOuter::FinalClose() {
   } else {
     mHavePendingClose = true;
   }
+  */
 }
 
 void nsGlobalWindowOuter::ReallyCloseWindow() {

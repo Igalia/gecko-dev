@@ -5,6 +5,7 @@
 
 package org.mozilla.gecko;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.annotation.TargetApi;
 import android.app.ActivityManager;
@@ -44,6 +45,7 @@ import android.os.Debug;
 import android.os.LocaleList;
 import android.os.Looper;
 import android.os.PowerManager;
+import android.os.Process;
 import android.os.Vibrator;
 import android.provider.Settings;
 import android.text.TextUtils;
@@ -561,6 +563,11 @@ public class GeckoAppShell {
   @SuppressLint("Wakelock") // We keep the wake lock independent from the function
   // scope, so we need to suppress the linter warning.
   private static void setWakeLockState(final String lock, final int state) {
+    // Prevent a crash if the {@link android.Manifest.permission#WAKE_LOCK} permission has not been granted.
+    if (getApplicationContext().checkPermission(Manifest.permission.WAKE_LOCK, Process.myPid(), Process.myUid()) != PackageManager.PERMISSION_GRANTED) {
+      return;
+    }
+
     if (sWakeLocks == null) {
       sWakeLocks = new SimpleArrayMap<>(WAKE_LOCKS_COUNT);
     }

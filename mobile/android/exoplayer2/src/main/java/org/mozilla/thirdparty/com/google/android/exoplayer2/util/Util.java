@@ -168,10 +168,16 @@ public final class Util {
    */
   @Nullable
   public static ComponentName startForegroundService(Context context, Intent intent) {
-    if (Util.SDK_INT >= 26) {
-      return context.startForegroundService(intent);
-    } else {
-      return context.startService(intent);
+    // Prevent a crash if the {@link android.Manifest.permission#FOREGROUND_SERVICE} permission has not been granted.
+    try {
+      if (Util.SDK_INT >= 26) {
+        return context.startForegroundService(intent);
+      } else {
+        return context.startService(intent);
+      }
+    } catch (Exception e) {
+      Log.e(TAG, "Error when staring foreground service: " + e.getMessage());
+      return null;
     }
   }
 

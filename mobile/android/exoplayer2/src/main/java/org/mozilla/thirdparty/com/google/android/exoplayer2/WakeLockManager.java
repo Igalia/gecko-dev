@@ -15,10 +15,13 @@
  */
 package org.mozilla.thirdparty.com.google.android.exoplayer2;
 
+import android.Manifest;
 import android.annotation.SuppressLint;
 import android.content.Context;
+import android.content.pm.PackageManager;
 import android.os.PowerManager;
 import android.os.PowerManager.WakeLock;
+import android.os.Process;
 import androidx.annotation.Nullable;
 import org.mozilla.thirdparty.com.google.android.exoplayer2.util.Log;
 
@@ -39,8 +42,12 @@ import org.mozilla.thirdparty.com.google.android.exoplayer2.util.Log;
   private boolean stayAwake;
 
   public WakeLockManager(Context context) {
-    powerManager =
-        (PowerManager) context.getApplicationContext().getSystemService(Context.POWER_SERVICE);
+    // Prevent a crash if the {@link android.Manifest.permission#WAKE_LOCK} permission has not been granted.
+    if (context.checkPermission(Manifest.permission.WAKE_LOCK, Process.myPid(), Process.myUid()) == PackageManager.PERMISSION_GRANTED) {
+      powerManager = (PowerManager) context.getApplicationContext().getSystemService(Context.POWER_SERVICE);
+    } else {
+      powerManager = null;
+    }
   }
 
   /**

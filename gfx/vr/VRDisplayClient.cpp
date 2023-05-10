@@ -419,6 +419,7 @@ void VRDisplayClient::GamepadMappingForWebVR(
       aControllerState.numAxes = 2;
       break;
     case VRControllerType::PicoNeo2:
+    case VRControllerType::Pico4:
       aControllerState.buttonPressed =
           ShiftButtonBitForNewSlot(0, 3) | ShiftButtonBitForNewSlot(1, 0) |
           ShiftButtonBitForNewSlot(2, 1) | ShiftButtonBitForNewSlot(3, 4) |

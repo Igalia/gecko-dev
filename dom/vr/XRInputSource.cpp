@@ -112,6 +112,12 @@ nsTArray<nsString> GetInputSourceProfile(gfx::VRControllerType aType) {
       id.AssignLiteral("generic-trigger-squeeze-thumbstick");
       profile.AppendElement(id);
       break;
+    case gfx::VRControllerType::Pico4:
+      id.AssignLiteral("pico-4");
+      profile.AppendElement(id);
+      id.AssignLiteral("generic-trigger-squeeze-thumbstick");
+      profile.AppendElement(id);
+      break;
     default:
       NS_WARNING("Unsupported XR input source profile.\n");
       break;

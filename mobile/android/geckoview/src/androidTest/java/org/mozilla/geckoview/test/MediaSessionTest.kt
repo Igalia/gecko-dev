@@ -822,4 +822,31 @@ class MediaSessionTest : BaseSessionTest() {
         mediaSession1!!.pause()
         sessionRule.waitForResult(completedStep5)
     }
+
+    @Test
+    fun switchingProcess() {
+        // TODO: bug 1810736
+        assumeThat(sessionRule.env.isIsolatedProcess, equalTo(false))
+        sessionRule.setPrefsUntilTestEnd(
+            mapOf(
+                "media.autoplay.default" to 0,
+            ),
+        )
+        mainSession.loadUri("about:blank")
+        sessionRule.waitForPageStop()
+        mainSession.loadTestPath(VIDEO_WEBM_PATH)
+        sessionRule.waitForPageStop()
+        val onPlayCalled = GeckoResult<Void>()
+        mainSession.delegateUntilTestEnd(object : MediaSession.Delegate {
+            @AssertCalled(count = 1)
+            override fun onPlay(
+                session: GeckoSession,
+                mediaSession: MediaSession,
+            ) {
+                onPlayCalled.complete(null)
+            }
+        })
+        mainSession.evaluateJS("document.querySelector('video').play()")
+        sessionRule.waitForResult(onPlayCalled)
+    }
 }

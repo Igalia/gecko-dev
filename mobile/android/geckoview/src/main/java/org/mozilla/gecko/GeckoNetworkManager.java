@@ -5,22 +5,27 @@
 
 package org.mozilla.gecko;
 
-import android.annotation.SuppressLint;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.net.ConnectivityManager;
-import android.net.DhcpInfo;
-import android.net.wifi.WifiManager;
+import android.net.Network;
+import android.net.RouteInfo;
+import android.os.Build;
 import android.util.Log;
+
 import androidx.annotation.NonNull;
 import androidx.annotation.Nullable;
+
 import org.mozilla.gecko.annotation.WrapForJNI;
 import org.mozilla.gecko.util.NetworkUtils;
 import org.mozilla.gecko.util.NetworkUtils.ConnectionSubType;
 import org.mozilla.gecko.util.NetworkUtils.ConnectionType;
 import org.mozilla.gecko.util.NetworkUtils.NetworkStatus;
+
+import java.net.Inet4Address;
+import java.util.List;
 
 /**
  * Provides connection type, subtype and general network status (up/down).
@@ -384,30 +389,37 @@ public class GeckoNetworkManager extends BroadcastReceiver {
   }
 
   private static int wifiDhcpGatewayAddress(final Context context) {
-    if (context == null) {
+    if (context == null || Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.M) {
       return 0;
     }
 
     try {
-      final WifiManager mgr =
-          (WifiManager) context.getApplicationContext().getSystemService(Context.WIFI_SERVICE);
-      if (mgr == null) {
+      ConnectivityManager connectivityManager =
+              (ConnectivityManager) context.getSystemService(Context.CONNECTIVITY_SERVICE);
+
+      Network activeNetwork = connectivityManager.getActiveNetwork();
+      if (activeNetwork == null) {
         return 0;
       }
-
-      @SuppressLint("MissingPermission")
-      final DhcpInfo d = mgr.getDhcpInfo();
-      if (d == null) {
-        return 0;
+      List<RouteInfo> routes = connectivityManager.getLinkProperties(activeNetwork).getRoutes();
+      for (RouteInfo route : routes) {
+        if (route.isDefaultRoute() && route.getGateway() instanceof Inet4Address) {
+          return ipv4ToInt((Inet4Address) route.getGateway());
+        }
       }
-
-      return d.gateway;
-
-    } catch (final Exception ex) {
-      // getDhcpInfo() is not documented to require any permissions, but on some devices
-      // requires android.permission.ACCESS_WIFI_STATE. Just catch the generic exception
-      // here and returning 0. Not logging because this could be noisy.
-      return 0;
+    } catch (Exception e) {
+      Log.w(LOGTAG, "wifiDhcpGatewayAddress: " + e.getMessage());
     }
+    return 0;
+  }
+
+  private static int ipv4ToInt(Inet4Address ipAddress) {
+    byte[] ipAddressBytes = ipAddress.getAddress();
+    int result = 0;
+    for (byte octet : ipAddressBytes) {
+      // Shift the result 8 bits to the left and add the current octet
+      result = (result << 8) | (octet & 0xFF);
+    }
+    return result;
   }
 }

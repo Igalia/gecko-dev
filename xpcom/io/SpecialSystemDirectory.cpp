@@ -7,6 +7,7 @@
 #include "SpecialSystemDirectory.h"
 #include "nsString.h"
 #include "nsDependentString.h"
+#include "nsIXULAppInfo.h"
 
 #if defined(XP_WIN)
 
@@ -27,7 +28,11 @@
 #  include <sys/param.h>
 #  include "prenv.h"
 #  if defined(MOZ_WIDGET_COCOA)
+#    include "CFTypeRefPtr.h"
 #    include "CocoaFileUtils.h"
+#  endif
+#  if defined(MOZ_WIDGET_GTK)
+#    include "mozilla/WidgetUtilsGtk.h"
 #  endif
 
 #endif
@@ -182,6 +187,41 @@ static nsresult GetUnixHomeDir(nsIFile** aFile) {
 #  else
   return NS_NewNativeLocalFile(nsDependentCString(PR_GetEnv("HOME")), true,
                                aFile);
+#  endif
+}
+
+static nsresult GetUnixSystemConfigDir(nsIFile** aFile) {
+#  if defined(ANDROID)
+  return NS_ERROR_FAILURE;
+#  else
+  nsAutoCString appName;
+  if (nsCOMPtr<nsIXULAppInfo> appInfo =
+          do_GetService("@mozilla.org/xre/app-info;1")) {
+    MOZ_TRY(appInfo->GetName(appName));
+  } else {
+    appName.AssignLiteral(MOZ_APP_BASENAME);
+  }
+
+  ToLowerCase(appName);
+
+  nsDependentCString sysConfigDir;
+  if (PR_GetEnv("XPCSHELL_TEST_PROFILE_DIR")) {
+    const char* mozSystemConfigDir = PR_GetEnv("MOZ_SYSTEM_CONFIG_DIR");
+    if (mozSystemConfigDir) {
+      sysConfigDir.Assign(nsDependentCString(mozSystemConfigDir));
+    }
+  }
+#    if defined(MOZ_WIDGET_GTK)
+  if (sysConfigDir.IsEmpty() && mozilla::widget::IsRunningUnderFlatpak()) {
+    sysConfigDir.Assign(nsLiteralCString("/app/etc"));
+  }
+#    endif
+  if (sysConfigDir.IsEmpty()) {
+    sysConfigDir.Assign(nsLiteralCString("/etc"));
+  }
+  MOZ_TRY(NS_NewNativeLocalFile(sysConfigDir, true, aFile));
+  MOZ_TRY((*aFile)->AppendNative(appName));
+  return NS_OK;
 #  endif
 }
 
@@ -365,38 +405,58 @@ static nsresult GetUnixXDGUserDirectory(SystemDirectories aSystemDirectory,
 
   nsresult rv;
   nsCOMPtr<nsIFile> file;
+  bool exists;
   if (dir) {
     rv = NS_NewNativeLocalFile(nsDependentCString(dir), true,
                                getter_AddRefs(file));
     free(dir);
+
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    rv = file->Exists(&exists);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    if (!exists) {
+      rv = file->Create(nsIFile::DIRECTORY_TYPE, 0755);
+      if (NS_FAILED(rv)) {
+        return rv;
+      }
+    }
   } else if (Unix_XDG_Desktop == aSystemDirectory) {
     // for the XDG desktop dir, fall back to HOME/Desktop
     // (for historical compatibility)
-    rv = GetUnixHomeDir(getter_AddRefs(file));
+    nsCOMPtr<nsIFile> home;
+    rv = GetUnixHomeDir(getter_AddRefs(home));
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    rv = home->Clone(getter_AddRefs(file));
     if (NS_FAILED(rv)) {
       return rv;
     }
 
     rv = file->AppendNative("Desktop"_ns);
-  } else {
-    // no fallback for the other XDG dirs
-    rv = NS_ERROR_FAILURE;
-  }
-
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  bool exists;
-  rv = file->Exists(&exists);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-  if (!exists) {
-    rv = file->Create(nsIFile::DIRECTORY_TYPE, 0755);
     if (NS_FAILED(rv)) {
       return rv;
     }
+
+    rv = file->Exists(&exists);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+
+    // fallback to HOME only if HOME/Desktop doesn't exist
+    if (!exists) {
+      file = home;
+    }
+  } else {
+    // no fallback for the other XDG dirs
+    return NS_ERROR_FAILURE;
   }
 
   *aFile = nullptr;
@@ -493,6 +553,25 @@ nsresult GetSpecialSystemDirectory(SystemDirectories aSystemSystemDirectory,
     }
     case Mac_PictureDocumentsDirectory: {
       return GetOSXFolderType(kUserDomain, kPictureDocumentsFolderType, aFile);
+    }
+    case Mac_DefaultScreenshotDirectory: {
+      auto prefValue = CFTypeRefPtr<CFPropertyListRef>::WrapUnderCreateRule(
+          CFPreferencesCopyAppValue(CFSTR("location"),
+                                    CFSTR("com.apple.screencapture")));
+
+      if (!prefValue || CFGetTypeID(prefValue.get()) != CFStringGetTypeID()) {
+        return GetOSXFolderType(kUserDomain, kPictureDocumentsFolderType,
+                                aFile);
+      }
+
+      nsAutoString path;
+      mozilla::Span<char16_t> data =
+          path.GetMutableData(CFStringGetLength((CFStringRef)prefValue.get()));
+      CFStringGetCharacters((CFStringRef)prefValue.get(),
+                            CFRangeMake(0, data.Length()),
+                            reinterpret_cast<UniChar*>(data.Elements()));
+
+      return NS_NewLocalFile(path, true, aFile);
     }
 #elif defined(XP_WIN)
     case Win_SystemDirectory: {
@@ -613,12 +692,6 @@ nsresult GetSpecialSystemDirectory(SystemDirectories aSystemSystemDirectory,
       }
       return rv;
     }
-#  if defined(MOZ_SANDBOX)
-    case Win_LocalAppdataLow: {
-      GUID localAppDataLowGuid = FOLDERID_LocalAppDataLow;
-      return GetKnownFolder(&localAppDataLowGuid, aFile);
-    }
-#  endif
 #  if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
     case Win_Documents: {
       return GetLibrarySaveToPath(CSIDL_MYDOCUMENTS, FOLDERID_DocumentsLibrary,
@@ -634,6 +707,9 @@ nsresult GetSpecialSystemDirectory(SystemDirectories aSystemSystemDirectory,
     case Unix_XDG_Desktop:
     case Unix_XDG_Download:
       return GetUnixXDGUserDirectory(aSystemSystemDirectory, aFile);
+
+    case Unix_SystemConfigDirectory:
+      return GetUnixSystemConfigDir(aFile);
 #endif
 
     default:

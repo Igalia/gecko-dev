@@ -10,6 +10,7 @@
 
 #include "jit/Lowering.h"
 #include "jit/MIR.h"
+#include "wasm/WasmFeatures.h"  // for wasm::ReportSimdAnalysis
 
 #include "jit/shared/Lowering-shared-inl.h"
 
@@ -408,6 +409,7 @@ void LIRGenerator::visitAsmJSStoreHeap(MAsmJSStoreHeap* ins) {
 
 void LIRGeneratorX86Shared::lowerUDiv(MDiv* div) {
   if (div->rhs()->isConstant()) {
+    // NOTE: the result of toInt32 is coerced to uint32_t.
     uint32_t rhs = div->rhs()->toConstant()->toInt32();
     int32_t shift = FloorLog2(rhs);
 
@@ -834,14 +836,14 @@ void LIRGenerator::visitWasmTernarySimd128(MWasmTernarySimd128* ins) {
       defineReuseInput(lir, ins, LWasmTernarySimd128::V0);
       break;
     }
-    case wasm::SimdOp::F32x4RelaxedFma:
-    case wasm::SimdOp::F32x4RelaxedFms:
-    case wasm::SimdOp::F64x2RelaxedFma:
-    case wasm::SimdOp::F64x2RelaxedFms: {
-      auto* lir = new (alloc())
-          LWasmTernarySimd128(ins->simdOp(), useRegisterAtStart(ins->v0()),
-                              useRegister(ins->v1()), useRegister(ins->v2()));
-      defineReuseInput(lir, ins, LWasmTernarySimd128::V0);
+    case wasm::SimdOp::F32x4RelaxedMadd:
+    case wasm::SimdOp::F32x4RelaxedNmadd:
+    case wasm::SimdOp::F64x2RelaxedMadd:
+    case wasm::SimdOp::F64x2RelaxedNmadd: {
+      auto* lir = new (alloc()) LWasmTernarySimd128(
+          ins->simdOp(), useRegister(ins->v0()), useRegister(ins->v1()),
+          useRegisterAtStart(ins->v2()));
+      defineReuseInput(lir, ins, LWasmTernarySimd128::V2);
       break;
     }
     case wasm::SimdOp::I32x4DotI8x16I7x16AddS: {
@@ -1672,10 +1674,10 @@ void LIRGenerator::visitWasmUnarySimd128(MWasmUnarySimd128* ins) {
     case wasm::SimdOp::I16x8ExtaddPairwiseI8x16U:
     case wasm::SimdOp::I32x4ExtaddPairwiseI16x8S:
     case wasm::SimdOp::I32x4ExtaddPairwiseI16x8U:
-    case wasm::SimdOp::I32x4RelaxedTruncSSatF32x4:
-    case wasm::SimdOp::I32x4RelaxedTruncUSatF32x4:
-    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2SZero:
-    case wasm::SimdOp::I32x4RelaxedTruncSatF64x2UZero:
+    case wasm::SimdOp::I32x4RelaxedTruncF32x4S:
+    case wasm::SimdOp::I32x4RelaxedTruncF32x4U:
+    case wasm::SimdOp::I32x4RelaxedTruncF64x2SZero:
+    case wasm::SimdOp::I32x4RelaxedTruncF64x2UZero:
     case wasm::SimdOp::I64x2ExtendHighI32x4S:
     case wasm::SimdOp::I64x2ExtendHighI32x4U:
       // Prefer src == dest to avoid an unconditional src->dest move

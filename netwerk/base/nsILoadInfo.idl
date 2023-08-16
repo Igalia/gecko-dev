@@ -7,6 +7,7 @@
 #include "nsISupports.idl"
 #include "nsIContentPolicy.idl"
 #include "nsIScriptSecurityManager.idl"
+#include "nsIInterceptionInfo.idl"
 
 interface nsIChannel;
 interface nsIContentSecurityPolicy;
@@ -309,6 +310,21 @@ interface nsILoadInfo : nsISupports
   nsIPrincipal binaryTriggeringPrincipal();
 
   /**
+   * The remote type of the process which caused the network load to start. I.e.
+   * this is the remote type of the process which provided the URL to be loaded.
+   *
+   * For subresource loads, this should be the same as the process which will
+   * handle the response, however for document loads this may both be different
+   * than the final process, as well as different from the process which starts
+   * the navigation.
+   *
+   * This field is intentionally not perfectly preserved over IPC, and will be
+   * reset to the remote type of the sending process when sent from a content
+   * process to the parent process.
+   */
+  attribute AUTF8String triggeringRemoteType;
+
+  /**
    * For non-document loads the principalToInherit is always null. For
    * loads of type TYPE_DOCUMENT or TYPE_SUBDOCUMENT the principalToInherit
    * might be null. If it's non null, then this is the principal that is
@@ -479,16 +495,31 @@ interface nsILoadInfo : nsISupports
   const unsigned long HTTPS_ONLY_DO_NOT_LOG_TO_CONSOLE = (1 << 6);
 
   /**
-   * This flag indicates that the request should not be logged to the
-   * console.
+   * This flag indicates that the request was upgraded by https-first mode.
    */
   const unsigned long HTTPS_ONLY_UPGRADED_HTTPS_FIRST = (1 << 7);
+
+  /**
+   * This flag indicates that the request should not be blocked by ORB.
+   */
+  const unsigned long HTTPS_ONLY_BYPASS_ORB = (1 << 8);
+
+  /**
+   * This flag indicates that HTTPS_ONLY_EXEMPT should be
+   * set the next time HTTPS-Only exemptions are checked.
+   */
+  const unsigned long HTTPS_ONLY_EXEMPT_NEXT_LOAD = (1 << 9);
 
   /**
    * Upgrade state of HTTPS-Only Mode. The flag HTTPS_ONLY_EXEMPT can get
    * set on requests that should be excempt from an upgrade.
    */
   [infallible] attribute unsigned long httpsOnlyStatus;
+
+  /**
+   * Reflects whetehr this is an HTTP Strict Transport Security host
+   */
+[infallible] attribute boolean hstsStatus;
 
   /**
    * Returns true if at the time of the loadinfo construction the document
@@ -675,7 +706,9 @@ interface nsILoadInfo : nsISupports
     MOZ_ASSERT(NS_SUCCEEDED(rv));
     return static_cast<ExtContentPolicyType>(result);
   }
+
 %}
+
 
   /**
    * The internal contentPolicyType of the channel, used for constructing
@@ -777,6 +810,18 @@ interface nsILoadInfo : nsISupports
    */
   [infallible] readonly attribute unsigned long long browsingContextID;
   [infallible] readonly attribute BrowsingContext browsingContext;
+
+  /**
+   * The BrowsingContext which the worker is associated.
+   *
+   * Note that this could be 0 if the load is not triggered in a WorkerScope.
+   * This value is only set and used in the parent process for some sitautions
+   * the channel is created in the parent process for Workers. Such as fetch().
+   * In content process, it is always 0.
+   * This value would not be propagated through IPC.
+   */
+  [infallible] attribute unsigned long long workerAssociatedBrowsingContextID;
+  [infallible] readonly attribute BrowsingContext workerAssociatedBrowsingContext;
 
   /**
    * Only when the element being loaded is <frame src="foo.html">
@@ -1220,9 +1265,9 @@ interface nsILoadInfo : nsISupports
    * when fetching the resource this loadinfo belongs to.
    *
    * a) Non-navigations:
-   * For non-navigation loads, GetCSP() returns what the spec refers to as the
+   * For non-navigation loads, GetCsp() returns what the spec refers to as the
    * "request's client's global object's CSP list". In practice, if this is the
-   * loadinfo of a subresource load (e.g an image load), then GetCSP() or
+   * loadinfo of a subresource load (e.g an image load), then GetCsp() or
    * GetPreloadCSP() returns the CSP of the document which embeds the image.
    * The returned CSP includes any policy delivered through the HTTP header or
    * also through the meta tag (modulo the difference for preloads, e.g. image
@@ -1233,7 +1278,7 @@ interface nsILoadInfo : nsISupports
    *
    * b) Navigations:
    *   * Top-level loads:
-   *     For top-level loads (navigations) GetCSP() will return null, unless
+   *     For top-level loads (navigations) GetCsp() will return null, unless
    *     the navigation is started by a WebExtension, in which case it will
    *     return the CSP of the webextension, if any.
    *     If you need to query the CSP that potentially should apply to the
@@ -1242,7 +1287,7 @@ interface nsILoadInfo : nsISupports
    *     is for non-navigation requests.
    *
    *   * Iframe-loads:
-   *     For iframe-loads (navigations) GetCSP() will return the CSP of the
+   *     For iframe-loads (navigations) GetCsp() will return the CSP of the
    *     parent document, unless the navigation is started by a WebExtension,
    *     in which case it will return the CSP of the webextension, if any.
    *
@@ -1296,6 +1341,9 @@ interface nsILoadInfo : nsISupports
    *  * TYPE_STYLESHEET
    */
   attribute AString cspNonce;
+
+  // Subresource Integrity (SRI) metadata.
+  attribute AString integrityMetadata;
 
   /**
    * List of possible reasons the request associated with this load info
@@ -1428,4 +1476,22 @@ interface nsILoadInfo : nsISupports
    * stripping was performed.
    */
   attribute nsIURI unstrippedURI;
+
+  /**
+   * Propagated information from InterceptedHttpChannel
+   * It should be null when the channel is not created from FetchEvent.request
+   * or ServiceWorker NavigationPreload.
+   * nsIFetchEventInfo is C++ only, so it is not an attribute.
+   */
+  [noscript, notxpcom, nostdcall, binaryname(InterceptionInfo)]
+  nsIInterceptionInfo binaryInterceptionInfo();
+
+  [noscript, notxpcom, nostdcall, binaryname(SetInterceptionInfo)]
+  void binarySetInterceptionInfo(in nsIInterceptionInfo info);
+
+  /**
+   * Whether nsICookieInjector has injected a cookie for this request to
+   * handle a cookie banner. This is only done for top-level requests.
+   */
+  [infallible] attribute boolean hasInjectedCookieForCookieBannerHandling;
 };

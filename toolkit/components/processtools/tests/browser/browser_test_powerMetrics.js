@@ -21,13 +21,15 @@ const kNS_PER_MS = 1000000;
 
 function printProcInfo(procInfo) {
   info(
-    `  pid: ${procInfo.pid}, type = parent, cpu time = ${procInfo.cpuTime /
-      kNS_PER_MS}ms`
+    `  pid: ${procInfo.pid}, type = parent, cpu time = ${
+      procInfo.cpuTime / kNS_PER_MS
+    }ms`
   );
   for (let child of procInfo.children) {
     info(
-      `  pid: ${child.pid}, type = ${child.type}, cpu time = ${child.cpuTime /
-        kNS_PER_MS}ms`
+      `  pid: ${child.pid}, type = ${child.type}, cpu time = ${
+        child.cpuTime / kNS_PER_MS
+      }ms`
     );
   }
 }
@@ -109,12 +111,10 @@ add_task(async () => {
   let cpuTimeByType = {},
     gpuTimeByType = {};
   for (let label of kGleanProcessTypeLabels) {
-    cpuTimeByType[label] = Glean.power.cpuTimePerProcessTypeMs[
-      label
-    ].testGetValue();
-    gpuTimeByType[label] = Glean.power.gpuTimePerProcessTypeMs[
-      label
-    ].testGetValue();
+    cpuTimeByType[label] =
+      Glean.power.cpuTimePerProcessTypeMs[label].testGetValue();
+    gpuTimeByType[label] =
+      Glean.power.gpuTimePerProcessTypeMs[label].testGetValue();
   }
   let totalCpuTime = Glean.power.totalCpuTimeMs.testGetValue();
   let totalGpuTime = Glean.power.totalGpuTimeMs.testGetValue();
@@ -327,5 +327,74 @@ add_task(async () => {
         `no thread wake ups should have been recorded for the ${processType} main thread`
       );
     }
+  }
+});
+
+add_task(async function test_tracker_power() {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["privacy.trackingprotection.enabled", false],
+      ["privacy.trackingprotection.annotate_channels", true],
+    ],
+  });
+  let initialValues = [];
+  for (let trackerType of [
+    "ad",
+    "analytics",
+    "cryptomining",
+    "fingerprinting",
+    "social",
+    "unknown",
+  ]) {
+    initialValues[trackerType] =
+      Glean.power.cpuTimePerTrackerTypeMs[trackerType].testGetValue() || 0;
+  }
+
+  await BrowserTestUtils.withNewTab(
+    GetTestWebBasedURL("dummy.html"),
+    async () => {
+      // Load a tracker in a subframe, as we only record CPU time used by third party trackers.
+      await SpecialPowers.spawn(
+        gBrowser.selectedTab.linkedBrowser,
+        [
+          GetTestWebBasedURL("dummy.html").replace(
+            "example.org",
+            "trackertest.org"
+          ),
+        ],
+        async frameUrl => {
+          let iframe = content.document.createElement("iframe");
+          iframe.setAttribute("src", frameUrl);
+          await new content.Promise(resolve => {
+            iframe.onload = resolve;
+            content.document.body.appendChild(iframe);
+          });
+        }
+      );
+    }
+  );
+
+  await Services.fog.testFlushAllChildren();
+
+  let unknownTrackerCPUTime =
+    Glean.power.cpuTimePerTrackerTypeMs.unknown.testGetValue() || 0;
+  Assert.greater(
+    unknownTrackerCPUTime,
+    initialValues.unknown,
+    "The CPU time of unknown trackers should have increased"
+  );
+
+  for (let trackerType of [
+    "ad",
+    "analytics",
+    "cryptomining",
+    "fingerprinting",
+    "social",
+  ]) {
+    Assert.equal(
+      Glean.power.cpuTimePerTrackerTypeMs[trackerType].testGetValue() || 0,
+      initialValues[trackerType],
+      `no new CPU time should have been recorded for ${trackerType} trackers`
+    );
   }
 });

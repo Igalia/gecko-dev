@@ -6,7 +6,7 @@ Transform the release-sign-and-push task into an actual task description.
 """
 
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import resolve_keyed_by, optionally_keyed_by
+from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by
 from taskgraph.util.treeherder import inherit_treeherder_from_dep
 from voluptuous import Any, Required
 
@@ -25,7 +25,6 @@ langpack_sign_push_description_schema = schema.extend(
         Required("description"): str,
         Required("worker-type"): optionally_keyed_by("release-level", str),
         Required("worker"): {
-            Required("implementation"): "push-addons",
             Required("channel"): optionally_keyed_by(
                 "project", "platform", Any("listed", "unlisted")
             ),
@@ -152,6 +151,7 @@ def make_task_worker(config, jobs):
             job, expected_kinds=("build", "shippable-l10n")
         )
 
+        job["worker"]["implementation"] = "push-addons"
         job["worker"]["upstream-artifacts"] = generate_upstream_artifacts(
             upstream_task_ref, job["attributes"]["chunk_locales"]
         )

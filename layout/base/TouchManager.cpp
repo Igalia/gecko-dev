@@ -10,6 +10,7 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/EventTarget.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/layers/InputAPZContext.h"
 #include "nsIContent.h"
 #include "nsIFrame.h"
 #include "nsLayoutUtils.h"
@@ -72,7 +73,6 @@ void TouchManager::EvictTouchPoint(RefPtr<Touch>& aTouch,
           nsCOMPtr<nsIWidget> widget = frame->GetView()->GetNearestWidget(&pt);
           if (widget) {
             WidgetTouchEvent event(true, eTouchEnd, widget);
-            event.mTime = PR_IntervalNow();
             event.mTouches.AppendElement(aTouch);
             nsEventStatus status;
             widget->DispatchEvent(&event, status);
@@ -329,6 +329,10 @@ bool TouchManager::PreHandleEvent(WidgetEvent* aEvent, nsEventStatus* aStatus,
             }
           }
         } else {
+          // This touch event isn't going to be dispatched on the main-thread,
+          // we need to tell it to APZ because returned nsEventStatus is
+          // unreliable to tell whether the event was preventDefaulted or not.
+          layers::InputAPZContext::SetDropped();
           return false;
         }
       }

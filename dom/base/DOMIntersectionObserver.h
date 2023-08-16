@@ -39,7 +39,7 @@ class DOMIntersectionObserverEntry final : public nsISupports,
         mTarget(aTarget),
         mIntersectionRatio(aIntersectionRatio) {}
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(DOMIntersectionObserverEntry)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(DOMIntersectionObserverEntry)
 
   nsISupports* GetParentObject() const { return mOwner; }
 
@@ -151,15 +151,24 @@ class DOMIntersectionObserver final : public nsISupports,
   static IntersectionInput ComputeInput(
       const Document& aDocument, const nsINode* aRoot,
       const StyleRect<LengthPercentage>* aRootMargin);
-  static IntersectionOutput Intersect(const IntersectionInput&, Element&);
 
-  void Update(Document* aDocument, DOMHighResTimeStamp time);
+  enum class IgnoreContentVisibility : bool { No, Yes };
+  static IntersectionOutput Intersect(
+      const IntersectionInput&, Element&,
+      IgnoreContentVisibility = IgnoreContentVisibility::No);
+  // Intersects with a given rect, already relative to the root frame.
+  static IntersectionOutput Intersect(const IntersectionInput&, const nsRect&);
+
+  void Update(Document& aDocument, DOMHighResTimeStamp time);
   MOZ_CAN_RUN_SCRIPT void Notify();
 
   static already_AddRefed<DOMIntersectionObserver> CreateLazyLoadObserver(
       Document&);
   static already_AddRefed<DOMIntersectionObserver>
   CreateLazyLoadObserverViewport(Document&);
+
+  static already_AddRefed<DOMIntersectionObserver>
+  CreateContentVisibilityObserver(Document&);
 
  protected:
   void Connect();

@@ -78,15 +78,7 @@ JSObject* SerializedStackHolder::ReadStack(JSContext* aCx) {
 
   JS::Rooted<JS::Value> stackValue(aCx);
 
-  {
-    Maybe<nsJSPrincipals::AutoSetActiveWorkerPrincipal> set;
-    if (mWorkerRef) {
-      set.emplace(mWorkerRef->Private()->GetPrincipal());
-    }
-
-    mHolder.Read(xpc::CurrentNativeGlobal(aCx), aCx, &stackValue,
-                 IgnoreErrors());
-  }
+  mHolder.Read(xpc::CurrentNativeGlobal(aCx), aCx, &stackValue, IgnoreErrors());
 
   return stackValue.isObject() ? &stackValue.toObject() : nullptr;
 }
@@ -141,7 +133,8 @@ void ConvertSerializedStackToJSON(UniquePtr<SerializedStackHolder> aStackHolder,
   }
 
   JS::Rooted<JS::Value> convertedValue(cx, JS::ObjectValue(*converted));
-  if (!nsContentUtils::StringifyJSON(cx, &convertedValue, aStackString)) {
+  if (!nsContentUtils::StringifyJSON(cx, convertedValue, aStackString,
+                                     UndefinedIsNullStringLiteral)) {
     JS_ClearPendingException(cx);
     return;
   }

@@ -6,18 +6,77 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "HomePage",
-  "resource:///modules/HomePage.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+});
 
 var { ExtensionError, promiseObserved } = ExtensionUtils;
+
+function sanitizePositionParams(params, window = null, positionOffset = 0) {
+  if (params.left === null && params.top === null) {
+    return;
+  }
+
+  if (params.left === null) {
+    const baseLeft = window ? window.screenX : 0;
+    params.left = baseLeft + positionOffset;
+  }
+  if (params.top === null) {
+    const baseTop = window ? window.screenY : 0;
+    params.top = baseTop + positionOffset;
+  }
+
+  // boundary check: don't put window out of visible area
+  const baseWidth = window ? window.outerWidth : 0;
+  const baseHeight = window ? window.outerHeight : 0;
+  // Secure minimum size of an window should be same to the one
+  // defined at nsGlobalWindowOuter::CheckSecurityWidthAndHeight.
+  const minWidth = 100;
+  const minHeight = 100;
+  const width = Math.max(
+    minWidth,
+    params.width !== null ? params.width : baseWidth
+  );
+  const height = Math.max(
+    minHeight,
+    params.height !== null ? params.height : baseHeight
+  );
+  const screenManager = Cc["@mozilla.org/gfx/screenmanager;1"].getService(
+    Ci.nsIScreenManager
+  );
+  const screen = screenManager.screenForRect(
+    params.left,
+    params.top,
+    width,
+    height
+  );
+  const availDeviceLeft = {};
+  const availDeviceTop = {};
+  const availDeviceWidth = {};
+  const availDeviceHeight = {};
+  screen.GetAvailRect(
+    availDeviceLeft,
+    availDeviceTop,
+    availDeviceWidth,
+    availDeviceHeight
+  );
+  const slopX = window?.screenEdgeSlopX || 0;
+  const slopY = window?.screenEdgeSlopY || 0;
+  const factor = screen.defaultCSSScaleFactor;
+  const availLeft = Math.floor(availDeviceLeft.value / factor) - slopX;
+  const availTop = Math.floor(availDeviceTop.value / factor) - slopY;
+  const availWidth = Math.floor(availDeviceWidth.value / factor) + slopX;
+  const availHeight = Math.floor(availDeviceHeight.value / factor) + slopY;
+  params.left = Math.min(
+    availLeft + availWidth - width,
+    Math.max(availLeft, params.left)
+  );
+  params.top = Math.min(
+    availTop + availHeight - height,
+    Math.max(availTop, params.top)
+  );
+}
 
 this.windows = class extends ExtensionAPIPersistent {
   windowEventRegistrar(event, listener) {
@@ -130,7 +189,7 @@ this.windows = class extends ExtensionAPIPersistent {
           extensionApi: this,
         }).api(),
 
-        get: function(windowId, getInfo) {
+        get: function (windowId, getInfo) {
           let window = windowTracker.getWindow(windowId, context);
           if (!window || !context.canAccessWindow(window)) {
             return Promise.reject({
@@ -140,7 +199,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return Promise.resolve(windowManager.convert(window, getInfo));
         },
 
-        getCurrent: function(getInfo) {
+        getCurrent: function (getInfo) {
           let window = context.currentWindow || windowTracker.topWindow;
           if (!context.canAccessWindow(window)) {
             return Promise.reject({ message: `Invalid window` });
@@ -148,7 +207,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return Promise.resolve(windowManager.convert(window, getInfo));
         },
 
-        getLastFocused: function(getInfo) {
+        getLastFocused: function (getInfo) {
           let window = windowTracker.topWindow;
           if (!context.canAccessWindow(window)) {
             return Promise.reject({ message: `Invalid window` });
@@ -156,7 +215,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return Promise.resolve(windowManager.convert(window, getInfo));
         },
 
-        getAll: function(getInfo) {
+        getAll: function (getInfo) {
           let doNotCheckTypes =
             getInfo === null || getInfo.windowTypes === null;
           let windows = [];
@@ -169,7 +228,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return windows;
         },
 
-        create: async function(createData) {
+        create: async function (createData) {
           let needResize =
             createData.left !== null ||
             createData.top !== null ||
@@ -327,10 +386,12 @@ this.windows = class extends ExtensionAPIPersistent {
               "dialog",
               "resizable",
               "minimizable",
-              "centerscreen",
               "titlebar",
               "close"
             );
+            if (createData.left === null && createData.top === null) {
+              features.push("centerscreen");
+            }
           }
 
           if (createData.incognito !== null) {
@@ -345,6 +406,10 @@ this.windows = class extends ExtensionAPIPersistent {
               features.push("non-private");
             }
           }
+
+          const baseWindow = windowTracker.getTopNormalWindow(context);
+          // 10px offset is same to Chromium
+          sanitizePositionParams(createData, baseWindow, 10);
 
           let window = Services.ww.openWindow(
             null,
@@ -362,7 +427,7 @@ this.windows = class extends ExtensionAPIPersistent {
           const contentLoaded = new Promise(resolve => {
             window.addEventListener(
               "DOMContentLoaded",
-              function() {
+              function () {
                 if (allowScriptsToClose) {
                   window.gBrowserAllowScriptsToCloseInitialTabs = true;
                 }
@@ -398,7 +463,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return win.convert({ populate: true });
         },
 
-        update: async function(windowId, updateInfo) {
+        update: async function (windowId, updateInfo) {
           if (updateInfo.state !== null && updateInfo.state != "normal") {
             if (
               updateInfo.left !== null ||
@@ -429,6 +494,7 @@ this.windows = class extends ExtensionAPIPersistent {
             win.window.getAttention();
           }
 
+          sanitizePositionParams(updateInfo, win.window);
           win.updateGeometry(updateInfo);
 
           if (updateInfo.titlePreface !== null) {
@@ -441,7 +507,7 @@ this.windows = class extends ExtensionAPIPersistent {
           return win.convert();
         },
 
-        remove: function(windowId) {
+        remove: function (windowId) {
           let window = windowTracker.getWindow(windowId, context);
           if (!context.canAccessWindow(window)) {
             return Promise.reject({

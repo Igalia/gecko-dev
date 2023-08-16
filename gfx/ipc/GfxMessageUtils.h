@@ -69,12 +69,6 @@ struct ParamTraits<mozilla::gfx::Matrix> {
 
     return false;
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"[[%g %g] [%g %g] [%g %g]]", aParam._11,
-                              aParam._12, aParam._21, aParam._22, aParam._31,
-                              aParam._32));
-  }
 };
 
 template <>
@@ -155,12 +149,13 @@ struct ParamTraits<gfxPoint> {
   typedef gfxPoint paramType;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    WriteParam(aWriter, aParam.x);
-    WriteParam(aWriter, aParam.y);
+    WriteParam(aWriter, aParam.x.value);
+    WriteParam(aWriter, aParam.y.value);
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
-    return (ReadParam(aReader, &aResult->x) && ReadParam(aReader, &aResult->y));
+    return (ReadParam(aReader, &aResult->x.value) &&
+            ReadParam(aReader, &aResult->y.value));
   }
 };
 
@@ -713,6 +708,12 @@ struct ParamTraits<mozilla::gfx::YUVRangedColorSpace>
           mozilla::gfx::YUVRangedColorSpace,
           mozilla::gfx::YUVRangedColorSpace::_First,
           mozilla::gfx::YUVRangedColorSpace::_Last> {};
+
+template <>
+struct ParamTraits<mozilla::gfx::ColorSpace2>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::gfx::ColorSpace2, mozilla::gfx::ColorSpace2::_First,
+          mozilla::gfx::ColorSpace2::_Last> {};
 
 template <>
 struct ParamTraits<mozilla::StereoMode>

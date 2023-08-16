@@ -11,8 +11,10 @@
 #include "gfxDWriteFontList.h"
 #include "gfxDWriteFonts.h"
 #include "nsUnicharUtils.h"
+#include "nsPresContext.h"
 #include "nsServiceManagerUtils.h"
 #include "nsCharSeparatedTokenizer.h"
+#include "mozilla/gfx/Logging.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/ProfilerLabels.h"
 #include "mozilla/Sprintf.h"
@@ -25,6 +27,8 @@
 #include "nsAppDirectoryServiceDefs.h"
 
 #include "gfxGDIFontList.h"
+#include "gfxRect.h"
+#include "SharedFontList-impl.h"
 
 #include "harfbuzz/hb.h"
 
@@ -726,101 +730,107 @@ nsresult gfxDWriteFontEntry::CreateFontFace(
                                      (aTag >> 8) & 0xff, aTag & 0xff);
   };
 
-  // initialize mFontFace if this hasn't been done before
-  if (!mFontFace) {
-    HRESULT hr;
-    if (mFont) {
-      hr = mFont->CreateFontFace(getter_AddRefs(mFontFace));
-    } else if (mFontFile) {
-      IDWriteFontFile* fontFile = mFontFile.get();
-      hr = Factory::GetDWriteFactory()->CreateFontFace(
-          mFaceType, 1, &fontFile, 0, DWRITE_FONT_SIMULATIONS_NONE,
-          getter_AddRefs(mFontFace));
-    } else {
-      MOZ_ASSERT_UNREACHABLE("invalid font entry");
-      return NS_ERROR_FAILURE;
+  MOZ_SEH_TRY {
+    // initialize mFontFace if this hasn't been done before
+    if (!mFontFace) {
+      HRESULT hr;
+      if (mFont) {
+        hr = mFont->CreateFontFace(getter_AddRefs(mFontFace));
+      } else if (mFontFile) {
+        IDWriteFontFile* fontFile = mFontFile.get();
+        hr = Factory::GetDWriteFactory()->CreateFontFace(
+            mFaceType, 1, &fontFile, 0, DWRITE_FONT_SIMULATIONS_NONE,
+            getter_AddRefs(mFontFace));
+      } else {
+        MOZ_ASSERT_UNREACHABLE("invalid font entry");
+        return NS_ERROR_FAILURE;
+      }
+      if (FAILED(hr)) {
+        return NS_ERROR_FAILURE;
+      }
+      // Also get the IDWriteFontFace5 interface if we're running on a
+      // sufficiently new DWrite version where it is available.
+      if (mFontFace) {
+        mFontFace->QueryInterface(__uuidof(IDWriteFontFace5),
+                                  (void**)getter_AddRefs(mFontFace5));
+        if (!mVariationSettings.IsEmpty()) {
+          // If the font entry has variations specified, mFontFace5 will
+          // be a distinct face that has the variations applied.
+          RefPtr<IDWriteFontResource> resource;
+          HRESULT hr = mFontFace5->GetFontResource(getter_AddRefs(resource));
+          if (SUCCEEDED(hr) && resource) {
+            AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
+            for (const auto& v : mVariationSettings) {
+              DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
+                                                  v.mValue};
+              fontAxisValues.AppendElement(axisValue);
+            }
+            resource->CreateFontFace(
+                mFontFace->GetSimulations(), fontAxisValues.Elements(),
+                fontAxisValues.Length(), getter_AddRefs(mFontFace5));
+          }
+        }
+      }
     }
-    if (FAILED(hr)) {
-      return NS_ERROR_FAILURE;
-    }
-    // Also get the IDWriteFontFace5 interface if we're running on a
-    // sufficiently new DWrite version where it is available.
-    if (mFontFace) {
-      mFontFace->QueryInterface(__uuidof(IDWriteFontFace5),
-                                (void**)getter_AddRefs(mFontFace5));
-      if (!mVariationSettings.IsEmpty()) {
-        // If the font entry has variations specified, mFontFace5 will
-        // be a distinct face that has the variations applied.
-        RefPtr<IDWriteFontResource> resource;
-        HRESULT hr = mFontFace5->GetFontResource(getter_AddRefs(resource));
-        if (SUCCEEDED(hr) && resource) {
-          AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
-          for (const auto& v : mVariationSettings) {
+
+    // Do we need to modify DWrite simulations from what mFontFace has?
+    bool needSimulations =
+        (aSimulations & DWRITE_FONT_SIMULATIONS_BOLD) &&
+        !(mFontFace->GetSimulations() & DWRITE_FONT_SIMULATIONS_BOLD);
+
+    // If the IDWriteFontFace5 interface is available, we can try using
+    // IDWriteFontResource to create a new modified face.
+    if (mFontFace5 && (HasVariations() || needSimulations)) {
+      RefPtr<IDWriteFontResource> resource;
+      HRESULT hr = mFontFace5->GetFontResource(getter_AddRefs(resource));
+      if (SUCCEEDED(hr) && resource) {
+        AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
+
+        // Copy variation settings to DWrite's type.
+        if (aVariations) {
+          for (const auto& v : *aVariations) {
             DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
                                                 v.mValue};
             fontAxisValues.AppendElement(axisValue);
           }
-          resource->CreateFontFace(
-              mFontFace->GetSimulations(), fontAxisValues.Elements(),
-              fontAxisValues.Length(), getter_AddRefs(mFontFace5));
+        }
+
+        IDWriteFontFace5* ff5;
+        resource->CreateFontFace(aSimulations, fontAxisValues.Elements(),
+                                 fontAxisValues.Length(), &ff5);
+        if (ff5) {
+          *aFontFace = ff5;
+          return NS_OK;
         }
       }
     }
-  }
 
-  // Do we need to modify DWrite simulations from what mFontFace has?
-  bool needSimulations =
-      (aSimulations & DWRITE_FONT_SIMULATIONS_BOLD) &&
-      !(mFontFace->GetSimulations() & DWRITE_FONT_SIMULATIONS_BOLD);
-
-  // If the IDWriteFontFace5 interface is available, we can try using
-  // IDWriteFontResource to create a new modified face.
-  if (mFontFace5 && (HasVariations() || needSimulations)) {
-    RefPtr<IDWriteFontResource> resource;
-    HRESULT hr = mFontFace5->GetFontResource(getter_AddRefs(resource));
-    if (SUCCEEDED(hr) && resource) {
-      AutoTArray<DWRITE_FONT_AXIS_VALUE, 4> fontAxisValues;
-
-      // Copy variation settings to DWrite's type.
-      if (aVariations) {
-        for (const auto& v : *aVariations) {
-          DWRITE_FONT_AXIS_VALUE axisValue = {makeDWriteAxisTag(v.mTag),
-                                              v.mValue};
-          fontAxisValues.AppendElement(axisValue);
-        }
+    // Do we need to add DWrite simulations to the face?
+    if (needSimulations) {
+      // if so, we need to return not mFontFace itself but a version that
+      // has the Bold simulation - unfortunately, old DWrite doesn't provide
+      // a simple API for this
+      UINT32 numberOfFiles = 0;
+      if (FAILED(mFontFace->GetFiles(&numberOfFiles, nullptr))) {
+        return NS_ERROR_FAILURE;
       }
-
-      IDWriteFontFace5* ff5;
-      resource->CreateFontFace(aSimulations, fontAxisValues.Elements(),
-                               fontAxisValues.Length(), &ff5);
-      if (ff5) {
-        *aFontFace = ff5;
-        return NS_OK;
+      AutoTArray<IDWriteFontFile*, 1> files;
+      files.AppendElements(numberOfFiles);
+      if (FAILED(mFontFace->GetFiles(&numberOfFiles, files.Elements()))) {
+        return NS_ERROR_FAILURE;
       }
+      HRESULT hr = Factory::GetDWriteFactory()->CreateFontFace(
+          mFontFace->GetType(), numberOfFiles, files.Elements(),
+          mFontFace->GetIndex(), aSimulations, aFontFace);
+      for (UINT32 i = 0; i < numberOfFiles; ++i) {
+        files[i]->Release();
+      }
+      return FAILED(hr) ? NS_ERROR_FAILURE : NS_OK;
     }
   }
-
-  // Do we need to add DWrite simulations to the face?
-  if (needSimulations) {
-    // if so, we need to return not mFontFace itself but a version that
-    // has the Bold simulation - unfortunately, old DWrite doesn't provide
-    // a simple API for this
-    UINT32 numberOfFiles = 0;
-    if (FAILED(mFontFace->GetFiles(&numberOfFiles, nullptr))) {
-      return NS_ERROR_FAILURE;
-    }
-    AutoTArray<IDWriteFontFile*, 1> files;
-    files.AppendElements(numberOfFiles);
-    if (FAILED(mFontFace->GetFiles(&numberOfFiles, files.Elements()))) {
-      return NS_ERROR_FAILURE;
-    }
-    HRESULT hr = Factory::GetDWriteFactory()->CreateFontFace(
-        mFontFace->GetType(), numberOfFiles, files.Elements(),
-        mFontFace->GetIndex(), aSimulations, aFontFace);
-    for (UINT32 i = 0; i < numberOfFiles; ++i) {
-      files[i]->Release();
-    }
-    return FAILED(hr) ? NS_ERROR_FAILURE : NS_OK;
+  MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    gfxCriticalNote << "Exception occurred creating font face for "
+                    << mName.get();
   }
 
   // no simulation: we can just add a reference to mFontFace5 (if present)
@@ -855,13 +865,10 @@ bool gfxDWriteFontEntry::IsCJKFont() {
   mIsCJK = false;
 
   const uint32_t kOS2Tag = TRUETYPE_TAG('O', 'S', '/', '2');
-  hb_blob_t* blob = GetFontTable(kOS2Tag);
+  gfxFontUtils::AutoHBBlob blob(GetFontTable(kOS2Tag));
   if (!blob) {
     return mIsCJK;
   }
-  // |blob| is an owning reference, but is not RAII-managed, so it must be
-  // explicitly freed using |hb_blob_destroy| before we return. (Beware of
-  // adding any early-return codepaths!)
 
   uint32_t len;
   const OS2Table* os2 =
@@ -879,7 +886,6 @@ bool gfxDWriteFontEntry::IsCJKFont() {
       mIsCJK = true;
     }
   }
-  hb_blob_destroy(blob);
 
   return mIsCJK;
 }
@@ -1044,89 +1050,100 @@ gfxFontEntry* gfxDWriteFontList::CreateFontEntry(
   bool foundExpectedFamily = false;
   const nsCString& familyName =
       aFamily->DisplayName().AsString(SharedFontList());
-  if (aFamily->Index() < collection->GetFontFamilyCount()) {
-    HRESULT hr =
-        collection->GetFontFamily(aFamily->Index(), getter_AddRefs(family));
-    // Check that the family name is what we expected; if not, fall back to
-    // search by name. It's sad we have to do this, but it is possible for
-    // Windows to have given different versions of the system font collection
-    // to the parent and child processes.
-    if (SUCCEEDED(hr) && family) {
-      RefPtr<IDWriteLocalizedStrings> names;
-      hr = family->GetFamilyNames(getter_AddRefs(names));
-      if (SUCCEEDED(hr) && names) {
-        nsAutoCString name;
-        if (GetEnglishOrFirstName(name, names)) {
-          foundExpectedFamily = name.Equals(familyName);
+
+  // The DirectWrite calls here might throw exceptions, e.g. in case of disk
+  // errors when trying to read the font file.
+  MOZ_SEH_TRY {
+    if (aFamily->Index() < collection->GetFontFamilyCount()) {
+      HRESULT hr =
+          collection->GetFontFamily(aFamily->Index(), getter_AddRefs(family));
+      // Check that the family name is what we expected; if not, fall back to
+      // search by name. It's sad we have to do this, but it is possible for
+      // Windows to have given different versions of the system font collection
+      // to the parent and child processes.
+      if (SUCCEEDED(hr) && family) {
+        RefPtr<IDWriteLocalizedStrings> names;
+        hr = family->GetFamilyNames(getter_AddRefs(names));
+        if (SUCCEEDED(hr) && names) {
+          nsAutoCString name;
+          if (GetEnglishOrFirstName(name, names)) {
+            foundExpectedFamily = name.Equals(familyName);
+          }
         }
       }
     }
-  }
-  if (!foundExpectedFamily) {
-    // Try to get family by name instead of index (to deal with the case of
-    // collection mismatch).
-    UINT32 index;
-    BOOL exists;
-    NS_ConvertUTF8toUTF16 name16(familyName);
-    HRESULT hr = collection->FindFamilyName(
-        reinterpret_cast<const WCHAR*>(name16.BeginReading()), &index, &exists);
-    if (FAILED(hr) || !exists || index == UINT_MAX ||
-        FAILED(collection->GetFontFamily(index, getter_AddRefs(family))) ||
-        !family) {
+    if (!foundExpectedFamily) {
+      // Try to get family by name instead of index (to deal with the case of
+      // collection mismatch).
+      UINT32 index;
+      BOOL exists;
+      NS_ConvertUTF8toUTF16 name16(familyName);
+      HRESULT hr = collection->FindFamilyName(
+          reinterpret_cast<const WCHAR*>(name16.BeginReading()), &index,
+          &exists);
+      if (FAILED(hr) || !exists || index == UINT_MAX ||
+          FAILED(collection->GetFontFamily(index, getter_AddRefs(family))) ||
+          !family) {
+        return nullptr;
+      }
+    }
+
+    // Retrieve the required face by index within the family.
+    RefPtr<IDWriteFont> font;
+    if (FAILED(family->GetFont(aFace->mIndex, getter_AddRefs(font))) || !font) {
       return nullptr;
     }
-  }
 
-  // Retrieve the required face by index within the family.
-  RefPtr<IDWriteFont> font;
-  if (FAILED(family->GetFont(aFace->mIndex, getter_AddRefs(font))) || !font) {
-    return nullptr;
-  }
-
-  // Retrieve the psName from the font, so we can check we've found the
-  // expected face.
-  nsAutoCString psName;
-  if (FAILED(GetDirectWriteFaceName(font, PSNAME_ID, psName))) {
-    RefPtr<IDWriteFontFace> dwFontFace;
-    if (SUCCEEDED(font->CreateFontFace(getter_AddRefs(dwFontFace)))) {
-      GetPostScriptNameFromNameTable(dwFontFace, psName);
+    // Retrieve the psName from the font, so we can check we've found the
+    // expected face.
+    nsAutoCString psName;
+    if (FAILED(GetDirectWriteFaceName(font, PSNAME_ID, psName))) {
+      RefPtr<IDWriteFontFace> dwFontFace;
+      if (SUCCEEDED(font->CreateFontFace(getter_AddRefs(dwFontFace)))) {
+        GetPostScriptNameFromNameTable(dwFontFace, psName);
+      }
     }
-  }
 
-  // If it doesn't match, DirectWrite must have shuffled the order of faces
-  // returned for the family; search by name as a fallback.
-  nsCString faceName = aFace->mDescriptor.AsString(SharedFontList());
-  if (psName != faceName) {
-    gfxWarning() << "Face name mismatch for index " << aFace->mIndex
-                 << " in family " << familyName.get() << ": expected "
-                 << faceName.get() << ", found " << psName.get();
-    for (uint32_t i = 0; i < family->GetFontCount(); ++i) {
-      if (i == aFace->mIndex) {
-        continue;  // this was the face we already tried
-      }
-      if (FAILED(family->GetFont(i, getter_AddRefs(font))) || !font) {
-        return nullptr;  // this font family is broken!
-      }
-      if (FAILED(GetDirectWriteFaceName(font, PSNAME_ID, psName))) {
-        RefPtr<IDWriteFontFace> dwFontFace;
-        if (SUCCEEDED(font->CreateFontFace(getter_AddRefs(dwFontFace)))) {
-          GetPostScriptNameFromNameTable(dwFontFace, psName);
+    // If it doesn't match, DirectWrite must have shuffled the order of faces
+    // returned for the family; search by name as a fallback.
+    nsCString faceName = aFace->mDescriptor.AsString(SharedFontList());
+    if (psName != faceName) {
+      gfxWarning() << "Face name mismatch for index " << aFace->mIndex
+                   << " in family " << familyName.get() << ": expected "
+                   << faceName.get() << ", found " << psName.get();
+      for (uint32_t i = 0; i < family->GetFontCount(); ++i) {
+        if (i == aFace->mIndex) {
+          continue;  // this was the face we already tried
+        }
+        if (FAILED(family->GetFont(i, getter_AddRefs(font))) || !font) {
+          return nullptr;  // this font family is broken!
+        }
+        if (FAILED(GetDirectWriteFaceName(font, PSNAME_ID, psName))) {
+          RefPtr<IDWriteFontFace> dwFontFace;
+          if (SUCCEEDED(font->CreateFontFace(getter_AddRefs(dwFontFace)))) {
+            GetPostScriptNameFromNameTable(dwFontFace, psName);
+          }
+        }
+        if (psName == faceName) {
+          break;
         }
       }
-      if (psName == faceName) {
-        break;
-      }
     }
-  }
-  if (psName != faceName) {
-    return nullptr;
-  }
+    if (psName != faceName) {
+      return nullptr;
+    }
 
-  auto fe = new gfxDWriteFontEntry(faceName, font, !aFamily->IsBundled());
-  fe->InitializeFrom(aFace, aFamily);
-  fe->mForceGDIClassic = aFamily->IsForceClassic();
-  fe->mMayUseGDIAccess = aFamily->IsSimple();
-  return fe;
+    auto fe = new gfxDWriteFontEntry(faceName, font, !aFamily->IsBundled());
+    fe->InitializeFrom(aFace, aFamily);
+    fe->mForceGDIClassic = aFamily->IsForceClassic();
+    fe->mMayUseGDIAccess = aFamily->IsSimple();
+    return fe;
+  }
+  MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    gfxCriticalNote << "Exception occurred while creating font entry for "
+                    << familyName.get();
+  }
+  return nullptr;
 }
 
 FontVisibility gfxDWriteFontList::GetVisibilityForFamily(
@@ -1441,34 +1458,34 @@ void gfxDWriteFontList::ReadFaceNamesForFamily(
   nsAutoCString familyName(aFamily->DisplayName().AsString(list));
   nsAutoCString key(aFamily->Key().AsString(list));
 
-  // Read PS-names and fullnames of the faces, and any alternate family names
-  // (either localizations or legacy subfamily names)
-  for (unsigned i = 0; i < aFamily->NumFaces(); ++i) {
-    auto face = static_cast<fontlist::Face*>(facePtrs[i].ToPtr(list));
-    if (!face) {
-      continue;
-    }
-    RefPtr<IDWriteFont> dwFont;
-    if (FAILED(family->GetFont(face->mIndex, getter_AddRefs(dwFont)))) {
-      continue;
-    }
-    RefPtr<IDWriteFontFace> dwFontFace;
-    if (FAILED(dwFont->CreateFontFace(getter_AddRefs(dwFontFace)))) {
-      continue;
-    }
+  MOZ_SEH_TRY {
+    // Read PS-names and fullnames of the faces, and any alternate family names
+    // (either localizations or legacy subfamily names)
+    for (unsigned i = 0; i < aFamily->NumFaces(); ++i) {
+      auto face = static_cast<fontlist::Face*>(facePtrs[i].ToPtr(list));
+      if (!face) {
+        continue;
+      }
+      RefPtr<IDWriteFont> dwFont;
+      if (FAILED(family->GetFont(face->mIndex, getter_AddRefs(dwFont)))) {
+        continue;
+      }
+      RefPtr<IDWriteFontFace> dwFontFace;
+      if (FAILED(dwFont->CreateFontFace(getter_AddRefs(dwFontFace)))) {
+        continue;
+      }
 
-    const char* data;
-    UINT32 size;
-    void* context;
-    BOOL exists;
-    if (FAILED(dwFontFace->TryGetFontTable(
-            NativeEndian::swapToBigEndian(TRUETYPE_TAG('n', 'a', 'm', 'e')),
-            (const void**)&data, &size, &context, &exists)) ||
-        !exists) {
-      continue;
-    }
+      const char* data;
+      UINT32 size;
+      void* context;
+      BOOL exists;
+      if (FAILED(dwFontFace->TryGetFontTable(
+              NativeEndian::swapToBigEndian(TRUETYPE_TAG('n', 'a', 'm', 'e')),
+              (const void**)&data, &size, &context, &exists)) ||
+          !exists) {
+        continue;
+      }
 
-    MOZ_SEH_TRY {
       AutoTArray<nsCString, 4> otherFamilyNames;
       gfxFontUtils::ReadOtherFamilyNamesForFace(familyName, data, size,
                                                 otherFamilyNames, false);
@@ -1495,13 +1512,13 @@ void gfxDWriteFontList::ReadFaceNamesForFamily(
               fullname, fontlist::LocalFaceRec::InitData(key, i));
         }
       }
-    }
-    MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
-      gfxCriticalNote << "Exception occurred reading names for "
-                      << familyName.get();
-    }
 
-    dwFontFace->ReleaseFontTable(context);
+      dwFontFace->ReleaseFontTable(context);
+    }
+  }
+  MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    gfxCriticalNote << "Exception occurred reading names for "
+                    << familyName.get();
   }
 }
 
@@ -2216,7 +2233,7 @@ gfxFontEntry* gfxDWriteFontList::PlatformGlobalFontFallback(
       FindFamily(aPresContext, mFallbackRenderer->FallbackFamilyName());
   if (!family.IsNull()) {
     gfxFontEntry* fontEntry = nullptr;
-    if (family.mIsShared) {
+    if (family.mShared) {
       auto face =
           family.mShared->FindFaceForStyle(SharedFontList(), *aMatchStyle);
       if (face) {

@@ -1,11 +1,11 @@
-const { RemoteSettingsClient } = ChromeUtils.import(
-  "resource://services-settings/RemoteSettingsClient.jsm"
+const { RemoteSettingsClient } = ChromeUtils.importESModule(
+  "resource://services-settings/RemoteSettingsClient.sys.mjs"
 );
-const { RemoteSettingsWorker } = ChromeUtils.import(
-  "resource://services-settings/RemoteSettingsWorker.jsm"
+const { RemoteSettingsWorker } = ChromeUtils.importESModule(
+  "resource://services-settings/RemoteSettingsWorker.sys.mjs"
 );
-const { SharedUtils } = ChromeUtils.import(
-  "resource://services-settings/SharedUtils.jsm"
+const { SharedUtils } = ChromeUtils.importESModule(
+  "resource://services-settings/SharedUtils.sys.mjs"
 );
 
 // A collection with a dump that's packaged on all builds where this test runs,

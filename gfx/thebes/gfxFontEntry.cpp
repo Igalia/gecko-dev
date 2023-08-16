@@ -28,9 +28,6 @@
 #include "nsStyleConsts.h"
 #include "mozilla/AppUnits.h"
 #include "mozilla/FloatingPoint.h"
-#ifdef MOZ_WASM_SANDBOXING_GRAPHITE
-#  include "mozilla/ipc/LibrarySandboxPreload.h"
-#endif
 #include "mozilla/Likely.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Preferences.h"
@@ -88,22 +85,15 @@ gfxFontEntry::gfxFontEntry(const nsACString& aName, bool aIsStandardFace)
       mIgnoreGSUB(false),
       mSkipDefaultFeatureSpaceCheck(false),
       mSVGInitialized(false),
-      mHasSpaceFeaturesInitialized(false),
-      mHasSpaceFeatures(false),
-      mHasSpaceFeaturesKerning(false),
-      mHasSpaceFeaturesNonKerning(false),
-      mGraphiteSpaceContextualsInitialized(false),
-      mHasGraphiteSpaceContextuals(false),
-      mSpaceGlyphIsInvisible(false),
-      mSpaceGlyphIsInvisibleInitialized(false),
-      mHasGraphiteTables(false),
-      mCheckedForGraphiteTables(false),
       mHasCmapTable(false),
       mGrFaceInitialized(false),
       mCheckedForColorGlyph(false),
       mCheckedForVariationAxes(false),
-      mHasColorBitmapTable(false),
-      mCheckedForColorBitmapTables(false) {
+      mSpaceGlyphIsInvisible(LazyFlag::Uninitialized),
+      mHasGraphiteTables(LazyFlag::Uninitialized),
+      mHasGraphiteSpaceContextuals(LazyFlag::Uninitialized),
+      mHasColorBitmapTable(LazyFlag::Uninitialized),
+      mHasSpaceFeatures(SpaceFeatures::Uninitialized) {
   mTrakTable.exchange(kTrakTableUninitialized);
   memset(&mDefaultSubSpaceFeatures, 0, sizeof(mDefaultSubSpaceFeatures));
   memset(&mNonDefaultSubSpaceFeatures, 0, sizeof(mNonDefaultSubSpaceFeatures));
@@ -270,12 +260,16 @@ already_AddRefed<gfxFont> gfxFontEntry::FindOrMakeFont(
     return font.forget();
   }
 
-  font = CreateFontInstance(aStyle);
-  if (!font || !font->Valid()) {
+  gfxFont* newFont = CreateFontInstance(aStyle);
+  if (!newFont) {
     return nullptr;
   }
-  font->SetUnicodeRangeMap(aUnicodeRangeMap);
-  return gfxFontCache::GetCache()->MaybeInsert(std::move(font));
+  if (!newFont->Valid()) {
+    newFont->Destroy();
+    return nullptr;
+  }
+  newFont->SetUnicodeRangeMap(aUnicodeRangeMap);
+  return gfxFontCache::GetCache()->MaybeInsert(newFont);
 }
 
 uint16_t gfxFontEntry::UnitsPerEm() {
@@ -287,6 +281,13 @@ uint16_t gfxFontEntry::UnitsPerEm() {
           reinterpret_cast<const HeadTable*>(hb_blob_get_data(headTable, &len));
       if (len >= sizeof(HeadTable)) {
         mUnitsPerEm = head->unitsPerEm;
+        if (int16_t(head->xMax) > int16_t(head->xMin) &&
+            int16_t(head->yMax) > int16_t(head->yMin)) {
+          mXMin = head->xMin;
+          mYMin = head->yMin;
+          mXMax = head->xMax;
+          mYMax = head->yMax;
+        }
       }
     }
 
@@ -389,7 +390,7 @@ bool gfxFontEntry::TryGetColorGlyphs() {
   auto* colr = GetFontTable(TRUETYPE_TAG('C', 'O', 'L', 'R'));
   auto* cpal = colr ? GetFontTable(TRUETYPE_TAG('C', 'P', 'A', 'L')) : nullptr;
 
-  if (colr && cpal && gfxFontUtils::ValidateColorGlyphs(colr, cpal)) {
+  if (colr && cpal && gfx::COLRFonts::ValidateColorGlyphs(colr, cpal)) {
     if (!mCOLR.compareExchange(nullptr, colr)) {
       hb_blob_destroy(colr);
     }
@@ -612,6 +613,56 @@ hb_blob_t* gfxFontEntry::HBGetTable(hb_face_t* face, uint32_t aTag,
   return fontEntry->GetFontTable(aTag);
 }
 
+static thread_local gfxFontEntry* tl_grGetFontTableCallbackData = nullptr;
+
+class gfxFontEntryCallbacks {
+ public:
+  static tainted_gr<const void*> GrGetTable(
+      rlbox_sandbox_gr& sandbox, tainted_gr<const void*> /* aAppFaceHandle */,
+      tainted_gr<unsigned int> aName, tainted_gr<unsigned int*> aLen) {
+    gfxFontEntry* fontEntry = tl_grGetFontTableCallbackData;
+    *aLen = 0;
+    tainted_gr<const void*> ret = nullptr;
+
+    if (fontEntry) {
+      unsigned int fontTableKey = aName.unverified_safe_because(
+          "This is only being used to index into a hashmap, which is robust "
+          "for any value. No checks needed.");
+      gfxFontUtils::AutoHBBlob blob(fontEntry->GetFontTable(fontTableKey));
+
+      if (blob) {
+        unsigned int blobLength;
+        const void* tableData = hb_blob_get_data(blob, &blobLength);
+        // tableData is read-only data shared with the sandbox.
+        // Making a copy in sandbox memory
+        tainted_gr<void*> t_tableData = rlbox::sandbox_reinterpret_cast<void*>(
+            sandbox.malloc_in_sandbox<char>(blobLength));
+        if (t_tableData) {
+          rlbox::memcpy(sandbox, t_tableData, tableData, blobLength);
+          *aLen = blobLength;
+          ret = rlbox::sandbox_const_cast<const void*>(t_tableData);
+        }
+      }
+    }
+
+    return ret;
+  }
+
+  static void GrReleaseTable(rlbox_sandbox_gr& sandbox,
+                             tainted_gr<const void*> /* aAppFaceHandle */,
+                             tainted_gr<const void*> aTableBuffer) {
+    sandbox.free_in_sandbox(aTableBuffer);
+  }
+
+  static tainted_gr<float> GrGetAdvance(rlbox_sandbox_gr& sandbox,
+                                        tainted_gr<const void*> appFontHandle,
+                                        tainted_gr<uint16_t> glyphid) {
+    tainted_opaque_gr<float> ret = gfxGraphiteShaper::GrGetAdvance(
+        sandbox, appFontHandle.to_opaque(), glyphid.to_opaque());
+    return rlbox::from_opaque(ret);
+  }
+};
+
 struct gfxFontEntry::GrSandboxData {
   rlbox_sandbox_gr sandbox;
   sandbox_callback_gr<const void* (*)(const void*, unsigned int, unsigned int*)>
@@ -624,10 +675,12 @@ struct gfxFontEntry::GrSandboxData {
 
   GrSandboxData() {
     sandbox.create_sandbox();
-    grGetTableCallback = sandbox.register_callback(GrGetTable);
-    grReleaseTableCallback = sandbox.register_callback(GrReleaseTable);
+    grGetTableCallback =
+        sandbox.register_callback(gfxFontEntryCallbacks::GrGetTable);
+    grReleaseTableCallback =
+        sandbox.register_callback(gfxFontEntryCallbacks::GrReleaseTable);
     grGetGlyphAdvanceCallback =
-        sandbox.register_callback(gfxGraphiteShaper::GrGetAdvance);
+        sandbox.register_callback(gfxFontEntryCallbacks::GrGetAdvance);
   }
 
   ~GrSandboxData() {
@@ -637,53 +690,6 @@ struct gfxFontEntry::GrSandboxData {
     sandbox.destroy_sandbox();
   }
 };
-
-static thread_local gfxFontEntry* tl_grGetFontTableCallbackData = nullptr;
-
-/*static*/
-tainted_opaque_gr<const void*> gfxFontEntry::GrGetTable(
-    rlbox_sandbox_gr& sandbox,
-    tainted_opaque_gr<const void*> /* aAppFaceHandle */,
-    tainted_opaque_gr<unsigned int> aName,
-    tainted_opaque_gr<unsigned int*> aLen) {
-  gfxFontEntry* fontEntry = tl_grGetFontTableCallbackData;
-  tainted_gr<unsigned int*> t_aLen = rlbox::from_opaque(aLen);
-  *t_aLen = 0;
-  tainted_gr<const void*> ret = nullptr;
-
-  if (fontEntry) {
-    unsigned int fontTableKey =
-        rlbox::from_opaque(aName).unverified_safe_because(
-            "This is only being used to index into a hashmap, which is robust "
-            "for any value. No checks needed.");
-    hb_blob_t* blob = fontEntry->GetFontTable(fontTableKey);
-
-    if (blob) {
-      unsigned int blobLength;
-      const void* tableData = hb_blob_get_data(blob, &blobLength);
-      // tableData is read-only data shared with the sandbox.
-      // Making a copy in sandbox memory
-      tainted_gr<void*> t_tableData = rlbox::sandbox_reinterpret_cast<void*>(
-          sandbox.malloc_in_sandbox<char>(blobLength));
-      if (t_tableData) {
-        rlbox::memcpy(sandbox, t_tableData, tableData, blobLength);
-        *t_aLen = blobLength;
-        ret = rlbox::sandbox_const_cast<const void*>(t_tableData);
-      }
-      hb_blob_destroy(blob);
-    }
-  }
-
-  return ret.to_opaque();
-}
-
-/*static*/
-void gfxFontEntry::GrReleaseTable(
-    rlbox_sandbox_gr& sandbox,
-    tainted_opaque_gr<const void*> /* aAppFaceHandle */,
-    tainted_opaque_gr<const void*> aTableBuffer) {
-  sandbox.free_in_sandbox(rlbox::from_opaque(aTableBuffer));
-}
 
 rlbox_sandbox_gr* gfxFontEntry::GetGrSandbox() {
   AutoReadLock lock(mLock);
@@ -773,12 +779,9 @@ bool gfxFontEntry::HasFontTable(uint32_t aTableTag) {
   return table && hb_blob_get_length(table) > 0;
 }
 
-void gfxFontEntry::CheckForGraphiteTables() {
-  mHasGraphiteTables = HasFontTable(TRUETYPE_TAG('S', 'i', 'l', 'f'));
-}
-
 tainted_boolean_hint gfxFontEntry::HasGraphiteSpaceContextuals() {
-  if (!mGraphiteSpaceContextualsInitialized) {
+  LazyFlag flag = mHasGraphiteSpaceContextuals;
+  if (flag == LazyFlag::Uninitialized) {
     auto face = GetGrFace();
     auto t_face = rlbox::from_opaque(face);
     if (t_face) {
@@ -789,20 +792,21 @@ tainted_boolean_hint gfxFontEntry::HasGraphiteSpaceContextuals() {
       // maliciously at any moment.
       tainted_boolean_hint is_not_none =
           faceInfo->space_contextuals != gr_faceinfo::gr_space_none;
-      mHasGraphiteSpaceContextuals = is_not_none.unverified_safe_because(
-          "Note ideally mHasGraphiteSpaceContextuals would be "
-          "tainted_boolean_hint, but RLBox does not yet support bitfields, so "
-          "it is not wrapped. However, its value is only ever accessed through "
-          "this function which returns a tainted_boolean_hint, so unwrapping "
-          "temporarily is safe. We remove the wrapper now and re-add it "
-          "below.");
+      flag = is_not_none.unverified_safe_because(
+                 "Note ideally mHasGraphiteSpaceContextuals would be "
+                 "tainted_boolean_hint, but RLBox does not yet support "
+                 "bitfields, so it is not wrapped. However, its value is only "
+                 "ever accessed through this function which returns a "
+                 "tainted_boolean_hint, so unwrapping temporarily is safe. "
+                 "We remove the wrapper now and re-add it below.")
+                 ? LazyFlag::Yes
+                 : LazyFlag::No;
     }
     ReleaseGrFace(face);  // always balance GetGrFace, even if face is null
-    mGraphiteSpaceContextualsInitialized = true;
+    mHasGraphiteSpaceContextuals = flag;
   }
 
-  bool ret = mHasGraphiteSpaceContextuals;
-  return tainted_boolean_hint(ret);
+  return tainted_boolean_hint(flag == LazyFlag::Yes);
 }
 
 #define FEATURE_SCRIPT_MASK 0x000000ff  // script index replaces low byte of tag
@@ -1039,15 +1043,6 @@ void gfxFontEntry::GetFeatureInfo(nsTArray<gfxFontFeatureInfo>& aFeatureInfo) {
   collectForTable(HB_TAG('G', 'P', 'O', 'S'));
 }
 
-bool gfxFontEntry::GetColorLayersInfo(
-    uint32_t aGlyphId, const mozilla::gfx::DeviceColor& aDefaultColor,
-    nsTArray<uint16_t>& aLayerGlyphs,
-    nsTArray<mozilla::gfx::DeviceColor>& aLayerColors) {
-  return gfxFontUtils::GetColorGlyphLayers(GetCOLR(), GetCPAL(), aGlyphId,
-                                           aDefaultColor, aLayerGlyphs,
-                                           aLayerColors);
-}
-
 typedef struct {
   AutoSwap_PRUint32 version;
   AutoSwap_PRUint16 format;
@@ -1280,6 +1275,8 @@ void gfxFontEntry::CheckForVariationAxes() {
       } else if (axis.mTag == HB_TAG('i', 't', 'a', 'l') &&
                  axis.mMaxValue >= 1.0f) {
         mRangeFlags |= RangeFlags::eItalicVariation;
+      } else if (axis.mTag == HB_TAG('s', 'l', 'n', 't')) {
+        mRangeFlags |= RangeFlags::eSlantVariation;
       } else if (axis.mTag == HB_TAG('o', 'p', 's', 'z')) {
         mRangeFlags |= RangeFlags::eOpticalSize;
       }
@@ -1299,6 +1296,13 @@ bool gfxFontEntry::HasItalicVariation() {
              "should not be called for user-font containers!");
   CheckForVariationAxes();
   return bool(mRangeFlags & RangeFlags::eItalicVariation);
+}
+
+bool gfxFontEntry::HasSlantVariation() {
+  MOZ_ASSERT(!mIsUserFontContainer,
+             "should not be called for user-font containers!");
+  CheckForVariationAxes();
+  return bool(mRangeFlags & RangeFlags::eSlantVariation);
 }
 
 bool gfxFontEntry::HasOpticalSize() {
@@ -1349,18 +1353,14 @@ void gfxFontEntry::GetVariationsForStyle(nsTArray<gfxFontVariation>& aResult,
     // The 'ital' axis is normally a binary toggle; intermediate values
     // can only be set using font-variation-settings.
     aResult.AppendElement(gfxFontVariation{HB_TAG('i', 't', 'a', 'l'), 1.0f});
-  } else if (SlantStyle().Min().IsOblique()) {
+  } else if (aStyle.style != StyleFontStyle::NORMAL && HasSlantVariation()) {
     // Figure out what slant angle we should try to match from the
     // requested style.
-    float angle = aStyle.style.IsNormal() ? 0.0f
-                  : aStyle.style.IsItalic()
-                      ? FontSlantStyle::DEFAULT_OBLIQUE_DEGREES
-                      : aStyle.style.ObliqueAngle();
+    float angle = aStyle.style.SlantAngle();
     // Clamp to the available range, unless the face is a user font
     // with no explicit descriptor.
     if (!(IsUserFont() && (mRangeFlags & RangeFlags::eAutoSlantStyle))) {
-      angle =
-          SlantStyle().Clamp(FontSlantStyle::FromFloat(angle)).ObliqueAngle();
+      angle = SlantStyle().Clamp(FontSlantStyle::FromFloat(angle)).SlantAngle();
     }
     // OpenType and CSS measure angles in opposite directions, so we have to
     // invert the sign of the CSS oblique value when setting OpenType 'slnt'.
@@ -2022,8 +2022,16 @@ bool gfxFontFamily::CheckForLegacyFamilyNames(gfxPlatformFontList* aFontList) {
   mCheckedForLegacyFamilyNames = true;
   bool added = false;
   const uint32_t kNAME = TRUETYPE_TAG('n', 'a', 'm', 'e');
-  AutoReadLock lock(mLock);
-  for (const auto& fe : mAvailableFonts) {
+  AutoTArray<RefPtr<gfxFontEntry>, 16> faces;
+  {
+    // Take a local copy of the array of font entries, because it's possible
+    // AddWithLegacyFamilyName will mutate it (and it needs to be able to take
+    // an exclusive lock on the family to do so, so we release the read lock
+    // here).
+    AutoReadLock lock(mLock);
+    faces.AppendElements(mAvailableFonts);
+  }
+  for (const auto& fe : faces) {
     if (!fe) {
       continue;
     }

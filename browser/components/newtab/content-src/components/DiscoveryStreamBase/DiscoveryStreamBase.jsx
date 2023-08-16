@@ -17,7 +17,7 @@ import { PrivacyLink } from "content-src/components/DiscoveryStreamComponents/Pr
 import React from "react";
 import { SectionTitle } from "content-src/components/DiscoveryStreamComponents/SectionTitle/SectionTitle";
 import { selectLayoutRender } from "content-src/lib/selectLayoutRender";
-import { TopSites } from "content-src/components/DiscoveryStreamComponents/TopSites/TopSites";
+import { TopSites } from "content-src/components/TopSites/TopSites";
 
 const ALLOWED_CSS_URL_PREFIXES = [
   "chrome://",
@@ -79,14 +79,15 @@ export class _DiscoveryStreamBase extends React.PureComponent {
           [...rule.style].forEach(property => {
             const value = rule.style[property];
             if (!isAllowedCSS(property, value)) {
-              console.error(`Bad CSS declaration ${property}: ${value}`); // eslint-disable-line no-console
+              console.error(`Bad CSS declaration ${property}: ${value}`);
               rule.style.removeProperty(property);
             }
           });
 
           // Set the actual desired selectors scoped to the component
-          const prefix = `.ds-layout > .ds-column:nth-child(${rowIndex +
-            1}) .ds-column-grid > :nth-child(${componentIndex + 1})`;
+          const prefix = `.ds-layout > .ds-column:nth-child(${
+            rowIndex + 1
+          }) .ds-column-grid > :nth-child(${componentIndex + 1})`;
           // NB: Splitting on "," doesn't work with strings with commas, but
           // we're okay with not supporting those selectors
           rule.selectorText = selectors
@@ -102,7 +103,7 @@ export class _DiscoveryStreamBase extends React.PureComponent {
 
           // CSSOM silently ignores bad selectors, so we'll be noisy instead
           if (rule.selectorText === DUMMY_CSS_SELECTOR) {
-            console.error(`Bad CSS selector ${selectors}`); // eslint-disable-line no-console
+            console.error(`Bad CSS selector ${selectors}`);
           }
         });
       });
@@ -114,21 +115,10 @@ export class _DiscoveryStreamBase extends React.PureComponent {
       case "Highlights":
         return <Highlights />;
       case "TopSites":
-        let promoAlignment;
-        if (
-          component.spocs &&
-          component.spocs.positions &&
-          component.spocs.positions.length
-        ) {
-          promoAlignment =
-            component.spocs.positions[0].index === 0 ? "left" : "right";
-        }
         return (
-          <TopSites
-            header={component.header}
-            data={component.data}
-            promoAlignment={promoAlignment}
-          />
+          <div className="ds-top-sites">
+            <TopSites isFixed={true} title={component.header?.title} />
+          </div>
         );
       case "TextPromo":
         return (
@@ -203,6 +193,7 @@ export class _DiscoveryStreamBase extends React.PureComponent {
             fourCardLayout={component.properties.fourCardLayout}
             compactGrid={component.properties.compactGrid}
             essentialReadsHeader={component.properties.essentialReadsHeader}
+            onboardingExperience={component.properties.onboardingExperience}
             editorsPicksHeader={component.properties.editorsPicksHeader}
             recentSavesEnabled={this.props.DiscoveryStream.recentSavesEnabled}
             hideDescriptions={this.props.DiscoveryStream.hideDescriptions}

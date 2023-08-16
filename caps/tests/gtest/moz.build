@@ -5,6 +5,7 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 UNIFIED_SOURCES += [
+    "TestBackgroundThreadPrincipal.cpp",
     "TestNullPrincipalPrecursor.cpp",
     "TestOriginAttributes.cpp",
     "TestPrincipalAttributes.cpp",
@@ -15,5 +16,3 @@ UNIFIED_SOURCES += [
 include("/ipc/chromium/chromium-config.mozbuild")
 
 FINAL_LIBRARY = "xul-gtest"
-
-REQUIRES_UNIFIED_BUILD = True

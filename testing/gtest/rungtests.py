@@ -4,16 +4,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, with_statement
-
 import argparse
 import os
+import subprocess
 import sys
+import threading
+import time
 
 import mozcrash
 import mozinfo
 import mozlog
-import mozprocess
 from mozrunner.utils import get_stack_fixer_function
 
 log = mozlog.unstructured.getLogger("gtest")
@@ -56,50 +56,76 @@ class GTests(object):
         if cwd and not os.path.isdir(cwd):
             os.makedirs(cwd)
 
-        stream_output = mozprocess.StreamOutput(sys.stdout)
-        process_output = stream_output
+        stack_fixer = None
         if utility_path:
             stack_fixer = get_stack_fixer_function(utility_path, symbols_path)
-            if stack_fixer:
 
-                def f(line):
-                    return stream_output(stack_fixer(line))
+        proc = None
+        timed_out = False
 
-                process_output = f
+        def proc_timeout_handler():
+            output_timer.cancel()
+            log.testFail("gtest | timed out after %d seconds", GTests.TEST_PROC_TIMEOUT)
+            mozcrash.kill_and_get_minidump(proc.pid, cwd, utility_path)
 
-        proc = mozprocess.ProcessHandler(
-            [prog, "-unittest", "--gtest_death_test_style=threadsafe"],
-            cwd=cwd,
-            env=env,
-            processOutputLine=process_output,
-        )
-        # TODO: After bug 811320 is fixed, don't let .run() kill the process,
-        # instead use a timeout in .wait() and then kill to get a stack.
-        proc.run(
-            timeout=GTests.TEST_PROC_TIMEOUT,
-            outputTimeout=GTests.TEST_PROC_NO_OUTPUT_TIMEOUT,
-        )
-        proc.wait()
-        log.info("gtest | process wait complete, returncode=%s" % proc.proc.returncode)
-        if proc.timedOut:
-            if proc.outputTimedOut:
+        def output_timeout_handler():
+            nonlocal output_timer
+            seconds_since_last_output = time.time() - output_time
+            next_possible_output_timeout = (
+                GTests.TEST_PROC_NO_OUTPUT_TIMEOUT - seconds_since_last_output
+            )
+            if next_possible_output_timeout <= 0:
+                proc_timer.cancel()
                 log.testFail(
                     "gtest | timed out after %d seconds without output",
                     GTests.TEST_PROC_NO_OUTPUT_TIMEOUT,
                 )
+                mozcrash.kill_and_get_minidump(proc.pid, cwd, utility_path)
             else:
-                log.testFail(
-                    "gtest | timed out after %d seconds", GTests.TEST_PROC_TIMEOUT
+                output_timer = threading.Timer(
+                    next_possible_output_timeout, output_timeout_handler
                 )
-            return False
-        if mozcrash.check_for_crashes(cwd, symbols_path, test_name="gtest"):
-            # mozcrash will output the log failure line for us.
-            return False
-        result = proc.proc.returncode == 0
-        if not result:
-            log.testFail(
-                "gtest | test failed with return code %d", proc.proc.returncode
+                output_timer.start()
+
+        with subprocess.Popen(
+            [prog, "-unittest", "--gtest_death_test_style=threadsafe"],
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        ) as proc:
+
+            proc_timer = None
+            proc_timer = threading.Timer(GTests.TEST_PROC_TIMEOUT, proc_timeout_handler)
+            proc_timer.start()
+
+            output_time = time.time()
+            output_timer = None
+            output_timer = threading.Timer(
+                GTests.TEST_PROC_NO_OUTPUT_TIMEOUT, output_timeout_handler
             )
+            output_timer.start()
+
+            for line in proc.stdout:
+                output_time = time.time()
+                if stack_fixer:
+                    print(stack_fixer(line))
+                else:
+                    print(line)
+            proc.wait()
+            proc_timer.cancel()
+            output_timer.cancel()
+
+            log.info("gtest | process wait complete, returncode=%s" % proc.returncode)
+            if mozcrash.check_for_crashes(cwd, symbols_path, test_name="gtest"):
+                # mozcrash will output the log failure line for us.
+                return False
+            if timed_out:
+                return False
+            result = proc.returncode == 0
+            if not result:
+                log.testFail("gtest | test failed with return code %d", proc.returncode)
         return result
 
     def build_core_environment(self, env={}):
@@ -154,18 +180,26 @@ class GTests(object):
             else:
                 env[pathvar] = self.xre_path
 
-        # ASan specific environment stuff
+        symbolizer_path = None
         if mozinfo.info["asan"]:
-            # Symbolizer support
-            llvmsym = os.path.join(
-                self.xre_path, "llvm-symbolizer" + mozinfo.info["bin_suffix"]
-            )
+            symbolizer_path = "ASAN_SYMBOLIZER_PATH"
+        elif mozinfo.info["tsan"]:
+            symbolizer_path = "TSAN_SYMBOLIZER_PATH"
+
+        if symbolizer_path is not None:
+            # Use llvm-symbolizer for ASan/TSan if available/required
+            if symbolizer_path in env and os.path.isfile(env[symbolizer_path]):
+                llvmsym = env[symbolizer_path]
+            else:
+                llvmsym = os.path.join(
+                    self.xre_path, "llvm-symbolizer" + mozinfo.info["bin_suffix"]
+                )
             if os.path.isfile(llvmsym):
-                env["ASAN_SYMBOLIZER_PATH"] = llvmsym
-                log.info("gtest | ASan using symbolizer at %s", llvmsym)
+                env[symbolizer_path] = llvmsym
+                log.info("Using LLVM symbolizer at %s", llvmsym)
             else:
                 # This should be |testFail| instead of |info|. See bug 1050891.
-                log.info("gtest | Failed to find ASan symbolizer at %s", llvmsym)
+                log.info("Failed to find LLVM symbolizer at %s", llvmsym)
 
         # webrender needs gfx.webrender.all=true, gtest doesn't use prefs
         env["MOZ_WEBRENDER"] = "1"

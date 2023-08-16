@@ -8,6 +8,7 @@ EXPORTS += [
     "malloc_decls.h",
     "mozjemalloc_types.h",
     "mozmemory.h",
+    "mozmemory_utils.h",
     "mozmemory_wrap.h",
 ]
 
@@ -27,6 +28,7 @@ if CONFIG["MOZ_MEMORY"]:
     UNIFIED_SOURCES += [
         "mozjemalloc.cpp",
         "mozmemory_wrap.cpp",
+        "Mutex.cpp",
     ]
 else:
     UNIFIED_SOURCES += [
@@ -37,7 +39,6 @@ if CONFIG["OS_TARGET"] == "Darwin" and (
     CONFIG["MOZ_REPLACE_MALLOC"] or CONFIG["MOZ_MEMORY"]
 ):
     SOURCES += [
-        "Mutex.cpp",
         "zone.c",
     ]
 
@@ -59,20 +60,4 @@ DisableStlWrapping()
 if CONFIG["CC_TYPE"] == "clang-cl":
     AllowCompilerWarnings()  # workaround for bug 1090497
 
-# Experimental: stall and retry on OOM (bug 1716727).
-#
-# This _will_ induce performance regressions in some (hopefully rare) contexts:
-# we don't know whether any given allocation is supposed to be fallible, so we
-# have to stall on any OOMed allocation.
-#
-# This is remediable, in theory. For now, though, we simply restrict it to
-# Nightly, to give us enough data to determine whether this approach is worth
-# the trouble of pursuing further.
-#
-# This experiment should probably not be active beyond 2022-09-01, and may be
-# terminated early if the performance regression turns out to be worse than
-# anticipated.
-if CONFIG["NIGHTLY_BUILD"] and CONFIG["OS_TARGET"] == "WINNT":
-    DEFINES["MOZ_STALL_ON_OOM"] = True
-
-REQUIRES_UNIFIED_BUILD = True
+TEST_DIRS += ["test"]

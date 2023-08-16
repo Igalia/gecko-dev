@@ -3,25 +3,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { actionCreators: ac, actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
-);
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
+const { actionCreators: ac, actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 const { Prefs } = ChromeUtils.import(
   "resource://activity-stream/lib/ActivityStreamPrefs.jsm"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  Region: "resource://gre/modules/Region.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
 });
 
 class PrefsFeed {
@@ -35,8 +32,16 @@ class PrefsFeed {
   onPrefChanged(name, value) {
     const prefItem = this._prefMap.get(name);
     if (prefItem) {
+      let action = "BroadcastToContent";
+      if (prefItem.skipBroadcast) {
+        action = "OnlyToMain";
+        if (prefItem.alsoToPreloaded) {
+          action = "AlsoToPreloaded";
+        }
+      }
+
       this.store.dispatch(
-        ac[prefItem.skipBroadcast ? "OnlyToMain" : "BroadcastToContent"]({
+        ac[action]({
           type: at.PREF_CHANGED,
           data: { name, value },
         })
@@ -86,15 +91,21 @@ class PrefsFeed {
    */
   onPocketExperimentUpdated(event, reason) {
     const value = lazy.NimbusFeatures.pocketNewtab.getAllVariables() || {};
-    this.store.dispatch(
-      ac.BroadcastToContent({
-        type: at.PREF_CHANGED,
-        data: {
-          name: "pocketConfig",
-          value,
-        },
-      })
-    );
+    // Loaded experiments are set up inside init()
+    if (
+      reason !== "feature-experiment-loaded" &&
+      reason !== "feature-rollout-loaded"
+    ) {
+      this.store.dispatch(
+        ac.BroadcastToContent({
+          type: at.PREF_CHANGED,
+          data: {
+            name: "pocketConfig",
+            value,
+          },
+        })
+      );
+    }
   }
 
   init() {
@@ -142,9 +153,8 @@ class PrefsFeed {
     let searchTopSiteExperimentPrefValue = Services.prefs.getBoolPref(
       "browser.newtabpage.activity-stream.improvesearch.topSiteSearchShortcuts"
     );
-    values[
-      "improvesearch.topSiteSearchShortcuts"
-    ] = searchTopSiteExperimentPrefValue;
+    values["improvesearch.topSiteSearchShortcuts"] =
+      searchTopSiteExperimentPrefValue;
     this._prefMap.set("improvesearch.topSiteSearchShortcuts", {
       value: searchTopSiteExperimentPrefValue,
     });
@@ -217,8 +227,8 @@ class PrefsFeed {
 
   removeListeners() {
     this._prefs.ignoreBranch(this);
-    lazy.NimbusFeatures.newtab.off(this.onExperimentUpdated);
-    lazy.NimbusFeatures.pocketNewtab.off(this.onPocketExperimentUpdated);
+    lazy.NimbusFeatures.newtab.offUpdate(this.onExperimentUpdated);
+    lazy.NimbusFeatures.pocketNewtab.offUpdate(this.onPocketExperimentUpdated);
     if (this.geo === "") {
       Services.obs.removeObserver(this, lazy.Region.REGION_TOPIC);
     }
@@ -229,7 +239,7 @@ class PrefsFeed {
     try {
       await this._storage.set(name, value);
     } catch (e) {
-      Cu.reportError("Could not set section preferences.");
+      console.error("Could not set section preferences.");
     }
   }
 

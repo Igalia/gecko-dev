@@ -8,29 +8,34 @@
 #include "nsComponentManagerUtils.h"
 #include "nsCOMPtr.h"
 
-namespace mozilla {
-namespace widget {
+namespace mozilla::widget {
 
-NS_IMPL_ISUPPORTS(HeadlessClipboard, nsIClipboard)
+NS_IMPL_ISUPPORTS_INHERITED0(HeadlessClipboard, nsBaseClipboard)
 
 HeadlessClipboard::HeadlessClipboard()
-    : mClipboard(MakeUnique<HeadlessClipboardData>()) {}
+    : nsBaseClipboard(mozilla::dom::ClipboardCapabilities(
+          true /* supportsSelectionClipboard */,
+          true /* supportsFindClipboard */,
+          true /* supportsSelectionCache */)) {
+  for (auto& clipboard : mClipboards) {
+    clipboard = MakeUnique<HeadlessClipboardData>();
+  }
+}
 
 NS_IMETHODIMP
-HeadlessClipboard::SetData(nsITransferable* aTransferable,
-                           nsIClipboardOwner* anOwner,
-                           int32_t aWhichClipboard) {
-  if (aWhichClipboard != kGlobalClipboard) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
+HeadlessClipboard::SetNativeClipboardData(nsITransferable* aTransferable,
+                                          nsIClipboardOwner* aOwner,
+                                          int32_t aWhichClipboard) {
+  MOZ_DIAGNOSTIC_ASSERT(aTransferable);
+  MOZ_DIAGNOSTIC_ASSERT(
+      nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
 
   // Clear out the clipboard in order to set the new data.
-  EmptyClipboard(aWhichClipboard);
+  EmptyNativeClipboardData(aWhichClipboard);
 
   // Only support plain text for now.
   nsCOMPtr<nsISupports> clip;
-  nsresult rv =
-      aTransferable->GetTransferData(kUnicodeMime, getter_AddRefs(clip));
+  nsresult rv = aTransferable->GetTransferData(kTextMime, getter_AddRefs(clip));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -38,75 +43,81 @@ HeadlessClipboard::SetData(nsITransferable* aTransferable,
   if (!wideString) {
     return NS_ERROR_NOT_IMPLEMENTED;
   }
+
+  auto& clipboard = mClipboards[aWhichClipboard];
+  MOZ_ASSERT(clipboard);
+
   nsAutoString utf16string;
   wideString->GetData(utf16string);
-  mClipboard->SetText(utf16string);
+  clipboard->SetText(utf16string);
 
   return NS_OK;
 }
 
 NS_IMETHODIMP
-HeadlessClipboard::GetData(nsITransferable* aTransferable,
-                           int32_t aWhichClipboard) {
-  if (aWhichClipboard != kGlobalClipboard) {
-    return NS_ERROR_NOT_IMPLEMENTED;
+HeadlessClipboard::GetNativeClipboardData(nsITransferable* aTransferable,
+                                          int32_t aWhichClipboard) {
+  MOZ_DIAGNOSTIC_ASSERT(aTransferable);
+  MOZ_DIAGNOSTIC_ASSERT(
+      nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
+
+  auto& clipboard = mClipboards[aWhichClipboard];
+  MOZ_ASSERT(clipboard);
+
+  if (!clipboard->HasText()) {
+    return NS_OK;
   }
 
   nsresult rv;
   nsCOMPtr<nsISupportsString> dataWrapper =
       do_CreateInstance(NS_SUPPORTS_STRING_CONTRACTID, &rv);
-  rv = dataWrapper->SetData(mClipboard->GetText());
+  rv = dataWrapper->SetData(clipboard->GetText());
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
   nsCOMPtr<nsISupports> genericDataWrapper = do_QueryInterface(dataWrapper);
-  rv = aTransferable->SetTransferData(kUnicodeMime, genericDataWrapper);
+  rv = aTransferable->SetTransferData(kTextMime, genericDataWrapper);
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
   return NS_OK;
 }
 
-NS_IMETHODIMP
-HeadlessClipboard::EmptyClipboard(int32_t aWhichClipboard) {
-  if (aWhichClipboard != kGlobalClipboard) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
-  mClipboard->Clear();
+nsresult HeadlessClipboard::EmptyNativeClipboardData(int32_t aWhichClipboard) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
+  auto& clipboard = mClipboards[aWhichClipboard];
+  MOZ_ASSERT(clipboard);
+  clipboard->Clear();
   return NS_OK;
 }
 
-NS_IMETHODIMP
-HeadlessClipboard::HasDataMatchingFlavors(
-    const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard,
-    bool* aHasType) {
-  *aHasType = false;
-  if (aWhichClipboard != kGlobalClipboard) {
-    return NS_ERROR_NOT_IMPLEMENTED;
-  }
+mozilla::Result<int32_t, nsresult>
+HeadlessClipboard::GetNativeClipboardSequenceNumber(int32_t aWhichClipboard) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
+  auto& clipboard = mClipboards[aWhichClipboard];
+  MOZ_ASSERT(clipboard);
+  return clipboard->GetChangeCount();
+  ;
+}
+
+mozilla::Result<bool, nsresult>
+HeadlessClipboard::HasNativeClipboardDataMatchingFlavors(
+    const nsTArray<nsCString>& aFlavorList, int32_t aWhichClipboard) {
+  MOZ_DIAGNOSTIC_ASSERT(
+      nsIClipboard::IsClipboardTypeSupported(aWhichClipboard));
+
+  auto& clipboard = mClipboards[aWhichClipboard];
+  MOZ_ASSERT(clipboard);
+
   // Retrieve the union of all aHasType in aFlavorList
   for (auto& flavor : aFlavorList) {
-    if (flavor.EqualsLiteral(kUnicodeMime) && mClipboard->HasText()) {
-      *aHasType = true;
-      break;
+    if (flavor.EqualsLiteral(kTextMime) && clipboard->HasText()) {
+      return true;
     }
   }
-  return NS_OK;
+  return false;
 }
 
-NS_IMETHODIMP
-HeadlessClipboard::SupportsSelectionClipboard(bool* aIsSupported) {
-  *aIsSupported = false;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-HeadlessClipboard::SupportsFindClipboard(bool* _retval) {
-  NS_ENSURE_ARG_POINTER(_retval);
-
-  *_retval = false;
-  return NS_OK;
-}
-
-}  // namespace widget
-}  // namespace mozilla
+}  // namespace mozilla::widget

@@ -22,7 +22,7 @@ jobs:
             platform: updatebot/all
             symbol: cron
             tier: 1
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: updatebot}
             max-run-time: 3600
@@ -48,6 +48,7 @@ jobs:
         fetches:
             toolchain:
                 - linux64-rust
+                - linux64-cargo-vet
 
     cron-win:
         description: Cron Job for Updatebot (Windows)
@@ -57,7 +58,7 @@ jobs:
             platform: updatebot/all
             symbol: w-cron
             tier: 1
-        worker-type: b-win2012
+        worker-type: b-win2022
         worker:
             max-run-time: 3600
             taskcluster-proxy: true

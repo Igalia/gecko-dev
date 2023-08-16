@@ -48,7 +48,7 @@ ID01:
         - bottomLinks-privacy
         - aboutDialog-version
         - aboutDialog-version-nightly
-        # aboutCertError.ftl: These IDs are generated programmatically
+        # certError.ftl: These IDs are generated programmatically
         # from certificate error codes.
         - connectionFailure-title
         - deniedPortAccess-title
@@ -82,6 +82,9 @@ ID01:
         # policies-descriptions.ftl: These IDs are generated programmatically
         # from policy names.
         - browser/locales/en-US/browser/policies/policies-descriptions.ftl
+        # The webext-perms-description-* IDs are generated programmatically
+        # from permission names
+        - toolkit/locales/en-US/toolkit/global/extensionPermissions.ftl
 ID02:
     messages:
         # browser/components/ion/content/ion.ftl
@@ -103,14 +106,6 @@ ID02:
         - find
         - new-tab
         - share
-        # security/manager/locales/en-US/security/certificates/deviceManager.ftl
-        - devmgr
-        # toolkit/locales/en-US/toolkit/about/aboutPerformance.ftl
-        - type-tab
-        - size-KB
-        - size-MB
-        - size-GB
-        - item
         # toolkit/locales/en-US/toolkit/about/aboutPlugins.ftl
         - file-dd
         - path-dd
@@ -141,27 +136,27 @@ ID02:
 CO01:
     messages:
         # browser/branding/official/locales/en-US/brand.ftl
-        # browser/locales/en-US/browser/branding/brandings.ftl
         - trademarkInfo
-        # browser/locales/en-US/browser/aboutCertError.ftl
+        # toolkit/locales/en-US/toolkit/neterror/certError.ftl
         - cert-error-mitm-mozilla
         - cert-error-mitm-connection
         # browser/locales/en-US/browser/appExtensionFields.ftl
         - extension-firefox-alpenglow-name
         # browser/locales/en-US/browser/browser.ftl
         - identity-custom-root
-        - identity-description-custom-root
+        - identity-description-custom-root2
         # browser/locales/en-US/browser/migration.ftl
         - import-from-firefox
+        # browser/locales/en-US/browser/migrationWizard.ftl
+        - migration-wizard-migrator-display-name-firefox
         # browser/locales/en-US/browser/newtab/onboarding.ftl
         - mr1-onboarding-welcome-image-caption
+        - mr2022-onboarding-gratitude-subtitle
         # browser/locales/en-US/browser/policies/policies-descriptions.ftl
         - policy-DisableFirefoxScreenshots
         # browser/locales/en-US/browser/preferences/preferences.ftl
         - sync-engine-addons
         - sync-mobile-promo
-        # browser/locales/en-US/browser/protectionsPanel.ftl
-        - protections-panel-content-blocking-breakage-report-view-description
         # devtools/client/locales/en-US/aboutdebugging.ftl
         - about-debugging-setup-usb-step-enable-debug-firefox2
         - about-debugging-browser-version-too-old-fennec
@@ -180,11 +175,13 @@ CO01:
         - rights-intro-point-2
         # toolkit/locales/en-US/toolkit/about/aboutSupport.ftl
         - app-basics-key-mozilla
+        - virtual-monitor-disp
         # toolkit/locales/en-US/toolkit/about/aboutTelemetry.ftl
         - about-telemetry-firefox-data-doc
-        - about-telemetry-origins-explanation
         - about-telemetry-telemetry-client-doc
         - about-telemetry-telemetry-dashboard
+        # toolkit/locales/en-US/toolkit/global/extensionPermissions.ftl
+        - webext-perms-description-management
         # toolkit/locales/en-US/toolkit/global/processTypes.ftl
         - process-type-privilegedmozilla
     files:

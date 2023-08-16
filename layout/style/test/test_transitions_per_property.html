@@ -86,7 +86,6 @@ var supported_properties = {
             test_length_unclamped, test_percent_unclamped ],
     "cy": [ test_length_transition, test_percent_transition,
             test_length_unclamped, test_percent_unclamped ],
-    "-moz-image-region": [ test_rect_transition ],
     "background-color": [ test_color_transition,
                           test_currentcolor_transition ],
     "background-position": [ test_background_position_transition,
@@ -139,6 +138,7 @@ var supported_properties = {
                    test_path_function ],
     "color": [ test_color_transition,
                test_currentcolor_transition ],
+    "d": [ test_path_function ],
     "fill": [ test_color_transition,
               test_currentcolor_transition ],
     "fill-opacity" : [ test_float_zeroToOne_transition,
@@ -352,67 +352,8 @@ var supported_properties = {
     ],
 };
 
-if (IsCSSPropertyPrefEnabled("layout.css.backdrop-filter.enabled") && IsWebRenderEnabled()) {
+if (IsCSSPropertyPrefEnabled("layout.css.backdrop-filter.enabled")) {
   supported_properties["backdrop-filter"] = [ test_filter_transition ];
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.motion-path.enabled")) {
-  supported_properties["offset-path"] = [ test_path_function ];
-  supported_properties["offset-distance"] =
-    [ test_length_transition,
-      test_percent_transition,
-      test_length_unclamped,
-      test_percent_unclamped,
-      test_calc_wrapped_calc_transition ];
-
-  function test_offset_rotate_transition(prop) {
-    [
-      // No transition between a keyword and a fixed angle.
-      { start: "auto", end: "0deg",
-        expected: "0deg" },
-      // "auto 45deg" to "auto 145 deg".
-      { start: "auto 45deg", end: "auto 145deg",
-        expected: "auto 70deg" },
-      // "auto 130deg" to "auto 90deg".
-      { start: "auto 130deg", end: "100grad auto",
-        expected: "auto 120deg" },
-      // "auto 0deg" to "auto 180deg".
-      { start: "auto", end: "reverse",
-        expected: "auto 45deg" },
-      // "auto 45deg" to "auto 225deg".
-      { start: "auto 45deg", end: "45deg reverse",
-        expected: "auto 90deg" },
-      // "auto -60deg" to "auto -360deg".
-      { start: "auto -60deg",
-        end: "auto calc(90deg - 0.5turn - 300grad + 0rad)",
-        expected: "auto -135deg" },
-    ].forEach(test => {
-      div.style.transitionProperty = 'none';
-      div.style[prop] = test.start;
-      is(cs[prop], test.start,
-         `offset-rotate: computed value before transition`);
-      div.style.transitionProperty = prop;
-      div.style[prop] = test.end;
-      is(cs[prop], test.expected,
-         `offset-rotate: interpolation of offset-rotate`);
-      // We check distance only if there is a transition.
-      if (test.end != test.expected) {
-        check_distance(prop, test.start, test.expected, test.end);
-      }
-    });
-  }
-  supported_properties["offset-rotate"] =
-    [ test_angle_transition,
-      test_offset_rotate_transition ];
-
-  // Note: offset-anchor supports "auto | <position>", and the tests for
-  // `auto` are already in wpt, so we don't test it here again.
-  supported_properties["offset-anchor"] =
-    [ test_background_position_transition ];
-}
-
-if (IsCSSPropertyPrefEnabled("layout.css.d-property.enabled")) {
-  supported_properties["d"] = [ test_path_function ];
 }
 
 if (IsCSSPropertyPrefEnabled("layout.css.font-variations.enabled")) {
@@ -425,6 +366,11 @@ if (IsCSSPropertyPrefEnabled("layout.css.individual-transform.enabled")) {
   supported_properties["translate"] = [ test_translate_transition ];
 }
 
+if (IsCSSPropertyPrefEnabled("layout.css.contain-intrinsic-size.enabled")) {
+  supported_properties["contain-intrinsic-width"] = [ test_length_transition, test_auto_with_length_transition ];
+  supported_properties["contain-intrinsic-height"] = supported_properties["contain-intrinsic-width"];
+}
+
 supported_properties["scrollbar-color"] = [
   test_scrollbar_color_transition,
 ];
@@ -435,8 +381,14 @@ var skipped_transitionable_properties = [
   "border-image-outset",
   "border-image-slice",
   "border-image-width",
+  "font-style",  // Tests being added in https://github.com/web-platform-tests/wpt/pull/37570
   "grid-template-columns",
   "grid-template-rows",
+  "offset-path",
+  "offset-distance",
+  "offset-rotate",
+  "offset-anchor",
+  "offset-position",
 ]
 
 // Logical properties.
@@ -454,6 +406,9 @@ for (const logical_size of ["inline", "block"]) {
   supported_properties[logical_size + "-size"] = supported_properties["width"];
   supported_properties["min-" + logical_size + "-size"] = supported_properties["min-width"];
   supported_properties["max-" + logical_size + "-size"] = supported_properties["max-width"];
+  if (IsCSSPropertyPrefEnabled("layout.css.contain-intrinsic-size.enabled")) {
+    supported_properties["contain-intrinsic-" + logical_size + "-size"] = supported_properties["contain-intrinsic-width"];
+  }
 }
 
 var div = document.getElementById("display");
@@ -1547,7 +1502,7 @@ function test_length_percent_calc_transition(prop) {
 }
 
 // This can deal well with properties for which the computed value
-// is not the used value, e.g. offset-distance, translate.
+// is not the used value, e.g. translate.
 function test_calc_wrapped_calc_transition(prop) {
   // Test interpolation that computes to calc() (transition from % to px)
   div.style.setProperty("transition-property", "none", "");
@@ -1832,7 +1787,7 @@ function test_shape_or_url_equals(computedValStr, expected)
   if (expectedList.length == 0) {
     if (computedValStr == "") {
       return true;
-    } 
+    }
     ok(false, "expected basic shape");
     return false;
   }
@@ -2133,9 +2088,9 @@ function test_shadow_transition(prop) {
      "shadow-valued property " + prop + ": computed value before transition");
   div.style.setProperty("transition-property", prop, "");
   div.style.setProperty(prop, "0px 0px 0px rgba(100, 100, 100, 0.5)", "");
-  // The alpha value, 0.5 * 1.2989961788069297 * 255, is clamped to 166 and then
-  // converted to 0.65.
-  is(cs.getPropertyValue(prop), "rgba(100, 100, 100, 0.65) 0px 0px 0px" + spreadStr,
+  // The alpha value, 0.5 * 1.2989961788069297 * 255, is 165.622012798, and then
+  // converted to 0.649.
+  is(cs.getPropertyValue(prop), "rgba(100, 100, 100, 0.649) 0px 0px 0px" + spreadStr,
      "shadow-valued property " + prop + ": interpolation of shadows with " +
      "timing function which produces values greater than 1.0");
 
@@ -3047,21 +3002,22 @@ function test_font_variations_transition(prop) {
 
   div.style.setProperty("transition-property", "none", "");
   div.style.setProperty(prop, "\"wght\" 0, \"wdth\" 1.5", "");
-  is(cs.getPropertyValue(prop), "\"wght\" 0, \"wdth\" 1.5",
+  // Note that computed-style returns the tags in sorted order.
+  is(cs.getPropertyValue(prop), "\"wdth\" 1.5, \"wght\" 0",
      "font-variation-settings property " + prop + ": computed value before transition");
   div.style.setProperty("transition-property", prop, "");
   div.style.setProperty(prop, "\"wght\" 2, \"wdth\" 0.5", "");
-  is(cs.getPropertyValue(prop), "\"wght\" 0.5, \"wdth\" 1.25",
+  is(cs.getPropertyValue(prop), "\"wdth\" 1.25, \"wght\" 0.5",
      "font-variation-settings property " + prop + ": interpolation of font-variation-settings");
   check_distance(prop, "\"wght\" 0, \"wdth\" 1.5", "\"wght\" 0.5, \"wdth\" 1.25", "\"wght\" 2, \"wdth\" 0.5");
 
   div.style.setProperty("transition-property", "none", "");
   div.style.setProperty(prop, "\"wght\" 2, \"wdth\" 0.5", "");
-  is(cs.getPropertyValue(prop), "\"wght\" 2, \"wdth\" 0.5",
+  is(cs.getPropertyValue(prop), "\"wdth\" 0.5, \"wght\" 2",
      "font-variation-settings property " + prop + ": computed value before transition");
   div.style.setProperty("transition-property", prop, "");
   div.style.setProperty(prop, "\"wght\" 0, \"wdth\" 1.5", "");
-  is(cs.getPropertyValue(prop), "\"wght\" 1.5, \"wdth\" 0.75",
+  is(cs.getPropertyValue(prop), "\"wdth\" 0.75, \"wght\" 1.5",
      "font-variation-settings property " + prop + ": interpolation of font-variation-settings");
   check_distance(prop, "\"wght\" 2, \"wdth\" 0.5", "\"wght\" 1.5, \"wdth\" 0.75", "\"wght\" 0, \"wdth\" 1.5");
 }
@@ -3095,6 +3051,18 @@ function test_aspect_ratio_transition(prop) {
       check_distance(prop, test.start, test.expected, test.end);
     }
   });
+}
+
+function test_auto_with_length_transition(prop) {
+  div.style.setProperty("transition-property", "none", "");
+  div.style.setProperty(prop, "auto 4px", "");
+  is(cs.getPropertyValue(prop), "auto 4px",
+     "auto+length-valued property " + prop + ": computed value before transition");
+  div.style.setProperty("transition-property", prop, "");
+  div.style.setProperty(prop, "auto 12px", "");
+  is(cs.getPropertyValue(prop), "auto 6px",
+     "auto+length-valued property " + prop + ": interpolation of lengths");
+  check_distance(prop, "auto 4px", "auto 6px", "auto 12px");
 }
 
 var OMTAdiv;

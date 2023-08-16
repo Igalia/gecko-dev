@@ -11,7 +11,9 @@ use mio::{event::Event, Events, Interest, Poll, Registry, Token, Waker};
 use slab::Slab;
 
 use crate::messages::AssociateHandleForMessage;
-use crate::rpccore::{make_client, make_server, Client, Handler, Proxy, Server};
+use crate::rpccore::{
+    make_client, make_server, Client, Handler, Proxy, RequestQueue, RequestQueueSender, Server,
+};
 use crate::{
     codec::Codec,
     codec::LengthDelimitedCodec,
@@ -53,7 +55,7 @@ enum Request {
 #[derive(Clone, Debug)]
 pub struct EventLoopHandle {
     waker: Arc<Waker>,
-    requests_tx: mpsc::Sender<Request>,
+    requests: RequestQueueSender<Request>,
 }
 
 impl EventLoopHandle {
@@ -65,7 +67,7 @@ impl EventLoopHandle {
         <C as Client>::ServerMessage: Serialize + Debug + AssociateHandleForMessage + Send,
         <C as Client>::ClientMessage: DeserializeOwned + Debug + AssociateHandleForMessage + Send,
     {
-        let (handler, mut proxy) = make_client::<C>();
+        let (handler, mut proxy) = make_client::<C>()?;
         let driver = Box::new(FramedDriver::new(handler));
         let r = self.add_connection(connection, driver);
         trace!("EventLoop::bind_client {:?}", r);
@@ -100,8 +102,8 @@ impl EventLoopHandle {
     ) -> Result<Token> {
         assert_not_in_event_loop_thread();
         let (tx, rx) = mpsc::channel();
-        self.requests_tx
-            .send(Request::AddConnection(connection, driver, tx))
+        self.requests
+            .push(Request::AddConnection(connection, driver, tx))
             .map_err(|_| {
                 debug!("EventLoopHandle::add_connection send failed");
                 io::ErrorKind::ConnectionAborted
@@ -115,7 +117,7 @@ impl EventLoopHandle {
 
     // Signal EventLoop to shutdown.  Causes EventLoop::poll to return Ok(false).
     fn shutdown(&self) -> Result<()> {
-        self.requests_tx.send(Request::Shutdown).map_err(|_| {
+        self.requests.push(Request::Shutdown).map_err(|_| {
             debug!("EventLoopHandle::shutdown send failed");
             io::ErrorKind::ConnectionAborted
         })?;
@@ -124,9 +126,8 @@ impl EventLoopHandle {
 
     // Signal EventLoop to wake connection specified by `token` for processing.
     pub(crate) fn wake_connection(&self, token: Token) {
-        match self.requests_tx.send(Request::WakeConnection(token)) {
-            Ok(_) => self.waker.wake().expect("wake failed"),
-            Err(e) => debug!("EventLoopHandle::wake_connection failed: {:?}", e),
+        if self.requests.push(Request::WakeConnection(token)).is_ok() {
+            self.waker.wake().expect("wake failed");
         }
     }
 }
@@ -140,8 +141,7 @@ struct EventLoop {
     waker: Arc<Waker>,
     name: String,
     connections: Slab<Connection>,
-    requests_rx: mpsc::Receiver<Request>,
-    requests_tx: mpsc::Sender<Request>,
+    requests: Arc<RequestQueue<Request>>,
 }
 
 const EVENT_LOOP_INITIAL_CLIENTS: usize = 64; // Initial client allocation, exceeding this will cause the connection slab to grow.
@@ -151,15 +151,13 @@ impl EventLoop {
     fn new(name: String) -> Result<EventLoop> {
         let poll = Poll::new()?;
         let waker = Arc::new(Waker::new(poll.registry(), WAKE_TOKEN)?);
-        let (tx, rx) = mpsc::channel();
         let eventloop = EventLoop {
             poll,
             events: Events::with_capacity(EVENT_LOOP_EVENTS_PER_ITERATION),
             waker,
             name,
             connections: Slab::with_capacity(EVENT_LOOP_INITIAL_CLIENTS),
-            requests_rx: rx,
-            requests_tx: tx,
+            requests: Arc::new(RequestQueue::new(EVENT_LOOP_INITIAL_CLIENTS)),
         };
 
         Ok(eventloop)
@@ -169,7 +167,7 @@ impl EventLoop {
     fn handle(&mut self) -> EventLoopHandle {
         EventLoopHandle {
             waker: self.waker.clone(),
-            requests_tx: self.requests_tx.clone(),
+            requests: self.requests.new_sender(),
         }
     }
 
@@ -235,7 +233,7 @@ impl EventLoop {
                         debug!("{}: {:?}: done, removing", self.name, token);
                         let mut connection = self.connections.remove(token.0);
                         if let Err(e) = connection.shutdown(self.poll.registry()) {
-                            warn!(
+                            debug!(
                                 "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                                 self.name, token, e
                             );
@@ -246,7 +244,7 @@ impl EventLoop {
         }
 
         // If the waker was signalled there may be pending requests to process.
-        while let Ok(req) = self.requests_rx.try_recv() {
+        while let Some(req) = self.requests.pop() {
             match req {
                 Request::AddConnection(pipe, driver, tx) => {
                     debug!("{}: EventLoop: handling add_connection", self.name);
@@ -264,10 +262,7 @@ impl EventLoop {
                     );
                     let done = if let Some(connection) = self.connections.get_mut(token.0) {
                         match connection.handle_wake(self.poll.registry()) {
-                            Ok(done) => {
-                                assert!(!done);
-                                false
-                            }
+                            Ok(done) => done,
                             Err(e) => {
                                 debug!("{}: {:?}: connection error: {:?}", self.name, token, e);
                                 true
@@ -285,7 +280,7 @@ impl EventLoop {
                         debug!("{}: {:?}: done (wake), removing", self.name, token);
                         let mut connection = self.connections.remove(token.0);
                         if let Err(e) = connection.shutdown(self.poll.registry()) {
-                            warn!(
+                            debug!(
                                 "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                                 self.name, token, e
                             );
@@ -308,7 +303,7 @@ impl Drop for EventLoop {
                 self.name, token
             );
             if let Err(e) = connection.shutdown(self.poll.registry()) {
-                warn!(
+                debug!(
                     "{}: EventLoop drop - closing connection for {:?} failed: {:?}",
                     self.name, token, e
                 );
@@ -467,8 +462,11 @@ impl Connection {
             let r = self.io.recv_msg(&mut self.inbound);
             match r {
                 Ok(0) => {
-                    trace!("{:?}: recv EOF", self.token);
-                    assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
+                    trace!(
+                        "{:?}: recv EOF unprocessed inbound={}",
+                        self.token,
+                        self.inbound.is_empty()
+                    );
                     return Ok(true);
                 }
                 Ok(n) => {
@@ -482,8 +480,12 @@ impl Connection {
                             }
                         }
                         Err(e) => {
-                            debug!("{:?}: process_inbound error: {:?}", self.token, e);
-                            assert!(self.inbound.is_empty()); // Ensure no unprocessed messages queued.
+                            debug!(
+                                "{:?}: process_inbound error: {:?} unprocessed inbound={}",
+                                self.token,
+                                e,
+                                self.inbound.is_empty()
+                            );
                             return Err(e);
                         }
                     }
@@ -824,7 +826,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -840,7 +842,7 @@ mod test {
 
         // RPC message from client to server.
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        let response = response.wait().expect("client response");
+        let response = response.expect("client response");
         assert_eq!(response, TestClientMessage::TestResponse);
 
         // Explicit shutdown.
@@ -855,7 +857,7 @@ mod test {
         drop(server);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on closed channel");
+        response.expect_err("sending on closed channel");
     }
 
     #[test]
@@ -865,7 +867,7 @@ mod test {
         drop(client);
 
         let response = client_proxy.call(TestServerMessage::TestRequest);
-        response.wait().expect_err("sending on a closed channel");
+        response.expect_err("sending on a closed channel");
     }
 
     #[test]
@@ -879,6 +881,18 @@ mod test {
         server_handle
             .shutdown()
             .expect_err("sending on closed channel");
+    }
+
+    #[test]
+    fn clone_after_drop() {
+        init();
+        let (server, client, client_proxy) = setup();
+        drop(server);
+        drop(client);
+
+        let clone = client_proxy.clone();
+        let response = clone.call(TestServerMessage::TestRequest);
+        response.expect_err("sending to a dropped ClientHandler");
     }
 
     #[test]

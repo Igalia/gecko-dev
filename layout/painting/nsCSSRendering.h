@@ -278,11 +278,6 @@ struct nsCSSRendering {
   static nsIFrame* FindBackgroundStyleFrame(nsIFrame* aForFrame);
 
   /**
-   * @return true if |aFrame| is a canvas frame, in the CSS sense.
-   */
-  static bool IsCanvasFrame(const nsIFrame* aFrame);
-
-  /**
    * Returns the ComputedStyle to be used to paint the background for the given
    * frame, if its element has a meaningful background.  This applies the rules
    * for propagating backgrounds between BODY, the root element, and the
@@ -300,36 +295,6 @@ struct nsCSSRendering {
    * and there is always some meaningful background returned.
    */
   static mozilla::ComputedStyle* FindRootFrameBackground(nsIFrame* aForFrame);
-
-  /**
-   * Returns background style information for the canvas.
-   *
-   * @param aForFrame
-   *   the frame used to represent the canvas, in the CSS sense (i.e.
-   *   nsCSSRendering::IsCanvasFrame(aForFrame) must be true)
-   * @param aRootElementFrame
-   *   the frame representing the root element of the document
-   * @param aBackground
-   *   contains background style information for the canvas on return
-   */
-
-  static nsIFrame* FindCanvasBackgroundFrame(const nsIFrame* aForFrame,
-                                             nsIFrame* aRootElementFrame) {
-    MOZ_ASSERT(IsCanvasFrame(aForFrame), "not a canvas frame");
-    if (aRootElementFrame) {
-      return FindBackgroundStyleFrame(aRootElementFrame);
-    }
-
-    // This should always give transparent, so we'll fill it in with the
-    // default color if needed.  This seems to happen a bit while a page is
-    // being loaded.
-    return const_cast<nsIFrame*>(aForFrame);
-  }
-
-  static mozilla::ComputedStyle* FindCanvasBackground(
-      nsIFrame* aForFrame, nsIFrame* aRootElementFrame) {
-    return FindCanvasBackgroundFrame(aForFrame, aRootElementFrame)->Style();
-  }
 
   /**
    * Find a non-transparent background color on an ancestor, for various
@@ -453,7 +418,7 @@ struct nsCSSRendering {
      * When this flag is passed, images are downscaled during decode. This
      * is also implied by PAINTBG_TO_WINDOW.
      */
-    PAINTBG_HIGH_QUALITY_SCALING = 0x16,
+    PAINTBG_HIGH_QUALITY_SCALING = 0x10,
   };
 
   struct PaintBGParams {
@@ -623,9 +588,9 @@ struct nsCSSRendering {
     // UNDERLINE or OVERLINE or LINE_THROUGH.
     mozilla::StyleTextDecorationLine decoration =
         mozilla::StyleTextDecorationLine::UNDERLINE;
-    // The style of the decoration line such as
-    // NS_STYLE_TEXT_DECORATION_STYLE_*.
-    uint8_t style = NS_STYLE_TEXT_DECORATION_STYLE_NONE;
+    // The style of the decoration line
+    mozilla::StyleTextDecorationStyle style =
+        mozilla::StyleTextDecorationStyle::None;
     bool vertical = false;
     bool sidewaysLeft = false;
     gfxTextRun::Range glyphRange;
@@ -769,9 +734,6 @@ struct nsCSSRendering {
    * input:
    *     @param aFrame            the frame which needs the decoration line.
    *     @param aStyle            the style of the complex decoration line
-   *                              NS_STYLE_TEXT_DECORATION_STYLE_DOTTED or
-   *                              NS_STYLE_TEXT_DECORATION_STYLE_DASHED or
-   *                              NS_STYLE_TEXT_DECORATION_STYLE_WAVY.
    *     @param aClippedRect      the clipped rect for the decoration line.
    *                              in other words, visible area of the line.
    *     @param aICoordInFrame  the distance between inline-start edge of aFrame
@@ -779,8 +741,9 @@ struct nsCSSRendering {
    *     @param aCycleLength      the width of one cycle of the line style.
    */
   static Rect ExpandPaintingRectForDecorationLine(
-      nsIFrame* aFrame, const uint8_t aStyle, const Rect& aClippedRect,
-      const Float aICoordInFrame, const Float aCycleLength, bool aVertical);
+      nsIFrame* aFrame, const mozilla::StyleTextDecorationStyle aStyle,
+      const Rect& aClippedRect, const Float aICoordInFrame,
+      const Float aCycleLength, bool aVertical);
 };
 
 /*
@@ -949,7 +912,8 @@ class nsContextBoxBlur {
                                      bool aConstrainSpreadRadius = true);
 
   gfxAlphaBoxBlur mAlphaBoxBlur;
-  RefPtr<gfxContext> mContext;
+  mozilla::UniquePtr<gfxContext> mOwnedContext;
+  gfxContext* mContext;  // may be either mOwnedContext or mDestinationContext
   gfxContext* mDestinationCtx;
 
   /* This is true if the blur already has it's content transformed

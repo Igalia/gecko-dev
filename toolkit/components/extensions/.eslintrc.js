@@ -33,24 +33,6 @@ module.exports = {
     // imported properties would be instatiated up-front rather than lazily.
     "mozilla/reject-importGlobalProperties": "off",
 
-    "valid-jsdoc": [
-      "error",
-      {
-        prefer: {
-          return: "returns",
-        },
-        preferType: {
-          Boolean: "boolean",
-          Number: "number",
-          String: "string",
-          bool: "boolean",
-        },
-        requireParamDescription: false,
-        requireReturn: false,
-        requireReturnDescription: false,
-      },
-    ],
-
     // Functions are not required to consistently return something or nothing
     "consistent-return": "off",
 

@@ -11,16 +11,16 @@
  *        this may change in the future.
  */
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
 
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
 
-const { TelemetryController } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryController.jsm"
+const { TelemetryController } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryController.sys.mjs"
 );
 
 let parserUtils = Cc["@mozilla.org/parserutils;1"].getService(
@@ -477,9 +477,8 @@ async function setup(cachedAddons) {
               console.error(
                 `Could not install default add-on ${cachedAddon.addon_id}`
               );
-              const availableStudies = document.getElementById(
-                "available-studies"
-              );
+              const availableStudies =
+                document.getElementById("available-studies");
               document.l10n.setAttributes(
                 availableStudies,
                 "ion-no-current-studies"

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -21,6 +21,9 @@ includes: [temporalHelpers.js]
 ].forEach((wrongOffset) => {
   const timeZone = TemporalHelpers.specificOffsetTimeZone(wrongOffset);
   const datetime = new Temporal.PlainDateTime(2000, 5, 2, 12, 34, 56, 987, 654, 321);
+  timeZone.getPossibleInstantsFor = function () {
+    return [];
+  };
   assert.throws(TypeError, () => datetime.toZonedDateTime(timeZone));
 });
 

@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { DefaultBrowserCheck } = ChromeUtils.import(
-  "resource:///modules/BrowserGlue.jsm"
+const { DefaultBrowserCheck } = ChromeUtils.importESModule(
+  "resource:///modules/BrowserGlue.sys.mjs"
 );
 const CHECK_PREF = "browser.shell.checkDefaultBrowser";
 
@@ -52,10 +52,7 @@ add_task(async function proton_shows_prompt() {
 add_task(async function not_now() {
   const histogram = getHistogram();
   await showAndWaitForModal(win => {
-    win.document
-      .querySelector("dialog")
-      .getButton("cancel")
-      .click();
+    win.document.querySelector("dialog").getButton("cancel").click();
   });
 
   Assert.equal(
@@ -88,10 +85,7 @@ add_task(async function primary_default() {
   const histogram = getHistogram();
 
   await showAndWaitForModal(win => {
-    win.document
-      .querySelector("dialog")
-      .getButton("accept")
-      .click();
+    win.document.querySelector("dialog").getButton("accept").click();
   });
 
   Assert.equal(
@@ -112,10 +106,7 @@ add_task(async function primary_pin() {
   const histogram = getHistogram();
 
   await showAndWaitForModal(win => {
-    win.document
-      .querySelector("dialog")
-      .getButton("accept")
-      .click();
+    win.document.querySelector("dialog").getButton("accept").click();
   });
 
   Assert.equal(

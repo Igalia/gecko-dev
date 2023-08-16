@@ -10,7 +10,6 @@ with Files("**"):
 DIRS += ["build"]
 
 XPIDL_SOURCES += [
-    "nsIEmbeddingSiteWindow.idl",
     "nsIWebBrowser.idl",
     "nsIWebBrowserChrome.idl",
     "nsIWebBrowserChromeFocus.idl",
@@ -40,5 +39,3 @@ EXPORTS += [
     "nsEmbedCID.h",
     "nsWebBrowser.h",
 ]
-
-REQUIRES_UNIFIED_BUILD = True

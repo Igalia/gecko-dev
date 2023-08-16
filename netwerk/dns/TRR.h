@@ -17,7 +17,7 @@
 #include "nsThreadUtils.h"
 #include "nsXULAppAPI.h"
 #include "DNSPacket.h"
-#include "TRRSkippedReason.h"
+#include "nsITRRSkipReason.h"
 
 class AHostResolver;
 class nsHostRecord;
@@ -76,6 +76,7 @@ class TRR : public Runnable,
 
   RequestPurpose Purpose() { return mPurpose; }
   void SetPurpose(RequestPurpose aPurpose) { mPurpose = aPurpose; }
+  TRRSkippedReason SkipReason() const { return mTRRSkippedReason; }
 
  protected:
   virtual ~TRR() = default;

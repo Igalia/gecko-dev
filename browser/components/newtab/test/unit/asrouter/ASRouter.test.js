@@ -15,9 +15,9 @@ import {
 import { ASRouterTriggerListeners } from "lib/ASRouterTriggerListeners.jsm";
 import { CFRPageActions } from "lib/CFRPageActions.jsm";
 import { GlobalOverrider } from "test/unit/utils";
-import { PanelTestProvider } from "lib/PanelTestProvider.jsm";
+import { PanelTestProvider } from "lib/PanelTestProvider.sys.mjs";
 import ProviderResponseSchema from "content-src/asrouter/schemas/provider-response.schema.json";
-import { SnippetsTestMessageProvider } from "lib/SnippetsTestMessageProvider.jsm";
+import { SnippetsTestMessageProvider } from "lib/SnippetsTestMessageProvider.sys.mjs";
 
 const MESSAGE_PROVIDER_PREF_NAME =
   "browser.newtabpage.activity-stream.asrouter.providers.snippets";
@@ -53,6 +53,7 @@ describe("ASRouter", () => {
   let FakeToolbarPanelHub;
   let FakeMomentsPageHub;
   let ASRouterTargeting;
+  let screenImpressions;
 
   function setMessageProviderPref(value) {
     sandbox.stub(ASRouterPreferences, "providers").get(() => value);
@@ -74,6 +75,9 @@ describe("ASRouter", () => {
     getStub
       .withArgs("previousSessionEnd")
       .returns(Promise.resolve(previousSessionEnd));
+    getStub
+      .withArgs("screenImpressions")
+      .returns(Promise.resolve(screenImpressions));
     initParams = {
       storage: {
         get: getStub,
@@ -103,6 +107,7 @@ describe("ASRouter", () => {
     messageImpressions = {};
     groupImpressions = {};
     previousSessionEnd = 100;
+    screenImpressions = {};
     sandbox = sinon.createSandbox();
     ASRouterTargeting = {
       isMatch: sandbox.stub(),
@@ -123,6 +128,7 @@ describe("ASRouter", () => {
         profileAgeReset: {},
         usesFirefoxSync: false,
         isFxAEnabled: true,
+        isFxASignedIn: false,
         sync: {
           desktopDevices: 0,
           mobileDevices: 0,
@@ -243,6 +249,7 @@ describe("ASRouter", () => {
       ASRouterTargeting,
       ASRouterTriggerListeners,
       QueryCache,
+      gBrowser: { selectedBrowser: {} },
       gURLBar: {},
       isSeparateAboutWelcome: true,
       AttributionCode: fakeAttributionCode,
@@ -399,6 +406,14 @@ describe("ASRouter", () => {
       await initASRouter(Router);
 
       assert.deepEqual(Router.state.messageImpressions, messageImpressions);
+    });
+    it("should set state.screenImpressions to the screenImpressions object in persistent storage", async () => {
+      screenImpressions = { test: 123 };
+
+      Router = new _ASRouter();
+      await initASRouter(Router);
+
+      assert.deepEqual(Router.state.screenImpressions, screenImpressions);
     });
     it("should clear impressions for groups that are not active", async () => {
       groupImpressions = { foo: [0, 1, 2] };
@@ -938,6 +953,69 @@ describe("ASRouter", () => {
         undefined
       );
     });
+    it("should parse the message's messagesLoaded trigger and immediately fire trigger", async () => {
+      setMessageProviderPref([
+        {
+          id: "foo",
+          type: "local",
+          enabled: true,
+          messages: [
+            {
+              id: "bar3",
+              template: "simple_template",
+              trigger: { id: "messagesLoaded" },
+              content: { title: "Bar3", body: "Bar123" },
+            },
+          ],
+        },
+      ]);
+      Router = new _ASRouter(Object.freeze(FAKE_LOCAL_PROVIDERS));
+      sandbox.spy(Router, "sendTriggerMessage");
+      await initASRouter(Router);
+      assert.calledOnce(Router.sendTriggerMessage);
+      assert.calledWith(
+        Router.sendTriggerMessage,
+        sandbox.match({ id: "messagesLoaded" }),
+        true
+      );
+    });
+    it("should gracefully handle messages loading before a window or browser exists", async () => {
+      sandbox.stub(global, "gBrowser").value(undefined);
+      sandbox
+        .stub(global.Services.wm, "getMostRecentBrowserWindow")
+        .returns(undefined);
+      setMessageProviderPref([
+        {
+          id: "foo",
+          type: "local",
+          enabled: true,
+          messages: [
+            "whatsnew_panel_message",
+            "cfr_doorhanger",
+            "toolbar_badge",
+            "update_action",
+            "infobar",
+            "spotlight",
+            "toast_notification",
+          ].map((template, i) => {
+            return {
+              id: `foo${i}`,
+              template,
+              trigger: { id: "messagesLoaded" },
+              content: { title: `Foo${i}`, body: "Bar123" },
+            };
+          }),
+        },
+      ]);
+      Router = new _ASRouter(Object.freeze(FAKE_LOCAL_PROVIDERS));
+      sandbox.spy(Router, "sendTriggerMessage");
+      await initASRouter(Router);
+      assert.calledWith(
+        Router.sendTriggerMessage,
+        sandbox.match({ id: "messagesLoaded" }),
+        true
+      );
+    });
     it("should gracefully handle RemoteSettings blowing up and dispatch undesired event", async () => {
       sandbox
         .stub(MessageLoaderUtils, "_getRemoteSettingsMessages")
@@ -982,7 +1060,7 @@ describe("ASRouter", () => {
         id: "cfr",
         enabled: true,
         type: "remote-settings",
-        bucket: "cfr",
+        collection: "cfr",
       };
       await createRouterAndInit([provider]);
 
@@ -1002,7 +1080,7 @@ describe("ASRouter", () => {
         id: "cfr",
         enabled: true,
         type: "remote-settings",
-        bucket: "cfr",
+        collection: "cfr",
       };
       await createRouterAndInit([provider]);
 
@@ -1545,13 +1623,14 @@ describe("ASRouter", () => {
         browser: {},
       });
 
-      assert.calledOnce(startTelemetryStopwatch);
+      // Called once for the messagesLoaded trigger and once for the above call.
+      assert.calledTwice(startTelemetryStopwatch);
       assert.calledWithExactly(
         startTelemetryStopwatch,
         "MS_MESSAGE_REQUEST_TIME_MS",
         { tabId }
       );
-      assert.calledOnce(finishTelemetryStopwatch);
+      assert.calledTwice(finishTelemetryStopwatch);
       assert.calledWithExactly(
         finishTelemetryStopwatch,
         "MS_MESSAGE_REQUEST_TIME_MS",
@@ -1837,13 +1916,13 @@ describe("ASRouter", () => {
         id: "firstRun",
       });
 
-      assert.calledOnce(startTelemetryStopwatch);
+      assert.calledTwice(startTelemetryStopwatch);
       assert.calledWithExactly(
         startTelemetryStopwatch,
         "MS_MESSAGE_REQUEST_TIME_MS",
         { tabId }
       );
-      assert.calledOnce(finishTelemetryStopwatch);
+      assert.calledTwice(finishTelemetryStopwatch);
       assert.calledWithExactly(
         finishTelemetryStopwatch,
         "MS_MESSAGE_REQUEST_TIME_MS",
@@ -1962,9 +2041,8 @@ describe("ASRouter", () => {
       global.Cc["@mozilla.org/mac-attribution;1"] = {
         getService: () => ({ setReferrerUrl }),
       };
-      global.Cc["@mozilla.org/process/environment;1"] = {
-        getService: () => ({ set: sandbox.stub() }),
-      };
+
+      sandbox.stub(global.Services.env, "set");
     });
     it("should double encode on windows", async () => {
       sandbox.stub(fakeAttributionCode, "writeAttributionFile");
@@ -1978,7 +2056,7 @@ describe("ASRouter", () => {
       );
     });
     it("should set referrer on mac", async () => {
-      sandbox.stub(AppConstants, "platform").value("macosx");
+      sandbox.stub(global.AppConstants, "platform").value("macosx");
 
       Router.forceAttribution({ foo: "FOO!", eh: "NOPE", bar: "BAR?" });
 
@@ -2049,14 +2127,73 @@ describe("ASRouter", () => {
 
   describe("valid preview endpoint", () => {
     it("should report an error if url protocol is not https", () => {
-      sandbox.stub(Cu, "reportError");
+      sandbox.stub(console, "error");
 
       assert.equal(false, Router._validPreviewEndpoint("http://foo.com"));
-      assert.calledTwice(Cu.reportError);
+      assert.calledTwice(console.error);
     });
   });
 
   describe("impressions", () => {
+    describe("#addImpression for groups", () => {
+      it("should save an impression in each group-with-frequency in a message", async () => {
+        const fooMessageImpressions = [0];
+        const aGroupImpressions = [0, 1, 2];
+        const bGroupImpressions = [3, 4, 5];
+        const cGroupImpressions = [6, 7, 8];
+
+        const message = {
+          id: "foo",
+          provider: "bar",
+          groups: ["a", "b", "c"],
+        };
+        const groups = [
+          { id: "a", frequency: { lifetime: 3 } },
+          { id: "b", frequency: { lifetime: 4 } },
+          { id: "c", frequency: { lifetime: 5 } },
+        ];
+        await Router.setState(state => {
+          // Add provider
+          const providers = [...state.providers];
+          // Add fooMessageImpressions
+          // eslint-disable-next-line no-shadow
+          const messageImpressions = Object.assign(
+            {},
+            state.messageImpressions
+          );
+          let gImpressions = {};
+          gImpressions.a = aGroupImpressions;
+          gImpressions.b = bGroupImpressions;
+          gImpressions.c = cGroupImpressions;
+          messageImpressions.foo = fooMessageImpressions;
+          return {
+            providers,
+            messageImpressions,
+            groups,
+            groupImpressions: gImpressions,
+          };
+        });
+
+        await Router.addImpression(message);
+
+        assert.deepEqual(
+          Router.state.groupImpressions.a,
+          [0, 1, 2, 0],
+          "a impressions"
+        );
+        assert.deepEqual(
+          Router.state.groupImpressions.b,
+          [3, 4, 5, 0],
+          "b impressions"
+        );
+        assert.deepEqual(
+          Router.state.groupImpressions.c,
+          [6, 7, 8, 0],
+          "c impressions"
+        );
+      });
+    });
+
     describe("#isBelowFrequencyCaps", () => {
       it("should call #_isBelowItemFrequencyCap for the message and for the provider with the correct impressions and arguments", async () => {
         sinon.spy(Router, "_isBelowItemFrequencyCap");
@@ -2390,7 +2527,7 @@ describe("ASRouter", () => {
         id: "cfr",
         enabled: true,
         type: "remote-settings",
-        bucket: "cfr",
+        collection: "cfr",
       };
       await createRouterAndInit([provider]);
       sandbox.spy(Router, "setState");
@@ -2405,7 +2542,7 @@ describe("ASRouter", () => {
             id: "cfr",
             enabled: true,
             type: "remote-settings",
-            bucket: "cfr",
+            collection: "cfr",
             lastUpdated: undefined,
             errors: [],
           },
@@ -2465,7 +2602,7 @@ describe("ASRouter", () => {
           {
             id: "message-groups",
             enabled: true,
-            bucket: "bucket",
+            collection: "collection",
             type: "remote-settings",
           },
         ],
@@ -2498,7 +2635,7 @@ describe("ASRouter", () => {
           {
             id: "message-groups",
             enabled: true,
-            bucket: "bucket",
+            collection: "collection",
             type: "remote-settings",
           },
         ],
@@ -2526,7 +2663,7 @@ describe("ASRouter", () => {
           {
             id: "message-groups",
             enabled: true,
-            bucket: "bucket",
+            collection: "collection",
             type: "remote-settings",
           },
         ],
@@ -2547,7 +2684,7 @@ describe("ASRouter", () => {
           {
             id: "cfr",
             enabled: true,
-            bucket: "bucket",
+            collection: "collection",
             type: "remote-settings",
           },
         ],
@@ -2570,7 +2707,7 @@ describe("ASRouter", () => {
           {
             id: "cfr",
             enabled: true,
-            bucket: "bucket",
+            collection: "collection",
             type: "remote-settings",
             userPreferences: ["cfrAddons"],
           },
@@ -2788,7 +2925,7 @@ describe("ASRouter", () => {
     beforeEach(() => {
       provider = {
         id: "cfr",
-        bucket: "cfr",
+        collection: "cfr",
       };
       sandbox
         .stub(MessageLoaderUtils, "_getRemoteSettingsMessages")
@@ -2864,7 +3001,7 @@ describe("ASRouter", () => {
         messages: [{ id: "1" }, { id: "2" }],
       });
       await Router.setState({
-        messageImpressions: { "1": [0, 1, 2], "2": [0, 1, 2] },
+        messageImpressions: { 1: [0, 1, 2], 2: [0, 1, 2] },
       }); // Add impressions for test messages
       let impressions = Object.values(Router.state.messageImpressions);
       assert.equal(impressions.filter(i => i.length).length, 2); // Both messages have impressions
@@ -2874,8 +3011,8 @@ describe("ASRouter", () => {
 
       assert.isEmpty(impressions.filter(i => i.length)); // Both messages now have zero impressions
       assert.calledWithExactly(Router._storage.set, "messageImpressions", {
-        "1": [],
-        "2": [],
+        1: [],
+        2: [],
       });
     });
   });
@@ -2885,7 +3022,7 @@ describe("ASRouter", () => {
         groups: [{ id: "1" }, { id: "2" }],
       });
       await Router.setState({
-        groupImpressions: { "1": [0, 1, 2], "2": [0, 1, 2] },
+        groupImpressions: { 1: [0, 1, 2], 2: [0, 1, 2] },
       }); // Add impressions for test groups
       let impressions = Object.values(Router.state.groupImpressions);
       assert.equal(impressions.filter(i => i.length).length, 2); // Both groups have impressions
@@ -2895,8 +3032,8 @@ describe("ASRouter", () => {
 
       assert.isEmpty(impressions.filter(i => i.length)); // Both groups now have zero impressions
       assert.calledWithExactly(Router._storage.set, "groupImpressions", {
-        "1": [],
-        "2": [],
+        1: [],
+        2: [],
       });
     });
   });

@@ -66,6 +66,8 @@
 #ifdef MOZ_WAYLAND
 #  include <gdk/gdkwayland.h>
 #  include "mozilla/widget/nsWaylandDisplay.h"
+#endif
+#ifdef MOZ_WIDGET_GTK
 #  include "mozilla/widget/DMABufLibWrapper.h"
 #  include "mozilla/StaticPrefs_widget.h"
 #endif
@@ -183,7 +185,6 @@ void gfxPlatformGtk::InitX11EGLConfig() {
 
 void gfxPlatformGtk::InitDmabufConfig() {
   FeatureState& feature = gfxConfig::GetFeature(Feature::DMABUF);
-#ifdef MOZ_WAYLAND
   feature.EnableByDefault();
 
   if (StaticPrefs::widget_dmabuf_force_enabled_AtStartup()) {
@@ -212,31 +213,25 @@ void gfxPlatformGtk::InitDmabufConfig() {
     gfxInfo->GetDrmRenderDevice(drmRenderDevice);
     gfxVars::SetDrmRenderDevice(drmRenderDevice);
 
-    if (!GetDMABufDevice()->Configure(failureId)) {
+    if (!GetDMABufDevice()->IsEnabled(failureId)) {
       feature.ForceDisable(FeatureStatus::Failed, "Failed to configure",
                            failureId);
     }
   }
-#else
-  feature.DisableByDefault(FeatureStatus::Unavailable,
-                           "Wayland support missing",
-                           "FEATURE_FAILURE_NO_WAYLAND"_ns);
-#endif
 }
 
 bool gfxPlatformGtk::InitVAAPIConfig(bool aForceEnabledByUser) {
   FeatureState& feature =
       gfxConfig::GetFeature(Feature::HARDWARE_VIDEO_DECODING);
-#ifdef MOZ_WAYLAND
+  // We're already configured in parent process
+  if (!XRE_IsParentProcess()) {
+    return feature.IsEnabled();
+  }
   feature.EnableByDefault();
 
-  if (aForceEnabledByUser) {
-    feature.UserForceEnable("Force enabled by pref");
-  }
-
-  nsCString failureId;
   int32_t status = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
   nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
+  nsCString failureId;
   if (NS_FAILED(gfxInfo->GetFeatureStatus(
           nsIGfxInfo::FEATURE_HARDWARE_VIDEO_DECODING, failureId, &status))) {
     feature.Disable(FeatureStatus::BlockedNoGfxInfo, "gfxInfo is broken",
@@ -248,16 +243,49 @@ bool gfxPlatformGtk::InitVAAPIConfig(bool aForceEnabledByUser) {
     feature.Disable(FeatureStatus::Blocklisted, "Blocklisted by gfxInfo",
                     failureId);
   }
-
+  if (aForceEnabledByUser) {
+    feature.UserForceEnable("Force enabled by pref");
+  }
   if (!gfxVars::UseEGL()) {
     feature.ForceDisable(FeatureStatus::Unavailable, "Requires EGL",
                          "FEATURE_FAILURE_REQUIRES_EGL"_ns);
   }
-#else
-  feature.DisableByDefault(FeatureStatus::Unavailable,
-                           "Wayland support missing",
-                           "FEATURE_FAILURE_NO_WAYLAND"_ns);
-#endif
+
+  // Configure zero-copy playback feature.
+  if (feature.IsEnabled()) {
+    FeatureState& featureZeroCopy =
+        gfxConfig::GetFeature(Feature::HW_DECODED_VIDEO_ZERO_COPY);
+
+    featureZeroCopy.EnableByDefault();
+    uint32_t state =
+        StaticPrefs::media_ffmpeg_vaapi_force_surface_zero_copy_AtStartup();
+    if (state == 0) {
+      featureZeroCopy.UserDisable("Force disable by pref",
+                                  "FEATURE_FAILURE_USER_FORCE_DISABLED"_ns);
+    } else if (state == 1) {
+      featureZeroCopy.UserEnable("Force enabled by pref");
+    } else {
+      nsCString failureId;
+      int32_t status = nsIGfxInfo::FEATURE_STATUS_UNKNOWN;
+      nsCOMPtr<nsIGfxInfo> gfxInfo = components::GfxInfo::Service();
+      if (NS_FAILED(gfxInfo->GetFeatureStatus(
+              nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY, failureId,
+              &status))) {
+        featureZeroCopy.Disable(FeatureStatus::BlockedNoGfxInfo,
+                                "gfxInfo is broken",
+                                "FEATURE_FAILURE_NO_GFX_INFO"_ns);
+      } else if (status == nsIGfxInfo::FEATURE_BLOCKED_PLATFORM_TEST) {
+        featureZeroCopy.ForceDisable(FeatureStatus::Unavailable,
+                                     "Force disabled by gfxInfo", failureId);
+      } else if (status != nsIGfxInfo::FEATURE_ALLOW_ALWAYS) {
+        featureZeroCopy.Disable(FeatureStatus::Blocklisted,
+                                "Blocklisted by gfxInfo", failureId);
+      }
+    }
+    if (featureZeroCopy.IsEnabled()) {
+      gfxVars::SetHwDecodedVideoZeroCopy(true);
+    }
+  }
   return feature.IsEnabled();
 }
 
@@ -275,11 +303,7 @@ void gfxPlatformGtk::InitWebRenderConfig() {
                        "FEATURE_FAILURE_DISABLE_RELEASE_OR_BETA"_ns);
 #else
   if (feature.IsEnabled()) {
-    if (!(gfxConfig::IsEnabled(Feature::WEBRENDER) ||
-          gfxConfig::IsEnabled(Feature::WEBRENDER_SOFTWARE))) {
-      feature.ForceDisable(FeatureStatus::Unavailable, "WebRender disabled",
-                           "FEATURE_FAILURE_WR_DISABLED"_ns);
-    } else if (!IsWaylandDisplay()) {
+    if (!IsWaylandDisplay()) {
       feature.ForceDisable(FeatureStatus::Unavailable,
                            "Wayland support missing",
                            "FEATURE_FAILURE_NO_WAYLAND"_ns);
@@ -424,7 +448,7 @@ int32_t gfxPlatformGtk::GetFontScaleDPI() {
   gtk_settings_get_for_screen(screen);
   int32_t dpi = int32_t(round(gdk_screen_get_resolution(screen)));
   if (dpi <= 0) {
-    // Fall back to something sane
+    // Fall back to something reasonable
     dpi = 96;
   }
   sDPI = dpi;
@@ -869,32 +893,38 @@ class XrandrSoftwareVsyncSource final
       Window root = gdk_x11_get_default_root_xwindow();
       XRRScreenResources* res = XRRGetScreenResourcesCurrent(dpy, root);
 
-      // We can't use refresh rates far below the default one (60Hz) because
-      // otherwise random CI tests start to fail. However, many users have
-      // screens just below the default rate, e.g. 59.95Hz. So slightly
-      // decrease the lower bound.
-      highestRefreshRate -= 1.0;
+      if (res) {
+        // We can't use refresh rates far below the default one (60Hz) because
+        // otherwise random CI tests start to fail. However, many users have
+        // screens just below the default rate, e.g. 59.95Hz. So slightly
+        // decrease the lower bound.
+        highestRefreshRate -= 1.0;
 
-      for (int i = 0; i < res->noutput; i++) {
-        XRROutputInfo* outputInfo = XRRGetOutputInfo(dpy, res, res->outputs[i]);
-        if (!outputInfo->crtc) {
-          XRRFreeOutputInfo(outputInfo);
-          continue;
-        }
+        for (int i = 0; i < res->noutput; i++) {
+          XRROutputInfo* outputInfo =
+              XRRGetOutputInfo(dpy, res, res->outputs[i]);
+          if (outputInfo) {
+            if (outputInfo->crtc) {
+              XRRCrtcInfo* crtcInfo =
+                  XRRGetCrtcInfo(dpy, res, outputInfo->crtc);
+              if (crtcInfo) {
+                for (int j = 0; j < res->nmode; j++) {
+                  if (res->modes[j].id == crtcInfo->mode) {
+                    double refreshRate = mode_refresh(&res->modes[j]);
+                    if (refreshRate > highestRefreshRate) {
+                      highestRefreshRate = refreshRate;
+                    }
+                    break;
+                  }
+                }
 
-        XRRCrtcInfo* crtcInfo = XRRGetCrtcInfo(dpy, res, outputInfo->crtc);
-        for (int j = 0; j < res->nmode; j++) {
-          if (res->modes[j].id == crtcInfo->mode) {
-            double refreshRate = mode_refresh(&res->modes[j]);
-            if (refreshRate > highestRefreshRate) {
-              highestRefreshRate = refreshRate;
+                XRRFreeCrtcInfo(crtcInfo);
+              }
             }
-            break;
+
+            XRRFreeOutputInfo(outputInfo);
           }
         }
-
-        XRRFreeCrtcInfo(crtcInfo);
-        XRRFreeOutputInfo(outputInfo);
       }
       XRRFreeScreenResources(res);
     }
@@ -961,7 +991,8 @@ gfxPlatformGtk::CreateGlobalHardwareVsyncSource() {
   // gl::sGLXLibrary.SupportsVideoSync() when EGL is used as NVIDIA drivers
   // refuse to use EGL GL context when GLX was initialized first and fail
   // silently.
-  if (gfxConfig::IsEnabled(Feature::HW_COMPOSITING) && !isXwayland &&
+  if (StaticPrefs::gfx_x11_glx_sgi_video_sync_AtStartup() &&
+      gfxConfig::IsEnabled(Feature::HW_COMPOSITING) && !isXwayland &&
       (!gfxVars::UseEGL() || isMesa) &&
       gl::sGLXLibrary.SupportsVideoSync(DefaultXDisplay())) {
     RefPtr<GtkVsyncSource> vsyncSource = new GtkVsyncSource();

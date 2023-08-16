@@ -3,12 +3,12 @@
 
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
-const { PermissionTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PermissionTestUtils.jsm"
+const { PermissionTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PermissionTestUtils.sys.mjs"
 );
 
 const XPI_URL = `${SECURE_TESTROOT}../xpinstall/amosigned.xpi`;
@@ -18,7 +18,7 @@ AddonTestUtils.initMochitest(this);
 
 AddonTestUtils.hookAMTelemetryEvents();
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["extensions.webapi.testing", true],

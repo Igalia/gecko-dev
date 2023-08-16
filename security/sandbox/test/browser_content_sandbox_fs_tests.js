@@ -3,8 +3,6 @@
 /* import-globals-from browser_content_sandbox_utils.js */
 "use strict";
 
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-
 // Test if the content process can create in $HOME, this should fail
 async function createFileInHome() {
   let browser = gBrowser.selectedBrowser;
@@ -19,37 +17,41 @@ async function createFileInHome() {
 }
 
 // Test if the content process can create a temp file, this is disallowed on
-// macOS but allowed everywhere else. Also test that the content process cannot
-// create symlinks or delete files.
+// macOS and Windows but allowed everywhere else. Also test that the content
+// process cannot create symlinks on macOS or delete files.
 async function createTempFile() {
+  // On Windows we allow access to the temp dir for DEBUG builds, because of
+  // logging that uses that dir.
+  let isOptWin = isWin() && !SpecialPowers.isDebugBuild;
+
   let browser = gBrowser.selectedBrowser;
   let path = fileInTempDir().path;
   let fileCreated = await SpecialPowers.spawn(browser, [path], createFile);
-  if (isMac()) {
-    ok(!fileCreated.ok, "creating a file in content temp is not permitted");
+  if (isMac() || isOptWin) {
+    ok(!fileCreated.ok, "creating a file in temp is not permitted");
   } else {
-    ok(!!fileCreated.ok, "creating a file in content temp is permitted");
+    ok(!!fileCreated.ok, "creating a file in temp is permitted");
   }
   // now delete the file
   let fileDeleted = await SpecialPowers.spawn(browser, [path], deleteFile);
-  if (isMac()) {
+  if (isMac() || isOptWin) {
     // On macOS we do not allow file deletion - it is not needed by the content
     // process itself, and macOS uses a different permission to control access
     // so revoking it is easy.
-    ok(!fileDeleted.ok, "deleting a file in content temp is not permitted");
+    ok(!fileDeleted.ok, "deleting a file in temp is not permitted");
+  } else {
+    ok(!!fileDeleted.ok, "deleting a file in temp is permitted");
+  }
 
+  // Test that symlink creation is not allowed on macOS.
+  if (isMac()) {
     let path = fileInTempDir().path;
     let symlinkCreated = await SpecialPowers.spawn(
       browser,
       [path],
       createSymlink
     );
-    ok(
-      !symlinkCreated.ok,
-      "created a symlink in content temp is not permitted"
-    );
-  } else {
-    ok(!!fileDeleted.ok, "deleting a file in content temp is permitted");
+    ok(!symlinkCreated.ok, "created a symlink in temp is not permitted");
   }
 }
 
@@ -407,7 +409,7 @@ async function testFileAccessLinuxOnly() {
   // allows to handle both $HOME/.config/ or $XDG_CONFIG_HOME
   let configDir = GetHomeSubdir(".config");
 
-  const xdgConfigHome = GetEnvironmentVariable("XDG_CONFIG_HOME");
+  const xdgConfigHome = Services.env.get("XDG_CONFIG_HOME");
 
   if (xdgConfigHome.length > 1) {
     configDir = GetDir(xdgConfigHome);
@@ -493,18 +495,11 @@ async function testFileAccessLinuxOnly() {
   // Create a file under $HOME/.config/ or $XDG_CONFIG_HOME and ensure we can
   // read it
   let fileUnderConfig = GetSubdirFile(configDir);
-  let fileUnderConfigCreated = await createFile(fileUnderConfig.path);
-  if (!fileUnderConfigCreated.ok) {
-    ok(false, `Failure to create ${fileUnderConfig.path}`);
-  }
+  await IOUtils.writeUTF8(fileUnderConfig.path, "TEST FILE DUMMY DATA");
   ok(
-    fileUnderConfigCreated,
+    await IOUtils.exists(fileUnderConfig.path),
     `File ${fileUnderConfig.path} was properly created`
   );
-  let removeFileUnderConfig = async aPath => {
-    const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-    await OS.File.remove(aPath);
-  };
 
   tests.push({
     desc: `${configDir.path}/xxx is readable (${fileUnderConfig.path})`,
@@ -513,7 +508,7 @@ async function testFileAccessLinuxOnly() {
     file: fileUnderConfig,
     minLevel: minHomeReadSandboxLevel(),
     func: readFile,
-    cleanup: removeFileUnderConfig,
+    cleanup: aPath => IOUtils.remove(aPath),
   });
 
   let configFile = GetSubdirFile(configDir);
@@ -545,28 +540,30 @@ async function testFileAccessLinuxOnly() {
 
   let populateFakeConfigMozilla = async aPath => {
     // called with configMozilla
-    const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-    await OS.File.makeDir(aPath, { unixMode: OS.Constants.S_IRWXU });
-    await createFile(emptyFile.path);
+    await IOUtils.makeDirectory(aPath, { permissions: 0o700 });
+    await IOUtils.writeUTF8(emptyFile.path, "");
     ok(
-      await OS.File.exists(emptyFile.path),
+      await IOUtils.exists(emptyFile.path),
       `Temp file ${emptyFile.path} was created`
     );
   };
 
   let unpopulateFakeConfigMozilla = async aPath => {
     // called with emptyFile
-    const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-    await OS.File.remove(aPath);
-    ok(!(await OS.File.exists(aPath)), `Temp file ${aPath} was removed`);
-    const parentDir = OS.Path.dirname(aPath);
+    await IOUtils.remove(aPath);
+    ok(!(await IOUtils.exists(aPath)), `Temp file ${aPath} was removed`);
+    const parentDir = PathUtils.parent(aPath);
     try {
-      await OS.File.removeEmptyDir(parentDir);
+      await IOUtils.remove(parentDir, { recursive: false });
     } catch (ex) {
-      // 39=ENOTEMPTY, if we get that there it means the directory was not
-      // empty and since we assert earlier we removed the temp file we created
-      // it means we should not worrying about removing this directory ...
-      if (ex.unixErrno !== 39) {
+      if (
+        !DOMException.isInstance(ex) ||
+        ex.name !== "OperationError" ||
+        /Could not remove the non-empty directory/.test(ex.message)
+      ) {
+        // If we get here it means the directory was not empty and since we assert
+        // earlier we removed the temp file we created it means we should not
+        // worrying about removing this directory ...
         throw ex;
       }
     }
@@ -633,7 +630,7 @@ async function testFileAccessLinuxSnap() {
 
   // Assert that if we run with SNAP= env, then we allow access to it in the
   // content process
-  let snap = GetEnvironmentVariable("SNAP");
+  let snap = Services.env.get("SNAP");
   let snapExpectedResult = false;
   if (snap.length > 1) {
     snapExpectedResult = true;
@@ -646,7 +643,7 @@ async function testFileAccessLinuxSnap() {
 
   let snapFile = GetSubdirFile(snapDir);
   await createFile(snapFile.path);
-  ok(await OS.File.exists(snapFile.path), `SNAP ${snapFile.path} was created`);
+  ok(await IOUtils.exists(snapFile.path), `SNAP ${snapFile.path} was created`);
   info(`SNAP (file) ${snapFile.path} was created`);
 
   tests.push({

@@ -39,11 +39,13 @@
   }, {
     name: 'persistent-storage',
     type: 'persistent-storage'
+  }, {
+    name: 'midi',
+    type: 'midi'
   }, ];
 
   const UNSUPPORTED_PERMISSIONS = [
     'foobarbaz', // Not in spec, for testing only.
-    'midi',
   ];
 
   // Create a closure, so that tests are run on the correct window object.
@@ -60,28 +62,6 @@
         });
         await SpecialPowers.popPermissions();
         return SpecialPowers.pushPermissions(permissions);
-      },
-      revokePermissions() {
-        const promisesToRevoke = PERMISSIONS.map(({ name })  => {
-          return iframeWindow.navigator.permissions
-            .revoke({ name })
-            .then(
-              ({ state }) => is(state, 'prompt', `correct state for '${name}'`),
-              () => ok(false, `revoke should not have rejected for '${name}'`)
-            );
-        });
-        return Promise.all(promisesToRevoke);
-      },
-      revokeUnsupportedPermissions() {
-        const promisesToRevoke = UNSUPPORTED_PERMISSIONS.map(({ name }) => {
-          return iframeWindow.navigator.permissions
-            .revoke({ name })
-            .then(
-              () => ok(false, `revoke should not have resolved for '${name}'`),
-              error => is(error.name, 'TypeError', `revoke should have thrown TypeError for '${name}'`)
-            );
-        });
-        return Promise.all(promisesToRevoke);
       },
       checkPermissions(expectedState) {
         const promisesToQuery = PERMISSIONS.map(({ name: expectedName }) => {
@@ -145,14 +125,6 @@
           .then(
             () => ok(false, 'invalid query should not have resolved'),
             () => ok(true, 'invalid query should have rejected')
-          );
-      },
-      testInvalidRevoke() {
-        return iframeWindow.navigator.permissions
-          .revoke({ name: 'invalid' })
-          .then(
-            () => ok(false, 'invalid revoke should not have resolved'),
-            () => ok(true, 'invalid revoke should have rejected')
           );
       },
       async testNotFullyActiveDoc() {
@@ -242,15 +214,6 @@
     };
   }
 
-  function enablePrefs() {
-    const ops = {
-      'set': [
-        ['dom.permissions.revoke.enable', true],
-      ],
-    };
-    return SpecialPowers.pushPrefEnv(ops);
-  }
-
   function createIframe() {
     return new Promise((resolve) => {
       const iframe = document.createElement('iframe');
@@ -261,8 +224,7 @@
   }
 
   window.onload = () => {
-    enablePrefs()
-      .then(createIframe)
+    createIframe()
       .then(createPermissionTester)
       .then((tester) => {
         return tester
@@ -277,10 +239,6 @@
           .then(() => tester.checkPermissions('denied'))
           .then(() => tester.testStatusOnChange())
           .then(() => tester.testInvalidQuery())
-          .then(() => tester.revokeUnsupportedPermissions())
-          .then(() => tester.revokePermissions())
-          .then(() => tester.checkPermissions('prompt'))
-          .then(() => tester.testInvalidRevoke())
           .then(() => tester.testNotFullyActiveDoc())
           .then(() => tester.testNotFullyActiveChange());
       })

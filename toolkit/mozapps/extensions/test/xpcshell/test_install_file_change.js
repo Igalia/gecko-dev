@@ -18,7 +18,7 @@ async function createXPIWithID(addonId, version = "1.0") {
   let xpiFile = await createTempWebExtensionFile({
     manifest: {
       version,
-      applications: { gecko: { id: addonId } },
+      browser_specific_settings: { gecko: { id: addonId } },
     },
   });
   return xpiFile;
@@ -71,7 +71,9 @@ add_task(async function test_file_replaced() {
   equal(install.state, AddonManager.STATE_DOWNLOADED);
 
   await IOUtils.copy(
-    (await createXPIWithID("replace@me", "2")).path,
+    (
+      await createXPIWithID("replace@me", "2")
+    ).path,
     xpiFile.path
   );
 
@@ -91,7 +93,7 @@ async function do_test_update_with_file_replaced(wantPostponeTest) {
   await promiseInstallWebExtension({
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: ADDON_ID,
           update_url: `http://example.com/update-${ADDON_ID}.json`,
@@ -106,7 +108,7 @@ async function do_test_update_with_file_replaced(wantPostponeTest) {
     await createTempWebExtensionFile({
       manifest: {
         version: "2.0",
-        applications: { gecko: { id: ADDON_ID } },
+        browser_specific_settings: { gecko: { id: ADDON_ID } },
       },
     })
   );
@@ -140,11 +142,13 @@ async function do_test_update_with_file_replaced(wantPostponeTest) {
 
   let promptCount = 0;
   let didReplaceFile = false;
-  install.promptHandler = async function() {
+  install.promptHandler = async function () {
     ++promptCount;
     equal(install.state, AddonManager.STATE_DOWNLOADED);
     await IOUtils.copy(
-      (await createXPIWithID(ADDON_ID, "3")).path,
+      (
+        await createXPIWithID(ADDON_ID, "3")
+      ).path,
       install.file.path
     );
     didReplaceFile = true;

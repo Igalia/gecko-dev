@@ -1,7 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-/* import-globals-from ../../../../..//gfx/layers/apz/test/mochitest/apz_test_native_event_utils.js */
 
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/gfx/layers/apz/test/mochitest/apz_test_utils.js",
@@ -411,7 +410,7 @@ async function test_emitLatchedEvents(eventPrefix, initialDelta, cmd) {
   }
 
   let check = (aDir, aMsg) => ok(cmd[aDir].callCount == expect[aDir], aMsg);
-  let checkBoth = function(aNum, aInc, aDec) {
+  let checkBoth = function (aNum, aInc, aDec) {
     let prefix = "Step " + aNum + ": ";
     check("inc", prefix + aInc);
     check("dec", prefix + aDec);
@@ -833,10 +832,7 @@ function test_rotateHelperGetImageRotation(aImageElement) {
     return 0;
   }
 
-  transformValue = transformValue
-    .split("(")[1]
-    .split(")")[0]
-    .split(",");
+  transformValue = transformValue.split("(")[1].split(")")[0].split(",");
   var rotation = Math.round(
     Math.atan2(transformValue[1], transformValue[0]) * (180 / Math.PI)
   );
@@ -972,7 +968,7 @@ async function test_rotateGesturesOnTab() {
     true
   );
 
-  if (!(content.document instanceof ImageDocument)) {
+  if (!ImageDocument.isInstance(content.document)) {
     ok(false, "Image document failed to open for rotation testing");
     gBrowser.removeTab(test_imageTab);
     BrowserTestUtils.removeTab(test_normalTab);
@@ -1000,7 +996,7 @@ async function test_rotateGesturesOnTab() {
   }
 
   // Quick function to normalize rotation to 0 <= r < 360
-  var normRot = function(rotation) {
+  var normRot = function (rotation) {
     rotation = rotation % 360;
     if (rotation < 0) {
       rotation += 360;

@@ -2,14 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
 ChromeUtils.defineESModuleGetters(this, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
-  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
+});
+
+ChromeUtils.defineLazyGetter(this, "UrlbarTestUtils", () => {
+  const { UrlbarTestUtils: module } = ChromeUtils.importESModule(
+    "resource://testing-common/UrlbarTestUtils.sys.mjs"
+  );
+  module.init(this);
+  return module;
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -54,13 +57,6 @@ async function searchAndCheckState({ input, token }) {
 
   await UrlbarTestUtils.promisePopupClose(window);
 }
-
-add_task(async function init() {
-  UrlbarTestUtils.init(this);
-  registerCleanupFunction(() => {
-    UrlbarTestUtils.uninit();
-  });
-});
 
 add_task(async function insertTokens() {
   const tests = [
@@ -146,7 +142,7 @@ add_task(async function clearURLs() {
   for (let { loadUrl, token } of tests) {
     let browser = win.gBrowser.selectedBrowser;
     let loadedPromise = BrowserTestUtils.browserLoaded(browser, false, loadUrl);
-    BrowserTestUtils.loadURI(browser, loadUrl);
+    BrowserTestUtils.loadURIString(browser, loadUrl);
     await loadedPromise;
     if (win.gURLBar.getAttribute("pageproxystate") != "valid") {
       await TestUtils.waitForCondition(

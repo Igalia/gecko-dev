@@ -189,6 +189,8 @@ static void ApplyBorderToStyle(const nsMathMLmtdFrame* aFrame,
   nsTArray<int8_t>* columnLinesList =
       FindCellProperty(aFrame, ColumnLinesProperty());
 
+  const auto a2d = aFrame->PresContext()->AppUnitsPerDevPixel();
+
   // We don't place a row line on top of the first row
   if (rowIndex > 0 && rowLinesList) {
     // If the row number is greater than the number of provided rowline
@@ -203,7 +205,7 @@ static void ApplyBorderToStyle(const nsMathMLmtdFrame* aFrame,
                                   static_cast<StyleBorderStyle>(
                                       rowLinesList->ElementAt(listLength - 1)));
     }
-    aStyleBorder.SetBorderWidth(eSideTop, borderWidth);
+    aStyleBorder.SetBorderWidth(eSideTop, borderWidth, a2d);
   }
 
   // We don't place a column line on the left of the first column.
@@ -220,7 +222,7 @@ static void ApplyBorderToStyle(const nsMathMLmtdFrame* aFrame,
           eSideLeft, static_cast<StyleBorderStyle>(
                          columnLinesList->ElementAt(listLength - 1)));
     }
-    aStyleBorder.SetBorderWidth(eSideLeft, borderWidth);
+    aStyleBorder.SetBorderWidth(eSideLeft, borderWidth, a2d);
   }
 }
 
@@ -323,7 +325,7 @@ static void ParseFrameAttribute(nsIFrame* aFrame, nsAtom* aAttribute,
   nsAutoString attrValue;
 
   Element* frameElement = aFrame->GetContent()->AsElement();
-  frameElement->GetAttr(kNameSpaceID_None, aAttribute, attrValue);
+  frameElement->GetAttr(aAttribute, attrValue);
 
   if (!attrValue.IsEmpty()) {
     nsTArray<int8_t>* valueList =
@@ -443,9 +445,8 @@ static void ExtractSpacingValues(const nsAString& aString, nsAtom* aAttribute,
       } else {
         newValue = aDefaultValue0;
       }
-      nsMathMLFrame::ParseNumericValue(
-          valueString, &newValue, dom::MathMLElement::PARSE_ALLOW_UNITLESS,
-          presContext, computedStyle, aFontSizeInflation);
+      nsMathMLFrame::ParseNumericValue(valueString, &newValue, 0, presContext,
+                                       computedStyle, aFontSizeInflation);
       aSpacingArray.AppendElement(newValue);
 
       startIndex += count;
@@ -464,11 +465,11 @@ static void ParseSpacingAttribute(nsMathMLmtableFrame* aFrame,
 
   nsAutoString attrValue;
   Element* frameElement = aFrame->GetContent()->AsElement();
-  frameElement->GetAttr(kNameSpaceID_None, aAttribute, attrValue);
+  frameElement->GetAttr(aAttribute, attrValue);
 
   if (nsGkAtoms::framespacing_ == aAttribute) {
     nsAutoString frame;
-    frameElement->GetAttr(kNameSpaceID_None, nsGkAtoms::frame, frame);
+    frameElement->GetAttr(nsGkAtoms::frame, frame);
     if (frame.IsEmpty() || frame.EqualsLiteral("none")) {
       aFrame->SetFrameSpacing(0, 0);
       return;
@@ -496,14 +497,14 @@ static void ParseSpacingAttribute(nsMathMLmtableFrame* aFrame,
   ExtractSpacingValues(attrValue, aAttribute, valueList, aFrame, value, value2,
                        fontSizeInflation);
   if (valueList.Length() == 0) {
-    if (frameElement->HasAttr(kNameSpaceID_None, aAttribute)) {
+    if (frameElement->HasAttr(aAttribute)) {
       ReportParseError(aFrame, aAttribute->GetUTF16String(), attrValue.get());
     }
     valueList.AppendElement(value);
   }
   if (aAttribute == nsGkAtoms::framespacing_) {
     if (valueList.Length() == 1) {
-      if (frameElement->HasAttr(kNameSpaceID_None, aAttribute)) {
+      if (frameElement->HasAttr(aAttribute)) {
         ReportParseError(aFrame, aAttribute->GetUTF16String(), attrValue.get());
       }
       valueList.AppendElement(value2);
@@ -682,7 +683,7 @@ nsresult nsMathMLmtableWrapperFrame::AttributeChanged(int32_t aNameSpaceID,
 
   // align - just need to issue a dirty (resize) reflow command
   if (aAttribute == nsGkAtoms::align) {
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::Resize,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::None,
                                   NS_FRAME_IS_DIRTY);
     return NS_OK;
   }
@@ -694,7 +695,8 @@ nsresult nsMathMLmtableWrapperFrame::AttributeChanged(int32_t aNameSpaceID,
     nsMathMLContainerFrame::RebuildAutomaticDataForChildren(GetParent());
     // Need to reflow the parent, not us, because this can actually
     // affect siblings.
-    PresShell()->FrameNeedsReflow(GetParent(), IntrinsicDirty::StyleChange,
+    PresShell()->FrameNeedsReflow(GetParent(),
+                                  IntrinsicDirty::FrameAncestorsAndDescendants,
                                   NS_FRAME_IS_DIRTY);
     return NS_OK;
   }
@@ -724,8 +726,8 @@ nsresult nsMathMLmtableWrapperFrame::AttributeChanged(int32_t aNameSpaceID,
   }
 
   // Explicitly request a reflow in our subtree to pick up any changes
-  presContext->PresShell()->FrameNeedsReflow(this, IntrinsicDirty::StyleChange,
-                                             NS_FRAME_IS_DIRTY);
+  presContext->PresShell()->FrameNeedsReflow(
+      this, IntrinsicDirty::FrameAncestorsAndDescendants, NS_FRAME_IS_DIRTY);
 
   return NS_OK;
 }
@@ -778,7 +780,7 @@ void nsMathMLmtableWrapperFrame::Reflow(nsPresContext* aPresContext,
   // see if the user has set the align attribute on the <mtable>
   int32_t rowIndex = 0;
   eAlign tableAlign = eAlign_axis;
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::align, value);
+  mContent->AsElement()->GetAttr(nsGkAtoms::align, value);
   if (!value.IsEmpty()) {
     ParseAlignAttribute(value, tableAlign, rowIndex);
   }
@@ -880,8 +882,8 @@ NS_IMPL_FRAMEARENA_HELPERS(nsMathMLmtableFrame)
 nsMathMLmtableFrame::~nsMathMLmtableFrame() = default;
 
 void nsMathMLmtableFrame::SetInitialChildList(ChildListID aListID,
-                                              nsFrameList& aChildList) {
-  nsTableFrame::SetInitialChildList(aListID, aChildList);
+                                              nsFrameList&& aChildList) {
+  nsTableFrame::SetInitialChildList(aListID, std::move(aChildList));
   MapAllAttributesIntoCSS(this);
 }
 
@@ -1009,12 +1011,10 @@ nscoord nsMathMLmtableFrame::GetRowSpacing(int32_t aStartRowIndex,
 }
 
 void nsMathMLmtableFrame::SetUseCSSSpacing() {
-  mUseCSSSpacing = !(mContent->AsElement()->HasAttr(kNameSpaceID_None,
-                                                    nsGkAtoms::rowspacing_) ||
+  mUseCSSSpacing = !(mContent->AsElement()->HasAttr(nsGkAtoms::rowspacing_) ||
                      mContent->AsElement()->HasAttr(
                          kNameSpaceID_None, nsGkAtoms::columnspacing_) ||
-                     mContent->AsElement()->HasAttr(kNameSpaceID_None,
-                                                    nsGkAtoms::framespacing_));
+                     mContent->AsElement()->HasAttr(nsGkAtoms::framespacing_));
 }
 
 NS_QUERYFRAME_HEAD(nsMathMLmtableFrame)
@@ -1057,8 +1057,8 @@ nsresult nsMathMLmtrFrame::AttributeChanged(int32_t aNameSpaceID,
   ParseFrameAttribute(this, aAttribute, allowMultiValues);
 
   // Explicitly request a reflow in our subtree to pick up any changes
-  presContext->PresShell()->FrameNeedsReflow(this, IntrinsicDirty::StyleChange,
-                                             NS_FRAME_IS_DIRTY);
+  presContext->PresShell()->FrameNeedsReflow(
+      this, IntrinsicDirty::FrameAncestorsAndDescendants, NS_FRAME_IS_DIRTY);
 
   return NS_OK;
 }

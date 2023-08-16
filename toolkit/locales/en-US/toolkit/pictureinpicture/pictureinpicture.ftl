@@ -4,36 +4,73 @@
 
 pictureinpicture-player-title = Picture-in-Picture
 
+## Note that this uses .tooltip rather than the standard '.title'
+## or '.tooltiptext' -  but it has the same effect. Code in the
+## picture-in-picture window will read and copy this to an in-document
+## DOM node that then shows the tooltip.
+##
 ## Variables:
 ##   $shortcut (String) - Keyboard shortcut to execute the command.
 
-pictureinpicture-pause-cmd =
+pictureinpicture-pause-btn =
   .aria-label = Pause
-  .title = Pause (Spacebar)
-pictureinpicture-play-cmd =
+  .tooltip = Pause (Spacebar)
+pictureinpicture-play-btn =
   .aria-label = Play
-  .title = Play (Spacebar)
+  .tooltip = Play (Spacebar)
 
-pictureinpicture-mute-cmd =
+pictureinpicture-mute-btn =
   .aria-label = Mute
-  .title = Mute ({ $shortcut })
-pictureinpicture-unmute-cmd =
+  .tooltip = Mute ({ $shortcut })
+pictureinpicture-unmute-btn =
   .aria-label = Unmute
-  .title = Unmute ({ $shortcut })
+  .tooltip = Unmute ({ $shortcut })
 
-pictureinpicture-unpip-cmd =
+pictureinpicture-unpip-btn =
   .aria-label = Send back to tab
-  .title = Back to tab
+  .tooltip = Back to tab
 
-pictureinpicture-close-cmd =
+pictureinpicture-close-btn =
   .aria-label = Close
-  .title = Close ({ $shortcut })
+  .tooltip = Close ({ $shortcut })
 
-pictureinpicture-subtitles-cmd =
+pictureinpicture-subtitles-btn =
   .aria-label = Subtitles
-  .title = Subtitles
+  .tooltip = Subtitles
+
+pictureinpicture-fullscreen-btn2 =
+  .aria-label = Fullscreen
+  .tooltip = Fullscreen (double-click or { $shortcut })
+
+pictureinpicture-exit-fullscreen-btn2 =
+  .aria-label = Exit fullscreen
+  .tooltip = Exit fullscreen (double-click or { $shortcut })
 
 ##
+
+# Keyboard shortcut to toggle fullscreen mode when Picture-in-Picture is open.
+pictureinpicture-toggle-fullscreen-shortcut =
+  .key = F
+
+## Note that this uses .tooltip rather than the standard '.title'
+## or '.tooltiptext' -  but it has the same effect. Code in the
+## picture-in-picture window will read and copy this to an in-document
+## DOM node that then shows the tooltip.
+
+pictureinpicture-seekbackward-btn =
+  .aria-label = Backward
+  .tooltip = Backward (←)
+
+pictureinpicture-seekforward-btn =
+  .aria-label = Forward
+  .tooltip = Forward (→)
+
+##
+
+# This string is never displayed on the window. Is intended to be announced by
+# a screen reader whenever a user opens the subtitles settings panel
+# after selecting the subtitles button.
+pictureinpicture-subtitles-panel-accessible = Subtitles settings
 
 pictureinpicture-subtitles-label = Subtitles
 

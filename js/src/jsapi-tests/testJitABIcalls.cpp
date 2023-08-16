@@ -30,10 +30,10 @@
 using namespace js;
 using namespace js::jit;
 
-// This test case relies on VMFUNCTION_LIST, TAIL_CALL_VMFUNCTION_LIST,
-// ABIFUNCTION_LIST, ABIFUNCTION_AND_TYPE_LIST and ABIFUNCTIONSIG_LIST, to
-// create a test case for each function registered, in order to check if the
-// arguments are properly being interpreted after a call from the JIT.
+// This test case relies on VMFUNCTION_LIST, ABIFUNCTION_LIST,
+// ABIFUNCTION_AND_TYPE_LIST and ABIFUNCTIONSIG_LIST, to create a test case for
+// each function registered, in order to check if the arguments are properly
+// being interpreted after a call from the JIT.
 //
 // This test checks that the interpretation of the C++ compiler matches the
 // interpretation of the JIT. It works by generating a call to a function which
@@ -51,8 +51,7 @@ using namespace js::jit;
 #define ABIFUN_TO_ALLFUN(Fun) (#Fun, decltype(&::Fun))
 #define ABIFUN_AND_SIG_TO_ALLFUN(Fun, Sig) (#Fun " as " #Sig, Sig)
 #define ABISIG_TO_ALLFUN(Sig) ("(none) as " #Sig, Sig)
-#define VMFUN_TO_ALLFUN(Name, Fun) (#Fun, decltype(&::Fun))
-#define TC_VMFUN_TO_ALLFUN(Name, Fun, Pop) (#Fun, decltype(&::Fun))
+#define VMFUN_TO_ALLFUN(Name, Fun, Pop...) (#Fun, decltype(&::Fun))
 
 #define APPLY(A, B) A B
 
@@ -65,8 +64,7 @@ using namespace js::jit;
   ABIFUNCTION_LIST(PREFIX##_ABIFUN_TO_ALLFUN)                  \
   ABIFUNCTION_AND_TYPE_LIST(PREFIX##_ABIFUN_AND_SIG_TO_ALLFUN) \
   ABIFUNCTIONSIG_LIST(PREFIX##_ABISIG_TO_ALLFUN)               \
-  VMFUNCTION_LIST(PREFIX##_VMFUN_TO_ALLFUN)                    \
-  TAIL_CALL_VMFUNCTION_LIST(PREFIX##_TC_VMFUN_TO_ALLFUN)
+  VMFUNCTION_LIST(PREFIX##_VMFUN_TO_ALLFUN)
 
 // sizeof(const T&) is not equal to sizeof(const T*), but references are passed
 // as pointers.
@@ -444,7 +442,7 @@ IntTypeOf_t<Type> ConvertToInt(Type v) {
 // Check if the raw values of arguments are equal to the numbers given in the
 // std::integer_sequence given as the first argument.
 template <typename... Args, typename Int, Int... Val>
-NO_ARGS_CHECKS bool CheckArgsEqual(JSAPITest* instance, int lineno,
+NO_ARGS_CHECKS bool CheckArgsEqual(JSAPIRuntimeTest* instance, int lineno,
                                    std::integer_sequence<Int, Val...>,
                                    Args... args) {
   return (instance->checkEqual(ConvertToInt<Args>(args), IntTypeOf_t<Args>(Val),
@@ -475,7 +473,7 @@ struct DefineCheckArgs;
 
 template <typename Res, typename... Args>
 struct DefineCheckArgs<Res (*)(Args...)> {
-  void set_instance(JSAPITest* instance, bool* reportTo) {
+  void set_instance(JSAPIRuntimeTest* instance, bool* reportTo) {
     MOZ_ASSERT((!instance_) != (!instance));
     instance_ = instance;
     MOZ_ASSERT((!reportTo_) != (!reportTo));
@@ -609,17 +607,17 @@ struct DefineCheckArgs<Res (*)(Args...)> {
   // As we are checking specific function signature, we cannot add extra
   // parameters, thus we rely on static variables to pass the value of the
   // instance that we are testing.
-  static JSAPITest* instance_;
+  static JSAPIRuntimeTest* instance_;
   static bool* reportTo_;
 };
 
 template <typename Res, typename... Args>
-JSAPITest* DefineCheckArgs<Res (*)(Args...)>::instance_ = nullptr;
+JSAPIRuntimeTest* DefineCheckArgs<Res (*)(Args...)>::instance_ = nullptr;
 
 template <typename Res, typename... Args>
 bool* DefineCheckArgs<Res (*)(Args...)>::reportTo_ = nullptr;
 
-// This is a child class of JSAPITest, which is used behind the scenes to
+// This is a child class of JSAPIRuntimeTest, which is used behind the scenes to
 // register test cases in jsapi-tests. Each instance of it creates a new test
 // case. This class is specialized with the type of the function to check, and
 // initialized with the name of the function with the given signature.
@@ -628,7 +626,7 @@ bool* DefineCheckArgs<Res (*)(Args...)>::reportTo_ = nullptr;
 // signature and checks that the JIT interpretation of arguments location
 // matches the C++ interpretation. If it differs, the test case will fail.
 template <typename Sig>
-class JitABICall final : public JSAPITest, public DefineCheckArgs<Sig> {
+class JitABICall final : public JSAPIRuntimeTest, public DefineCheckArgs<Sig> {
  public:
   explicit JitABICall(const char* name) : name_(name) { reuseGlobal = true; }
   virtual const char* name() override { return name_; }
@@ -664,6 +662,9 @@ class JitABICall final : public JSAPITest, public DefineCheckArgs<Sig> {
     Register base = t1;
     regs.take(base);
 #elif defined(JS_CODEGEN_LOONG64)
+    Register base = t0;
+    regs.take(base);
+#elif defined(JS_CODEGEN_RISCV64)
     Register base = t0;
     regs.take(base);
 #else
@@ -705,8 +706,6 @@ class JitABICall final : public JSAPITest, public DefineCheckArgs<Sig> {
   APPLY(TEST_INSTANCE, ABISIG_TO_ALLFUN(__VA_ARGS__))
 #define TEST_INSTANCE_VMFUN_TO_ALLFUN(...) \
   APPLY(TEST_INSTANCE, VMFUN_TO_ALLFUN(__VA_ARGS__))
-#define TEST_INSTANCE_TC_VMFUN_TO_ALLFUN(...) \
-  APPLY(TEST_INSTANCE, TC_VMFUN_TO_ALLFUN(__VA_ARGS__))
 
 ALL_FUNCTIONS(TEST_INSTANCE)
 

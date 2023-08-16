@@ -5,7 +5,7 @@
 #}
 
 {%- macro to_ffi_call(func) -%}
-    {%- match func.throws() -%}
+    {%- match func.throws_name() -%}
     {%- when Some with (e) -%}
       {{ ci.namespace()|class_name_rb }}.rust_call_with_error({{ e|class_name_rb }},
     {%- else -%}
@@ -17,7 +17,7 @@
 {%- endmacro -%}
 
 {%- macro to_ffi_call_with_prefix(prefix, func) -%}
-    {%- match func.throws() -%}
+    {%- match func.throws_name() -%}
     {%- when Some with (e) -%}
       {{ ci.namespace()|class_name_rb }}.rust_call_with_error({{ e|class_name_rb }},
     {%- else -%}
@@ -31,7 +31,7 @@
 
 {%- macro _arg_list_ffi_call(func) %}
     {%- for arg in func.arguments() %}
-        {{- arg.name()|lower_rb(arg.type_().borrow()) }}
+        {{- arg.name()|lower_rb(arg.as_type().borrow()) }}
         {%- if !loop.last %},{% endif %}
     {%- endfor %}
 {%- endmacro -%}
@@ -53,7 +53,7 @@
 {%- endmacro %}
 
 {#-
-// Arglist as used in the UniFFILib function declations.
+// Arglist as used in the UniFFILib function declarations.
 // Note unfiltered name but type_ffi filters.
 -#}
 {%- macro arg_list_ffi_decl(func) %}
@@ -62,12 +62,12 @@
 
 {%- macro coerce_args(func) %}
     {%- for arg in func.arguments() %}
-    {{ arg.name() }} = {{ arg.name()|coerce_rb(arg.type_().borrow()) -}}
+    {{ arg.name() }} = {{ arg.name()|coerce_rb(ci.namespace()|class_name_rb, arg.as_type().borrow()) -}}
     {% endfor -%}
 {%- endmacro -%}
 
 {%- macro coerce_args_extra_indent(func) %}
         {%- for arg in func.arguments() %}
-        {{ arg.name() }} = {{ arg.name()|coerce_rb(arg.type_().borrow()) }}
+        {{ arg.name() }} = {{ arg.name()|coerce_rb(ci.namespace()|class_name_rb, arg.as_type().borrow()) }}
         {%- endfor %}
 {%- endmacro -%}

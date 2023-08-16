@@ -11,9 +11,11 @@
 #include "StorageAccessAPIHelper.h"
 
 #include "mozilla/net/HttpBaseChannel.h"
+#include "mozilla/net/UrlClassifierCommon.h"
 #include "mozilla/Telemetry.h"
 #include "nsContentUtils.h"
 #include "nsIChannel.h"
+#include "nsICookieJarSettings.h"
 #include "nsICookieService.h"
 #include "nsIEffectiveTLDService.h"
 #include "nsINavHistoryService.h"
@@ -21,6 +23,7 @@
 #include "nsIScriptError.h"
 #include "nsIURI.h"
 #include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsScriptSecurityManager.h"
 #include "nsToolkitCompsCID.h"
 
@@ -175,7 +178,7 @@ bool ShouldRedirectHeuristicApplyTrackingResource(nsIChannel* aOldChannel,
       classifiedOldChannel->GetFirstPartyClassificationFlags();
 
   if (net::UrlClassifierCommon::IsTrackingClassificationFlag(
-          oldClassificationFlags)) {
+          oldClassificationFlags, NS_UsePrivateBrowsing(aOldChannel))) {
     // This is a redirect from tracking.
     LOG_SPEC2(("Ignoring redirect for %s to %s because it's from tracking ",
                _spec1, _spec2),
@@ -297,16 +300,16 @@ void DynamicFpiRedirectHeuristic(nsIChannel* aOldChannel, nsIURI* aOldURI,
   }
 
   nsAutoCString oldOrigin;
-  rv = oldPrincipal->GetOrigin(oldOrigin);
+  rv = oldPrincipal->GetOriginNoSuffix(oldOrigin);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    LOG(("Can't get the origin from the Principal"));
+    LOG(("Can't get the origin from the old Principal"));
     return;
   }
 
   nsAutoCString newOrigin;
-  rv = nsContentUtils::GetASCIIOrigin(aNewURI, newOrigin);
+  rv = newPrincipal->GetOriginNoSuffix(newOrigin);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    LOG(("Can't get the origin from the URI"));
+    LOG(("Can't get the origin from the new Principal"));
     return;
   }
 
@@ -332,7 +335,7 @@ void DynamicFpiRedirectHeuristic(nsIChannel* aOldChannel, nsIURI* aOldURI,
   RefPtr<StorageAccessAPIHelper::ParentAccessGrantPromise> promise =
       StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
           newPrincipal, oldPrincipal,
-          StorageAccessAPIHelper::StorageAccessPromptChoices::eAllow,
+          StorageAccessAPIHelper::StorageAccessPromptChoices::eAllow, false,
           StaticPrefs::privacy_restrict3rdpartystorage_expiration_visited());
   Unused << promise;
 }

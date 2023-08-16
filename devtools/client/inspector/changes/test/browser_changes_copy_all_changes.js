@@ -26,7 +26,7 @@ div {
 }
 `;
 
-add_task(async function() {
+add_task(async function () {
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
   const { inspector, view: ruleView } = await openRuleView();
   const changesView = selectChangesView(inspector);
@@ -48,6 +48,6 @@ add_task(async function() {
 });
 
 function checkClipboardData(expected) {
-  const actual = SpecialPowers.getClipboardData("text/unicode");
+  const actual = SpecialPowers.getClipboardData("text/plain");
   return decodeURIComponent(actual).trim() === expected.trim();
 }

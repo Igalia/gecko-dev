@@ -9,18 +9,19 @@ origin:
   description: "Cross platform audio library"
   url: https://github.com/mozilla/cubeb
   license: ISC
-  release: commit 708f52cccffe69ed1d65b52903237c990db860a9 (2022-04-13T15:02:09Z).
-  revision: 708f52cccffe69ed1d65b52903237c990db860a9
+  release: 41344b3abb2822bc0ecf6c9bf482ed68a9435493 (2023-07-26T12:02:22Z).
+  revision: 41344b3abb2822bc0ecf6c9bf482ed68a9435493
 
 vendoring:
   url: https://github.com/mozilla/cubeb
   source-hosting: github
   vendor-directory: media/libcubeb
+  patches:
+    - 0001-disable-aaudio-before-android-31.patch
   skip-vendoring-steps:
     - update-moz-build
   exclude:
     - .clang-format
-    - .github
     - CMakeLists.txt
     - Config.cmake.in
     - INSTALL.md
@@ -29,12 +30,12 @@ vendoring:
     - docs
     - scan-build-install.sh
     - src/cubeb-jni-instances.h
-    - src/cubeb-sles.h
     - src/cubeb_assert.h
     - src/cubeb_audiotrack.c
     - src/cubeb_kai.c
     - src/cubeb_osx_run_loop.cpp
     - src/cubeb_pulse.c
+    - src/cubeb_tracing.h
     - subprojects
     - tools
   keep:
@@ -43,8 +44,8 @@ vendoring:
     - include/cubeb_export.h
     - include/moz.build
     - src/cubeb-jni-instances.h
-    - src/cubeb-sles.h
     - src/cubeb_assert.h
     - src/cubeb_osx_run_loop.c
+    - src/cubeb_tracing.h
     - src/moz.build
 

@@ -5,8 +5,8 @@
 
 const {
   ConsoleAPIListener,
-} = require("devtools/server/actors/webconsole/listeners/console-api");
-const EventEmitter = require("devtools/shared/event-emitter");
+} = require("resource://devtools/server/actors/webconsole/listeners/console-api.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const hasMethod = (target, method) =>
   method in target && typeof target[method] === "function";
 
@@ -318,7 +318,7 @@ function onConsoleWarningLogged(warningMessage) {
  *  The tests descriptor object, contains the tests to run.
  */
 const runnable = tests =>
-  async function() {
+  async function () {
     for (const name of Object.keys(tests)) {
       info(name);
       if (tests[name].length === 1) {

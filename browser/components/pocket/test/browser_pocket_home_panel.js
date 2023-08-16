@@ -2,7 +2,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   // The recent saves feature makes an external call to api.getpocket.com.
   // External calls are not permitted in tests.
   // however, we're not testing the content of the panel,
@@ -34,8 +34,8 @@ add_task(async function() {
   let pocketPanel = document.getElementById("customizationui-widget-panel");
   let pocketFrame = pocketPanel.querySelector("browser");
 
-  await ContentTaskUtils.waitForCondition(
-    () => pocketFrame.src.split("?")[0] === "about:pocket-home",
+  await TestUtils.waitForCondition(
+    () => pocketFrame.src.startsWith("about:pocket-home?"),
     "pocket home panel is showing"
   );
 

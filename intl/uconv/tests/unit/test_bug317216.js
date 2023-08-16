@@ -9,7 +9,9 @@
  * UTF16 character and mid-surrogate pair
  */
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 const test = [
   // 0: Valid surrogate pair
@@ -75,14 +77,14 @@ const test = [
   // 10: Lone high surrogate at the end of the input
   [
     "%D8%35%",
-    //    expected: nothing
-    "",
+    //    expected: one replacement char
+    "\uFFFD",
   ],
   // 11: Half code unit at the end of the input
   [
     "%D8",
-    //    expected: nothing
-    "",
+    //    expected: one replacement char
+    "\uFFFD",
   ],
 ];
 

@@ -37,7 +37,7 @@ async function AsyncIteratorClose(iteratorRecord, value) {
   // Step 4.
   const returnMethod = iterator.return;
   // Step 5.
-  if (returnMethod !== undefined && returnMethod !== null) {
+  if (!IsNullOrUndefined(returnMethod)) {
     const result = await callContentFunction(returnMethod, iterator);
     // Step 8.
     if (!IsObject(result)) {
@@ -46,6 +46,28 @@ async function AsyncIteratorClose(iteratorRecord, value) {
   }
   // Step 5b & 9.
   return value;
+}
+
+/* Iterator Helpers proposal 1.1.1 */
+function GetIteratorDirect(obj) {
+  // Step 1.
+  if (!IsObject(obj)) {
+    ThrowTypeError(JSMSG_OBJECT_REQUIRED, DecompileArg(0, obj));
+  }
+
+  // Step 2.
+  const nextMethod = obj.next;
+  // Step 3.
+  if (!IsCallable(nextMethod)) {
+    ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(0, nextMethod));
+  }
+
+  // Steps 4-5.
+  return {
+    iterator: obj,
+    nextMethod,
+    done: false,
+  };
 }
 
 /* Iterator Helpers proposal 1.1.1 */
@@ -74,7 +96,7 @@ function GetAsyncIteratorDirectWrapper(obj) {
     },
     async return(value) {
       const returnMethod = obj.return;
-      if (returnMethod !== undefined && returnMethod !== null) {
+      if (!IsNullOrUndefined(returnMethod)) {
         return callContentFunction(returnMethod, obj, value);
       }
       return { done: true, value };
@@ -468,7 +490,7 @@ async function AsyncIteratorReduce(reducer /*, initialValue*/) {
 
   // Step 3.
   let accumulator;
-  if (arguments.length === 1) {
+  if (ArgumentsLength() === 1) {
     // Step a.
     const next = await callContentFunction(iterated.next, iterated);
     if (!IsObject(next)) {
@@ -482,7 +504,7 @@ async function AsyncIteratorReduce(reducer /*, initialValue*/) {
     accumulator = next.value;
   } else {
     // Step 4.
-    accumulator = arguments[1];
+    accumulator = GetArgument(1);
   }
 
   // Step 5.

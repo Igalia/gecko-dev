@@ -22,9 +22,9 @@ class WindowGlobalParent;
 class OwningByteStringOrObjectOrNull;
 struct SessionStoreZoomData;
 
-using SessionStoreZoom = mozilla::Tuple<float, uint32_t, uint32_t>;
+using SessionStoreZoom = std::tuple<float, uint32_t, uint32_t>;
 using MaybeSessionStoreZoom =
-    mozilla::Maybe<mozilla::Tuple<float, uint32_t, uint32_t>>;
+    mozilla::Maybe<std::tuple<float, uint32_t, uint32_t>>;
 
 class SessionStoreScrollData final : public nsISupports,
                                      public nsWrapperCache,
@@ -35,7 +35,7 @@ class SessionStoreScrollData final : public nsISupports,
   using ChildrenArray = nsTArray<RefPtr<SessionStoreScrollData>>;
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(SessionStoreScrollData)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(SessionStoreScrollData)
   nsISupports* GetParentObject() const;
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;

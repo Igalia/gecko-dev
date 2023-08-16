@@ -6,14 +6,15 @@
 
 #include "FileSystemHashSource.h"
 
+#include "FileSystemParentTypes.h"
 #include "mozilla/dom/FileSystemTypes.h"
 #include "mozilla/dom/data_encoding_ffi_generated.h"
 #include "mozilla/dom/quota/QuotaCommon.h"
 #include "nsComponentManagerUtils.h"
 #include "nsICryptoHash.h"
 #include "nsNetCID.h"
-#include "nsStringFwd.h"
 #include "nsString.h"
+#include "nsStringFwd.h"
 
 namespace mozilla::dom::fs::data {
 
@@ -43,11 +44,10 @@ Result<EntryId, QMResult> FileSystemHashSource::GenerateHash(
   return entryId;
 }
 
-Result<Name, QMResult> FileSystemHashSource::EncodeHash(
-    const EntryId& aEntryId) {
-  MOZ_ASSERT(32u == aEntryId.Length());
+Result<Name, QMResult> FileSystemHashSource::EncodeHash(const FileId& aFileId) {
+  MOZ_ASSERT(32u == aFileId.Value().Length());
   nsCString encoded;
-  base32encode(&aEntryId, &encoded);
+  base32encode(&aFileId.Value(), &encoded);
 
   // We are stripping last four padding characters because
   // it may not be allowed in some file systems.

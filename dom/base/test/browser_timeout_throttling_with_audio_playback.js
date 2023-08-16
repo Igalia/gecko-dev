@@ -1,8 +1,8 @@
 // The tab closing code leaves an uncaught rejection. This test has been
 // whitelisted until the issue is fixed.
 if (!gMultiProcessBrowser) {
-  const { PromiseTestUtils } = ChromeUtils.import(
-    "resource://testing-common/PromiseTestUtils.jsm"
+  const { PromiseTestUtils } = ChromeUtils.importESModule(
+    "resource://testing-common/PromiseTestUtils.sys.mjs"
   );
   PromiseTestUtils.expectUncaughtRejection(/is no longer, usable/);
 }
@@ -35,30 +35,32 @@ async function runTest(url) {
     newTab,
     "true"
   );
-  BrowserTestUtils.loadURI(newBrowser, url);
+  BrowserTestUtils.loadURIString(newBrowser, url);
   await promise;
 
   // Put the tab in the background.
   await BrowserTestUtils.switchTab(gBrowser, currentTab);
 
-  let timeout = await SpecialPowers.spawn(newBrowser, [kDelay], function(
-    delay
-  ) {
-    return new Promise(resolve => {
-      let before = new Date();
-      content.window.setTimeout(function() {
-        let after = new Date();
-        resolve(after - before);
-      }, delay);
-    });
-  });
+  let timeout = await SpecialPowers.spawn(
+    newBrowser,
+    [kDelay],
+    function (delay) {
+      return new Promise(resolve => {
+        let before = new Date();
+        content.window.setTimeout(function () {
+          let after = new Date();
+          resolve(after - before);
+        }, delay);
+      });
+    }
+  );
   ok(timeout <= kMinTimeoutBackground, `Got the correct timeout (${timeout})`);
 
   // All done.
   BrowserTestUtils.removeTab(newTab);
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [["dom.min_background_timeout_value", kMinTimeoutBackground]],
   });

@@ -9,11 +9,13 @@ const TEST_URL = "http://example.com/";
 
 function getServerConnections(browser) {
   ok(browser.isRemoteBrowser, "Content browser is remote");
-  return SpecialPowers.spawn(browser, [], async function() {
-    const { require } = ChromeUtils.import(
-      "resource://devtools/shared/loader/Loader.jsm"
+  return SpecialPowers.spawn(browser, [], async function () {
+    const { require } = ChromeUtils.importESModule(
+      "resource://devtools/shared/loader/Loader.sys.mjs"
     );
-    const { DevToolsServer } = require("devtools/server/devtools-server");
+    const {
+      DevToolsServer,
+    } = require("resource://devtools/server/devtools-server.js");
     if (!DevToolsServer._connections) {
       return 0;
     }
@@ -21,19 +23,19 @@ function getServerConnections(browser) {
   });
 }
 
-const checkServerConnectionCount = async function(browser, expected, msg) {
+const checkServerConnectionCount = async function (browser, expected, msg) {
   const conns = await getServerConnections(browser);
   is(conns.length || 0, expected, "Server connection count: " + msg);
 };
 
-const checkToolbox = async function(tab, location) {
+const checkToolbox = async function (tab, location) {
   const toolbox = await gDevTools.getToolboxForTab(tab);
   ok(!!toolbox, `Toolbox exists ${location}`);
 };
 
 addRDMTask(
   "",
-  async function() {
+  async function () {
     const tab = await addTab(TEST_URL);
 
     const tabsInDifferentProcesses =

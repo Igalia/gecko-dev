@@ -3,7 +3,6 @@
 // Make sure Shield doesn't hit the network.
 user_pref("app.normandy.api_url", "https://localhost/selfsupport-dummy/");
 user_pref("app.update.staging.enabled", false);
-user_pref("app.update.url.android", "");
 user_pref("browser.safebrowsing.blockedURIs.enabled", false);
 user_pref("browser.safebrowsing.downloads.enabled", false);
 user_pref("browser.safebrowsing.downloads.remote.url", "http://127.0.0.1/safebrowsing-dummy/gethash");
@@ -25,8 +24,6 @@ user_pref("browser.startup.page", 0);
 // assumed 980px content.
 user_pref("browser.viewport.desktopWidth", 800);
 user_pref("datareporting.healthreport.uploadEnabled", false);
-// Allow XUL and XBL files to be opened from file:// URIs
-user_pref("dom.allow_XUL_XBL_for_file", true);
 // Don't forcibly kill content processes after a timeout
 user_pref("dom.ipc.tabs.shutdownTimeoutSecs", 0);
 // For mochitests, we're more interested in testing the behavior of in-
@@ -60,8 +57,10 @@ user_pref("layout.interruptible-reflow.enabled", false);
 // can't guarantee taking both reftest snapshots at the same point
 // during the fade.
 user_pref("layout.testing.overlay-scrollbars.always-visible", true);
+// The broken image icon doesn't block the load event and thus there's no easy
+// way to guarantee it's loaded by the time we take the reftest screenshot.
+user_pref("layout.image.eager_broken_image_icon", true);
 user_pref("media.gmp-manager.url.override", "http://localhost/dummy-gmp-manager.xml");
-user_pref("media.openUnsupportedTypeWithExternalApp", false);
 // Reftests load a lot of URLs very quickly. This puts avoidable and
 // unnecessary I/O pressure on the Places DB (measured to be in the
 // gigabytes).

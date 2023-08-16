@@ -3,11 +3,8 @@
 const { Spotlight } = ChromeUtils.import(
   "resource://activity-stream/lib/Spotlight.jsm"
 );
-const { PanelTestProvider } = ChromeUtils.import(
-  "resource://activity-stream/lib/PanelTestProvider.jsm"
-);
-const { BrowserWindowTracker } = ChromeUtils.import(
-  "resource:///modules/BrowserWindowTracker.jsm"
+const { PanelTestProvider } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/PanelTestProvider.sys.mjs"
 );
 
 const { AboutWelcomeTelemetry } = ChromeUtils.import(
@@ -60,31 +57,67 @@ add_task(async function send_spotlight_as_page_in_telemetry() {
 });
 
 add_task(async function send_dismiss_event_telemetry() {
-  const messageId = "PB_FOCUS_PROMO"; // a multistage spotlight promo with dismiss button
+  // Have to turn on AS telemetry for anything to be recorded.
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.newtabpage.activity-stream.telemetry", true]],
+  });
+  registerCleanupFunction(async () => {
+    await SpecialPowers.popPrefEnv();
+  });
+
+  // Let's collect all "messaging-system" pings submitted in this test.
+  let pingContents = [];
+  let onSubmit = () => {
+    pingContents.push({
+      messageId: Glean.messagingSystem.messageId.testGetValue(),
+      event: Glean.messagingSystem.event.testGetValue(),
+    });
+    GleanPings.messagingSystem.testBeforeNextSubmit(onSubmit);
+  };
+  GleanPings.messagingSystem.testBeforeNextSubmit(onSubmit);
+
+  const messageId = "MULTISTAGE_SPOTLIGHT_MESSAGE";
   let message = (await PanelTestProvider.getMessages()).find(
     m => m.id === messageId
   );
   let browser = BrowserWindowTracker.getTopWindow().gBrowser.selectedBrowser;
   let sandbox = sinon.createSandbox();
-  let stub = sandbox.stub(AboutWelcomeTelemetry.prototype, "sendTelemetry");
+  sandbox
+    .stub(AboutWelcomeTelemetry.prototype, "pingCentre")
+    .value({ sendStructuredIngestionPing: () => {} });
+  let spy = sandbox.spy(AboutWelcomeTelemetry.prototype, "sendTelemetry");
   // send without a dispatch function so that default is used
   await showAndWaitForDialog({ message, browser }, async win => {
     await waitForClick("button.dismiss-button", win);
-    win.close();
+    await win.close();
   });
 
   Assert.equal(
-    stub.lastCall.args[0].message_id,
+    spy.lastCall.args[0].message_id,
     messageId,
     "A dismiss event is called with the correct message id"
   );
 
   Assert.equal(
-    stub.lastCall.args[0].event,
+    spy.lastCall.args[0].event,
     "DISMISS",
     "A dismiss event is called with a top level event field with value 'DISMISS'"
   );
 
+  Assert.greater(
+    pingContents.length,
+    0,
+    "Glean 'messaging-system' pings were submitted."
+  );
+  Assert.ok(
+    pingContents.some(ping => {
+      return ping.messageId === messageId && ping.event === "DISMISS";
+    }),
+    "A Glean 'messaging-system' ping was sent for the correct message+event."
+  );
+
+  // Tidy up by removing the self-referential test callback.
+  GleanPings.messagingSystem.testBeforeNextSubmit(() => {});
   sandbox.restore();
 });
 

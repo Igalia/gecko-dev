@@ -26,14 +26,14 @@ GENERATED_HEADER = """
 def data_review(command_context, bug=None):
     # Get the metrics_index's list of metrics indices
     # by loading the index as a module.
-    from os import path
     import sys
+    from os import path
 
     sys.path.append(path.join(path.dirname(__file__), path.pardir))
-    from metrics_index import metrics_yamls
+    from pathlib import Path
 
     from glean_parser import data_review
-    from pathlib import Path
+    from metrics_index import metrics_yamls
 
     return data_review.generate(
         bug, [Path(command_context.topsrcdir) / x for x in metrics_yamls]
@@ -51,15 +51,16 @@ def data_review(command_context, bug=None):
 def perf_data_review(command_context, bug=None):
     # Get the metrics_index's list of metrics indices
     # by loading the index as a module.
-    from os import path
     import sys
+    from os import path
 
     sys.path.append(path.join(path.dirname(__file__), path.pardir))
     from metrics_index import metrics_yamls
 
     sys.path.append(path.dirname(__file__))
-    import perf_data_review
     from pathlib import Path
+
+    import perf_data_review
 
     return perf_data_review.generate(
         bug, [Path(command_context.topsrcdir) / x for x in metrics_yamls]
@@ -75,10 +76,18 @@ def perf_data_review(command_context, bug=None):
 )
 def update_glean_tags(command_context):
     from pathlib import Path
-    import yaml
-    from mozbuild.frontend.reader import BuildReader, EmptyConfig
 
-    config = EmptyConfig(str((Path(__file__).parent / "../../../../").resolve()))
+    import yaml
+    from mozbuild.backend.configenvironment import ConfigEnvironment
+    from mozbuild.frontend.reader import BuildReader
+
+    config = ConfigEnvironment(
+        command_context.topsrcdir,
+        command_context.topobjdir,
+        defines=command_context.defines,
+        substs=command_context.substs,
+    )
+
     reader = BuildReader(config)
     bug_components = set()
     for p in reader.read_topsrcdir():
@@ -152,8 +161,8 @@ def replace_in_file_or_die(path, pattern, replace):
 )
 @CommandArgument("version", help="Glean version to upgrade to")
 def update_glean(command_context, version):
-    from pathlib import Path
     import textwrap
+    from pathlib import Path
 
     topsrcdir = Path(command_context.topsrcdir)
 
@@ -184,23 +193,35 @@ def update_glean(command_context, version):
     )
 
     instructions = f"""
-    Version in files modified. Please run the following commands:
+    We've edited most of the necessary files to require Glean SDK {version}.
+
+    You will have to edit the following files yourself:
+
+        gfx/wr/wr_glyph_rasterizer/Cargo.toml
+
+    Then, to ensure Glean and Firefox's other Rust dependencies are appropriately vendored,
+    please run the following commands:
 
         cargo update -p glean
-        mach vendor rust
+        ./mach vendor rust --ignore-modified
 
-    Vendoring will require re-certification of crates.
-    To do that run
+    `./mach vendor rust` may identify version mismatches.
+    Please consult the Updating the Glean SDK docs for assistance:
+    https://firefox-source-docs.mozilla.org/toolkit/components/glean/dev/updating_sdk.html
 
-        mach cargo vet certify glean {version}
-        mach cargo vet certify glean-core {version}
+    The Glean SDK is already vetted and no additional vetting for it is necessary.
+    To prune the configuration file after vendoring run:
 
-    This will require you to rerun `mach vendor rust` afterwards.
+        ./mach cargo vet prune
 
-    Then run:
+    Then, to update webrender which independently relies on the Glean SDK, run:
 
         cd gfx/wr
         cargo update -p glean
+
+    Then, to ensure all is well, build Firefox and run the FOG tests.
+    Instructions can be found here:
+    https://firefox-source-docs.mozilla.org/toolkit/components/glean/dev/testing.html
     """
 
     print(textwrap.dedent(instructions))

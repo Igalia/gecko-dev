@@ -483,10 +483,11 @@ class HostWebGLContext final : public SupportsWeakPtr {
   }
 
   void BufferSubData(GLenum target, uint64_t dstByteOffset,
-                     const RawBuffer<>& srcData) const {
+                     const RawBuffer<>& srcData,
+                     bool unsynchronized = false) const {
     const auto& range = srcData.Data();
     mContext->BufferSubData(target, dstByteOffset, range.length(),
-                            range.begin().get());
+                            range.begin().get(), unsynchronized);
   }
 
   // -------------------------- Framebuffer Objects --------------------------
@@ -594,7 +595,7 @@ class HostWebGLContext final : public SupportsWeakPtr {
   // ------------------------ Uniforms and attributes ------------------------
 
   void UniformData(uint32_t loc, bool transpose,
-                   const RawBuffer<>& data) const {
+                   const RawBuffer<webgl::UniformDataVal>& data) const {
     mContext->UniformData(loc, transpose, data.Data());
   }
 
@@ -773,6 +774,11 @@ class HostWebGLContext final : public SupportsWeakPtr {
     const auto obj = ById<WebGLQuery>(id);
     if (!obj) return {};
     return mContext->GetQueryParameter(*obj, pname);
+  }
+
+  // WEBGL_provoking_vertex
+  void ProvokingVertex(const webgl::ProvokingVertex mode) const {
+    mContext->ProvokingVertex(mode);
   }
 
   // -------------------------------------------------------------------------

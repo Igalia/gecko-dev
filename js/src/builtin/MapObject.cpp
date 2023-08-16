@@ -19,7 +19,6 @@
 #include "vm/EqualityOperations.h"  // js::SameValue
 #include "vm/GlobalObject.h"
 #include "vm/Interpreter.h"
-#include "vm/Iteration.h"
 #include "vm/JSContext.h"
 #include "vm/JSObject.h"
 #include "vm/SelfHosting.h"
@@ -30,14 +29,13 @@
 #  include "vm/TupleType.h"
 #endif
 
+#include "gc/GCContext-inl.h"
 #include "gc/Marking-inl.h"
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/Interpreter-inl.h"
 #include "vm/NativeObject-inl.h"
 
 using namespace js;
 
-using mozilla::IsNaN;
 using mozilla::NumberEqualsInt32;
 
 /*** HashableValue **********************************************************/
@@ -146,7 +144,7 @@ inline bool SameExtendedPrimitiveType(const PreBarriered<Value>& a,
 }
 #endif
 
-bool HashableValue::operator==(const HashableValue& other) const {
+bool HashableValue::equals(const HashableValue& other) const {
   // Two HashableValues are equal if they have equal bits.
   bool b = (value.asRawBits() == other.value.asRawBits());
 
@@ -173,12 +171,6 @@ bool HashableValue::operator==(const HashableValue& other) const {
   MOZ_ASSERT(same == b);
 #endif
   return b;
-}
-
-HashableValue HashableValue::trace(JSTracer* trc) const {
-  HashableValue hv(*this);
-  TraceEdge(trc, &hv.value, "key");
-  return hv;
 }
 
 /*** MapIterator ************************************************************/
@@ -460,11 +452,12 @@ const JSClassOps MapObject::classOps_ = {
 const ClassSpec MapObject::classSpec_ = {
     GenericCreateConstructor<MapObject::construct, 0, gc::AllocKind::FUNCTION>,
     GenericCreatePrototype<MapObject>,
-    nullptr,
+    MapObject::staticMethods,
     MapObject::staticProperties,
     MapObject::methods,
     MapObject::properties,
-    MapObject::finishInit};
+    MapObject::finishInit,
+};
 
 const JSClass MapObject::class_ = {
     "Map",
@@ -472,17 +465,23 @@ const JSClass MapObject::class_ = {
         JSCLASS_HAS_RESERVED_SLOTS(MapObject::SlotCount) |
         JSCLASS_HAS_CACHED_PROTO(JSProto_Map) | JSCLASS_FOREGROUND_FINALIZE |
         JSCLASS_SKIP_NURSERY_FINALIZE,
-    &MapObject::classOps_, &MapObject::classSpec_};
+    &MapObject::classOps_,
+    &MapObject::classSpec_,
+};
 
 const JSClass MapObject::protoClass_ = {
-    "Map.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_Map), JS_NULL_CLASS_OPS,
-    &MapObject::classSpec_};
+    "Map.prototype",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Map),
+    JS_NULL_CLASS_OPS,
+    &MapObject::classSpec_,
+};
 
 const JSPropertySpec MapObject::properties[] = {
     JS_PSG("size", size, 0),
-    JS_STRING_SYM_PS(toStringTag, "Map", JSPROP_READONLY), JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "Map", JSPROP_READONLY),
+    JS_PS_END,
+};
 
-// clang-format off
 const JSFunctionSpec MapObject::methods[] = {
     JS_INLINABLE_FN("get", get, 1, 0, MapGet),
     JS_INLINABLE_FN("has", has, 1, 0, MapHas),
@@ -496,12 +495,20 @@ const JSFunctionSpec MapObject::methods[] = {
     // @@iterator is re-defined in finishInit so that it has the
     // same identity as |entries|.
     JS_SYM_FN(iterator, entries, 0, 0),
-    JS_FS_END
+    JS_FS_END,
 };
-// clang-format on
 
 const JSPropertySpec MapObject::staticProperties[] = {
-    JS_SELF_HOSTED_SYM_GET(species, "$MapSpecies", 0), JS_PS_END};
+    JS_SELF_HOSTED_SYM_GET(species, "$MapSpecies", 0),
+    JS_PS_END,
+};
+
+const JSFunctionSpec MapObject::staticMethods[] = {
+#ifdef NIGHTLY_BUILD
+    JS_SELF_HOSTED_FN("groupBy", "MapGroupBy", 2, 0),
+#endif
+    JS_FS_END,
+};
 
 /* static */ bool MapObject::finishInit(JSContext* cx, HandleObject ctor,
                                         HandleObject proto) {
@@ -520,27 +527,9 @@ const JSPropertySpec MapObject::staticProperties[] = {
   return NativeDefineDataProperty(cx, nativeProto, iteratorId, entriesFn, 0);
 }
 
-template <class MutableRange>
-static void TraceKey(MutableRange& r, const HashableValue& key, JSTracer* trc) {
-  HashableValue newKey = key.trace(trc);
-
-  if (newKey.get() != key.get()) {
-    // The hash function must take account of the fact that the thing being
-    // hashed may have been moved by GC. This is only an issue for BigInt as for
-    // other types the hash function only uses the bits of the Value.
-    r.rekeyFront(newKey);
-  }
-
-  // Clear newKey to avoid the barrier in ~PreBarriered.
-  newKey.unbarrieredClear();
-}
-
 void MapObject::trace(JSTracer* trc, JSObject* obj) {
   if (ValueMap* map = obj->as<MapObject>().getTableUnchecked()) {
-    for (auto r = map->mutableAll(); !r.empty(); r.popFront()) {
-      TraceKey(r, r.front().key, trc);
-      TraceEdge(trc, &r.front().value, "value");
-    }
+    map->trace(trc);
   }
 }
 
@@ -684,14 +673,14 @@ inline bool MapObject::setWithHashableKey(JSContext* cx, MapObject* obj,
   bool needsPostBarriers = obj->isTenured();
   if (needsPostBarriers) {
     // Use the ValueMap representation which has post barriers.
-    if (!PostWriteBarrier(obj, key.value()) || !table->put(key, value)) {
+    if (!PostWriteBarrier(obj, key.get()) || !table->put(key.get(), value)) {
       ReportOutOfMemory(cx);
       return false;
     }
   } else {
     // Use the PreBarrieredTable representation which does not.
     auto* preBarriedTable = reinterpret_cast<PreBarrieredTable*>(table);
-    if (!preBarriedTable->put(key, value)) {
+    if (!preBarriedTable->put(key.get(), value.get())) {
       ReportOutOfMemory(cx);
       return false;
     }
@@ -1290,7 +1279,8 @@ const ClassSpec SetObject::classSpec_ = {
     SetObject::staticProperties,
     SetObject::methods,
     SetObject::properties,
-    SetObject::finishInit};
+    SetObject::finishInit,
+};
 
 const JSClass SetObject::class_ = {
     "Set",
@@ -1303,14 +1293,18 @@ const JSClass SetObject::class_ = {
 };
 
 const JSClass SetObject::protoClass_ = {
-    "Set.prototype", JSCLASS_HAS_CACHED_PROTO(JSProto_Set), JS_NULL_CLASS_OPS,
-    &SetObject::classSpec_};
+    "Set.prototype",
+    JSCLASS_HAS_CACHED_PROTO(JSProto_Set),
+    JS_NULL_CLASS_OPS,
+    &SetObject::classSpec_,
+};
 
 const JSPropertySpec SetObject::properties[] = {
     JS_PSG("size", size, 0),
-    JS_STRING_SYM_PS(toStringTag, "Set", JSPROP_READONLY), JS_PS_END};
+    JS_STRING_SYM_PS(toStringTag, "Set", JSPROP_READONLY),
+    JS_PS_END,
+};
 
-// clang-format off
 const JSFunctionSpec SetObject::methods[] = {
     JS_INLINABLE_FN("has", has, 1, 0, SetHas),
     JS_FN("add", add, 1, 0),
@@ -1332,12 +1326,14 @@ const JSFunctionSpec SetObject::methods[] = {
     // same identity as |values|.
     JS_FN("keys", values, 0, 0),
     JS_SYM_FN(iterator, values, 0, 0),
-    JS_FS_END
+    JS_FS_END,
 };
 // clang-format on
 
 const JSPropertySpec SetObject::staticProperties[] = {
-    JS_SELF_HOSTED_SYM_GET(species, "$SetSpecies", 0), JS_PS_END};
+    JS_SELF_HOSTED_SYM_GET(species, "$SetSpecies", 0),
+    JS_PS_END,
+};
 
 /* static */ bool SetObject::finishInit(JSContext* cx, HandleObject ctor,
                                         HandleObject proto) {
@@ -1390,7 +1386,8 @@ bool SetObject::add(JSContext* cx, HandleObject obj, HandleValue k) {
     return false;
   }
 
-  if (!PostWriteBarrier(&obj->as<SetObject>(), key.value()) || !set->put(key)) {
+  if (!PostWriteBarrier(&obj->as<SetObject>(), key.get()) ||
+      !set->put(key.get())) {
     ReportOutOfMemory(cx);
     return false;
   }
@@ -1431,9 +1428,7 @@ SetObject* SetObject::create(JSContext* cx,
 void SetObject::trace(JSTracer* trc, JSObject* obj) {
   SetObject* setobj = static_cast<SetObject*>(obj);
   if (ValueSet* set = setobj->getData()) {
-    for (auto r = set->mutableAll(); !r.empty(); r.popFront()) {
-      TraceKey(r, r.front(), trc);
-    }
+    set->trace(trc);
   }
 }
 
@@ -1516,7 +1511,7 @@ bool SetObject::construct(JSContext* cx, unsigned argc, Value* vp) {
         if (!key.setValue(cx, keyVal)) {
           return false;
         }
-        if (!PostWriteBarrier(obj, key.value()) || !set->put(key)) {
+        if (!PostWriteBarrier(obj, key.get()) || !set->put(key.get())) {
           ReportOutOfMemory(cx);
           return false;
         }
@@ -1617,9 +1612,8 @@ bool SetObject::add_impl(JSContext* cx, const CallArgs& args) {
 
   ValueSet& set = extract(args);
   ARG0_KEY(cx, args, key);
-  if (!PostWriteBarrier(&args.thisv().toObject().as<SetObject>(),
-                        key.value()) ||
-      !set.put(key)) {
+  if (!PostWriteBarrier(&args.thisv().toObject().as<SetObject>(), key.get()) ||
+      !set.put(key.get())) {
     ReportOutOfMemory(cx);
     return false;
   }

@@ -10,14 +10,13 @@ const helpers = require("../helpers");
 
 const callExpressionDefinitions = [
   /^loader\.lazyGetter\((?:globalThis|window), "(\w+)"/,
-  /^loader\.lazyImporter\((?:globalThis|window), "(\w+)"/,
   /^loader\.lazyServiceGetter\((?:globalThis|window), "(\w+)"/,
   /^loader\.lazyRequireGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyModuleGetter\((?:globalThis|window), "(\w+)"/,
+  /^ChromeUtils\.defineLazyGetter\((?:globalThis|window), "(\w+)"/,
   /^ChromeUtils\.defineModuleGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyPreferenceGetter\((?:globalThis|window), "(\w+)"/,
-  /^XPCOMUtils\.defineLazyProxy\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyScriptGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineLazyServiceGetter\((?:globalThis|window), "(\w+)"/,
   /^XPCOMUtils\.defineConstant\((?:globalThis|window), "(\w+)"/,
@@ -44,13 +43,13 @@ const callExpressionMultiDefinitions = [
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-lazy-imports-into-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-lazy-imports-into-globals.html",
     },
     messages: {
       rejectLazyImportsIntoGlobals:
         "Non-system modules should not import into globalThis nor window. Prefer a lazy object holder",
     },
+    schema: [],
     type: "suggestion",
   },
 

@@ -12,7 +12,7 @@ use crate::clip::{ClipStore, ClipTree};
 use crate::spatial_tree::SpatialTree;
 use crate::frame_builder::{FrameBuilderConfig};
 use crate::hit_test::{HitTester, HitTestingScene, HitTestingSceneStats};
-use crate::internal_types::{FastHashMap, PlaneSplitter};
+use crate::internal_types::FastHashMap;
 use crate::picture::SurfaceInfo;
 use crate::picture_graph::PictureGraph;
 use crate::prim_store::{PrimitiveStore, PrimitiveStoreStats, PictureIndex, PrimitiveInstance};
@@ -173,9 +173,6 @@ impl SceneProperties {
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 #[derive(Clone)]
 pub struct ScenePipeline {
-    pub pipeline_id: PipelineId,
-    pub viewport_size: LayoutSize,
-    pub background_color: Option<ColorF>,
     pub display_list: DisplayListWithCache,
 }
 
@@ -207,8 +204,6 @@ impl Scene {
         pipeline_id: PipelineId,
         epoch: Epoch,
         display_list: BuiltDisplayList,
-        background_color: Option<ColorF>,
-        viewport_size: LayoutSize,
     ) {
         // Adds a cache to the given display list. If this pipeline already had
         // a display list before, that display list is updated and used instead.
@@ -221,9 +216,6 @@ impl Scene {
         };
 
         let new_pipeline = ScenePipeline {
-            pipeline_id,
-            viewport_size,
-            background_color,
             display_list,
         };
 
@@ -281,7 +273,6 @@ pub struct BuiltScene {
     pub has_root_pipeline: bool,
     pub pipeline_epochs: FastHashMap<PipelineId, Epoch>,
     pub output_rect: DeviceIntRect,
-    pub background_color: Option<ColorF>,
     pub prim_store: PrimitiveStore,
     pub clip_store: ClipStore,
     pub config: FrameBuilderConfig,
@@ -289,7 +280,7 @@ pub struct BuiltScene {
     pub tile_cache_config: TileCacheConfig,
     pub tile_cache_pictures: Vec<PictureIndex>,
     pub picture_graph: PictureGraph,
-    pub plane_splitters: Vec<PlaneSplitter>,
+    pub num_plane_splitters: usize,
     pub prim_instances: Vec<PrimitiveInstance>,
     pub surfaces: Vec<SurfaceInfo>,
     pub clip_tree: ClipTree,
@@ -301,20 +292,18 @@ impl BuiltScene {
             has_root_pipeline: false,
             pipeline_epochs: FastHashMap::default(),
             output_rect: DeviceIntRect::zero(),
-            background_color: None,
             prim_store: PrimitiveStore::new(&PrimitiveStoreStats::empty()),
             clip_store: ClipStore::new(),
             hit_testing_scene: Arc::new(HitTestingScene::new(&HitTestingSceneStats::empty())),
             tile_cache_config: TileCacheConfig::new(0),
             tile_cache_pictures: Vec::new(),
             picture_graph: PictureGraph::new(),
-            plane_splitters: Vec::new(),
+            num_plane_splitters: 0,
             prim_instances: Vec::new(),
             surfaces: Vec::new(),
             clip_tree: ClipTree::new(),
             config: FrameBuilderConfig {
                 default_font_render_mode: FontRenderMode::Mono,
-                dual_source_blending_is_enabled: true,
                 dual_source_blending_is_supported: false,
                 testing: false,
                 gpu_supports_fast_clears: false,
@@ -332,6 +321,7 @@ impl BuiltScene {
                 force_invalidation: false,
                 is_software: false,
                 low_quality_pinch_zoom: false,
+                max_shared_surface_size: 2048,
             },
         }
     }

@@ -35,6 +35,7 @@
 #include "xpc_make_class.h"
 #include "XPCWrapper.h"
 #include "Crypto.h"
+#include "mozilla/Result.h"
 #include "mozilla/dom/AbortControllerBinding.h"
 #include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/BindingCallContext.h"
@@ -59,6 +60,8 @@
 #include "mozilla/dom/InspectorUtilsBinding.h"
 #include "mozilla/dom/MessageChannelBinding.h"
 #include "mozilla/dom/MessagePortBinding.h"
+#include "mozilla/dom/MIDIInputMapBinding.h"
+#include "mozilla/dom/MIDIOutputMapBinding.h"
 #include "mozilla/dom/ModuleLoader.h"
 #include "mozilla/dom/NodeBinding.h"
 #include "mozilla/dom/NodeFilterBinding.h"
@@ -80,7 +83,6 @@
 #include "mozilla/dom/StorageManager.h"
 #include "mozilla/dom/TextDecoderBinding.h"
 #include "mozilla/dom/TextEncoderBinding.h"
-#include "mozilla/dom/UnionConversions.h"
 #include "mozilla/dom/URLBinding.h"
 #include "mozilla/dom/URLSearchParamsBinding.h"
 #include "mozilla/dom/XMLHttpRequest.h"
@@ -89,6 +91,8 @@
 #include "mozilla/dom/XMLSerializerBinding.h"
 #include "mozilla/dom/FormDataBinding.h"
 #include "mozilla/dom/nsCSPContext.h"
+#include "mozilla/ipc/BackgroundUtils.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/DeferredFinalize.h"
 #include "mozilla/ExtensionPolicyService.h"
@@ -98,6 +102,7 @@
 #include "mozilla/StaticPrefs_extensions.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 using namespace JS;
 using namespace JS::loader;
 using namespace xpc;
@@ -105,7 +110,7 @@ using namespace xpc;
 using mozilla::dom::DestroyProtoAndIfaceCache;
 using mozilla::dom::IndexedDatabaseManager;
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(SandboxPrivate)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(SandboxPrivate)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(SandboxPrivate)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
@@ -119,8 +124,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(SandboxPrivate)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mModuleLoader)
   tmp->TraverseObjectsInGlobal(cb);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(SandboxPrivate)
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(SandboxPrivate)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(SandboxPrivate)
@@ -297,23 +300,6 @@ static bool SandboxCreateRTCIdentityProvider(JSContext* cx,
 }
 #endif
 
-static bool SetFetchRequestFromValue(JSContext* cx, RequestOrUSVString& request,
-                                     const MutableHandleValue& requestOrUrl) {
-  RequestOrUSVStringArgument requestHolder(request);
-  bool noMatch = true;
-  if (requestOrUrl.isObject() &&
-      !requestHolder.TrySetToRequest(cx, requestOrUrl, noMatch, false)) {
-    return false;
-  }
-  if (noMatch && !requestHolder.TrySetToUSVString(cx, requestOrUrl, noMatch)) {
-    return false;
-  }
-  if (noMatch) {
-    return false;
-  }
-  return true;
-}
-
 static bool SandboxFetch(JSContext* cx, JS::HandleObject scope,
                          const CallArgs& args) {
   if (args.length() < 1) {
@@ -321,14 +307,13 @@ static bool SandboxFetch(JSContext* cx, JS::HandleObject scope,
     return false;
   }
 
+  BindingCallContext callCx(cx, "fetch");
   RequestOrUSVString request;
-  if (!SetFetchRequestFromValue(cx, request, args[0])) {
-    JS_ReportErrorASCII(cx, "fetch requires a string or Request in argument 1");
+  if (!request.Init(callCx, args[0], "Argument 1")) {
     return false;
   }
   RootedDictionary<dom::RequestInit> options(cx);
-  BindingCallContext callCx(cx, "fetch");
-  if (!options.Init(cx, args.hasDefined(1) ? args[1] : JS::NullHandleValue,
+  if (!options.Init(callCx, args.hasDefined(1) ? args[1] : JS::NullHandleValue,
                     "Argument 2", false)) {
     return false;
   }
@@ -942,6 +927,10 @@ bool xpc::GlobalProperties::Parse(JSContext* cx, JS::HandleObject obj) {
       InspectorUtils = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "MessageChannel")) {
       MessageChannel = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "MIDIInputMap")) {
+      MIDIInputMap = true;
+    } else if (JS_LinearStringEqualsLiteral(nameStr, "MIDIOutputMap")) {
+      MIDIOutputMap = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "Node")) {
       Node = true;
     } else if (JS_LinearStringEqualsLiteral(nameStr, "NodeFilter")) {
@@ -1083,6 +1072,14 @@ bool xpc::GlobalProperties::Define(JSContext* cx, JS::HandleObject obj) {
       (!dom::MessageChannel_Binding::GetConstructorObject(cx) ||
        !dom::MessagePort_Binding::GetConstructorObject(cx)))
     return false;
+
+  if (MIDIInputMap && !dom::MIDIInputMap_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
+
+  if (MIDIOutputMap && !dom::MIDIOutputMap_Binding::GetConstructorObject(cx)) {
+    return false;
+  }
 
   if (Node && !dom::Node_Binding::GetConstructorObject(cx)) {
     return false;
@@ -1421,7 +1418,7 @@ nsresult xpc::CreateSandboxObject(JSContext* cx, MutableHandleValue vp,
           return NS_ERROR_INVALID_ARG;
         }
         const JSClass* unwrappedClass = JS::GetClass(unwrappedProto);
-        useSandboxProxy = IS_WN_CLASS(unwrappedClass) ||
+        useSandboxProxy = unwrappedClass->isWrappedNative() ||
                           mozilla::dom::IsDOMClass(unwrappedClass);
       }
 
@@ -2235,4 +2232,25 @@ ModuleLoaderBase* SandboxPrivate::GetModuleLoader(JSContext* aCx) {
   mModuleLoader = moduleLoader;
 
   return moduleLoader;
+}
+
+mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult>
+SandboxPrivate::GetStorageKey() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  mozilla::ipc::PrincipalInfo principalInfo;
+  nsresult rv = PrincipalToPrincipalInfo(mPrincipal, &principalInfo);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return mozilla::Err(rv);
+  }
+
+  // Block expanded and null principals, let content and system through.
+  if (principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TContentPrincipalInfo &&
+      principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TSystemPrincipalInfo) {
+    return Err(NS_ERROR_DOM_SECURITY_ERR);
+  }
+
+  return std::move(principalInfo);
 }

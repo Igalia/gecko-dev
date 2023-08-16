@@ -8,6 +8,7 @@
 
 #include <algorithm>
 
+#include "mozilla/AntiTrackingUtils.h"
 #include "mozilla/AsyncEventDispatcher.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/ContentBlockingAllowList.h"
@@ -21,6 +22,7 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/BrowserHost.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "mozilla/dom/IdentityCredential.h"
 #include "mozilla/dom/MediaController.h"
 #include "mozilla/dom/WindowGlobalChild.h"
 #include "mozilla/dom/ChromeUtils.h"
@@ -30,6 +32,7 @@
 #include "mozilla/ScopeExit.h"
 #include "mozilla/ServoCSSParser.h"
 #include "mozilla/ServoStyleSet.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Variant.h"
@@ -52,6 +55,7 @@
 #include "nsITransportSecurityInfo.h"
 #include "nsISharePicker.h"
 #include "nsIURIMutator.h"
+#include "nsIWebProgressListener.h"
 
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/DOMExceptionBinding.h"
@@ -449,9 +453,9 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvUpdateDocumentTitle(
     return IPC_OK();
   }
 
-  (new AsyncEventDispatcher(frameElement, u"pagetitlechanged"_ns,
-                            CanBubble::eYes, ChromeOnlyDispatch::eYes))
-      ->RunDOMEventWhenSafe();
+  AsyncEventDispatcher::RunDOMEventWhenSafe(
+      *frameElement, u"pagetitlechanged"_ns, CanBubble::eYes,
+      ChromeOnlyDispatch::eYes);
 
   return IPC_OK();
 }
@@ -972,45 +976,6 @@ void WindowGlobalParent::DrawSnapshotInternal(gfx::CrossProcessPaint* aPaint,
       });
 }
 
-already_AddRefed<Promise> WindowGlobalParent::GetSecurityInfo(
-    ErrorResult& aRv) {
-  RefPtr<BrowserParent> browserParent = GetBrowserParent();
-  if (NS_WARN_IF(!browserParent)) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return nullptr;
-  }
-
-  nsIGlobalObject* global = GetParentObject();
-  RefPtr<Promise> promise = Promise::Create(global, aRv);
-  if (aRv.Failed()) {
-    return nullptr;
-  }
-
-  SendGetSecurityInfo(
-      [promise](Maybe<nsCString>&& aResult) {
-        if (aResult) {
-          nsCOMPtr<nsISupports> infoObj;
-          nsresult rv =
-              NS_DeserializeObject(aResult.value(), getter_AddRefs(infoObj));
-          if (NS_WARN_IF(NS_FAILED(rv))) {
-            promise->MaybeReject(NS_ERROR_FAILURE);
-          }
-          nsCOMPtr<nsITransportSecurityInfo> info = do_QueryInterface(infoObj);
-          if (!info) {
-            promise->MaybeReject(NS_ERROR_FAILURE);
-          }
-          promise->MaybeResolve(info);
-        } else {
-          promise->MaybeResolveWithUndefined();
-        }
-      },
-      [promise](ResponseRejectReason&& aReason) {
-        promise->MaybeReject(NS_ERROR_FAILURE);
-      });
-
-  return promise.forget();
-}
-
 /**
  * Accumulated page use counter data for a given top-level content document.
  */
@@ -1130,6 +1095,13 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
             (" > reporting [%s]",
              nsContentUtils::TruncatedURLForDisplay(mDocumentURI).get()));
 
+    Maybe<nsCString> urlForLogging;
+    const bool dumpCounters = StaticPrefs::dom_use_counters_dump_page();
+    if (dumpCounters) {
+      urlForLogging.emplace(
+          nsContentUtils::TruncatedURLForDisplay(mDocumentURI));
+    }
+
     Telemetry::Accumulate(Telemetry::TOP_LEVEL_CONTENT_DOCUMENTS_DESTROYED, 1);
 
     for (int32_t c = 0; c < eUseCounter_Count; ++c) {
@@ -1140,8 +1112,10 @@ void WindowGlobalParent::FinishAccumulatingPageUseCounters() {
 
       auto id = static_cast<Telemetry::HistogramID>(
           Telemetry::HistogramFirstUseCounter + uc * 2 + 1);
-      MOZ_LOG(gUseCountersLog, LogLevel::Debug,
-              (" > %s\n", Telemetry::GetHistogramName(id)));
+      if (dumpCounters) {
+        printf_stderr("USE_COUNTER_PAGE: %s - %s\n",
+                      Telemetry::GetHistogramName(id), urlForLogging->get());
+      }
       Telemetry::Accumulate(id, 1);
     }
   } else {
@@ -1387,7 +1361,88 @@ mozilla::ipc::IPCResult WindowGlobalParent::RecvReloadWithHttpsOnlyException() {
   return IPC_OK();
 }
 
+IPCResult WindowGlobalParent::RecvDiscoverIdentityCredentialFromExternalSource(
+    const IdentityCredentialRequestOptions& aOptions,
+    const DiscoverIdentityCredentialFromExternalSourceResolver& aResolver) {
+  IdentityCredential::DiscoverFromExternalSourceInMainProcess(
+      DocumentPrincipal(), this->BrowsingContext(), aOptions)
+      ->Then(
+          GetCurrentSerialEventTarget(), __func__,
+          [aResolver](const IPCIdentityCredential& aResult) {
+            return aResolver(Some(aResult));
+          },
+          [aResolver](nsresult aErr) { aResolver(Nothing()); });
+  return IPC_OK();
+}
+
+IPCResult WindowGlobalParent::RecvHasStorageAccessPermission(
+    HasStorageAccessPermissionResolver&& aResolve) {
+  WindowGlobalParent* top = TopWindowContext();
+  if (!top) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+  nsIPrincipal* topPrincipal = top->DocumentPrincipal();
+  nsIPrincipal* principal = DocumentPrincipal();
+
+  nsCOMPtr<nsIPermissionManager> permMgr =
+      components::PermissionManager::Service();
+  if (!permMgr) {
+    return IPC_FAIL(
+        this,
+        "Storage Access Permission: Failed to get Permission Manager service");
+  }
+
+  // Build the permission keys
+  nsAutoCString requestPermissionKey;
+  bool success = AntiTrackingUtils::CreateStoragePermissionKey(
+      principal, requestPermissionKey);
+  if (!success) {
+    return IPC_FAIL(
+        this,
+        "Storage Access Permission: Failed to create top level permission key");
+  }
+
+  nsAutoCString requestFramePermissionKey;
+  success = AntiTrackingUtils::CreateStorageFramePermissionKey(
+      principal, requestFramePermissionKey);
+  if (!success) {
+    return IPC_FAIL(
+        this,
+        "Storage Access Permission: Failed to create frame permission key");
+  }
+
+  // Test the permission
+  uint32_t access = nsIPermissionManager::UNKNOWN_ACTION;
+  nsresult rv = permMgr->TestPermissionFromPrincipal(
+      topPrincipal, requestPermissionKey, &access);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return IPC_FAIL(this,
+                    "Storage Access Permission: Permission Manager failed to "
+                    "test permission");
+  }
+  if (access == nsIPermissionManager::ALLOW_ACTION) {
+    aResolve(true);
+    return IPC_OK();
+  }
+
+  uint32_t frameAccess = nsIPermissionManager::UNKNOWN_ACTION;
+  rv = permMgr->TestPermissionFromPrincipal(
+      topPrincipal, requestFramePermissionKey, &frameAccess);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return IPC_FAIL(this,
+                    "Storage Access Permission: Permission Manager failed to "
+                    "test permission");
+  }
+  aResolve(frameAccess == nsIPermissionManager::ALLOW_ACTION);
+  return IPC_OK();
+}
+
 void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
+  if (GetBrowsingContext()->IsTopContent()) {
+    Telemetry::Accumulate(Telemetry::ORB_DID_EVER_BLOCK_RESPONSE,
+                          mShouldReportHasBlockedOpaqueResponse);
+  }
+
   if (mPageUseCountersWindow) {
     mPageUseCountersWindow->FinishAccumulatingPageUseCounters();
     mPageUseCountersWindow = nullptr;
@@ -1467,7 +1522,6 @@ void WindowGlobalParent::ActorDestroy(ActorDestroyReason aWhy) {
 
         if (mDocumentURI && (net::SchemeIsHTTP(mDocumentURI) ||
                              net::SchemeIsHTTPS(mDocumentURI))) {
-          GetContentBlockingLog()->ReportOrigins();
           GetContentBlockingLog()->ReportEmailTrackingLog(DocumentPrincipal());
         }
       }
@@ -1511,6 +1565,10 @@ void WindowGlobalParent::DidBecomeCurrentWindowGlobal(bool aCurrent) {
     top->mOriginCounter->UpdateSiteOriginsFrom(this,
                                                /* aIncrease = */ aCurrent);
   }
+
+  if (!aCurrent && Fullscreen()) {
+    ExitTopChromeDocumentFullscreen();
+  }
 }
 
 bool WindowGlobalParent::ShouldTrackSiteOriginTelemetry() {
@@ -1537,7 +1595,8 @@ void WindowGlobalParent::AddSecurityState(uint32_t aStateFlags) {
                nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT |
                nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT |
                nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED |
-               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED)) ==
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED |
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED_FIRST)) ==
                  aStateFlags,
              "Invalid flags specified!");
 
@@ -1557,6 +1616,34 @@ bool WindowGlobalParent::HasActivePeerConnections() {
              "mNumOfProcessesWithActivePeerConnections is set only "
              "in the top window context");
   return mNumOfProcessesWithActivePeerConnections > 0;
+}
+
+void WindowGlobalParent::ExitTopChromeDocumentFullscreen() {
+  RefPtr<CanonicalBrowsingContext> chromeTop =
+      BrowsingContext()->TopCrossChromeBoundary();
+  if (Document* chromeDoc = chromeTop->GetDocument()) {
+    Document::ClearPendingFullscreenRequests(chromeDoc);
+    if (chromeDoc->Fullscreen()) {
+      // This only clears the DOM fullscreen, will not exit from browser UI
+      // fullscreen mode.
+      Document::AsyncExitFullscreen(chromeDoc);
+    }
+  }
+}
+
+void WindowGlobalParent::SetShouldReportHasBlockedOpaqueResponse(
+    nsContentPolicyType aContentPolicy) {
+  // It's always okay to block TYPE_BEACON, TYPE_PING and TYPE_CSP_REPORT in
+  // the parent process because content processes can do nothing to their
+  // responses. Hence excluding them from the telemetry as blocking
+  // them have no webcompat concerns.
+  if (aContentPolicy != nsIContentPolicy::TYPE_BEACON &&
+      aContentPolicy != nsIContentPolicy::TYPE_PING &&
+      aContentPolicy != nsIContentPolicy::TYPE_CSP_REPORT) {
+    if (IsTop()) {
+      mShouldReportHasBlockedOpaqueResponse = true;
+    }
+  }
 }
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(WindowGlobalParent, WindowContext,

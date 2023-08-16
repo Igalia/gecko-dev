@@ -2,22 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals, print_function
-
 import os
 import re
 import sys
 from argparse import Namespace
 
-from mozbuild.base import (
-    MachCommandConditions as conditions,
-    MozbuildObject,
-)
-
-from mach.decorators import (
-    Command,
-)
-
+from mach.decorators import Command
+from mozbuild.base import MachCommandConditions as conditions
+from mozbuild.base import MozbuildObject
 
 parser = None
 
@@ -279,8 +271,8 @@ def _run_reftest(command_context, **kwargs):
     reftest.log_manager.enable_unstructured()
     if conditions.is_android(command_context):
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
 
         install = InstallIntent.NO if kwargs.get("no_install") else InstallIntent.YES

@@ -3,8 +3,8 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
@@ -16,7 +16,7 @@ requestLongerTimeout(4);
 // - the iframe dropdown also show the right targets
 // - both are updated accordingly when toggle to parent-process only scope
 
-add_task(async function() {
+add_task(async function () {
   // Forces the Browser Toolbox to open on the console by default
   await pushPref("devtools.browsertoolbox.panel", "webconsole");
   await pushPref("devtools.webconsole.input.context", true);
@@ -31,9 +31,7 @@ add_task(async function() {
     "https://example.com/document-builder.sjs?html=<html><title>Test tab</title></html>"
   );
 
-  const ToolboxTask = await initBrowserToolboxTask({
-    enableBrowserToolboxFission: true,
-  });
+  const ToolboxTask = await initBrowserToolboxTask();
 
   await ToolboxTask.importFunctions({
     waitUntil,

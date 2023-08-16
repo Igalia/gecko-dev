@@ -67,6 +67,15 @@ Touch::Touch(int32_t aIdentifier, LayoutDeviceIntPoint aPoint,
   nsJSContext::LikelyShortLivingObjectCreated();
 }
 
+Touch::Touch(int32_t aIdentifier, LayoutDeviceIntPoint aPoint,
+             LayoutDeviceIntPoint aRadius, float aRotationAngle, float aForce,
+             int32_t aTiltX, int32_t aTiltY, int32_t aTwist)
+    : Touch(aIdentifier, aPoint, aRadius, aRotationAngle, aForce) {
+  tiltX = aTiltX;
+  tiltY = aTiltY;
+  twist = aTwist;
+}
+
 Touch::Touch(const Touch& aOther)
     : mOriginalTarget(aOther.mOriginalTarget),
       mTarget(aOther.mTarget),
@@ -122,7 +131,8 @@ EventTarget* Touch::GetOriginalTarget() const {
 }
 
 int32_t Touch::ScreenX(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return ClientX();
   }
 
@@ -130,7 +140,8 @@ int32_t Touch::ScreenX(CallerType aCallerType) const {
 }
 
 int32_t Touch::ScreenY(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return ClientY();
   }
 
@@ -138,7 +149,8 @@ int32_t Touch::ScreenY(CallerType aCallerType) const {
 }
 
 int32_t Touch::RadiusX(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return 0;
   }
 
@@ -146,7 +158,8 @@ int32_t Touch::RadiusX(CallerType aCallerType) const {
 }
 
 int32_t Touch::RadiusY(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return 0;
   }
 
@@ -154,7 +167,8 @@ int32_t Touch::RadiusY(CallerType aCallerType) const {
 }
 
 float Touch::RotationAngle(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return 0.0f;
   }
 
@@ -162,7 +176,8 @@ float Touch::RotationAngle(CallerType aCallerType) const {
 }
 
 float Touch::Force(CallerType aCallerType) const {
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(aCallerType, GetParentObject(),
+                                                 RFPTarget::TouchEvents)) {
     return 0.0f;
   }
 
@@ -208,7 +223,7 @@ JSObject* Touch::WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) {
 // Parent ourselves to the global of the target. This achieves the desirable
 // effects of parenting to the target, but avoids making the touch inaccessible
 // when the target happens to be NAC and therefore reflected into the XBL scope.
-nsIGlobalObject* Touch::GetParentObject() {
+nsIGlobalObject* Touch::GetParentObject() const {
   if (!mOriginalTarget) {
     return nullptr;
   }

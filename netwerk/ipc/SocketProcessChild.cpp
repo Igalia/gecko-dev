@@ -105,13 +105,12 @@ void CGSShutdownServerConnections();
 };
 #endif
 
-bool SocketProcessChild::Init(base::ProcessId aParentPid,
-                              const char* aParentBuildID,
-                              mozilla::ipc::ScopedPort aPort) {
+bool SocketProcessChild::Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
+                              const char* aParentBuildID) {
   if (NS_WARN_IF(NS_FAILED(nsThreadManager::get().Init()))) {
     return false;
   }
-  if (NS_WARN_IF(!Open(std::move(aPort), aParentPid))) {
+  if (NS_WARN_IF(!aEndpoint.Bind(this))) {
     return false;
   }
   // This must be sent before any IPDL message, which may hit sentinel
@@ -204,6 +203,12 @@ void SocketProcessChild::CleanUp() {
     MutexAutoLock lock(mMutex);
     mBackgroundDataBridgeMap.Clear();
   }
+
+  // Normally, the IPC channel should be already closed at this point, but
+  // sometimes it's not (bug 1788860). When the channel is closed, calling
+  // Close() again is harmless.
+  Close();
+
   NS_ShutdownXPCOM(nullptr);
 
   if (sInitializedJS) {
@@ -290,9 +295,15 @@ mozilla::ipc::IPCResult SocketProcessChild::RecvInitSocketProcessBridgeParent(
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!mSocketProcessBridgeParentMap.Contains(aContentProcessId));
 
-  mSocketProcessBridgeParentMap.InsertOrUpdate(
-      aContentProcessId, MakeRefPtr<SocketProcessBridgeParent>(
-                             aContentProcessId, std::move(aEndpoint)));
+  if (NS_WARN_IF(!aEndpoint.IsValid())) {
+    return IPC_FAIL(this, "invalid endpoint");
+  }
+
+  auto bridge = MakeRefPtr<SocketProcessBridgeParent>(aContentProcessId);
+  MOZ_ALWAYS_TRUE(aEndpoint.Bind(bridge));
+
+  mSocketProcessBridgeParentMap.InsertOrUpdate(aContentProcessId,
+                                               std::move(bridge));
   return IPC_OK();
 }
 
@@ -424,7 +435,7 @@ SocketProcessChild::AllocPAltSvcTransactionChild(
 already_AddRefed<PDNSRequestChild> SocketProcessChild::AllocPDNSRequestChild(
     const nsACString& aHost, const nsACString& aTrrServer, const int32_t& aPort,
     const uint16_t& aType, const OriginAttributes& aOriginAttributes,
-    const uint32_t& aFlags) {
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestHandler> handler = new DNSRequestHandler();
   RefPtr<DNSRequestChild> actor = new DNSRequestChild(handler);
   return actor.forget();
@@ -433,7 +444,8 @@ already_AddRefed<PDNSRequestChild> SocketProcessChild::AllocPDNSRequestChild(
 mozilla::ipc::IPCResult SocketProcessChild::RecvPDNSRequestConstructor(
     PDNSRequestChild* aActor, const nsACString& aHost,
     const nsACString& aTrrServer, const int32_t& aPort, const uint16_t& aType,
-    const OriginAttributes& aOriginAttributes, const uint32_t& aFlags) {
+    const OriginAttributes& aOriginAttributes,
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestChild> actor = static_cast<DNSRequestChild*>(aActor);
   RefPtr<DNSRequestHandler> handler =
       actor->GetDNSRequest()->AsDNSRequestHandler();
@@ -461,8 +473,10 @@ SocketProcessChild::GetAndRemoveDataBridge(uint64_t aChannelId) {
   return mBackgroundDataBridgeMap.Extract(aChannelId);
 }
 
-mozilla::ipc::IPCResult SocketProcessChild::RecvClearSessionCache() {
+mozilla::ipc::IPCResult SocketProcessChild::RecvClearSessionCache(
+    ClearSessionCacheResolver&& aResolve) {
   nsNSSComponent::DoClearSSLExternalAndInternalSessionCache();
+  aResolve(void_t{});
   return IPC_OK();
 }
 

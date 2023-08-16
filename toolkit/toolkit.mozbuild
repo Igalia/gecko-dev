@@ -140,12 +140,12 @@ DIRS += [
     '/toolkit/library',
     '/services',
     '/startupcache',
-    '/js/ductwork/debugger',
     '/other-licenses/snappy',
 ]
 
 if CONFIG['MOZ_WIDGET_TOOLKIT'] == 'gtk':
     DIRS += [
+        '/media/mozva',
         '/toolkit/system/gnome',
     ]
 
@@ -161,7 +161,6 @@ if CONFIG['MOZ_GECKODRIVER'] and not CONFIG['MOZ_TSAN'] and not CONFIG['FUZZING_
     DIRS += ['/testing/geckodriver']
 
 DIRS += [
-    '/tools/quitter',
     '/media/gmp-clearkey/0.1',
 ]
 
@@ -188,7 +187,4 @@ if CONFIG['ENABLE_TESTS']:
 
 if CONFIG['FUZZING']:
     DIRS += ['/tools/fuzzing']
-
-if CONFIG['MOZ_WAYLAND']:
-    DIRS += ['/media/mozva']
 

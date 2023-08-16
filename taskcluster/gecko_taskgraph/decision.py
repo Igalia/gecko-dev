@@ -3,38 +3,46 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-import os
 import json
 import logging
-import time
+import os
 import shutil
 import sys
+import time
 from collections import defaultdict
 
 import yaml
 from redo import retry
+from taskgraph import create
+from taskgraph.create import create_tasks
+
+# TODO: Let standalone taskgraph generate parameters instead of calling internals
+from taskgraph.decision import (
+    _determine_more_accurate_base_ref,
+    _determine_more_accurate_base_rev,
+    _get_env_prefix,
+)
+from taskgraph.generator import TaskGraphGenerator
 from taskgraph.parameters import Parameters
 from taskgraph.taskgraph import TaskGraph
 from taskgraph.util.python_path import find_object
 from taskgraph.util.schema import Schema, validate_schema
 from taskgraph.util.taskcluster import get_artifact
+from taskgraph.util.vcs import get_repository
 from taskgraph.util.yaml import load_yaml
-from voluptuous import Required, Optional, Any
+from voluptuous import Any, Optional, Required
 
-from . import GECKO, create
+from . import GECKO
 from .actions import render_actions_json
-from .create import create_tasks
-from .generator import TaskGraphGenerator
-from .parameters import get_version, get_app_version
+from .parameters import get_app_version, get_version
 from .try_option_syntax import parse_message
-from .util.backstop import is_backstop, BACKSTOP_INDEX
+from .util.backstop import BACKSTOP_INDEX, is_backstop
 from .util.bugbug import push_schedules
 from .util.chunking import resolver
-from .util.hg import get_hg_revision_branch, get_hg_commit_message
+from .util.hg import get_hg_commit_message, get_hg_revision_branch
 from .util.partials import populate_release_history
 from .util.taskcluster import insert_index
 from .util.taskgraph import find_decision_task, find_existing_tasks_from_previous_kinds
-
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +52,7 @@ ARTIFACTS_DIR = "artifacts"
 # See `taskcluster/docs/parameters.rst` for information on parameters.
 PER_PROJECT_PARAMETERS = {
     "try": {
+        "enable_always_target": True,
         "target_tasks_method": "try_tasks",
     },
     "kaios-try": {
@@ -55,8 +64,12 @@ PER_PROJECT_PARAMETERS = {
     "cedar": {
         "target_tasks_method": "default",
     },
+    "holly": {
+        "enable_always_target": True,
+        "target_tasks_method": "holly_tasks",
+    },
     "oak": {
-        "target_tasks_method": "nightly_desktop",
+        "target_tasks_method": "default",
         "release_type": "nightly-oak",
     },
     "graphics": {
@@ -79,19 +92,23 @@ PER_PROJECT_PARAMETERS = {
         "target_tasks_method": "mozilla_release_tasks",
         "release_type": "release",
     },
-    "mozilla-esr91": {
-        "target_tasks_method": "mozilla_esr91_tasks",
-        "release_type": "esr91",
-    },
     "mozilla-esr102": {
         "target_tasks_method": "mozilla_esr102_tasks",
         "release_type": "esr102",
     },
+    "mozilla-esr115": {
+        "target_tasks_method": "mozilla_esr115_tasks",
+        "release_type": "esr115",
+    },
     "pine": {
-        "target_tasks_method": "pine_tasks",
+        "target_tasks_method": "default",
+        "release_type": "nightly-pine",
     },
     "kaios": {
         "target_tasks_method": "kaios_tasks",
+    },
+    "toolchains": {
+        "target_tasks_method": "mozilla_central_tasks",
     },
     # the default parameters are used for projects that do not match above.
     "default": {
@@ -287,6 +304,8 @@ def get_decision_parameters(graph_config, options):
         n: options[n]
         for n in [
             "base_repository",
+            "base_ref",
+            "base_rev",
             "head_repository",
             "head_rev",
             "head_ref",
@@ -303,22 +322,31 @@ def get_decision_parameters(graph_config, options):
         if n in options
     }
 
-    for n in (
-        "comm_base_repository",
-        "comm_head_repository",
-        "comm_head_rev",
-        "comm_head_ref",
-    ):
-        if n in options and options[n] is not None:
-            parameters[n] = options[n]
-
     commit_message = get_hg_commit_message(os.path.join(GECKO, product_dir))
+
+    repo_path = os.getcwd()
+    repo = get_repository(repo_path)
+    parameters["base_ref"] = _determine_more_accurate_base_ref(
+        repo,
+        candidate_base_ref=options.get("base_ref"),
+        head_ref=options.get("head_ref"),
+        base_rev=options.get("base_rev"),
+    )
+
+    parameters["base_rev"] = _determine_more_accurate_base_rev(
+        repo,
+        base_ref=parameters["base_ref"],
+        candidate_base_rev=options.get("base_rev"),
+        head_rev=options.get("head_rev"),
+        env_prefix=_get_env_prefix(graph_config),
+    )
 
     # Define default filter list, as most configurations shouldn't need
     # custom filters.
     parameters["filters"] = [
         "target_tasks_method",
     ]
+    parameters["enable_always_target"] = ["docker-image"]
     parameters["existing_tasks"] = {}
     parameters["do_not_optimize"] = []
     parameters["build_number"] = 1
@@ -522,10 +550,10 @@ def read_artifact(filename):
     path = os.path.join(ARTIFACTS_DIR, filename)
     if filename.endswith(".yml"):
         return load_yaml(path, filename)
-    elif filename.endswith(".json"):
+    if filename.endswith(".json"):
         with open(path) as f:
             return json.load(f)
-    elif filename.endswith(".json.gz"):
+    if filename.endswith(".json.gz"):
         import gzip
 
         with gzip.open(path, "rb") as f:

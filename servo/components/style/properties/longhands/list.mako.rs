@@ -11,6 +11,7 @@ ${helpers.single_keyword(
     "outside inside",
     engines="gecko servo-2013 servo-2020",
     servo_2020_pref="layout.2020.unimplemented",
+    gecko_enum_prefix="StyleListStylePosition",
     animation_value_type="discrete",
     spec="https://drafts.csswg.org/css-lists/#propdef-list-style-position",
     servo_restyle_damage="rebuild_and_reflow",
@@ -71,15 +72,4 @@ ${helpers.predefined_type(
     animation_value_type="discrete",
     spec="https://drafts.csswg.org/css-content/#propdef-quotes",
     servo_restyle_damage="rebuild_and_reflow",
-)}
-
-${helpers.predefined_type(
-    "-moz-image-region",
-    "ClipRectOrAuto",
-    "computed::ClipRectOrAuto::auto()",
-    engines="gecko",
-    gecko_ffi_name="mImageRegion",
-    animation_value_type="ComputedValue",
-    boxed=True,
-    spec="Nonstandard (https://developer.mozilla.org/en-US/docs/Web/CSS/-moz-image-region)",
 )}

@@ -13,9 +13,6 @@ namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(JSProcessActorParent, JSActor, mManager)
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(JSProcessActorParent, JSActor)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
-
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(JSProcessActorParent)
 NS_INTERFACE_MAP_END_INHERITING(JSActor)
 
@@ -46,21 +43,6 @@ void JSProcessActorParent::SendRawMessage(
         nsPrintfCString("Actor '%s' cannot send message '%s' during shutdown.",
                         PromiseFlatCString(aMeta.actorName()).get(),
                         NS_ConvertUTF16toUTF8(aMeta.messageName()).get()));
-    return;
-  }
-
-  size_t length = 0;
-  if (aData) {
-    length += aData->DataLength();
-  }
-  if (aStack) {
-    length += aStack->DataLength();
-  }
-  if (NS_WARN_IF(!AllowMessage(aMeta, length))) {
-    aRv.ThrowDataError(nsPrintfCString(
-        "Actor '%s' cannot send message '%s': message too long.",
-        PromiseFlatCString(aMeta.actorName()).get(),
-        NS_ConvertUTF16toUTF8(aMeta.messageName()).get()));
     return;
   }
 

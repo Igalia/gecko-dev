@@ -8,6 +8,9 @@
 #include "ia2AccessibleHypertext.h"
 
 #include "AccessibleHypertext_i.c"
+#include "AccessibleHypertext2_i.c"
+
+#include "mozilla/a11y/HyperTextAccessibleBase.h"
 
 #include "IUnknownImpl.h"
 

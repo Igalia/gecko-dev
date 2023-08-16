@@ -14,13 +14,18 @@ extern "C" {
 #include "libavcodec/avcodec.h"
 #include "libavutil/avutil.h"
 #include "libavutil/mem.h"
-#ifdef MOZ_WAYLAND_USE_VAAPI
+#ifdef MOZ_WAYLAND_USE_HWDECODE
 #  include "libavutil/hwcontext_vaapi.h"
+#  include "libavutil/hwcontext_drm.h"
 #endif
 #ifdef __GNUC__
 #  pragma GCC visibility pop
 #endif
 }
+
+#if LIBAVCODEC_VERSION_MAJOR >= 58
+#  include "libavcodec/codec_desc.h"
+#endif  // LIBAVCODEC_VERSION_MAJOR >= 58
 
 #if LIBAVCODEC_VERSION_MAJOR < 55
 #  define AV_CODEC_ID_VP6F CODEC_ID_VP6F

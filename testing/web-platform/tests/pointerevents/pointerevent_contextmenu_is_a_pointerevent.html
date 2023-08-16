@@ -8,6 +8,7 @@
 <script src="/resources/testdriver.js"></script>
 <script src="/resources/testdriver-actions.js"></script>
 <script src="/resources/testdriver-vendor.js"></script>
+<script src="pointerevent_support.js"></script>
 
 <input id="target" style="margin: 20px">
 
@@ -19,16 +20,22 @@ let pointerdownPointerId, pointerdownPointerType;
 let inputSource = location.search.substring(1);
 
 target.addEventListener("contextmenu", contextmenuTest.step_func((e)=>{
-  assert_equals(e.constructor, window.PointerEvent, "contextmenu should use a PointerEvent constructor");
-  assert_true(e instanceof PointerEvent, "contextmenu should be a PointerEvent");
-  assert_equals(e.pointerId, pointerdownPointerId, "contextmenu's pointerId should match the pointerId of the pointer event that triggers it");
-    assert_equals(e.pointerType, pointerdownPointerType, "contextmenu's pointerType should match the pointerType of the pointer event that triggers it");
+  assert_equals(e.constructor, window.PointerEvent,
+      "contextmenu should use a PointerEvent constructor");
+  assert_true(e instanceof PointerEvent,
+      "contextmenu should be a PointerEvent");
+  assert_equals(e.pointerId, pointerdownPointerId,
+      "contextmenu's pointerId should match the pointerId of the pointer event that triggers it");
+  assert_equals(e.pointerType, pointerdownPointerType,
+      "contextmenu's pointerType should match the pointerType of the pointer event that triggers it");
+  assert_equals(e.composed, true, "contextmenu.composed should be true");
 }));
 target.addEventListener("pointerdown", e=>{
   pointerdownPointerId = e.pointerId;
   pointerdownPointerType = e.pointerType;
 });
 
+let pointerDownPrevented = preventDefaultPointerdownOnce(target);
 let eventWatcher = new EventWatcher(contextmenuTest, target, ["contextmenu"]);
 let actions = new test_driver.Actions();
 // TODO: We might be able to test "pen" just like "touch".
@@ -38,5 +45,5 @@ actions = actions.addPointer(testPointer, inputSource)
   .pointerDown({sourceName:testPointer, button:actions.ButtonType.RIGHT})
   .pause(inputSource === "touch" ? 1500 : 0, "pointer", {sourceName:testPointer})
   .pointerUp({sourceName:testPointer, button:actions.ButtonType.RIGHT});
-Promise.all([eventWatcher.wait_for("contextmenu"), actions.send()]).then(()=>contextmenuTest.done());
+Promise.all([pointerDownPrevented, eventWatcher.wait_for("contextmenu"), actions.send()]).then(()=>contextmenuTest.done());
 </script>

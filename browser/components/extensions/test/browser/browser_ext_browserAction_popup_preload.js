@@ -23,6 +23,7 @@ add_task(async function testBrowserActionClickCanceled() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
       permissions: ["activeTab"],
@@ -39,7 +40,7 @@ add_task(async function testBrowserActionClickCanceled() {
     Management: {
       global: { browserActionFor },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let ext = WebExtensionPolicy.getByID(extension.id)?.extension;
   let browserAction = browserActionFor(ext);
@@ -158,11 +159,12 @@ add_task(async function testBrowserActionDisabled() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
     },
 
-    background: async function() {
+    background: async function () {
       await browser.browserAction.disable();
       browser.test.sendMessage("browserAction-disabled");
     },
@@ -184,14 +186,15 @@ add_task(async function testBrowserActionDisabled() {
     Management: {
       global: { browserActionFor },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let ext = WebExtensionPolicy.getByID(extension.id)?.extension;
   let browserAction = browserActionFor(ext);
 
   let widget = getBrowserActionWidget(extension).forWindow(window);
+  let button = widget.node.firstElementChild;
 
-  is(widget.node.getAttribute("disabled"), "true", "Button is disabled");
+  is(button.getAttribute("disabled"), "true", "Button is disabled");
   is(browserAction.pendingPopup, null, "Have no pending popup prior to click");
 
   // Test canceled click.
@@ -265,6 +268,7 @@ add_task(async function testBrowserActionTabPopulation() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
       permissions: ["activeTab"],
@@ -272,7 +276,7 @@ add_task(async function testBrowserActionTabPopulation() {
 
     files: {
       "popup.html": scriptPage("popup.js"),
-      "popup.js": function() {
+      "popup.js": function () {
         browser.tabs.query({ active: true, currentWindow: true }).then(tabs => {
           browser.test.assertEq(
             "mochitest index /",
@@ -286,7 +290,10 @@ add_task(async function testBrowserActionTabPopulation() {
   });
 
   let win = await BrowserTestUtils.openNewBrowserWindow();
-  BrowserTestUtils.loadURI(win.gBrowser.selectedBrowser, "http://example.com/");
+  BrowserTestUtils.loadURIString(
+    win.gBrowser.selectedBrowser,
+    "http://example.com/"
+  );
   await BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
 
   // Make sure the mouse isn't hovering over the browserAction widget.
@@ -324,13 +331,14 @@ add_task(async function testClosePopupDuringPreload() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
         browser_style: true,
       },
     },
 
     files: {
       "popup.html": scriptPage("popup.js"),
-      "popup.js": function() {
+      "popup.js": function () {
         browser.test.sendMessage("popup_loaded");
         window.close();
       },
@@ -350,7 +358,7 @@ add_task(async function testClosePopupDuringPreload() {
     Management: {
       global: { browserActionFor },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let ext = WebExtensionPolicy.getByID(extension.id)?.extension;
   let browserAction = browserActionFor(ext);

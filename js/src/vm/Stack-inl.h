@@ -9,23 +9,18 @@
 
 #include "vm/Stack.h"
 
-#include "mozilla/Maybe.h"
 #include "mozilla/PodOperations.h"
 
-#include "builtin/Array.h"  // js::NewDenseEmptyArray
-#include "builtin/ModuleObject.h"
 #include "jit/BaselineFrame.h"
 #include "jit/RematerializedFrame.h"
-#include "js/Debug.h"
 #include "js/friend/StackLimits.h"  // js::ReportOverRecursed
 #include "vm/EnvironmentObject.h"
-#include "vm/FrameIter.h"  // js::FrameIter
+#include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/JSScript.h"
 
 #include "jit/BaselineFrame-inl.h"
 #include "jit/RematerializedFrame-inl.h"  // js::jit::RematerializedFrame::unsetIsDebuggee
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
 
@@ -109,21 +104,6 @@ inline void InterpreterFrame::unaliasedForEachActual(Op op) {
     op(*p);
   }
 }
-
-struct CopyTo {
-  Value* dst;
-  explicit CopyTo(Value* dst) : dst(dst) {}
-  void operator()(const Value& src) { *dst++ = src; }
-};
-
-struct CopyToHeap {
-  GCPtr<Value>* dst;
-  explicit CopyToHeap(GCPtr<Value>* dst) : dst(dst) {}
-  void operator()(const Value& src) {
-    dst->init(src);
-    ++dst;
-  }
-};
 
 inline ArgumentsObject& InterpreterFrame::argsObj() const {
   MOZ_ASSERT(script()->needsArgsObj());

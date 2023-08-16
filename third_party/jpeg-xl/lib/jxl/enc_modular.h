@@ -6,8 +6,6 @@
 #ifndef LIB_JXL_ENC_MODULAR_H_
 #define LIB_JXL_ENC_MODULAR_H_
 
-#include "lib/jxl/aux_out.h"
-#include "lib/jxl/aux_out_fwd.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/dec_modular.h"
 #include "lib/jxl/enc_bit_writer.h"
@@ -20,6 +18,8 @@
 #include "lib/jxl/modular/modular_image.h"
 
 namespace jxl {
+
+struct AuxOut;
 
 class ModularFrameEncoder {
  public:
@@ -63,7 +63,8 @@ class ModularFrameEncoder {
   std::vector<uint8_t> extra_dc_precision;
 
  private:
-  Status PrepareEncoding(ThreadPool* pool, EncoderHeuristics* heuristics,
+  Status PrepareEncoding(const FrameHeader& frame_header, ThreadPool* pool,
+                         EncoderHeuristics* heuristics,
                          AuxOut* aux_out = nullptr);
   Status PrepareStreamParams(const Rect& rect, const CompressParams& cparams,
                              int minShift, int maxShift,

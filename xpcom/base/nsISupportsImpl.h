@@ -9,7 +9,7 @@
 #define nsISupportsImpl_h__
 
 #include "nscore.h"
-#include "nsISupportsBase.h"
+#include "nsISupports.h"
 #include "nsISupportsUtils.h"
 
 #if !defined(XPCOM_GLUE_AVOID_NSPR)
@@ -27,10 +27,9 @@
 #include "mozilla/Likely.h"
 #include "mozilla/MacroArgs.h"
 #include "mozilla/MacroForEach.h"
-#include "mozilla/TypeTraits.h"
 
 #define MOZ_ASSERT_TYPE_OK_FOR_REFCOUNTING(X)            \
-  static_assert(!mozilla::IsDestructible<X>::value,      \
+  static_assert(!std::is_destructible_v<X>,              \
                 "Reference-counted class " #X            \
                 " should not have a public destructor. " \
                 "Make this class's destructor non-public");
@@ -397,6 +396,16 @@ class ThreadSafeAutoRefCnt {
   std::atomic<nsrefcnt> mValue;
 };
 
+namespace detail {
+
+// Type trait indicating whether a given XPCOM interface class may only be
+// implemented by types with threadsafe refcounts. This is specialized for
+// classes with the `rust_sync` annotation within XPIDL-generated header files,
+// and checked within macro-generated QueryInterface implementations.
+template <typename T>
+class InterfaceNeedsThreadSafeRefCnt : public std::false_type {};
+
+}
 }  // namespace mozilla
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -416,6 +425,18 @@ class ThreadSafeAutoRefCnt {
  protected:                                                               \
   nsAutoRefCnt mRefCnt;                                                   \
   NS_DECL_OWNINGTHREAD                                                    \
+ public:
+
+#define NS_DECL_ISUPPORTS_ONEVENTTARGET                                   \
+ public:                                                                  \
+  NS_IMETHOD QueryInterface(REFNSIID aIID, void** aInstancePtr) override; \
+  NS_IMETHOD_(MozExternalRefCountType) AddRef(void) override;             \
+  NS_IMETHOD_(MozExternalRefCountType) Release(void) override;            \
+  using HasThreadSafeRefCnt = std::false_type;                            \
+                                                                          \
+ protected:                                                               \
+  nsAutoRefCnt mRefCnt;                                                   \
+  NS_DECL_OWNINGEVENTTARGET                                               \
  public:
 
 #define NS_DECL_THREADSAFE_ISUPPORTS                                      \
@@ -1106,6 +1127,30 @@ void ProxyDeleteVoid(const char* aRunnableName,
 
 ///////////////////////////////////////////////////////////////////////////////
 
+namespace mozilla::detail {
+
+// Helper which is roughly equivalent to NS_GET_IID, which also performs static
+// assertions that `Class` is allowed to implement the given XPCOM interface.
+//
+// These assertions are done like this to allow them to be used within the
+// `NS_INTERFACE_TABLE_ENTRY` macro, though they are also used in
+// `NS_IMPL_QUERY_BODY`.
+template <typename Class, typename Interface>
+constexpr const nsIID& GetImplementedIID() {
+  if constexpr (mozilla::detail::InterfaceNeedsThreadSafeRefCnt<
+                    Interface>::value) {
+    static_assert(Class::HasThreadSafeRefCnt::value,
+                  "Cannot implement a threadsafe interface with "
+                  "non-threadsafe refcounting!");
+  }
+  return NS_GET_TEMPLATE_IID(Interface);
+}
+
+template <typename Class, typename Interface>
+constexpr const nsIID& kImplementedIID = GetImplementedIID<Class, Interface>();
+
+}
+
 /**
  * There are two ways of implementing QueryInterface, and we use both:
  *
@@ -1142,13 +1187,13 @@ nsresult NS_FASTCALL NS_TableDrivenQI(void* aThis, REFNSIID aIID,
 
 #define NS_INTERFACE_TABLE_BEGIN static const QITableEntry table[] = {
 #define NS_INTERFACE_TABLE_ENTRY(_class, _interface)                        \
-  {&NS_GET_IID(_interface),                                                 \
+  {&mozilla::detail::kImplementedIID<_class, _interface>,                   \
    int32_t(                                                                 \
        reinterpret_cast<char*>(static_cast<_interface*>((_class*)0x1000)) - \
        reinterpret_cast<char*>((_class*)0x1000))},
 
 #define NS_INTERFACE_TABLE_ENTRY_AMBIGUOUS(_class, _interface, _implClass) \
-  {&NS_GET_IID(_interface),                                                \
+  {&mozilla::detail::kImplementedIID<_class, _interface>,                  \
    int32_t(reinterpret_cast<char*>(static_cast<_interface*>(               \
                static_cast<_implClass*>((_class*)0x1000))) -               \
            reinterpret_cast<char*>((_class*)0x1000))},
@@ -1203,31 +1248,35 @@ nsresult NS_FASTCALL NS_TableDrivenQI(void* aThis, REFNSIID aIID,
                  "QueryInterface requires a non-NULL destination!");         \
     nsISupports* foundInterface;
 
-#define NS_IMPL_QUERY_BODY(_interface)               \
-  if (aIID.Equals(NS_GET_IID(_interface)))           \
-    foundInterface = static_cast<_interface*>(this); \
+#define NS_IMPL_QUERY_BODY_IID(_interface)                                   \
+  mozilla::detail::kImplementedIID<std::remove_reference_t<decltype(*this)>, \
+                                   _interface>
+
+#define NS_IMPL_QUERY_BODY(_interface)                 \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface))) \
+    foundInterface = static_cast<_interface*>(this);   \
   else
 
-#define NS_IMPL_QUERY_BODY_CONDITIONAL(_interface, condition) \
-  if ((condition) && aIID.Equals(NS_GET_IID(_interface)))     \
-    foundInterface = static_cast<_interface*>(this);          \
+#define NS_IMPL_QUERY_BODY_CONDITIONAL(_interface, condition)         \
+  if ((condition) && aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface))) \
+    foundInterface = static_cast<_interface*>(this);                  \
   else
 
 #define NS_IMPL_QUERY_BODY_AMBIGUOUS(_interface, _implClass)                   \
-  if (aIID.Equals(NS_GET_IID(_interface)))                                     \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface)))                         \
     foundInterface = static_cast<_interface*>(static_cast<_implClass*>(this)); \
   else
 
 // Use this for querying to concrete class types which cannot be unambiguously
 // cast to nsISupports. See also nsQueryObject.h.
 #define NS_IMPL_QUERY_BODY_CONCRETE(_class)                       \
-  if (aIID.Equals(NS_GET_IID(_class))) {                          \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_class))) {              \
     *aInstancePtr = do_AddRef(static_cast<_class*>(this)).take(); \
     return NS_OK;                                                 \
   } else
 
 #define NS_IMPL_QUERY_BODY_AGGREGATED(_interface, _aggregate) \
-  if (aIID.Equals(NS_GET_IID(_interface)))                    \
+  if (aIID.Equals(NS_IMPL_QUERY_BODY_IID(_interface)))        \
     foundInterface = static_cast<_interface*>(_aggregate);    \
   else
 
@@ -1454,28 +1503,20 @@ constexpr bool ShouldLogInheritedRefcnt =
   NS_IMPL_RELEASE_INHERITED(aClass, aSuper)
 
 /**
- * A macro to declare and implement addref/release for a class that does not
- * need to QI to any interfaces other than the ones its parent class QIs to.
+ * A macro to declare and implement inherited addref/release for a class which
+ * doesn't have or need to override QueryInterface from its base class.
+ *
+ * Note: This macro always overrides the `AddRef` and `Release` methods,
+ * including when refcount logging is disabled, meaning that it will implement
+ * the `AddRef` or `Release` method from another virtual base class.
  */
-#if defined(NS_BUILD_REFCNT_LOGGING)
-#  define NS_INLINE_DECL_REFCOUNTING_INHERITED(Class, Super)  \
-    NS_IMETHOD_(MozExternalRefCountType) AddRef() override {  \
-      NS_IMPL_ADDREF_INHERITED_GUTS(Class, Super);            \
-    }                                                         \
-    NS_IMETHOD_(MozExternalRefCountType) Release() override { \
-      NS_IMPL_RELEASE_INHERITED_GUTS(Class, Super);           \
-    }
-#else  // NS_BUILD_REFCNT_LOGGING
-   // Defining inheriting versions of functions in the refcount logging case has
-   // the side effect of making qualified references to |AddRef| and |Release|
-   // on the containing class unambiguous, if |Super| isn't the only base class
-   // that provides these members.  So if we're building without refcount
-   // logging, |using| in |Super|'s declarations to make the names similarly
-   // unambiguous.
-#  define NS_INLINE_DECL_REFCOUNTING_INHERITED(Class, Super) \
-    using Super::AddRef;                                     \
-    using Super::Release;
-#endif  // NS_BUILD_REFCNT_LOGGING
+#define NS_INLINE_DECL_REFCOUNTING_INHERITED(Class, Super)  \
+  NS_IMETHOD_(MozExternalRefCountType) AddRef() override {  \
+    NS_IMPL_ADDREF_INHERITED_GUTS(Class, Super);            \
+  }                                                         \
+  NS_IMETHOD_(MozExternalRefCountType) Release() override { \
+    NS_IMPL_RELEASE_INHERITED_GUTS(Class, Super);           \
+  }
 
 /*
  * Macro to glue together a QI that starts with an interface table

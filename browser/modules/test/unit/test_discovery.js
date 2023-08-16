@@ -7,13 +7,17 @@
 // ClientID fails without...
 do_get_profile();
 
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
-const { ClientID } = ChromeUtils.import("resource://gre/modules/ClientID.jsm");
-const { Discovery } = ChromeUtils.import("resource:///modules/Discovery.jsm");
-const { ContextualIdentityService } = ChromeUtils.import(
-  "resource://gre/modules/ContextualIdentityService.jsm"
+const { ClientID } = ChromeUtils.importESModule(
+  "resource://gre/modules/ClientID.sys.mjs"
+);
+const { Discovery } = ChromeUtils.importESModule(
+  "resource:///modules/Discovery.sys.mjs"
+);
+const { ContextualIdentityService } = ChromeUtils.importESModule(
+  "resource://gre/modules/ContextualIdentityService.sys.mjs"
 );
 
 const TAAR_COOKIE_NAME = "taarId";

@@ -37,14 +37,14 @@ function loadCert(certFilename, trustString) {
  *
  * @param {Array} expectedNamesForOCSP
  *        An array of nicknames of the certs to be responded to.
- * @param {String} rootCertFileName
+ * @param {string} rootCertFileName
  *        The file name of the root cert. Can begin with ".." to reference
  *        certs in folders other than "test_validity/".
  * @param {Array} intCertFileNames
  *        An array of file names of any intermediate certificates.
- * @param {String} endEntityCertFileName
+ * @param {string} endEntityCertFileName
  *        The file name of the end entity cert.
- * @param {Boolean} expectedResult
+ * @param {boolean} expectedResult
  *        Whether the chain is expected to validate as EV.
  */
 async function doEVTest(
@@ -98,7 +98,7 @@ async function checkEVChains() {
   );
 }
 
-add_task(async function() {
+add_task(async function () {
   Services.prefs.setCharPref("network.dns.localDomains", "www.example.com");
   Services.prefs.setIntPref("security.OCSP.enabled", 1);
 

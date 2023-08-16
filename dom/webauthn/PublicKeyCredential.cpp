@@ -10,12 +10,15 @@
 #include "nsCycleCollectionParticipant.h"
 #include "mozilla/dom/AuthenticatorResponse.h"
 #include "mozilla/HoldDropJSObjects.h"
+#include "mozilla/Preferences.h"
 
-#ifdef OS_WIN
+#ifdef XP_WIN
 #  include "WinWebAuthnManager.h"
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/MozPromise.h"
+#  include "mozilla/java/GeckoResultNatives.h"
 #  include "mozilla/java/WebAuthnTokenManagerWrappers.h"
 #endif
 
@@ -33,6 +36,7 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(PublicKeyCredential,
                                                   Credential)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mResponse)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_ADDREF_INHERITED(PublicKeyCredential, Credential)
@@ -91,7 +95,7 @@ PublicKeyCredential::IsUserVerifyingPlatformAuthenticatorAvailable(
 //
 // If on latest windows, call system APIs, otherwise return false, as we don't
 // have other UVPAAs available at this time.
-#ifdef OS_WIN
+#ifdef XP_WIN
 
   if (WinWebAuthnManager::IsUserVerifyingPlatformAuthenticatorAvailable()) {
     promise->MaybeResolve(true);
@@ -127,14 +131,18 @@ PublicKeyCredential::IsExternalCTAP2SecurityKeySupported(GlobalObject& aGlobal,
     return nullptr;
   }
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   if (WinWebAuthnManager::AreWebAuthNApisAvailable()) {
     promise->MaybeResolve(true);
-    return promise.forget();
+  } else {
+    promise->MaybeResolve(Preferences::GetBool("security.webauthn.ctap2"));
   }
+#elif defined(MOZ_WIDGET_ANDROID)
+  promise->MaybeResolve(false);
+#else
+  promise->MaybeResolve(Preferences::GetBool("security.webauthn.ctap2"));
 #endif
 
-  promise->MaybeResolve(false);
   return promise.forget();
 }
 

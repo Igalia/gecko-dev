@@ -3,8 +3,8 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-const { PermissionTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PermissionTestUtils.jsm"
+const { PermissionTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PermissionTestUtils.sys.mjs"
 );
 
 AddonTestUtils.init(this);
@@ -32,7 +32,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "origins@example.com",
         },
@@ -49,7 +49,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins sitepermission test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "sitepermission@example.com",
         },
@@ -67,7 +67,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins sitepermission public suffix test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "sitepermission-suffix@github.io",
         },
@@ -85,7 +85,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "two_origins@example.com",
         },
@@ -102,7 +102,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "no_origins@example.com",
         },
@@ -118,7 +118,7 @@ server.registerFile(
       manifest_version: 2,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "no_origins@example.com",
         },
@@ -135,7 +135,7 @@ server.registerFile(
       manifest_version: 3,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "v3_origins@example.com",
         },
@@ -152,7 +152,7 @@ server.registerFile(
       manifest_version: 3,
       name: "Install Origins test",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "v3_no_origins@example.com",
         },
@@ -276,18 +276,16 @@ let ssm = Services.scriptSecurityManager;
 const PRINCIPAL_AMO = ssm.createContentPrincipalFromOrigin(
   "https://amo.example.com"
 );
-const PRINCIPAL_COM = ssm.createContentPrincipalFromOrigin(
-  "http://example.com"
-);
+const PRINCIPAL_COM =
+  ssm.createContentPrincipalFromOrigin("http://example.com");
 const SUB_PRINCIPAL_COM = ssm.createContentPrincipalFromOrigin(
   "http://abc.example.com"
 );
 const THIRDPARTY_PRINCIPAL_COM = ssm.createContentPrincipalFromOrigin(
   "http://fake-example.com"
 );
-const PRINCIPAL_ORG = ssm.createContentPrincipalFromOrigin(
-  "http://example.org"
-);
+const PRINCIPAL_ORG =
+  ssm.createContentPrincipalFromOrigin("http://example.org");
 const PRINCIPAL_ETLD = ssm.createContentPrincipalFromOrigin("http://github.io");
 
 const TESTS = [

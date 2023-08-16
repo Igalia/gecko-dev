@@ -1,4 +1,4 @@
-use crate::{encode_section, Encode, Instruction, Section, SectionId, ValType};
+use crate::{encode_section, ConstExpr, Encode, RefType, Section, SectionId};
 
 /// An encoder for the element section.
 ///
@@ -8,25 +8,24 @@ use crate::{encode_section, Encode, Instruction, Section, SectionId, ValType};
 ///
 /// ```
 /// use wasm_encoder::{
-///     Elements, ElementSection, Instruction, Module, TableSection, TableType,
-///     ValType,
+///     Elements, ElementSection, Module, TableSection, TableType,
+///     RefType, ConstExpr
 /// };
 ///
 /// let mut tables = TableSection::new();
 /// tables.table(TableType {
-///     element_type: ValType::FuncRef,
+///     element_type: RefType::FUNCREF,
 ///     minimum: 128,
 ///     maximum: None,
 /// });
 ///
 /// let mut elements = ElementSection::new();
 /// let table_index = 0;
-/// let offset = Instruction::I32Const(42);
-/// let element_type = ValType::FuncRef;
+/// let offset = ConstExpr::i32_const(42);
 /// let functions = Elements::Functions(&[
 ///     // Function indices...
 /// ]);
-/// elements.active(Some(table_index), &offset, element_type, functions);
+/// elements.active(Some(table_index), &offset, functions);
 ///
 /// let mut module = Module::new();
 /// module
@@ -47,16 +46,7 @@ pub enum Elements<'a> {
     /// A sequences of references to functions by their indices.
     Functions(&'a [u32]),
     /// A sequence of reference expressions.
-    Expressions(&'a [Element]),
-}
-
-/// An element in a segment in the element section.
-#[derive(Clone, Copy, Debug)]
-pub enum Element {
-    /// A null reference.
-    Null,
-    /// A `ref.func n`.
-    Func(u32),
+    Expressions(RefType, &'a [ConstExpr]),
 }
 
 /// An element segment's mode.
@@ -79,7 +69,7 @@ pub enum ElementMode<'a> {
         /// bulk memory proposal and can refer to tables with any valid reference type.
         table: Option<u32>,
         /// The offset within the table to place this segment.
-        offset: &'a Instruction<'a>,
+        offset: &'a ConstExpr,
     },
 }
 
@@ -88,8 +78,6 @@ pub enum ElementMode<'a> {
 pub struct ElementSegment<'a> {
     /// The element segment's mode.
     pub mode: ElementMode<'a>,
-    /// The element segment's type.
-    pub element_type: ValType,
     /// This segment's elements.
     pub elements: Elements<'a>,
 }
@@ -113,64 +101,56 @@ impl ElementSection {
     /// Define an element segment.
     pub fn segment<'a>(&mut self, segment: ElementSegment<'a>) -> &mut Self {
         let expr_bit = match segment.elements {
-            Elements::Expressions(_) => 0b100u32,
+            Elements::Expressions(..) => 0b100u32,
             Elements::Functions(_) => 0b000u32,
         };
+        let mut encode_type = false;
         match &segment.mode {
-            ElementMode::Active {
-                table: None,
-                offset,
-            } => {
-                (/* 0x00 | */expr_bit).encode(&mut self.bytes);
-                offset.encode(&mut self.bytes);
-                Instruction::End.encode(&mut self.bytes);
-            }
             ElementMode::Passive => {
                 (0x01 | expr_bit).encode(&mut self.bytes);
-                if expr_bit == 0 {
-                    self.bytes.push(0x00); // elemkind == funcref
-                } else {
-                    segment.element_type.encode(&mut self.bytes);
-                }
+                encode_type = true;
             }
-            ElementMode::Active {
-                table: Some(i),
-                offset,
-            } => {
-                (0x02 | expr_bit).encode(&mut self.bytes);
-                i.encode(&mut self.bytes);
-                offset.encode(&mut self.bytes);
-                Instruction::End.encode(&mut self.bytes);
-                if expr_bit == 0 {
-                    self.bytes.push(0x00); // elemkind == funcref
-                } else {
-                    segment.element_type.encode(&mut self.bytes);
+            ElementMode::Active { table, offset } => {
+                match (table, &segment.elements) {
+                    // If the `table` is not specified then the 0x00 encoding
+                    // can be used with either function indices or expressions
+                    // that have a `funcref` type.
+                    (None, Elements::Functions(_) | Elements::Expressions(RefType::FUNCREF, _)) => {
+                        (/* 0x00 | */expr_bit).encode(&mut self.bytes);
+                    }
+
+                    // ... otherwise fall through for all other expressions here
+                    // with table 0 or an explicitly specified table to the 0x02
+                    // encoding.
+                    (None, Elements::Expressions(..)) | (Some(_), _) => {
+                        (0x02 | expr_bit).encode(&mut self.bytes);
+                        table.unwrap_or(0).encode(&mut self.bytes);
+                        encode_type = true;
+                    }
                 }
+                offset.encode(&mut self.bytes);
             }
             ElementMode::Declared => {
                 (0x03 | expr_bit).encode(&mut self.bytes);
-                if expr_bit == 0 {
-                    self.bytes.push(0x00); // elemkind == funcref
-                } else {
-                    segment.element_type.encode(&mut self.bytes);
-                }
+                encode_type = true;
             }
         }
 
         match segment.elements {
             Elements::Functions(fs) => {
+                if encode_type {
+                    // elemkind == funcref
+                    self.bytes.push(0x00);
+                }
                 fs.encode(&mut self.bytes);
             }
-            Elements::Expressions(e) => {
+            Elements::Expressions(ty, e) => {
+                if encode_type {
+                    ty.encode(&mut self.bytes);
+                }
                 e.len().encode(&mut self.bytes);
                 for expr in e {
-                    match expr {
-                        Element::Func(i) => Instruction::RefFunc(*i).encode(&mut self.bytes),
-                        Element::Null => {
-                            Instruction::RefNull(segment.element_type).encode(&mut self.bytes)
-                        }
-                    }
-                    Instruction::End.encode(&mut self.bytes);
+                    expr.encode(&mut self.bytes);
                 }
             }
         }
@@ -187,8 +167,7 @@ impl ElementSection {
     pub fn active(
         &mut self,
         table_index: Option<u32>,
-        offset: &Instruction<'_>,
-        element_type: ValType,
+        offset: &ConstExpr,
         elements: Elements<'_>,
     ) -> &mut Self {
         self.segment(ElementSegment {
@@ -196,7 +175,6 @@ impl ElementSection {
                 table: table_index,
                 offset,
             },
-            element_type,
             elements,
         })
     }
@@ -204,10 +182,9 @@ impl ElementSection {
     /// Encode a passive element segment.
     ///
     /// Passive segments are part of the bulk memory proposal.
-    pub fn passive<'a>(&mut self, element_type: ValType, elements: Elements<'a>) -> &mut Self {
+    pub fn passive<'a>(&mut self, elements: Elements<'a>) -> &mut Self {
         self.segment(ElementSegment {
             mode: ElementMode::Passive,
-            element_type,
             elements,
         })
     }
@@ -215,10 +192,9 @@ impl ElementSection {
     /// Encode a declared element segment.
     ///
     /// Declared segments are part of the bulk memory proposal.
-    pub fn declared<'a>(&mut self, element_type: ValType, elements: Elements<'a>) -> &mut Self {
+    pub fn declared<'a>(&mut self, elements: Elements<'a>) -> &mut Self {
         self.segment(ElementSegment {
             mode: ElementMode::Declared,
-            element_type,
             elements,
         })
     }

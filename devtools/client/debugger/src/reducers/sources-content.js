@@ -13,7 +13,7 @@ import { pending, fulfilled, rejected } from "../utils/async-value";
 export function initialSourcesContentState() {
   return {
     /**
-     * Text content of all the sources.
+     * Text content of all the original sources.
      * This is large data, so this is only fetched on-demand for a subset of sources.
      * This state attribute is mutable in order to avoid cloning this possibly large map
      * on each new source. But selectors are never based on the map. Instead they only
@@ -21,7 +21,14 @@ export function initialSourcesContentState() {
      *
      * Map(source id => AsyncValue<String>)
      */
-    mutableTextContentMap: new Map(),
+    mutableOriginalSourceTextContentMapBySourceId: new Map(),
+
+    /**
+     * Text content of all the generated sources.
+     *
+     * Map(source actor is => AsyncValue<String>)
+     */
+    mutableGeneratedSourceTextContentMapBySourceActorId: new Map(),
 
     /**
      * Incremental number that is bumped each time we navigate to a new page.
@@ -35,14 +42,20 @@ export function initialSourcesContentState() {
 
 function update(state = initialSourcesContentState(), action) {
   switch (action.type) {
-    case "LOAD_SOURCE_TEXT":
+    case "LOAD_ORIGINAL_SOURCE_TEXT":
+      if (!action.source) {
+        throw new Error("Missing source");
+      }
       return updateSourceTextContent(state, action);
 
-    case "NAVIGATE":
-      return {
-        ...initialSourcesContentState(),
-        epoch: state.epoch + 1,
-      };
+    case "LOAD_GENERATED_SOURCE_TEXT":
+      if (!action.sourceActor) {
+        throw new Error("Missing source actor.");
+      }
+      return updateSourceTextContent(state, action);
+
+    case "REMOVE_THREAD":
+      return removeThread(state, action);
   }
 
   return state;
@@ -76,11 +89,51 @@ function updateSourceTextContent(state, action) {
     });
   }
 
-  state.mutableTextContentMap.set(action.sourceId, content);
+  if (action.source && action.sourceActor) {
+    throw new Error(
+      "Both the source and the source actor should not exist at the same time"
+    );
+  }
+
+  if (action.source) {
+    state.mutableOriginalSourceTextContentMapBySourceId.set(
+      action.source.id,
+      content
+    );
+  }
+
+  if (action.sourceActor) {
+    state.mutableGeneratedSourceTextContentMapBySourceActorId.set(
+      action.sourceActor.id,
+      content
+    );
+  }
 
   return {
     ...state,
   };
+}
+
+function removeThread(state, action) {
+  const originalSizeBefore =
+    state.mutableOriginalSourceTextContentMapBySourceId.size;
+  for (const source of action.sources) {
+    state.mutableOriginalSourceTextContentMapBySourceId.delete(source.id);
+  }
+  const generatedSizeBefore =
+    state.mutableGeneratedSourceTextContentMapBySourceActorId.size;
+  for (const actor of action.actors) {
+    state.mutableGeneratedSourceTextContentMapBySourceActorId.delete(actor.id);
+  }
+  if (
+    originalSizeBefore !=
+      state.mutableOriginalSourceTextContentMapBySourceId.size ||
+    generatedSizeBefore !=
+      state.mutableGeneratedSourceTextContentMapBySourceActorId.size
+  ) {
+    return { ...state };
+  }
+  return state;
 }
 
 export default update;

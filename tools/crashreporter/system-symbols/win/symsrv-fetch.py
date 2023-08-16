@@ -24,30 +24,27 @@
 # The script also depends on having write access to the directory it is
 # installed in, to write the skiplist text file.
 
+import argparse
+import asyncio
+import logging
+import os
+import shutil
+import zipfile
+from collections import defaultdict
+from tempfile import mkdtemp
+from urllib.parse import quote, urljoin
+
 from aiofile import AIOFile, LineReader
 from aiohttp import ClientSession, ClientTimeout
 from aiohttp.connector import TCPConnector
-import argparse
-import asyncio
-import os
-import shutil
-import logging
-from collections import defaultdict
-from tempfile import mkdtemp
-from urllib.parse import urljoin
-from urllib.parse import quote
-import zipfile
-
 
 # Just hardcoded here
 MICROSOFT_SYMBOL_SERVER = "https://msdl.microsoft.com/download/symbols/"
 USER_AGENT = "Microsoft-Symbol-Server/6.3.0.0"
-MOZILLA_SYMBOL_SERVER = (
-    "https://s3-us-west-2.amazonaws.com/org.mozilla.crash-stats.symbols-public/v1/"
-)
+MOZILLA_SYMBOL_SERVER = "https://symbols.mozilla.org/"
 MISSING_SYMBOLS_URL = "https://symbols.mozilla.org/missingsymbols.csv?microsoft=only"
 HEADERS = {"User-Agent": USER_AGENT}
-SYM_SRV = "SRV*{0}*https://msdl.microsoft.com/download/symbols;SRV*{0}*https://software.intel.com/sites/downloads/symbols;SRV*{0}*https://download.amd.com/dir/bin;SRV*{0}*https://driver-symbols.nvidia.com"
+SYM_SRV = "SRV*{0}*https://msdl.microsoft.com/download/symbols;SRV*{0}*https://software.intel.com/sites/downloads/symbols;SRV*{0}*https://download.amd.com/dir/bin;SRV*{0}*https://driver-symbols.nvidia.com"  # noqa
 TIMEOUT = 7200
 RETRIES = 5
 
@@ -273,12 +270,12 @@ async def dump_module(
 
     if has_code:
         cmd = (
-            f"{dump_syms} {code_file} --code-id {code_id} --check-cfi "
+            f"{dump_syms} {code_file} --code-id {code_id} --check-cfi --inlines "
             f"--store {output} --symbol-server '{sym_srv}' --verbose error"
         )
     else:
         cmd = (
-            f"{dump_syms} {filename} --debug-id {debug_id} --check-cfi "
+            f"{dump_syms} {filename} --debug-id {debug_id} --check-cfi --inlines "
             f"--store {output} --symbol-server '{sym_srv}' --verbose error"
         )
 
@@ -517,7 +514,7 @@ def main():
         )
 
     log.info(
-        f"{stats_collect['is_there']} already present, {stats_skipped['ignorelist']} in ignored list, "
+        f"{stats_collect['is_there']} already present, {stats_skipped['ignorelist']} in ignored list, "  # noqa
         f"{stats_skipped['skiplist']} skipped, {stats_collect['no_pdb']} not found, "
         f"{stats_dump['dump_error']} processed with errors, "
         f"{stats_dump['no_bin']} processed but with no binaries (x86_64)"

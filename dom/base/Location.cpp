@@ -81,14 +81,10 @@ nsresult Location::GetURI(nsIURI** aURI, bool aGetInnermostURI) {
     return NS_OK;
   }
 
-  nsresult rv;
-  nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(docShell, &rv));
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  nsIWebNavigation* webNav = nsDocShell::Cast(docShell);
 
   nsCOMPtr<nsIURI> uri;
-  rv = webNav->GetCurrentURI(getter_AddRefs(uri));
+  nsresult rv = webNav->GetCurrentURI(getter_AddRefs(uri));
   NS_ENSURE_SUCCESS(rv, rv);
 
   // It is valid for docshell to return a null URI. Don't try to fixup
@@ -295,7 +291,7 @@ void Location::GetOrigin(nsAString& aOrigin, nsIPrincipal& aSubjectPrincipal,
   }
 
   nsAutoString origin;
-  aRv = nsContentUtils::GetUTFOrigin(uri, origin);
+  aRv = nsContentUtils::GetWebExposedOriginSerialization(uri, origin);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
@@ -532,16 +528,8 @@ void Location::SetSearch(const nsAString& aSearch,
     return;
   }
 
-  if (Document* doc = GetEntryDocument()) {
-    aRv = NS_MutateURI(uri)
-              .SetQueryWithEncoding(NS_ConvertUTF16toUTF8(aSearch),
-                                    doc->GetDocumentCharacterSet())
-              .Finalize(uri);
-  } else {
-    aRv = NS_MutateURI(uri)
-              .SetQuery(NS_ConvertUTF16toUTF8(aSearch))
-              .Finalize(uri);
-  }
+  aRv =
+      NS_MutateURI(uri).SetQuery(NS_ConvertUTF16toUTF8(aSearch)).Finalize(uri);
   if (NS_WARN_IF(aRv.Failed())) {
     return;
   }
@@ -641,11 +629,11 @@ bool Location::CallerSubsumes(nsIPrincipal* aSubjectPrincipal) {
   // principal of the Location object itself.  This is why we need this check
   // even though we only allow limited cross-origin access to Location objects
   // in general.
-  nsCOMPtr<nsPIDOMWindowOuter> outer = bc->GetDOMWindow();
+  nsPIDOMWindowOuter* outer = bc->GetDOMWindow();
   MOZ_DIAGNOSTIC_ASSERT(outer);
   if (MOZ_UNLIKELY(!outer)) return false;
 
-  nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(outer);
+  nsIScriptObjectPrincipal* sop = nsGlobalWindowOuter::Cast(outer);
   bool subsumes = false;
   nsresult rv = aSubjectPrincipal->SubsumesConsideringDomain(
       sop->GetPrincipal(), &subsumes);

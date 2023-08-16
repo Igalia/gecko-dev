@@ -30,10 +30,9 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
                             mozilla::ErrorResult& aError) override;
 
   // nsIScriptElement
-  virtual bool GetScriptType(nsAString& type) override;
-  virtual void GetScriptText(nsAString& text) override;
+  virtual void GetScriptText(nsAString& text) const override;
   virtual void GetScriptCharset(nsAString& charset) override;
-  virtual void FreezeExecutionAttrs(Document* aOwnerDoc) override;
+  virtual void FreezeExecutionAttrs(const Document* aOwnerDoc) override;
   virtual CORSMode GetCORSMode() const override;
   virtual mozilla::dom::ReferrerPolicy GetReferrerPolicy() override;
 
@@ -47,14 +46,14 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
   virtual nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
 
   // Element
-  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aMaybeScriptedPrincipal,
-                                bool aNotify) override;
+  virtual void AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                            const nsAttrValue* aValue,
+                            const nsAttrValue* aOldValue,
+                            nsIPrincipal* aMaybeScriptedPrincipal,
+                            bool aNotify) override;
 
   // WebIDL
-  void GetText(nsAString& aValue, ErrorResult& aRv);
+  void GetText(nsAString& aValue, ErrorResult& aRv) const;
 
   void SetText(const nsAString& aValue, ErrorResult& aRv);
 
@@ -139,6 +138,9 @@ class HTMLScriptElement final : public nsGenericHTMLElement,
 
   virtual JSObject* WrapNode(JSContext* aCx,
                              JS::Handle<JSObject*> aGivenProto) override;
+
+  // nsIScriptElement
+  nsIContent* GetAsContent() override { return this; }
 
   // ScriptElement
   virtual bool HasScriptContent() override;

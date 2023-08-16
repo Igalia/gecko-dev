@@ -6,10 +6,15 @@
 
 #include "Fetch.h"
 
+#include "js/RootingAPI.h"
 #include "js/Value.h"
 #include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/ipc/BackgroundChild.h"
+#include "mozilla/ipc/PBackgroundChild.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
+#include "mozilla/ipc/IPCStreamUtils.h"
 #include "nsIGlobalObject.h"
 
 #include "nsDOMString.h"
@@ -40,6 +45,7 @@
 #include "mozilla/net/CookieJarSettings.h"
 
 #include "BodyExtractor.h"
+#include "FetchChild.h"
 #include "FetchObserver.h"
 #include "InternalRequest.h"
 #include "InternalResponse.h"
@@ -53,19 +59,25 @@ namespace mozilla::dom {
 
 namespace {
 
+// Step 17.2.1.2 and 17.2.2 of
+// https://fetch.spec.whatwg.org/#concept-http-network-fetch
+// If stream is readable, then error stream with ...
 void AbortStream(JSContext* aCx, ReadableStream* aReadableStream,
-                 ErrorResult& aRv) {
+                 ErrorResult& aRv, JS::Handle<JS::Value> aReasonDetails) {
   if (aReadableStream->State() != ReadableStream::ReaderState::Readable) {
     return;
   }
 
-  RefPtr<DOMException> e = DOMException::Create(NS_ERROR_DOM_ABORT_ERR);
-  JS::Rooted<JS::Value> value(aCx);
-  if (!GetOrCreateDOMReflector(aCx, e, &value)) {
-    return;
+  JS::Rooted<JS::Value> value(aCx, aReasonDetails);
+
+  if (aReasonDetails.isUndefined()) {
+    RefPtr<DOMException> e = DOMException::Create(NS_ERROR_DOM_ABORT_ERR);
+    if (!GetOrCreateDOMReflector(aCx, e, &value)) {
+      return;
+    }
   }
 
-  ReadableStreamError(aCx, aReadableStream, value, aRv);
+  aReadableStream->ErrorNative(aCx, value, aRv);
 }
 
 }  // namespace
@@ -280,7 +292,8 @@ class WorkerFetchResolver final : public FetchDriverObserver {
   void OnResponseAvailableInternal(
       SafeRefPtr<InternalResponse> aResponse) override;
 
-  void OnResponseEnd(FetchDriverObserver::EndReason aReason) override;
+  void OnResponseEnd(FetchDriverObserver::EndReason aReason,
+                     JS::Handle<JS::Value> aReasonDetails) override;
 
   bool NeedOnDataAvailable() override;
 
@@ -356,9 +369,14 @@ class MainThreadFetchResolver final : public FetchDriverObserver {
 
   void SetLoadGroup(nsILoadGroup* aLoadGroup) { mLoadGroup = aLoadGroup; }
 
-  void OnResponseEnd(FetchDriverObserver::EndReason aReason) override {
+  void OnResponseEnd(FetchDriverObserver::EndReason aReason,
+                     JS::Handle<JS::Value> aReasonDetails) override {
     if (aReason == eAborted) {
-      mPromise->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
+      if (!aReasonDetails.isUndefined()) {
+        mPromise->MaybeReject(aReasonDetails);
+      } else {
+        mPromise->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
+      }
     }
 
     mFetchObserver = nullptr;
@@ -486,12 +504,39 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
   }
 
   SafeRefPtr<InternalRequest> r = request->GetInternalRequest();
+
+  // Restore information of InterceptedHttpChannel if they are passed with the
+  // Request. Since Request::Constructor would not copy these members.
+  if (aInput.IsRequest()) {
+    RefPtr<Request> inputReq = &aInput.GetAsRequest();
+    SafeRefPtr<InternalRequest> inputInReq = inputReq->GetInternalRequest();
+    if (inputInReq->GetInterceptionTriggeringPrincipalInfo()) {
+      r->SetInterceptionContentPolicyType(
+          inputInReq->InterceptionContentPolicyType());
+      r->SetInterceptionTriggeringPrincipalInfo(
+          MakeUnique<mozilla::ipc::PrincipalInfo>(
+              *(inputInReq->GetInterceptionTriggeringPrincipalInfo().get())));
+      if (!inputInReq->InterceptionRedirectChain().IsEmpty()) {
+        r->SetInterceptionRedirectChain(
+            inputInReq->InterceptionRedirectChain());
+      }
+      r->SetInterceptionFromThirdParty(
+          inputInReq->InterceptionFromThirdParty());
+    }
+  }
+
   RefPtr<AbortSignalImpl> signalImpl = request->GetSignalImpl();
 
   if (signalImpl && signalImpl->Aborted()) {
     // Already aborted signal rejects immediately.
-    aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-    return nullptr;
+    JS::Rooted<JS::Value> reason(cx, signalImpl->RawReason());
+    if (reason.get().isUndefined()) {
+      aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
+      return nullptr;
+    }
+
+    p->MaybeReject(reason);
+    return p.forget();
   }
 
   JS::Realm* realm = JS::GetCurrentRealmOrNull(cx);
@@ -562,6 +607,66 @@ already_AddRefed<Promise> FetchRequest(nsIGlobalObject* aGlobal,
       r->SetSkipServiceWorker();
     }
 
+    // PFetch gives no benefit for the fetch in the parent process.
+    // Dispatch fetch to the parent process main thread directly for that case.
+    // For child process, dispatch fetch op to the parent.
+    if (StaticPrefs::dom_workers_pFetch_enabled() && !XRE_IsParentProcess()) {
+      RefPtr<FetchChild> actor =
+          FetchChild::Create(worker, p, signalImpl, observer);
+      if (!actor) {
+        NS_WARNING("Could not keep the worker alive.");
+        aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
+        return nullptr;
+      }
+
+      Maybe<ClientInfo> clientInfo(worker->GlobalScope()->GetClientInfo());
+      if (clientInfo.isNothing()) {
+        aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
+        return nullptr;
+      }
+
+      auto* backgroundChild =
+          mozilla::ipc::BackgroundChild::GetOrCreateForCurrentThread();
+      Unused << NS_WARN_IF(!backgroundChild->SendPFetchConstructor(actor));
+
+      FetchOpArgs ipcArgs;
+
+      ipcArgs.request() = IPCInternalRequest();
+      r->ToIPCInternalRequest(&(ipcArgs.request()), backgroundChild);
+
+      ipcArgs.principalInfo() = worker->GetPrincipalInfo();
+      ipcArgs.clientInfo() = clientInfo.ref().ToIPC();
+      if (worker->GetBaseURI()) {
+        worker->GetBaseURI()->GetAsciiSpec(ipcArgs.workerScript());
+      }
+      if (worker->GlobalScope()->GetController().isSome()) {
+        ipcArgs.controller() =
+            Some(worker->GlobalScope()->GetController().ref().ToIPC());
+      }
+      if (worker->CookieJarSettings()) {
+        ipcArgs.cookieJarSettings() = Some(worker->CookieJarSettingsArgs());
+      }
+      if (worker->CSPEventListener()) {
+        ipcArgs.hasCSPEventListener() = true;
+        actor->SetCSPEventListener(worker->CSPEventListener());
+      } else {
+        ipcArgs.hasCSPEventListener() = false;
+      }
+
+      ipcArgs.associatedBrowsingContextID() =
+          worker->AssociatedBrowsingContextID();
+
+      if (worker->IsWatchedByDevTools()) {
+        UniquePtr<SerializedStackHolder> stack;
+        stack = GetCurrentStackForNetMonitor(cx);
+        actor->SetOriginStack(std::move(stack));
+      }
+
+      actor->DoFetchOp(ipcArgs);
+
+      return p.forget();
+    }
+
     RefPtr<WorkerFetchResolver> resolver =
         WorkerFetchResolver::Create(worker, p, signalImpl, observer);
     if (!resolver) {
@@ -628,6 +733,13 @@ void MainThreadFetchResolver::OnResponseAvailableInternal(
     }
 
     mResponse = new Response(go, std::move(aResponse), mSignalImpl);
+    // response headers received from the network should be immutable
+    // all response header settings must be done before this point
+    // see Bug 1574174
+    ErrorResult result;
+    mResponse->Headers_()->SetGuard(HeadersGuardEnum::Immutable, result);
+    MOZ_ASSERT(!result.Failed());
+
     BrowsingContext* bc = inner ? inner->GetBrowsingContext() : nullptr;
     bc = bc ? bc->Top() : nullptr;
     if (bc && bc->IsLoading()) {
@@ -690,8 +802,12 @@ class WorkerFetchResponseRunnable final : public MainThreadWorkerRunnable {
   bool WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) override {
     MOZ_ASSERT(aWorkerPrivate);
     aWorkerPrivate->AssertIsOnWorkerThread();
+    if (mResolver->IsShutdown(aWorkerPrivate)) {
+      return true;
+    }
 
     RefPtr<Promise> promise = mResolver->WorkerPromise(aWorkerPrivate);
+    MOZ_ASSERT(promise);
     RefPtr<FetchObserver> fetchObserver =
         mResolver->GetFetchObserver(aWorkerPrivate);
 
@@ -704,6 +820,14 @@ class WorkerFetchResponseRunnable final : public MainThreadWorkerRunnable {
       RefPtr<Response> response =
           new Response(global, mInternalResponse.clonePtr(),
                        mResolver->GetAbortSignalForTargetThread());
+
+      // response headers received from the network should be immutable,
+      // all response header settings must be done before this point
+      // see Bug 1574174
+      ErrorResult result;
+      response->Headers_()->SetGuard(HeadersGuardEnum::Immutable, result);
+      MOZ_ASSERT(!result.Failed());
+
       promise->MaybeResolve(response);
     } else {
       if (fetchObserver) {
@@ -780,16 +904,7 @@ class WorkerFetchResponseEndRunnable final : public MainThreadWorkerRunnable,
     return true;
   }
 
-  nsresult Cancel() override {
-    // We need to check first if cancel is called twice
-    nsresult rv = WorkerRunnable::Cancel();
-    NS_ENSURE_SUCCESS(rv, rv);
-
-    // Execute Run anyway to make sure we cleanup our promise proxy to avoid
-    // leaking the worker thread
-    Run();
-    return NS_OK;
-  }
+  nsresult Cancel() override { return Run(); }
 };
 
 class WorkerFetchResponseEndControlRunnable final
@@ -844,8 +959,8 @@ void WorkerFetchResolver::OnDataAvailable() {
   Unused << r->Dispatch();
 }
 
-void WorkerFetchResolver::OnResponseEnd(
-    FetchDriverObserver::EndReason aReason) {
+void WorkerFetchResolver::OnResponseEnd(FetchDriverObserver::EndReason aReason,
+                                        JS::Handle<JS::Value> aReasonDetails) {
   AssertIsOnMainThread();
   MutexAutoLock lock(mPromiseProxy->Lock());
   if (mPromiseProxy->CleanedUp()) {
@@ -853,6 +968,8 @@ void WorkerFetchResolver::OnResponseEnd(
   }
 
   FlushConsoleReport();
+
+  Unused << aReasonDetails;
 
   RefPtr<WorkerFetchResponseEndRunnable> r = new WorkerFetchResponseEndRunnable(
       mPromiseProxy->GetWorkerPrivate(), this, aReason);
@@ -1061,12 +1178,18 @@ nsresult ExtractByteStreamFromBody(const fetch::ResponseBodyInit& aBodyInit,
   return NS_ERROR_FAILURE;
 }
 
+NS_IMPL_CYCLE_COLLECTION(FetchBodyBase, mReadableStreamBody)
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(FetchBodyBase)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(FetchBodyBase)
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(FetchBodyBase)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
+
 template <class Derived>
 FetchBody<Derived>::FetchBody(nsIGlobalObject* aOwner)
-    : mOwner(aOwner),
-      mReadableStreamBody(nullptr),
-      mReadableStreamReader(nullptr),
-      mBodyUsed(false) {
+    : mOwner(aOwner), mBodyUsed(false) {
   MOZ_ASSERT(aOwner);
 
   if (!NS_IsMainThread()) {
@@ -1094,7 +1217,7 @@ template FetchBody<Request>::~FetchBody();
 template FetchBody<Response>::~FetchBody();
 
 template <class Derived>
-bool FetchBody<Derived>::GetBodyUsed(ErrorResult& aRv) const {
+bool FetchBody<Derived>::BodyUsed() const {
   if (mBodyUsed) {
     return true;
   }
@@ -1107,31 +1230,17 @@ bool FetchBody<Derived>::GetBodyUsed(ErrorResult& aRv) const {
   return false;
 }
 
-template bool FetchBody<Request>::GetBodyUsed(ErrorResult&) const;
+template bool FetchBody<Request>::BodyUsed() const;
 
-template bool FetchBody<Response>::GetBodyUsed(ErrorResult&) const;
-
-template <class Derived>
-bool FetchBody<Derived>::CheckBodyUsed() const {
-  IgnoredErrorResult result;
-  bool bodyUsed = GetBodyUsed(result);
-  if (result.Failed()) {
-    // Ignore the error.
-    return true;
-  }
-  return bodyUsed;
-}
-
-template bool FetchBody<Request>::CheckBodyUsed() const;
-
-template bool FetchBody<Response>::CheckBodyUsed() const;
+template bool FetchBody<Response>::BodyUsed() const;
 
 template <class Derived>
 void FetchBody<Derived>::SetBodyUsed(JSContext* aCx, ErrorResult& aRv) {
   MOZ_ASSERT(aCx);
   MOZ_ASSERT(mOwner->EventTargetFor(TaskCategory::Other)->IsOnCurrentThread());
 
-  if (mBodyUsed) {
+  MOZ_DIAGNOSTIC_ASSERT(!BodyUsed(), "Consuming already used body?");
+  if (BodyUsed()) {
     return;
   }
 
@@ -1140,7 +1249,7 @@ void FetchBody<Derived>::SetBodyUsed(JSContext* aCx, ErrorResult& aRv) {
   // If we already have a ReadableStreamBody and it has been created by DOM, we
   // have to lock it now because it can have been shared with other objects.
   if (mReadableStreamBody) {
-    if (mReadableStreamBody->HasNativeUnderlyingSource()) {
+    if (mReadableStreamBody->MaybeGetInputStreamIfUnread()) {
       LockStream(aCx, mReadableStreamBody, aRv);
       if (NS_WARN_IF(aRv.Failed())) {
         return;
@@ -1148,14 +1257,10 @@ void FetchBody<Derived>::SetBodyUsed(JSContext* aCx, ErrorResult& aRv) {
     } else {
       MOZ_ASSERT(mFetchStreamReader);
       //  Let's activate the FetchStreamReader.
-      RefPtr<ReadableStreamDefaultReader> reader;
-      mFetchStreamReader->StartConsuming(aCx, mReadableStreamBody,
-                                         getter_AddRefs(reader), aRv);
+      mFetchStreamReader->StartConsuming(aCx, mReadableStreamBody, aRv);
       if (NS_WARN_IF(aRv.Failed())) {
         return;
       }
-
-      mReadableStreamReader = reader.forget();
     }
   }
 }
@@ -1172,16 +1277,23 @@ already_AddRefed<Promise> FetchBody<Derived>::ConsumeBody(
 
   RefPtr<AbortSignalImpl> signalImpl =
       DerivedClass()->GetSignalImplToConsumeBody();
+
   if (signalImpl && signalImpl->Aborted()) {
-    aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
-    return nullptr;
+    JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
+
+    if (abortReason.get().isUndefined()) {
+      aRv.Throw(NS_ERROR_DOM_ABORT_ERR);
+      return nullptr;
+    }
+
+    nsCOMPtr<nsIGlobalObject> go = DerivedClass()->GetParentObject();
+
+    RefPtr<Promise> promise = Promise::Create(go, aRv);
+    promise->MaybeReject(abortReason);
+    return promise.forget();
   }
 
-  bool bodyUsed = GetBodyUsed(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-  if (bodyUsed) {
+  if (BodyUsed()) {
     aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
     return nullptr;
   }
@@ -1319,7 +1431,8 @@ void FetchBody<Derived>::SetReadableStreamBody(JSContext* aCx,
   bool aborted = signalImpl->Aborted();
   if (aborted) {
     IgnoredErrorResult result;
-    AbortStream(aCx, mReadableStreamBody, result);
+    JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
+    AbortStream(aCx, mReadableStreamBody, result, abortReason);
     if (NS_WARN_IF(result.Failed())) {
       return;
     }
@@ -1338,8 +1451,7 @@ template <class Derived>
 already_AddRefed<ReadableStream> FetchBody<Derived>::GetBody(JSContext* aCx,
                                                              ErrorResult& aRv) {
   if (mReadableStreamBody) {
-    RefPtr<ReadableStream> body(mReadableStreamBody);
-    return body.forget();
+    return do_AddRef(mReadableStreamBody);
   }
 
   nsCOMPtr<nsIInputStream> inputStream;
@@ -1349,22 +1461,24 @@ already_AddRefed<ReadableStream> FetchBody<Derived>::GetBody(JSContext* aCx,
     return nullptr;
   }
 
-  BodyStream::Create(aCx, this, DerivedClass()->GetParentObject(), inputStream,
-                     aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
+  // The spec immediately creates ReadableStream on Response/Request constructor
+  // via https://fetch.spec.whatwg.org/#concept-bodyinit-extract, but Gecko
+  // creates nsIInputStream there instead and creates ReadableStream only when
+  // .body is accessed. Thus we only follow step 4 of it here.
+  //
+  // Step 4: Otherwise, set stream to a new ReadableStream object, and set up
+  // stream with byte reading support.
+  auto algorithms =
+      MakeRefPtr<NonAsyncInputToReadableStreamAlgorithms>(*inputStream);
+  RefPtr<ReadableStream> body = ReadableStream::CreateByteNative(
+      aCx, DerivedClass()->GetParentObject(), *algorithms, Nothing(), aRv);
+  if (aRv.Failed()) {
     return nullptr;
   }
-
-  MOZ_ASSERT(mReadableStreamBody);
-
-  RefPtr<ReadableStream> body(mReadableStreamBody);
+  mReadableStreamBody = body;
 
   // If the body has been already consumed, we lock the stream.
-  bool bodyUsed = GetBodyUsed(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-  if (bodyUsed) {
+  if (BodyUsed()) {
     LockStream(aCx, body, aRv);
     if (NS_WARN_IF(aRv.Failed())) {
       return nullptr;
@@ -1374,7 +1488,8 @@ already_AddRefed<ReadableStream> FetchBody<Derived>::GetBody(JSContext* aCx,
   RefPtr<AbortSignalImpl> signalImpl = DerivedClass()->GetSignalImpl();
   if (signalImpl) {
     if (signalImpl->Aborted()) {
-      AbortStream(aCx, body, aRv);
+      JS::Rooted<JS::Value> abortReason(aCx, signalImpl->RawReason());
+      AbortStream(aCx, body, aRv, abortReason);
       if (NS_WARN_IF(aRv.Failed())) {
         return nullptr;
       }
@@ -1396,13 +1511,10 @@ template <class Derived>
 void FetchBody<Derived>::LockStream(JSContext* aCx, ReadableStream* aStream,
                                     ErrorResult& aRv) {
   // This is native stream, creating a reader will not execute any JS code.
-  RefPtr<ReadableStreamDefaultReader> reader =
-      AcquireReadableStreamDefaultReader(aStream, aRv);
+  RefPtr<ReadableStreamDefaultReader> reader = aStream->GetReader(aRv);
   if (aRv.Failed()) {
     return;
   }
-
-  mReadableStreamReader = reader;
 }
 
 template void FetchBody<Request>::LockStream(JSContext* aCx,
@@ -1420,7 +1532,7 @@ void FetchBody<Derived>::MaybeTeeReadableStreamBody(
     ErrorResult& aRv) {
   MOZ_DIAGNOSTIC_ASSERT(aStreamReader);
   MOZ_DIAGNOSTIC_ASSERT(aInputStream);
-  MOZ_DIAGNOSTIC_ASSERT(!CheckBodyUsed());
+  MOZ_DIAGNOSTIC_ASSERT(!BodyUsed());
 
   *aBodyOut = nullptr;
   *aStreamReader = nullptr;
@@ -1433,7 +1545,7 @@ void FetchBody<Derived>::MaybeTeeReadableStreamBody(
   // If this is a ReadableStream with an native source, this has been
   // generated by a Fetch. In this case, Fetch will be able to recreate it
   // again when GetBody() is called.
-  if (mReadableStreamBody->HasNativeUnderlyingSource()) {
+  if (mReadableStreamBody->MaybeGetInputStreamIfUnread()) {
     *aBodyOut = nullptr;
     return;
   }
@@ -1478,7 +1590,15 @@ void FetchBody<Derived>::RunAbortAlgorithm() {
 
   RefPtr<ReadableStream> body(mReadableStreamBody);
   IgnoredErrorResult result;
-  AbortStream(cx, body, result);
+
+  JS::Rooted<JS::Value> abortReason(cx);
+
+  AbortSignalImpl* signalImpl = Signal();
+  if (signalImpl) {
+    abortReason.set(signalImpl->RawReason());
+  }
+
+  AbortStream(cx, body, result, abortReason);
 }
 
 template void FetchBody<Request>::RunAbortAlgorithm();
@@ -1494,8 +1614,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(EmptyBody, FetchBody<EmptyBody>)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mOwner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mFetchStreamReader)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mReadableStreamBody)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mReadableStreamReader)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(EmptyBody,
@@ -1503,8 +1621,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(EmptyBody,
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOwner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mAbortSignalImpl)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFetchStreamReader)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReadableStreamBody)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mReadableStreamReader)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(EmptyBody, FetchBody<EmptyBody>)

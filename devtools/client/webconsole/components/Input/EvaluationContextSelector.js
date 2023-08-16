@@ -8,36 +8,41 @@
 const {
   Component,
   createFactory,
-} = require("devtools/client/shared/vendor/react");
-const dom = require("devtools/client/shared/vendor/react-dom-factories");
+} = require("resource://devtools/client/shared/vendor/react.js");
+const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-const { connect } = require("devtools/client/shared/vendor/react-redux");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const {
+  connect,
+} = require("resource://devtools/client/shared/vendor/react-redux.js");
 
-const targetActions = require("devtools/shared/commands/target/actions/targets");
-const webconsoleActions = require("devtools/client/webconsole/actions/index");
+const targetActions = require("resource://devtools/shared/commands/target/actions/targets.js");
+const webconsoleActions = require("resource://devtools/client/webconsole/actions/index.js");
 
-const { l10n } = require("devtools/client/webconsole/utils/messages");
-const targetSelectors = require("devtools/shared/commands/target/selectors/targets");
+const {
+  l10n,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
+const targetSelectors = require("resource://devtools/shared/commands/target/selectors/targets.js");
 
-loader.lazyGetter(this, "TARGET_TYPES", function() {
-  return require("devtools/shared/commands/target/target-command").TYPES;
+loader.lazyGetter(this, "TARGET_TYPES", function () {
+  return require("resource://devtools/shared/commands/target/target-command.js")
+    .TYPES;
 });
 
 // Additional Components
 const MenuButton = createFactory(
-  require("devtools/client/shared/components/menu/MenuButton")
+  require("resource://devtools/client/shared/components/menu/MenuButton.js")
 );
 
-loader.lazyGetter(this, "MenuItem", function() {
+loader.lazyGetter(this, "MenuItem", function () {
   return createFactory(
-    require("devtools/client/shared/components/menu/MenuItem")
+    require("resource://devtools/client/shared/components/menu/MenuItem.js")
   );
 });
 
-loader.lazyGetter(this, "MenuList", function() {
+loader.lazyGetter(this, "MenuList", function () {
   return createFactory(
-    require("devtools/client/shared/components/menu/MenuList")
+    require("resource://devtools/client/shared/components/menu/MenuList.js")
   );
 });
 
@@ -45,8 +50,7 @@ class EvaluationContextSelector extends Component {
   static get propTypes() {
     return {
       selectTarget: PropTypes.func.isRequired,
-      updateInstantEvaluationResultForCurrentExpression:
-        PropTypes.func.isRequired,
+      onContextChange: PropTypes.func.isRequired,
       selectedTarget: PropTypes.object,
       lastTargetRefresh: PropTypes.number,
       targets: PropTypes.array,
@@ -79,7 +83,7 @@ class EvaluationContextSelector extends Component {
 
   componentDidUpdate(prevProps) {
     if (this.props.selectedTarget !== prevProps.selectedTarget) {
-      this.props.updateInstantEvaluationResultForCurrentExpression();
+      this.props.onContextChange();
     }
   }
 
@@ -206,7 +210,7 @@ class EvaluationContextSelector extends Component {
     }
 
     for (const [targetType, menuItems] of Object.entries(sections)) {
-      if (menuItems.length > 0) {
+      if (menuItems.length) {
         items.push(
           dom.hr({ role: "menuseparator", key: `${targetType}-separator` }),
           ...menuItems
@@ -276,9 +280,11 @@ const toolboxConnected = connect(
 module.exports = connect(
   state => state,
   dispatch => ({
-    updateInstantEvaluationResultForCurrentExpression: () =>
+    onContextChange: () => {
       dispatch(
         webconsoleActions.updateInstantEvaluationResultForCurrentExpression()
-      ),
+      );
+      dispatch(webconsoleActions.autocompleteClear());
+    },
   })
 )(toolboxConnected);

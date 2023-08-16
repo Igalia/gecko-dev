@@ -3,19 +3,21 @@
 
 "use strict";
 
-const { COMPATIBILITY_ISSUE_TYPE } = require("devtools/shared/constants");
+const {
+  COMPATIBILITY_ISSUE_TYPE,
+} = require("resource://devtools/shared/constants.js");
 
 const {
   COMPATIBILITY_APPEND_NODE_COMPLETE,
   COMPATIBILITY_REMOVE_NODE_COMPLETE,
-} = require("devtools/client/inspector/compatibility/actions/index");
+} = require("resource://devtools/client/inspector/compatibility/actions/index.js");
 
 // Test the behavior rules are dynamically added
 
-const ISSUE_BINDING = {
+const ISSUE_OUTLINE_RADIUS = {
   type: COMPATIBILITY_ISSUE_TYPE.CSS_PROPERTY,
-  property: "-moz-binding",
-  url: "https://developer.mozilla.org/docs/Web/CSS/-moz-binding",
+  property: "-moz-user-input",
+  url: "https://developer.mozilla.org/docs/Web/CSS/-moz-user-input",
   deprecated: true,
   experimental: false,
 };
@@ -32,7 +34,7 @@ const ISSUE_HYPHENS = {
 const TEST_URI = `
   <style>
     div {
-      -moz-binding: none;
+      -moz-user-input: none;
     }
   </style>
   <body>
@@ -43,7 +45,7 @@ const TEST_URI = `
   </body>
 `;
 
-add_task(async function() {
+add_task(async function () {
   info("Testing dynamic DOM mutation using JavaScript");
   const tab = await addTab(
     "data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI)
@@ -52,16 +54,20 @@ add_task(async function() {
   const { allElementsPane, inspector } = await openCompatibilityView();
 
   info("Check initial issues");
-  await assertIssueList(allElementsPane, [ISSUE_BINDING, ISSUE_HYPHENS]);
+  await assertIssueList(allElementsPane, [ISSUE_OUTLINE_RADIUS, ISSUE_HYPHENS]);
 
   info("Delete node whose child node has CSS compatibility issue");
-  await testNodeRemoval(".parent", inspector, allElementsPane, [ISSUE_BINDING]);
+  await testNodeRemoval(".parent", inspector, allElementsPane, [
+    ISSUE_OUTLINE_RADIUS,
+  ]);
 
   info("Delete node that has CSS compatibility issue");
   await testNodeRemoval("div", inspector, allElementsPane, []);
 
   info("Add node that has CSS compatibility issue");
-  await testNodeAddition("div", inspector, allElementsPane, [ISSUE_BINDING]);
+  await testNodeAddition("div", inspector, allElementsPane, [
+    ISSUE_OUTLINE_RADIUS,
+  ]);
 
   await removeTab(tab);
 });
@@ -76,7 +82,7 @@ add_task(async function() {
  * loaded in the toolbox
  * @return {Promise} Resolves when the node has been selected.
  */
-var clickContainer = async function(selector, inspector) {
+var clickContainer = async function (selector, inspector) {
   info("Clicking on the markup-container for node " + selector);
 
   const nodeFront = await getNodeFront(selector, inspector);

@@ -8,7 +8,7 @@
 /* import-globals-from /testing/mochitest/tests/SimpleTest/WorkerSimpleTest.js */
 importScripts("chrome://mochikit/content/tests/SimpleTest/WorkerSimpleTest.js");
 
-self.onmessage = async function(message) {
+self.onmessage = async function (message) {
   let expected = message.data;
   info("ON message");
   info(JSON.stringify(expected));
@@ -31,13 +31,6 @@ self.onmessage = async function(message) {
     tempDir,
     expected.tempDir,
     "PathUtils.getTempDir() in a worker should match PathUtils.tempDir on main thread"
-  );
-
-  const osTempDir = await PathUtils.getOSTempDir();
-  is(
-    osTempDir,
-    expected.osTempDir,
-    "PathUtils.getOSTempDir() in a worker should match PathUtils.osTempDir on main thread"
   );
 
   finish();

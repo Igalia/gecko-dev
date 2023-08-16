@@ -4,14 +4,15 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   FrontClassWithSpec,
   types,
   registerFront,
-} = require("devtools/shared/protocol.js");
-const { walkerSpec } = require("devtools/shared/specs/walker");
-const { safeAsyncMethod } = require("devtools/shared/async-utils");
+} = require("resource://devtools/shared/protocol.js");
+const { walkerSpec } = require("resource://devtools/shared/specs/walker.js");
+const {
+  safeAsyncMethod,
+} = require("resource://devtools/shared/async-utils.js");
 
 /**
  * Client side of the DOM walker.
@@ -215,10 +216,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
 
       const emittedMutation = Object.assign(change, { target: targetFront });
 
-      if (
-        change.type === "childList" ||
-        change.type === "nativeAnonymousChildList"
-      ) {
+      if (change.type === "childList") {
         // Update the ownership tree according to the mutation record.
         const addedFronts = [];
         const removedFronts = [];
@@ -286,8 +284,7 @@ class WalkerFront extends FrontClassWithSpec(walkerSpec) {
       if (
         change.type === "inlineTextChild" ||
         change.type === "childList" ||
-        change.type === "shadowRootAttached" ||
-        change.type === "nativeAnonymousChildList"
+        change.type === "shadowRootAttached"
       ) {
         if (change.inlineTextChild) {
           targetFront.inlineTextChild = types

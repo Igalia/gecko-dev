@@ -4,10 +4,12 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "Accessible.h"
-#include "AccGroupInfo.h"
 #include "ARIAMap.h"
 #include "nsAccUtils.h"
+#include "nsIURI.h"
+#include "Relation.h"
 #include "States.h"
+#include "mozilla/a11y/FocusManager.h"
 #include "mozilla/a11y/HyperTextAccessibleBase.h"
 #include "mozilla/BasicEvents.h"
 #include "mozilla/Components.h"
@@ -74,6 +76,16 @@ bool Accessible::IsBefore(const Accessible* aAcc) const {
   return otherPos > 0;
 }
 
+Accessible* Accessible::FocusedChild() {
+  Accessible* doc = nsAccUtils::DocumentFor(this);
+  Accessible* child = doc->FocusedChild();
+  if (child && (child == this || child->Parent() == this)) {
+    return child;
+  }
+
+  return nullptr;
+}
+
 const nsRoleMapEntry* Accessible::ARIARoleMap() const {
   return aria::GetRoleMapFromIndex(mRoleMapEntryIndex);
 }
@@ -106,7 +118,8 @@ LayoutDeviceIntSize Accessible::Size() const { return Bounds().Size(); }
 
 LayoutDeviceIntPoint Accessible::Position(uint32_t aCoordType) {
   LayoutDeviceIntPoint point = Bounds().TopLeft();
-  nsAccUtils::ConvertScreenCoordsTo(&point.x, &point.y, aCoordType, this);
+  nsAccUtils::ConvertScreenCoordsTo(&point.x.value, &point.y.value, aCoordType,
+                                    this);
   return point;
 }
 
@@ -224,7 +237,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
 
     if (!aFast) {
       const Accessible* parent = this;
-      while ((parent = parent->Parent())) {
+      while ((parent = parent->Parent()) && !parent->IsDoc()) {
         roles::Role parentRole = parent->Role();
 
         if (parentRole == roles::OUTLINE) break;
@@ -241,7 +254,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
     // Calculate 'level' attribute based on number of parent listitems.
     level = 0;
     const Accessible* parent = this;
-    while ((parent = parent->Parent())) {
+    while ((parent = parent->Parent()) && !parent->IsDoc()) {
       roles::Role parentRole = parent->Role();
 
       if (parentRole == roles::LISTITEM) {
@@ -283,9 +296,8 @@ int32_t Accessible::GetLevel(bool aFast) const {
           return 1;
         }
 
-        for (Accessible* child = parent->FirstChild(); child;
-             child = child->NextSibling()) {
-          if (child->IsHTMLOptGroup()) {
+        for (uint32_t i = 0, count = parent->ChildCount(); i < count; ++i) {
+          if (parent->ChildAt(i)->IsHTMLOptGroup()) {
             return 1;
           }
         }
@@ -324,7 +336,7 @@ int32_t Accessible::GetLevel(bool aFast) const {
 
     if (!aFast) {
       const Accessible* parent = this;
-      while ((parent = parent->Parent())) {
+      while ((parent = parent->Parent()) && !parent->IsDoc()) {
         roles::Role parentRole = parent->Role();
         if (parentRole == roles::COMMENT) {
           ++level;
@@ -349,6 +361,71 @@ void Accessible::GetPositionAndSetSize(int32_t* aPosInSet, int32_t* aSetSize) {
     *aPosInSet = groupInfo->PosInSet();
     *aSetSize = groupInfo->SetSize();
   }
+}
+
+bool Accessible::IsLinkValid() {
+  MOZ_ASSERT(IsLink(), "IsLinkValid is called on not hyper link!");
+
+  // XXX In order to implement this we would need to follow every link
+  // Perhaps we can get information about invalid links from the cache
+  // In the mean time authors can use role="link" aria-invalid="true"
+  // to force it for links they internally know to be invalid
+  return (0 == (State() & mozilla::a11y::states::INVALID));
+}
+
+uint32_t Accessible::AnchorCount() {
+  if (IsImageMap()) {
+    return ChildCount();
+  }
+
+  MOZ_ASSERT(IsLink(), "AnchorCount is called on not hyper link!");
+  return 1;
+}
+
+Accessible* Accessible::AnchorAt(uint32_t aAnchorIndex) const {
+  if (IsImageMap()) {
+    return ChildAt(aAnchorIndex);
+  }
+
+  MOZ_ASSERT(IsLink(), "GetAnchor is called on not hyper link!");
+  return aAnchorIndex == 0 ? const_cast<Accessible*>(this) : nullptr;
+}
+
+already_AddRefed<nsIURI> Accessible::AnchorURIAt(uint32_t aAnchorIndex) const {
+  Accessible* anchor = nullptr;
+
+  if (IsTextLeaf() || IsImage()) {
+    for (Accessible* parent = Parent(); parent && !parent->IsOuterDoc();
+         parent = parent->Parent()) {
+      if (parent->IsLink()) {
+        anchor = parent->AnchorAt(aAnchorIndex);
+      }
+    }
+  } else {
+    anchor = AnchorAt(aAnchorIndex);
+  }
+
+  if (anchor) {
+    RefPtr<nsIURI> uri;
+    nsAutoString spec;
+    anchor->Value(spec);
+    nsresult rv = NS_NewURI(getter_AddRefs(uri), spec);
+    if (NS_SUCCEEDED(rv)) {
+      return uri.forget();
+    }
+  }
+
+  return nullptr;
+}
+
+bool Accessible::IsSearchbox() const {
+  const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+  if (roleMapEntry && roleMapEntry->Is(nsGkAtoms::searchbox)) {
+    return true;
+  }
+
+  RefPtr<nsAtom> inputType = InputType();
+  return inputType == nsGkAtoms::search;
 }
 
 #ifdef A11Y_LOG
@@ -386,8 +463,16 @@ void Accessible::DebugDescription(nsCString& aDesc) const {
 void Accessible::DebugPrint(const char* aPrefix,
                             const Accessible* aAccessible) {
   nsAutoCString desc;
-  aAccessible->DebugDescription(desc);
+  if (aAccessible) {
+    aAccessible->DebugDescription(desc);
+  } else {
+    desc.AssignLiteral("[null]");
+  }
+#  if defined(ANDROID)
+  printf_stderr("%s %s\n", aPrefix, desc.get());
+#  else
   printf("%s %s\n", aPrefix, desc.get());
+#  endif
 }
 
 #endif
@@ -422,7 +507,7 @@ const Accessible* Accessible::ActionAncestor() const {
   return nullptr;
 }
 
-nsAtom* Accessible::LandmarkRole() const {
+nsStaticAtom* Accessible::LandmarkRole() const {
   nsAtom* tagName = TagName();
   if (!tagName) {
     // Either no associated content, or no cache.
@@ -473,6 +558,91 @@ nsAtom* Accessible::LandmarkRole() const {
   return roleMapEntry && roleMapEntry->IsOfType(eLandmark)
              ? roleMapEntry->roleAtom
              : nullptr;
+}
+
+nsStaticAtom* Accessible::ComputedARIARole() const {
+  const nsRoleMapEntry* roleMap = ARIARoleMap();
+  if (roleMap && roleMap->roleAtom != nsGkAtoms::_empty &&
+      // region has its own Gecko role and it needs to be handled specially.
+      roleMap->roleAtom != nsGkAtoms::region &&
+      (roleMap->roleRule == kUseNativeRole || roleMap->IsOfType(eLandmark) ||
+       roleMap->roleAtom == nsGkAtoms::alertdialog ||
+       roleMap->roleAtom == nsGkAtoms::feed ||
+       roleMap->roleAtom == nsGkAtoms::rowgroup ||
+       roleMap->roleAtom == nsGkAtoms::searchbox)) {
+    // Explicit ARIA role (e.g. specified via the role attribute) which does not
+    // map to a unique Gecko role.
+    return roleMap->roleAtom;
+  }
+  role geckoRole = Role();
+  if (geckoRole == roles::LANDMARK) {
+    // Landmark role from native markup; e.g. <main>, <nav>.
+    return LandmarkRole();
+  }
+  if (geckoRole == roles::GROUPING) {
+    // Gecko doesn't differentiate between group and rowgroup. It uses
+    // roles::GROUPING for both.
+    nsAtom* tag = TagName();
+    if (tag == nsGkAtoms::tbody || tag == nsGkAtoms::tfoot ||
+        tag == nsGkAtoms::thead) {
+      return nsGkAtoms::rowgroup;
+    }
+  }
+  // Role from native markup or layout.
+#define ROLE(_geckoRole, stringRole, ariaRole, atkRole, macRole, macSubrole, \
+             msaaRole, ia2Role, androidClass, nameRule)                      \
+  case roles::_geckoRole:                                                    \
+    return ariaRole;
+  switch (geckoRole) {
+#include "RoleMap.h"
+  }
+#undef ROLE
+  MOZ_ASSERT_UNREACHABLE("Unknown role");
+  return nullptr;
+}
+
+void Accessible::ApplyImplicitState(uint64_t& aState) const {
+  // nsAccessibilityService (and thus FocusManager) can be shut down before
+  // RemoteAccessibles.
+  if (const auto* focusMgr = FocusMgr()) {
+    if (focusMgr->IsFocused(this)) {
+      aState |= states::FOCUSED;
+    }
+  }
+
+  // If this is an ARIA item of the selectable widget and if it's focused and
+  // not marked unselected explicitly (i.e. aria-selected="false") then expose
+  // it as selected to make ARIA widget authors life easier.
+  const nsRoleMapEntry* roleMapEntry = ARIARoleMap();
+  if (roleMapEntry && !(aState & states::SELECTED) &&
+      ARIASelected().valueOr(true)) {
+    // Special case for tabs: focused tab or focus inside related tab panel
+    // implies selected state.
+    if (roleMapEntry->role == roles::PAGETAB) {
+      if (aState & states::FOCUSED) {
+        aState |= states::SELECTED;
+      } else {
+        // If focus is in a child of the tab panel surely the tab is selected!
+        Relation rel = RelationByType(RelationType::LABEL_FOR);
+        Accessible* relTarget = nullptr;
+        while ((relTarget = rel.Next())) {
+          if (relTarget->Role() == roles::PROPERTYPAGE &&
+              FocusMgr()->IsFocusWithin(relTarget)) {
+            aState |= states::SELECTED;
+          }
+        }
+      }
+    } else if (aState & states::FOCUSED) {
+      Accessible* container = nsAccUtils::GetSelectableContainer(this, aState);
+      if (container && !(container->State() & states::MULTISELECTABLE)) {
+        aState |= states::SELECTED;
+      }
+    }
+  }
+
+  if (Opacity() == 1.0f && !(aState & states::INVISIBLE)) {
+    aState |= states::OPAQUE1;
+  }
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -31,6 +31,7 @@
 #include "mozilla/Logging.h"
 #include "mozilla/UniquePtr.h"
 #include "DOMMediaStream.h"
+#include "PerformanceRecorder.h"
 
 #ifdef MOZ_WEBRTC
 #  include "transport/runnable_utils.h"
@@ -76,9 +77,16 @@ class MediaDevice final {
    * Whether source device does end-run around cross origin restrictions.
    */
   enum class IsScary { No, Yes };
+
+  /**
+   * Whether source device can use OS level selection prompt
+   */
+  enum class OsPromptable { No, Yes };
+
   MediaDevice(MediaEngine* aEngine, dom::MediaSourceEnum aMediaSource,
               const nsString& aRawName, const nsString& aRawID,
-              const nsString& aRawGroupID, IsScary aIsScary);
+              const nsString& aRawGroupID, IsScary aIsScary,
+              const OsPromptable canRequestOsLevelPrompt);
 
   MediaDevice(MediaEngine* aEngine,
               const RefPtr<AudioDeviceInfo>& aAudioDeviceInfo,
@@ -98,6 +106,7 @@ class MediaDevice final {
   const dom::MediaSourceEnum mMediaSource;
   const dom::MediaDeviceKind mKind;
   const bool mScary;
+  const bool mCanRequestOsLevelPrompt;
   const bool mIsFake;
   const nsString mType;
   const nsString mRawID;
@@ -139,6 +148,7 @@ class LocalMediaDevice final : public nsIMediaDevice {
 
   void GetSettings(dom::MediaTrackSettings& aOutSettings);
   MediaEngineSource* Source();
+  const TrackingId& GetTrackingId() const;
   // Returns null if not a physical audio device.
   AudioDeviceInfo* GetAudioDeviceInfo() const {
     return mRawDevice->mAudioDeviceInfo;
@@ -184,12 +194,11 @@ class MediaManager final : public nsIMediaManagerService,
  public:
   static already_AddRefed<MediaManager> GetInstance();
 
-  // NOTE: never Dispatch(....,NS_DISPATCH_SYNC) to the MediaManager
-  // thread from the MainThread, as we NS_DISPATCH_SYNC to MainThread
-  // from MediaManager thread.
+  // NOTE: never NS_DispatchAndSpinEventLoopUntilComplete to the MediaManager
+  // thread from the MainThread, as we NS_DispatchAndSpinEventLoopUntilComplete
+  // to MainThread from MediaManager thread.
   static MediaManager* Get();
   static MediaManager* GetIfExists();
-  static void StartupInit();
   static void Dispatch(already_AddRefed<Runnable> task);
 
   /**
@@ -383,8 +392,11 @@ class MediaManager final : public nsIMediaManagerService,
   bool mCamerasMuted = false;
   bool mMicrophonesMuted = false;
 
+ public:
   // Always exists
   const RefPtr<TaskQueue> mMediaThread;
+
+ private:
   nsCOMPtr<nsIAsyncShutdownBlocker> mShutdownBlocker;
 
   // ONLY accessed from MediaManagerThread

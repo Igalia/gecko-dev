@@ -16,6 +16,7 @@
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "mozilla/dom/MediaSource.h"
 #include "mozilla/ipc/IPCStreamUtils.h"
+#include "mozilla/AppShutdown.h"
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/LoadInfo.h"
 #include "mozilla/Maybe.h"
@@ -155,8 +156,8 @@ void BroadcastBlobURLRegistration(const nsACString& aURI,
   }
 
   dom::ContentChild* cc = dom::ContentChild::GetSingleton();
-  Unused << NS_WARN_IF(!cc->SendStoreAndBroadcastBlobURLRegistration(
-      nsCString(aURI), ipcBlob, IPC::Principal(aPrincipal), aAgentClusterId));
+  (void)NS_WARN_IF(!cc->SendStoreAndBroadcastBlobURLRegistration(
+      nsCString(aURI), ipcBlob, aPrincipal, aAgentClusterId));
 }
 
 void BroadcastBlobURLUnregistration(const nsCString& aURI,
@@ -170,8 +171,8 @@ void BroadcastBlobURLUnregistration(const nsCString& aURI,
 
   dom::ContentChild* cc = dom::ContentChild::GetSingleton();
   if (cc) {
-    Unused << NS_WARN_IF(!cc->SendUnstoreAndBroadcastBlobURLUnregistration(
-        aURI, IPC::Principal(aPrincipal)));
+    (void)NS_WARN_IF(
+        !cc->SendUnstoreAndBroadcastBlobURLUnregistration(aURI, aPrincipal));
   }
 }
 
@@ -396,13 +397,10 @@ class ReleasingTimerHolder final : public Runnable,
 
     RefPtr<ReleasingTimerHolder> holder = new ReleasingTimerHolder(aURI);
 
+    // BlobURLProtocolHandler::RemoveDataEntry potentially happens late. We are
+    // prepared to RevokeUri synchronously if we run after XPCOMWillShutdown,
+    // but we need at least to be able to dispatch to the main thread here.
     auto raii = MakeScopeExit([holder] { holder->CancelTimerAndRevokeURI(); });
-
-    // ReleasingTimerHolder potentially dispatches after we've
-    // shutdown the main thread, so guard agains that.
-    if (NS_WARN_IF(gXPCOMThreadsShutDown)) {
-      return;
-    }
 
     nsresult rv =
         SchedulerGroup::Dispatch(TaskCategory::Other, holder.forget());
@@ -719,7 +717,7 @@ nsresult BlobURLProtocolHandler::GenerateURIString(nsIPrincipal* aPrincipal,
 
   if (aPrincipal) {
     nsAutoCString origin;
-    rv = aPrincipal->GetAsciiOrigin(origin);
+    rv = aPrincipal->GetWebExposedOriginSerialization(origin);
     if (NS_FAILED(rv)) {
       origin.AssignLiteral("null");
     }
@@ -826,29 +824,6 @@ void BlobURLProtocolHandler::Traverse(
 NS_IMPL_ISUPPORTS(BlobURLProtocolHandler, nsIProtocolHandler,
                   nsISupportsWeakReference)
 
-NS_IMETHODIMP
-BlobURLProtocolHandler::GetDefaultPort(int32_t* result) {
-  *result = -1;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-BlobURLProtocolHandler::GetProtocolFlags(uint32_t* result) {
-  *result = URI_NORELATIVE | URI_NOAUTH | URI_LOADABLE_BY_SUBSUMERS |
-            URI_NON_PERSISTABLE | URI_IS_LOCAL_RESOURCE;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-BlobURLProtocolHandler::GetFlagsForURI(nsIURI* aURI, uint32_t* aResult) {
-  Unused << BlobURLProtocolHandler::GetProtocolFlags(aResult);
-  if (IsBlobURI(aURI)) {
-    *aResult |= URI_IS_LOCAL_RESOURCE;
-  }
-
-  return NS_OK;
-}
-
 /* static */ nsresult BlobURLProtocolHandler::CreateNewURI(
     const nsACString& aSpec, const char* aCharset, nsIURI* aBaseURI,
     nsIURI** aResult) {
@@ -906,8 +881,7 @@ bool BlobURLProtocolHandler::GetBlobURLPrincipal(nsIURI* aURI,
     return false;
   }
 
-  MOZ_ASSERT(NS_IsMainThread(),
-             "without locking gDataTable is main-thread only");
+  StaticMutexAutoLock lock(sMutex);
   mozilla::dom::DataInfo* info =
       GetDataInfoFromURI(aURI, true /*aAlsoIfRevoked */);
   if (!info || info->mObjectType != mozilla::dom::DataInfo::eBlobImpl ||

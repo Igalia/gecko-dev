@@ -6,8 +6,6 @@
  * This module exports a provider returning the user's newtab Top Sites.
  */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import {
@@ -18,20 +16,15 @@ import {
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  TOP_SITES_DEFAULT_ROWS: "resource://activity-stream/common/Reducers.sys.mjs",
+  TOP_SITES_MAX_SITES_PER_ROW:
+    "resource://activity-stream/common/Reducers.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  CONTEXTUAL_SERVICES_PING_TYPES:
-    "resource:///modules/PartnerLinkAttribution.jsm",
-  PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.jsm",
-  TOP_SITES_MAX_SITES_PER_ROW: "resource://activity-stream/common/Reducers.jsm",
-  TOP_SITES_DEFAULT_ROWS: "resource://activity-stream/common/Reducers.jsm",
 });
 
 // The scalar category of TopSites impression for Contextual Services
@@ -68,6 +61,8 @@ class ProviderTopSites extends UrlbarProvider {
   /**
    * Unique name for the provider, used by the context to filter on providers.
    * Not using a unique name will cause the newest registration to win.
+   *
+   * @returns {string}
    */
   get name() {
     return "UrlbarProviderTopSites";
@@ -75,6 +70,8 @@ class ProviderTopSites extends UrlbarProvider {
 
   /**
    * The type of the provider.
+   *
+   * @returns {UrlbarUtils.PROVIDER_TYPE}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -84,6 +81,7 @@ class ProviderTopSites extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
@@ -97,6 +95,7 @@ class ProviderTopSites extends UrlbarProvider {
 
   /**
    * Gets the provider's priority.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {number} The provider's priority for the given query.
    */
@@ -105,12 +104,13 @@ class ProviderTopSites extends UrlbarProvider {
   }
 
   /**
-   * Starts querying.
+   * Starts querying. Extended classes should return a Promise resolved when the
+   * provider is done searching AND returning results.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        result. A UrlbarResult should be passed to it.
-   * @note Extended classes should return a Promise resolved when the provider
-   *       is done searching AND returning results.
+   * @returns {Promise}
    */
   async startQuery(queryContext, addCallback) {
     // Bail if Top Sites are not enabled. We check this condition here instead
@@ -305,23 +305,9 @@ class ProviderTopSites extends UrlbarProvider {
     }
   }
 
-  /**
-   * Called when the user starts and ends an engagement with the urlbar. We send
-   * the impression ping for the sponsored TopSites, the impression scalar is
-   * recorded as well.
-   *
-   * Note:
-   *   * No telemetry recording in private browsing mode
-   *   * The impression is only recorded for the "engagement" and "abandonment"
-   *     states
-   *
-   * @param {boolean} isPrivate True if the engagement is in a private context.
-   * @param {string} state The state of the engagement, one of: start,
-   *        engagement, abandonment, discard.
-   */
-  onEngagement(isPrivate, state) {
+  onEngagement(state, queryContext, details, controller) {
     if (
-      !isPrivate &&
+      !controller.input.isPrivate &&
       this.sponsoredSites &&
       ["engagement", "abandonment"].includes(state)
     ) {
@@ -330,16 +316,6 @@ class ProviderTopSites extends UrlbarProvider {
           SCALAR_CATEGORY_TOPSITES,
           `urlbar_${site.position}`,
           1
-        );
-        lazy.PartnerLinkAttribution.sendContextualServicesPing(
-          {
-            source: "urlbar",
-            tile_id: site.sponsoredTileId || -1,
-            position: site.position,
-            reporting_url: site.sponsoredImpressionUrl,
-            advertiser: site.title.toLocaleLowerCase(),
-          },
-          lazy.CONTEXTUAL_SERVICES_PING_TYPES.TOPSITES_IMPRESSION
         );
       }
     }
@@ -354,7 +330,7 @@ class ProviderTopSites extends UrlbarProvider {
    * keep a strong reference to it to keep it from being immediately garbage
    * collected.
    *
-   * @param {function} callback
+   * @param {Function} callback
    *   The listener function. This class will hold a weak reference to it.
    */
   addTopSitesListener(callback) {

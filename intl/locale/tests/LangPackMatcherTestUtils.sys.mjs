@@ -1,7 +1,6 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-"use strict";
 
 import { LangPackMatcher } from "resource://gre/modules/LangPackMatcher.sys.mjs";
 
@@ -41,6 +40,7 @@ export function getAddonAndLocalAPIsMocker(testScope, sandbox) {
           availableLangpacks.map(locale => ({
             guid: `langpack-${locale}@firefox.mozilla.org`,
             type: "language",
+            hash: locale,
             target_locale: locale,
             current_compatible_version: {
               files: [

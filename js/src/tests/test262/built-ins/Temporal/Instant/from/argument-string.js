@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -39,12 +39,9 @@ const tests = [
   ['1976-11-18T15Z', 217177200000000000n],
   ['1976-11-18T15:23:30.123456789Z[u-ca=discord]', 217178610123456789n],
   ['1976-11-18T15:23:30.123456789Z[+00]', 217178610123456789n],
-  ['1976-11-18T15:23:30.123456789Z[+00:00]', 217178610123456789n],
   ['1976-11-18T15:23:30.123456789Z[-00]', 217178610123456789n],
   ['1976-11-18T15:23:30.123456789Z[-00:00]', 217178610123456789n],
   ['1976-11-18T15:23:30.123456789Z[+12]', 217178610123456789n],
-  ['1976-11-18T15:23:30.123456789Z[UTC]', 217178610123456789n],
-  ['1976-11-18T15:23:30.123456789Z[Europe/Paris]', 217178610123456789n],
   ['1976-11-18T15:23:30.123456789Z[NotATimeZone]', 217178610123456789n],
 ];
 

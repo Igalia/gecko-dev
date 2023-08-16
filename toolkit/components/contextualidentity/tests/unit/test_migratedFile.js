@@ -2,8 +2,8 @@
 
 const profileDir = do_get_profile();
 
-const { ContextualIdentityService } = ChromeUtils.import(
-  "resource://gre/modules/ContextualIdentityService.jsm"
+const { ContextualIdentityService } = ChromeUtils.importESModule(
+  "resource://gre/modules/ContextualIdentityService.sys.mjs"
 );
 
 const TEST_STORE_FILE_PATH = PathUtils.join(
@@ -25,7 +25,6 @@ add_task(async function migratedFile() {
         color: "blue",
         l10nID: "userContextPersonal.label",
         accessKey: "userContextPersonal.accesskey",
-        telemetryId: 1,
       },
       {
         userContextId: 2,
@@ -34,7 +33,6 @@ add_task(async function migratedFile() {
         color: "orange",
         l10nID: "userContextWork.label",
         accessKey: "userContextWork.accesskey",
-        telemetryId: 2,
       },
       {
         userContextId: 3,
@@ -43,7 +41,6 @@ add_task(async function migratedFile() {
         color: "green",
         l10nID: "userContextBanking.label",
         accessKey: "userContextBanking.accesskey",
-        telemetryId: 3,
       },
       {
         userContextId: 4,
@@ -52,7 +49,6 @@ add_task(async function migratedFile() {
         color: "pink",
         l10nID: "userContextShopping.label",
         accessKey: "userContextShopping.accesskey",
-        telemetryId: 4,
       },
       {
         userContextId: 5,
@@ -76,9 +72,8 @@ add_task(async function migratedFile() {
     tmpPath: TEST_STORE_FILE_PATH + ".tmp",
   });
 
-  let cis = ContextualIdentityService.createNewInstanceForTesting(
-    TEST_STORE_FILE_PATH
-  );
+  let cis =
+    ContextualIdentityService.createNewInstanceForTesting(TEST_STORE_FILE_PATH);
   ok(!!cis, "We have our instance of ContextualIdentityService");
 
   // Check that the custom user-created identity exists.
@@ -100,13 +95,20 @@ add_task(async function migratedFile() {
   );
   ok(!!customUserCreatedIdentity, "Got the custom user-created identity");
 
+  Assert.deepEqual(
+    cis.getPublicUserContextIds(),
+    cis.getPublicIdentities().map(identity => identity.userContextId),
+    "getPublicUserContextIds has matching user context IDs"
+  );
+
   // Check that the reserved userContextIdInternal.webextStorageLocal identity exists.
 
-  const webextStorageLocalPrivateId = ContextualIdentityService._defaultIdentities
-    .filter(
-      identity => identity.name === "userContextIdInternal.webextStorageLocal"
-    )
-    .pop().userContextId;
+  const webextStorageLocalPrivateId =
+    ContextualIdentityService._defaultIdentities
+      .filter(
+        identity => identity.name === "userContextIdInternal.webextStorageLocal"
+      )
+      .pop().userContextId;
 
   const privWebExtStorageLocal = cis.getPrivateIdentity(
     "userContextIdInternal.webextStorageLocal"

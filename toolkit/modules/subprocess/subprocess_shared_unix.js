@@ -7,11 +7,14 @@
 
 /* exported LIBC, libc */
 
-// This file is loaded into the same scope as subprocess_unix.jsm
-/* import-globals-from subprocess_shared.js */
-/* import-globals-from subprocess_unix.jsm */
+// ctypes is either already available in the chrome worker scope, or defined
+// in scope via loadSubScript.
+/* global ctypes */
 
-var LIBC = OS.Constants.libc;
+// This file is loaded into the same scope as subprocess_shared.js.
+/* import-globals-from subprocess_shared.js */
+
+var LIBC = ChromeUtils.getLibcConstants();
 
 const LIBC_CHOICES = ["libc.so", "libSystem.B.dylib", "a.out"];
 
@@ -108,6 +111,6 @@ var libc = new Library("libc", LIBC_CHOICES, {
   ],
 });
 
-unix.Fd = function(fd) {
+unix.Fd = function (fd) {
   return ctypes.CDataFinalizer(ctypes.int(fd), libc.close);
 };

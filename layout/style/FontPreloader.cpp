@@ -9,6 +9,7 @@
 #include "gfxUserFontSet.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/WorkerPrivate.h"
+#include "mozilla/dom/ReferrerInfo.h"
 #include "nsContentSecurityManager.h"
 #include "nsIClassOfService.h"
 #include "nsIHttpChannel.h"
@@ -25,7 +26,8 @@ void FontPreloader::PrioritizeAsPreload() { PrioritizeAsPreload(Channel()); }
 nsresult FontPreloader::CreateChannel(
     nsIChannel** aChannel, nsIURI* aURI, const CORSMode aCORSMode,
     const dom::ReferrerPolicy& aReferrerPolicy, dom::Document* aDocument,
-    nsILoadGroup* aLoadGroup, nsIInterfaceRequestor* aCallbacks) {
+    nsILoadGroup* aLoadGroup, nsIInterfaceRequestor* aCallbacks,
+    uint64_t aEarlyHintPreloaderId) {
   return BuildChannel(aChannel, aURI, aCORSMode, aReferrerPolicy, nullptr,
                       nullptr, aDocument, aLoadGroup, aCallbacks, true);
 }
@@ -78,8 +80,9 @@ void FontPreloader::PrioritizeAsPreload(nsIChannel* aChannel) {
 
       // For WOFF and WOFF2, we should tell servers/proxies/etc NOT to try
       // and apply additional compression at the content-encoding layer
-      if (aFontFaceSrc->mFormatFlags & (gfxUserFontSet::FLAG_FORMAT_WOFF |
-                                        gfxUserFontSet::FLAG_FORMAT_WOFF2)) {
+      if (aFontFaceSrc->mFormatHint == StyleFontFaceSourceFormatKeyword::Woff ||
+          aFontFaceSrc->mFormatHint ==
+              StyleFontFaceSourceFormatKeyword::Woff2) {
         rv = aHttpChannel->SetRequestHeader("Accept-Encoding"_ns, "identity"_ns,
                                             false);
         NS_ENSURE_SUCCESS(rv, rv);

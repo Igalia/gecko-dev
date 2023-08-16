@@ -1,13 +1,14 @@
 // |jit-test| skip-if: !wasmGcEnabled()
 
 // White-box test for bug 1617908.  The significance of this test is that the
-// type $S is too large to fit in an inline TypedObject, and the write barrier
+// type $S is too large to fit in an inline WasmGcObject, and the write barrier
 // logic must take this into account when storing the (ref $S2) into the last
 // field of the object.
 
 const wat = `
 (module
-  (type $S
+  (type $S2 (sub (struct)))
+  (type $S (sub $S2
     (struct
       (field (mut i64))
       (field (mut i64))
@@ -27,8 +28,7 @@ const wat = `
       (field (mut i64))
       (field (mut i64))
       (field (mut i64))
-      (field (mut eqref))))
-  (type $S2 (struct))
+      (field (mut eqref)))))
 
   (func $main
     (struct.set $S 18
@@ -61,36 +61,36 @@ wasmEvalText(wat);
 
 wasmEvalText(`
 (module
-  (type $outline
-    (struct
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))
-      (field (mut i64))))
   (type $inline
+    (sub (struct
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+    )))
+  (type $outline (sub $inline
     (struct
       (field (mut i64))
       (field (mut i64))
       (field (mut i64))
       (field (mut i64))
       (field (mut i64))
-    ))
-
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64))
+      (field (mut i64)))))
+  
   (func $main
     (local $outline (ref null $outline))
     (local $inline (ref null $inline))

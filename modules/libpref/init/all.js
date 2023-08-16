@@ -37,19 +37,6 @@ pref("security.remember_cert_checkbox_default_setting", true);
 // x_11_x: COSE is required, PKCS#7 disabled (fail when present)
 pref("security.signed_app_signatures.policy", 2);
 
-// Only one of ["enable_softtoken", "enable_usbtoken",
-// "webauthn_enable_android_fido2"] should be true at a time, as the
-// softtoken will override the other two. Note android's pref is set in
-// mobile.js / geckoview-prefs.js
-pref("security.webauth.webauthn_enable_softtoken", false);
-
-#ifdef MOZ_WIDGET_ANDROID
-  // the Rust usbtoken support does not function on Android
-  pref("security.webauth.webauthn_enable_usbtoken", false);
-#else
-  pref("security.webauth.webauthn_enable_usbtoken", true);
-#endif
-
 pref("security.xfocsp.errorReporting.enabled", true);
 pref("security.xfocsp.errorReporting.automatic", false);
 
@@ -69,11 +56,7 @@ pref("security.pki.mitm_canary_issuer.enabled", true);
 pref("security.pki.mitm_detected", false);
 
 // Intermediate CA Preloading settings
-#if !defined(MOZ_WIDGET_ANDROID)
-  pref("security.remote_settings.intermediates.enabled", true);
-#else
-  pref("security.remote_settings.intermediates.enabled", false);
-#endif
+pref("security.remote_settings.intermediates.enabled", true);
 pref("security.remote_settings.intermediates.downloads_per_poll", 5000);
 pref("security.remote_settings.intermediates.parallel_downloads", 8);
 
@@ -88,7 +71,7 @@ pref("security.osreauthenticator.password_last_changed_lo", 0);
 pref("security.osreauthenticator.password_last_changed_hi", 0);
 
 pref("security.crash_tracking.js_load_1.prevCrashes", 0);
-pref("security.crash_tracking.js_load_1.maxCrashes", 0);
+pref("security.crash_tracking.js_load_1.maxCrashes", 1);
 
 pref("general.useragent.compatMode.firefox", false);
 
@@ -123,9 +106,6 @@ pref("browser.bookmarks.max_backups",       5);
 pref("browser.cache.disk_cache_ssl",        true);
 // The half life used to re-compute cache entries frecency in hours.
 pref("browser.cache.frecency_half_life_hours", 6);
-
-// offline cache capacity in kilobytes
-pref("browser.cache.offline.capacity",         512000);
 
 // Don't show "Open with" option on download dialog if true.
 pref("browser.download.forbid_open_with", false);
@@ -180,24 +160,13 @@ pref("dom.keyboardevent.keypress.hack.use_legacy_keycode_and_charcode.addl", "")
 // explanation for the detail.
 pref("dom.mouseevent.click.hack.use_legacy_non-primary_dispatch", "");
 
-// Enable experimental text recognition features for supported OSes.
-pref("dom.text-recognition.enabled", false);
+// Text recognition is a platform dependent feature, so even if this preference is
+// enabled here, the feature may not be visible in all browsers.
+pref("dom.text-recognition.enabled", true);
 
 // Fastback caching - if this pref is negative, then we calculate the number
 // of content viewers to cache based on the amount of available memory.
 pref("browser.sessionhistory.max_total_viewers", -1);
-
-pref("browser.display.force_inline_alttext", false); // true = force ALT text for missing images to be layed out inline
-// 0 = no external leading,
-// 1 = use external leading only when font provides,
-// 2 = add extra leading both internal leading and external leading are zero
-pref("browser.display.normal_lineheight_calc_control", 2);
-// enable showing image placeholders while image is loading or when image is broken
-pref("browser.display.show_image_placeholders", true);
-// if browser.display.show_image_placeholders is true then this controls whether the loading image placeholder and border is shown or not
-pref("browser.display.show_loading_image_placeholder", false);
-// min font device pixel size at which to turn on high quality
-pref("browser.display.auto_quality_min_font_size", 20);
 
 // See http://whatwg.org/specs/web-apps/current-work/#ping
 pref("browser.send_pings", false);
@@ -208,23 +177,13 @@ pref("browser.helperApps.neverAsk.saveToDisk", "");
 pref("browser.helperApps.neverAsk.openFile", "");
 pref("browser.helperApps.deleteTempFileOnExit", false);
 
-// xxxbsmedberg: where should prefs for the toolkit go?
-pref("browser.chrome.toolbar_tips",         true);
-// max image size for which it is placed in the tab icon for tabbrowser.
-// if 0, no images are used for tab icons for image documents.
-pref("browser.chrome.image_icons.max_size", 1024);
-
 pref("browser.triple_click_selects_paragraph", true);
 
 // Enable fillable forms in the PDF viewer.
 pref("pdfjs.annotationMode", 2);
 
 // Enable editing in the PDF viewer.
-#ifdef EARLY_BETA_OR_EARLIER
-  pref("pdfjs.annotationEditorMode", 0);
-#else
-  pref("pdfjs.annotationEditorMode", -1);
-#endif
+pref("pdfjs.annotationEditorMode", 0);
 
 // Enable JavaScript support in the PDF viewer.
 pref("pdfjs.enableScripting", true);
@@ -232,15 +191,18 @@ pref("pdfjs.enableScripting", true);
 // Enable XFA form support in the PDF viewer.
 pref("pdfjs.enableXfa", true);
 
+// Enable adding an image in a pdf.
+#if defined(EARLY_BETA_OR_EARLIER)
+  pref("pdfjs.enableStampEditor", true);
+#else
+  pref("pdfjs.enableStampEditor", false);
+#endif
+
 // Disable support for MathML
 pref("mathml.disabled",    false);
 
 // Enable scale transform for stretchy MathML operators. See bug 414277.
 pref("mathml.scale_stretchy_operators.enabled", true);
-
-// Used by ChannelMediaResource to run data callbacks from HTTP channel
-// off the main thread.
-pref("media.omt_data_delivery.enabled", true);
 
 // We'll throttle the download if the download rate is throttle-factor times
 // the estimated playback rate, AND we satisfy the cache readahead_limit
@@ -248,11 +210,6 @@ pref("media.omt_data_delivery.enabled", true);
 // This means we'll only throttle the download if there's no concern that
 // throttling would cause us to stop and buffer.
 pref("media.throttle-factor", 2);
-// By default, we'll throttle media download once we've reached the the
-// readahead_limit if the download is fast. This pref toggles the "and the
-// download is fast" check off, so that we can always throttle the download
-// once the readaheadd limit is reached even on a slow network.
-pref("media.throttle-regardless-of-download-rate", false);
 
 // Master HTML5 media volume scale.
 pref("media.volume_scale", "1.0");
@@ -265,8 +222,6 @@ pref("media.play-stand-alone", true);
   pref("media.wmf.dxva.enabled", true);
   pref("media.wmf.play-stand-alone", true);
 #endif
-pref("media.gmp.decoder.aac", 0);
-pref("media.gmp.decoder.h264", 0);
 
 // GMP storage version number. At startup we check the version against
 // media.gmp.storage.version.observed, and if the versions don't match,
@@ -298,6 +253,8 @@ pref("media.videocontrols.picture-in-picture.video-toggle.position", "right");
 pref("media.videocontrols.picture-in-picture.video-toggle.has-used", false);
 pref("media.videocontrols.picture-in-picture.display-text-tracks.toggle.enabled", true);
 pref("media.videocontrols.picture-in-picture.display-text-tracks.size", "medium");
+pref("media.videocontrols.picture-in-picture.improved-video-controls.enabled", true);
+pref("media.videocontrols.picture-in-picture.respect-disablePictureInPicture", true);
 pref("media.videocontrols.keyboard-tab-to-all-controls", true);
 
 #ifdef MOZ_WEBRTC
@@ -322,14 +279,12 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", true);
     pref("media.peerconnection.sdp.strict_success", false);
   #endif
 
-  pref("media.webrtc.debug.trace_mask", 0);
-  pref("media.webrtc.debug.multi_log", false);
+  pref("media.peerconnection.sdp.disable_stereo_fmtp", false);
   pref("media.webrtc.debug.log_file", "");
   pref("media.webrtc.debug.aec_dump_max_size", 4194304); // 4MB
 
   pref("media.navigator.video.default_width",0);  // adaptive default
   pref("media.navigator.video.default_height",0); // adaptive default
-  pref("media.peerconnection.video.enabled", true);
   pref("media.navigator.video.max_fs", 12288); // Enough for 2048x1536
   pref("media.navigator.video.max_fr", 60);
   pref("media.navigator.video.h264.level", 31); // 0x42E01f - level 3.1
@@ -357,8 +312,8 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", true);
   pref("media.navigator.audio.fake_frequency", 1000);
   pref("media.navigator.permission.disabled", false);
   pref("media.navigator.streams.fake", false);
-  pref("media.peerconnection.simulcast", true);
   pref("media.peerconnection.default_iceservers", "[]");
+  pref("media.peerconnection.allow_old_setParameters", true);
   pref("media.peerconnection.ice.loopback", false); // Set only for testing in offline environments.
   pref("media.peerconnection.ice.tcp", true);
   pref("media.peerconnection.ice.tcp_so_sock_count", 0); // Disable SO gathering
@@ -381,6 +336,7 @@ pref("media.videocontrols.keyboard-tab-to-all-controls", true);
   pref("media.peerconnection.ice.obfuscate_host_addresses.blocklist", "");
   pref("media.peerconnection.ice.proxy_only_if_behind_proxy", false);
   pref("media.peerconnection.ice.proxy_only", false);
+  pref("media.peerconnection.ice.proxy_only_if_pbmode", false);
   pref("media.peerconnection.turn.disable", false);
 
   // 770 = DTLS 1.0, 771 = DTLS 1.2, 772 = DTLS 1.3
@@ -425,16 +381,6 @@ pref("media.recorder.audio_node.enabled", false);
 // to keep up under load. Useful for tests but beware of memory consumption!
 pref("media.recorder.video.frame_drops", true);
 
-// Whether to autostart a media element with an |autoplay| attribute.
-// ALLOWED=0, BLOCKED=1, defined in dom/media/Autoplay.idl
-pref("media.autoplay.default", 0);
-
-// By default, don't block WebAudio from playing automatically.
-pref("media.autoplay.block-webaudio", false);
-
-// By default, don't block the media from extension background script.
-pref("media.autoplay.allow-extension-background-pages", true);
-
 // The default number of decoded video frames that are enqueued in
 // MediaDecoderReader's mVideoQueue.
 pref("media.video-queue.default-size", 10);
@@ -442,10 +388,6 @@ pref("media.video-queue.default-size", 10);
 // The maximum number of queued frames to send to the compositor.
 // By default, send all of them.
 pref("media.video-queue.send-to-compositor-size", 9999);
-
-// Log level for cubeb, the audio input/output system. Valid values are
-// "verbose", "normal" and "" (log disabled).
-pref("media.cubeb.logging_level", "");
 
 pref("media.cubeb.output_voice_routing", true);
 
@@ -470,8 +412,6 @@ pref("formhelper.autozoom.force-disable.test-only", false);
   //          broken).
   pref("gfx.hidpi.enabled", 2);
 #endif
-
-pref("gfx.color_management.display_profile", "");
 
 pref("gfx.downloadable_fonts.enabled", true);
 pref("gfx.downloadable_fonts.fallback_delay", 3000);
@@ -607,22 +547,7 @@ pref("ui.-moz-autofill-background", "rgba(255, 249, 145, .5)");
 // further checks.
 pref("accessibility.force_disabled", 0);
 
-#ifdef XP_WIN
-  // Some accessibility tools poke at windows in the plugin process during
-  // setup which can cause hangs.  To hack around this set
-  // accessibility.delay_plugins to true, you can also try increasing
-  // accessibility.delay_plugin_time if your machine is slow and you still
-  // experience hangs. See bug 781791.
-  pref("accessibility.delay_plugins", false);
-  pref("accessibility.delay_plugin_time", 10000);
-
-  // The COM handler used for Windows e10s performance and live regions.
-  pref("accessibility.handler.enabled", true);
-#endif
-
 pref("focusmanager.testmode", false);
-
-pref("accessibility.usetexttospeech", "");
 
 // Type Ahead Find
 pref("accessibility.typeaheadfind", true);
@@ -664,14 +589,14 @@ pref("gfx.use_text_smoothing_setting", false);
 // Number of characters to consider emphasizing for rich autocomplete results
 pref("toolkit.autocomplete.richBoundaryCutoff", 200);
 
-// Variable controlling logging for osfile.
-pref("toolkit.osfile.log", false);
-
-pref("toolkit.scrollbox.smoothScroll", true);
 pref("toolkit.scrollbox.scrollIncrement", 20);
 pref("toolkit.scrollbox.clickToScroll.scrollDelay", 150);
 
-// Controls logging for Sqlite.jsm.
+pref("toolkit.shopping.useOHTTP", false);
+pref("toolkit.shopping.ohttpConfigURL", "");
+pref("toolkit.shopping.ohttpRelayURL", "");
+
+// Controls logging for Sqlite.sys.mjs.
 pref("toolkit.sqlitejsm.loglevel", "Error");
 
 pref("toolkit.tabbox.switchByScrolling", false);
@@ -686,17 +611,31 @@ pref("toolkit.telemetry.server_owner", "Mozilla");
 pref("toolkit.telemetry.debugSlowSql", false);
 // Whether to use the unified telemetry behavior, requires a restart.
 pref("toolkit.telemetry.unified", true);
+
+// DAP related preferences
+pref("toolkit.telemetry.dap_enabled", false);
+// Verification tasks
+pref("toolkit.telemetry.dap_task1_enabled", false);
+// Leader endpoint for the DAP protocol
+pref("toolkit.telemetry.dap_leader", "https://dap-02.api.divviup.org");
+// Not used for anything. Just additional information.
+pref("toolkit.telemetry.dap_leader_owner", "ISRG");
+// Second DAP server. Only two are currently supported.
+pref("toolkit.telemetry.dap_helper", "https://helper1.dap.cloudflareresearch.com/v02");
+pref("toolkit.telemetry.dap_helper_owner", "Cloudflare");
+pref("toolkit.telemetry.dap.logLevel", "Warn");
+
 // AsyncShutdown delay before crashing in case of shutdown freeze
-#if !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
-  pref("toolkit.asyncshutdown.crash_timeout", 60000); // 1 minute
+// ASan, TSan and code coverage builds can be considerably slower. Extend the
+// grace period for both the asyncshutdown and the terminator.
+#if defined(MOZ_ASAN)
+  pref("toolkit.asyncshutdown.crash_timeout", 300000); // 5 minutes
+#elif defined(MOZ_TSAN)
+  pref("toolkit.asyncshutdown.crash_timeout", 360000); // 6 minutes
+#elif defined(MOZ_CODE_COVERAGE)
+  pref("toolkit.asyncshutdown.crash_timeout", 180000); // 3 minutes
 #else
-  // ASan and TSan builds can be considerably slower. Extend the grace period
-  // of both asyncshutdown and the terminator.
-  #if defined(MOZ_TSAN)
-    pref("toolkit.asyncshutdown.crash_timeout", 360000); // 6 minutes
-  #else
-    pref("toolkit.asyncshutdown.crash_timeout", 300000); // 5 minutes
-  #endif
+  pref("toolkit.asyncshutdown.crash_timeout", 60000); // 1 minute
 #endif // !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
 // Extra logging for AsyncShutdown barriers and phases
 pref("toolkit.asyncshutdown.log", false);
@@ -879,6 +818,12 @@ pref("print.print_edge_bottom", 0);
   pref("print.print_in_color", true);
 #endif
 
+// List of domains of web apps which depend on Gecko's traditional join/split
+// node(s) behavior or Blink/WebKit compatible one in `contenteditable` or
+// `designMode`.
+pref("editor.join_split_direction.force_use_traditional_direction", "");
+pref("editor.join_split_direction.force_use_compatible_direction", "");
+
 // Scripts & Windows prefs
 pref("dom.beforeunload_timeout_ms",         1000);
 pref("dom.disable_window_flip",             false);
@@ -890,7 +835,6 @@ pref("dom.popup_allowed_events", "change click dblclick auxclick mousedown mouse
 
 pref("dom.serviceWorkers.disable_open_click_delay", 1000);
 
-pref("dom.storage.enabled", true);
 pref("dom.storage.shadow_writes", false);
 pref("dom.storage.snapshot_prefill", 16384);
 pref("dom.storage.snapshot_gradual_prefill", 4096);
@@ -918,16 +862,12 @@ pref("dom.forms.selectSearch", false);
 
 pref("dom.cycle_collector.incremental", true);
 
-// Disable popups from plugins by default
-//   0 = openAllowed
-//   1 = openControlled
-//   2 = openBlocked
-//   3 = openAbused
-pref("privacy.popups.disable_from_plugins", 3);
-
-// If enabled by privacy.resistFingerprinting.testGranularityMask, list of
-// domains exempted from RFP.
+// List of domains exempted from RFP. The list is comma separated domain list.
 pref("privacy.resistFingerprinting.exemptedDomains", "*.example.invalid");
+
+// If privacy.fingerprintingProtection is enabled, this pref can be used to add
+// or remove features from its effects
+pref("privacy.fingerprintingProtection.overrides", "");
 
 // Fix cookie blocking breakage by providing ephemeral Paritioned LocalStorage
 // for a list of hosts when detected as trackers.
@@ -971,21 +911,16 @@ pref("privacy.purge_trackers.consider_entity_list", false);
 pref("dom.event.contextmenu.enabled",       true);
 
 pref("javascript.enabled",                  true);
-pref("javascript.options.asmjs",                  true);
 pref("javascript.options.wasm",                   true);
 pref("javascript.options.wasm_trustedprincipals", true);
 pref("javascript.options.wasm_verbose",           false);
 pref("javascript.options.wasm_baselinejit",       true);
-
-pref("javascript.options.parallel_parsing", true);
-pref("javascript.options.source_pragmas",    true);
 
 pref("javascript.options.asyncstack", true);
 // Broadly capturing async stack data adds overhead that is only advisable for
 // developers, so we only enable it when the devtools are open, by default.
 pref("javascript.options.asyncstack_capture_debuggee_only", true);
 
-pref("javascript.options.throw_on_asmjs_validation_failure", false);
 // This preference instructs the JS engine to discard the
 // source of any privileged JS after compilation. This saves
 // memory, but makes things like Function.prototype.toSource()
@@ -1024,6 +959,10 @@ pref("javascript.options.mem.gc_incremental_slice_ms", 5);
 // JSGC_COMPACTING_ENABLED
 pref("javascript.options.mem.gc_compacting", true);
 
+// JSGC_PARALLEL_MARKING_ENABLED
+// This only applies to the main runtime and does not affect workers.
+pref("javascript.options.mem.gc_parallel_marking", false);
+
 // JSGC_HIGH_FREQUENCY_TIME_LIMIT
 pref("javascript.options.mem.gc_high_frequency_time_limit_ms", 1000);
 
@@ -1046,7 +985,7 @@ pref("javascript.options.mem.gc_low_frequency_heap_growth", 150);
 pref("javascript.options.mem.gc_balanced_heap_limits", false);
 
 // JSGC_HEAP_GROWTH_FACTOR
-pref("javascript.options.mem.gc_heap_growth_factor", 40);
+pref("javascript.options.mem.gc_heap_growth_factor", 50);
 
 // JSGC_ALLOCATION_THRESHOLD
 pref("javascript.options.mem.gc_allocation_threshold_mb", 27);
@@ -1055,7 +994,7 @@ pref("javascript.options.mem.gc_allocation_threshold_mb", 27);
 pref("javascript.options.mem.gc_malloc_threshold_base_mb", 38);
 
 // JSGC_SMALL_HEAP_INCREMENTAL_LIMIT
-pref("javascript.options.mem.gc_small_heap_incremental_limit", 140);
+pref("javascript.options.mem.gc_small_heap_incremental_limit", 150);
 
 // JSGC_LARGE_HEAP_INCREMENTAL_LIMIT
 pref("javascript.options.mem.gc_large_heap_incremental_limit", 110);
@@ -1079,9 +1018,6 @@ pref("javascript.options.shared_memory", true);
 
 pref("javascript.options.throw_on_debuggee_would_run", false);
 pref("javascript.options.dump_stack_on_debuggee_would_run", false);
-
-// Dynamic module import.
-pref("javascript.options.dynamicImport", true);
 
 // advanced prefs
 pref("image.animation_mode",                "normal");
@@ -1118,6 +1054,8 @@ pref("network.protocol-handler.external.ie.http", false);
 pref("network.protocol-handler.external.iehistory", false);
 pref("network.protocol-handler.external.ierss", false);
 pref("network.protocol-handler.external.mk", false);
+pref("network.protocol-handler.external.ms-cxh", false);
+pref("network.protocol-handler.external.ms-cxh-full", false);
 pref("network.protocol-handler.external.ms-help", false);
 pref("network.protocol-handler.external.ms-msdt", false);
 pref("network.protocol-handler.external.res", false);
@@ -1422,16 +1360,9 @@ pref("network.websocket.delay-failed-reconnects", true);
 // Equal to the DEFAULT_RECONNECTION_TIME_VALUE value in nsEventSource.cpp
 pref("dom.server-events.default-reconnection-time", 5000); // in milliseconds
 
-// This preference, if true, causes all UTF-8 domain names to be normalized to
-// punycode.  The intention is to allow UTF-8 domain names as input, but never
-// generate them from punycode.
-pref("network.IDN_show_punycode", false);
-
-// If "network.IDN.use_whitelist" is set to true, TLDs with
-// "network.IDN.whitelist.tld" explicitly set to true are treated as
-// IDN-safe. Otherwise, they're treated as unsafe and punycode will be used
-// for displaying them in the UI (e.g. URL bar), unless they conform to one of
-// the profiles specified in
+// TLDs are treated as IDN-unsafe and punycode will be used for displaying them
+// in the UI (e.g. URL bar), unless they conform to one of the profiles
+// specified in
 // https://www.unicode.org/reports/tr39/#Restriction_Level_Detection
 // If "network.IDN.restriction_profile" is "high", the Highly Restrictive
 // profile is used.
@@ -1442,122 +1373,9 @@ pref("network.IDN_show_punycode", false);
 // "network.IDN_show_punycode" is false. In other words, all IDNs will be shown
 // in punycode if "network.IDN_show_punycode" is true.
 pref("network.IDN.restriction_profile", "high");
-pref("network.IDN.use_whitelist", false);
-
-// ccTLDs
-pref("network.IDN.whitelist.ac", true);
-pref("network.IDN.whitelist.ar", true);
-pref("network.IDN.whitelist.at", true);
-pref("network.IDN.whitelist.br", true);
-pref("network.IDN.whitelist.ca", true);
-pref("network.IDN.whitelist.ch", true);
-pref("network.IDN.whitelist.cl", true);
-pref("network.IDN.whitelist.cn", true);
-pref("network.IDN.whitelist.de", true);
-pref("network.IDN.whitelist.dk", true);
-pref("network.IDN.whitelist.ee", true);
-pref("network.IDN.whitelist.es", true);
-pref("network.IDN.whitelist.fi", true);
-pref("network.IDN.whitelist.fr", true);
-pref("network.IDN.whitelist.gr", true);
-pref("network.IDN.whitelist.gt", true);
-pref("network.IDN.whitelist.hu", true);
-pref("network.IDN.whitelist.il", true);
-pref("network.IDN.whitelist.io", true);
-pref("network.IDN.whitelist.ir", true);
-pref("network.IDN.whitelist.is", true);
-pref("network.IDN.whitelist.jp", true);
-pref("network.IDN.whitelist.kr", true);
-pref("network.IDN.whitelist.li", true);
-pref("network.IDN.whitelist.lt", true);
-pref("network.IDN.whitelist.lu", true);
-pref("network.IDN.whitelist.lv", true);
-pref("network.IDN.whitelist.no", true);
-pref("network.IDN.whitelist.nu", true);
-pref("network.IDN.whitelist.nz", true);
-pref("network.IDN.whitelist.pl", true);
-pref("network.IDN.whitelist.pm", true);
-pref("network.IDN.whitelist.pr", true);
-pref("network.IDN.whitelist.re", true);
-pref("network.IDN.whitelist.se", true);
-pref("network.IDN.whitelist.sh", true);
-pref("network.IDN.whitelist.si", true);
-pref("network.IDN.whitelist.tf", true);
-pref("network.IDN.whitelist.th", true);
-pref("network.IDN.whitelist.tm", true);
-pref("network.IDN.whitelist.tw", true);
-pref("network.IDN.whitelist.ua", true);
-pref("network.IDN.whitelist.vn", true);
-pref("network.IDN.whitelist.wf", true);
-pref("network.IDN.whitelist.yt", true);
-
-// IDN ccTLDs
-// ae, UAE, .<Emarat>
-pref("network.IDN.whitelist.xn--mgbaam7a8h", true);
-// cn, China, .<China> with variants
-pref("network.IDN.whitelist.xn--fiqz9s", true); // Traditional
-pref("network.IDN.whitelist.xn--fiqs8s", true); // Simplified
-// eg, Egypt, .<Masr>
-pref("network.IDN.whitelist.xn--wgbh1c", true);
-// hk, Hong Kong, .<Hong Kong>
-pref("network.IDN.whitelist.xn--j6w193g", true);
-// ir, Iran, <.Iran> with variants
-pref("network.IDN.whitelist.xn--mgba3a4f16a", true);
-pref("network.IDN.whitelist.xn--mgba3a4fra", true);
-// jo, Jordan, .<Al-Ordon>
-pref("network.IDN.whitelist.xn--mgbayh7gpa", true);
-// lk, Sri Lanka, .<Lanka> and .<Ilangai>
-pref("network.IDN.whitelist.xn--fzc2c9e2c", true);
-pref("network.IDN.whitelist.xn--xkc2al3hye2a", true);
-// qa, Qatar, .<Qatar>
-pref("network.IDN.whitelist.xn--wgbl6a", true);
-// rs, Serbia, .<Srb>
-pref("network.IDN.whitelist.xn--90a3ac", true);
-// ru, Russian Federation, .<RF>
-pref("network.IDN.whitelist.xn--p1ai", true);
-// sa, Saudi Arabia, .<al-Saudiah> with variants
-pref("network.IDN.whitelist.xn--mgberp4a5d4ar", true);
-pref("network.IDN.whitelist.xn--mgberp4a5d4a87g", true);
-pref("network.IDN.whitelist.xn--mgbqly7c0a67fbc", true);
-pref("network.IDN.whitelist.xn--mgbqly7cvafr", true);
-// sy, Syria, .<Souria>
-pref("network.IDN.whitelist.xn--ogbpf8fl", true);
-// th, Thailand, .<Thai>
-pref("network.IDN.whitelist.xn--o3cw4h", true);
-// tw, Taiwan, <.Taiwan> with variants
-pref("network.IDN.whitelist.xn--kpry57d", true);  // Traditional
-pref("network.IDN.whitelist.xn--kprw13d", true);  // Simplified
-
-// gTLDs
-pref("network.IDN.whitelist.asia", true);
-pref("network.IDN.whitelist.biz", true);
-pref("network.IDN.whitelist.cat", true);
-pref("network.IDN.whitelist.info", true);
-pref("network.IDN.whitelist.museum", true);
-pref("network.IDN.whitelist.org", true);
-pref("network.IDN.whitelist.tel", true);
-
-// NOTE: Before these can be removed, one of bug 414812's tests must be updated
-//       or it will likely fail!  Please CC jwalden+bmo on the bug associated
-//       with removing these so he can provide a patch to make the necessary
-//       changes to avoid bustage.
-// ".test" localised TLDs for ICANN's top-level IDN trial
-pref("network.IDN.whitelist.xn--0zwm56d", true);
-pref("network.IDN.whitelist.xn--11b5bs3a9aj6g", true);
-pref("network.IDN.whitelist.xn--80akhbyknj4f", true);
-pref("network.IDN.whitelist.xn--9t4b11yi5a", true);
-pref("network.IDN.whitelist.xn--deba0ad", true);
-pref("network.IDN.whitelist.xn--g6w251d", true);
-pref("network.IDN.whitelist.xn--hgbk6aj7f53bba", true);
-pref("network.IDN.whitelist.xn--hlcj6aya9esc7a", true);
-pref("network.IDN.whitelist.xn--jxalpdlp", true);
-pref("network.IDN.whitelist.xn--kgbechtv", true);
-pref("network.IDN.whitelist.xn--zckzah", true);
 
 // If a domain includes any of the blocklist characters, it may be a spoof
-// attempt and so we always display the domain name as punycode. This would
-// override the settings "network.IDN_show_punycode" and
-// "network.IDN.whitelist.*".
+// attempt and so we always display the domain name as punycode.
 // For a complete list of the blocked IDN characters see:
 //   netwerk/dns/IDNCharacterBlocklist.inc
 
@@ -1574,9 +1392,6 @@ pref("network.IDN.extra_blocked_chars", "");
 // IPv4 only. Works around broken DNS servers which can't handle IPv6 lookups
 // and/or allows the user to disable IPv6 on a per-domain basis. See bug 68796.
 pref("network.dns.ipv4OnlyDomains", "");
-
-// This preference can be used to turn off IPv6 name lookups. See bug 68796.
-pref("network.dns.disableIPv6", false);
 
 // This is the number of dns cache entries allowed
 pref("network.dnsCacheEntries", 400);
@@ -1695,13 +1510,7 @@ pref("network.auth.private-browsing-sso", false);
 // This feature is occasionally causing visible regressions (download too slow for
 // too long time, jitter in video/audio in background tabs...)
 pref("network.http.throttle.enable", false);
-
-// Make HTTP throttling v2 algorithm Nightly-only due to bug 1462906
-#ifdef NIGHTLY_BUILD
-  pref("network.http.throttle.version", 2);
-#else
-  pref("network.http.throttle.version", 1);
-#endif
+pref("network.http.throttle.version", 1);
 
 // V1 prefs
 pref("network.http.throttle.suspend-for", 900);
@@ -1748,10 +1557,6 @@ pref("network.proxy.no_proxies_on",         "");
 pref("network.proxy.failover_timeout",      1800); // 30 minutes
 pref("network.online",                      true); //online/offline
 
-// The interval in seconds to move the cookies in the child process.
-// Set to 0 to disable moving the cookies.
-pref("network.cookie.move.interval_sec",    0);
-
 // This pref contains the list of hostnames (such as
 // "mozilla.org,example.net"). For these hosts, firefox will treat
 // SameSite=None if nothing else is specified, even if
@@ -1779,9 +1584,6 @@ pref("network.proxy.enable_wpad_over_dhcp", true);
 // Use the HSTS preload list by default
 pref("network.stricttransportsecurity.preloadlist", true);
 
-// Use JS mDNS as a fallback
-pref("network.mdns.use_js_fallback", false);
-
 pref("converter.html2txt.structs",          true); // Output structured phrases (strong, em, code, sub, sup, b, i, u)
 pref("converter.html2txt.header_strategy",  1); // 0 = no indention; 1 = indention, increased with header level; 2 = numbering and slight indention
 
@@ -1793,14 +1595,8 @@ pref("intl.ellipsis",                       "chrome://global-platform/locale/int
 // like date/time formatting, unit formatting, calendars etc. should use
 // OS locale set instead of the app locale set.
 pref("intl.regional_prefs.use_os_locales",  false);
-// fallback charset list for Unicode conversion (converting from Unicode)
-// currently used for mail send only to handle symbol characters (e.g Euro, trademark, smartquotes)
-// for ISO-8859-1
-pref("intl.fallbackCharsetList.ISO-8859-1", "windows-1252");
 pref("font.language.group",                 "chrome://global/locale/intl.properties");
 pref("font.cjk_pref_fallback_order",        "zh-cn,zh-hk,zh-tw,ja,ko");
-
-pref("intl.uidirection", -1); // -1 to set from locale; 0 for LTR; 1 for RTL
 
 // This pref controls pseudolocales for testing localization.
 // See https://firefox-source-docs.mozilla.org/l10n/fluent/tutorial.html#manually-testing-ui-with-pseudolocalization
@@ -2074,25 +1870,32 @@ pref("extensions.blocklist.addonItemURL", "https://addons.mozilla.org/%LOCALE%/%
 // blocking them.
 pref("extensions.blocklist.level", 2);
 // Whether event pages should be enabled for "manifest_version: 2" extensions.
-pref("extensions.eventPages.enabled", false);
+pref("extensions.eventPages.enabled", true);
+// Whether MV3 restrictions for actions popup urls should be extended to MV2 extensions
+// (only allowing same extension urls to be used as action popup urls).
+pref("extensions.manifestV2.actionsPopupURLRestricted", false);
 // Whether "manifest_version: 3" extensions should be allowed to install successfully.
-pref("extensions.manifestV3.enabled", false);
-// Whether to enable the unified extensions feature.
-pref("extensions.unifiedExtensions.enabled", false);
+pref("extensions.manifestV3.enabled", true);
+// Whether to enable the updated openPopup API.
+#ifdef NIGHTLY_BUILD
+  pref("extensions.openPopupWithoutUserGesture.enabled", true);
+#else
+  pref("extensions.openPopupWithoutUserGesture.enabled", false);
+#endif
+// Install origins restriction.
+pref("extensions.install_origins.enabled", false);
 
-// Modifier key prefs: default to Windows settings,
-// menu access key = alt, accelerator key = control.
-// Use 17 for Ctrl, 18 for Alt, 224 for Meta, 91 for Win, 0 for none. Mac settings in macprefs.js
-pref("ui.key.accelKey", 17);
-pref("ui.key.menuAccessKey", 18);
+// browser_style deprecation - bug 1827910.
+// TODO bug 1830711: set to false.
+// TODO bug 1830712: remove pref.
+pref("extensions.browser_style_mv3.supported", true);
+// TODO bug 1830712: remove pref.
+pref("extensions.browser_style_mv3.same_as_mv2", false);
 
 // Middle-mouse handling
 pref("middlemouse.paste", false);
 pref("middlemouse.contentLoadURL", false);
 pref("middlemouse.scrollbarPosition", false);
-
-// Clipboard only supports text/plain
-pref("clipboard.plainTextOnly", false);
 
 #if defined(XP_WIN) || defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
   // Setting false you can disable 4th button and/or 5th button of your mouse.
@@ -2157,9 +1960,6 @@ pref("mousewheel.with_win.delta_multiplier_x", 100);
 pref("mousewheel.with_win.delta_multiplier_y", 100);
 pref("mousewheel.with_win.delta_multiplier_z", 100);
 
-// We can show it anytime from menus
-pref("profile.manage_only_at_launch", false);
-
 // pref for which side vertical scrollbars should be on
 // 0 = end-side in UI direction
 // 1 = end-side in document/content direction
@@ -2169,9 +1969,6 @@ pref("layout.scrollbar.side", 0);
 
 // pref to control whether layout warnings that are hit quite often are enabled
 pref("layout.spammy_warnings.enabled", false);
-
-// if true, allow plug-ins to override internal imglib decoder mime types in full-page mode
-pref("plugin.override_internal_types", false);
 
 // enable single finger gesture input (win7+ tablets)
 pref("gestures.enable_single_finger_input", true);
@@ -2184,79 +1981,8 @@ pref("dom.global_stop_script", true);
 // Support the input event queue on the main thread of content process
 pref("input_event_queue.supported", true);
 
-// The maximum and minimum time (milliseconds) we reserve for handling input
-// events in each frame.
-pref("input_event_queue.duration.max", 8);
-pref("input_event_queue.duration.min", 1);
-
-// The default amount of time (milliseconds) required for handling a input
-// event.
-pref("input_event_queue.default_duration_per_event", 1);
-
-// The number of processed input events we use to predict the amount of time
-// required to process the following input events.
-pref("input_event_queue.count_for_prediction", 9);
-
-// This only supports one hidden ctp plugin, edit nsPluginArray.cpp if adding a second
-pref("plugins.navigator.hidden_ctp_plugin", "");
-
 // The default value for nsIPluginTag.enabledState (STATE_ENABLED = 2)
 pref("plugin.default.state", 2);
-
-// This pref can take 3 possible string values:
-// "always"     - always use favor fallback mode
-// "follow-ctp" - activate if ctp is active for the given
-//                plugin object (could be due to a plugin-wide
-//                setting or a site-specific setting)
-// "never"      - never use favor fallback mode
-pref("plugins.favorfallback.mode", "never");
-
-// A comma-separated list of rules to follow when deciding
-// whether an object has been provided with good fallback content.
-// The valid values can be found at nsObjectLoadingContent::HasGoodFallback.
-pref("plugins.favorfallback.rules", "");
-
-
-// Set IPC timeouts for plugins and tabs, except in leak-checking and
-// dynamic analysis builds.  (NS_FREE_PERMANENT_DATA is C++ only, so
-// approximate its definition here.)
-#if !defined(DEBUG) && !defined(MOZ_ASAN) && !defined(MOZ_VALGRIND) && !defined(MOZ_TSAN)
-  // How long a plugin is allowed to process a synchronous IPC message
-  // before we consider it "hung".
-  pref("dom.ipc.plugins.timeoutSecs", 45);
-  // How long a plugin process will wait for a response from the parent
-  // to a synchronous request before terminating itself. After this
-  // point the child assumes the parent is hung. Currently disabled.
-  pref("dom.ipc.plugins.parentTimeoutSecs", 0);
-  // How long a plugin in e10s is allowed to process a synchronous IPC
-  // message before we notify the chrome process of a hang.
-  pref("dom.ipc.plugins.contentTimeoutSecs", 10);
-  // How long a plugin launch is allowed to take before
-  // we consider it failed.
-  pref("dom.ipc.plugins.processLaunchTimeoutSecs", 45);
-  #ifdef XP_WIN
-    // How long a plugin is allowed to process a synchronous IPC message
-    // before we display the plugin hang UI
-    pref("dom.ipc.plugins.hangUITimeoutSecs", 11);
-    // Minimum time that the plugin hang UI will be displayed
-    pref("dom.ipc.plugins.hangUIMinDisplaySecs", 10);
-  #endif
-#else
-  // No timeout in leak-checking builds
-  pref("dom.ipc.plugins.timeoutSecs", 0);
-  pref("dom.ipc.plugins.contentTimeoutSecs", 0);
-  pref("dom.ipc.plugins.processLaunchTimeoutSecs", 0);
-  pref("dom.ipc.plugins.parentTimeoutSecs", 0);
-  #ifdef XP_WIN
-    pref("dom.ipc.plugins.hangUITimeoutSecs", 0);
-    pref("dom.ipc.plugins.hangUIMinDisplaySecs", 0);
-  #endif
-#endif
-
-pref("dom.ipc.plugins.reportCrashURL", true);
-
-// Force the accelerated direct path for a subset of Flash wmode values
-pref("dom.ipc.plugins.forcedirect.enabled", true);
 
 // Enable multi by default.
 #if !defined(MOZ_ASAN) && !defined(MOZ_TSAN)
@@ -2649,113 +2375,8 @@ pref("font.size.monospace.x-math", 13);
   // force_gdi_classic_for_families.
   pref("gfx.font_rendering.cleartype_params.force_gdi_classic_max_size", 15);
 
-  // Locate plugins by the directories specified in the Windows registry for PLIDs
-  // Which is currently HKLM\Software\MozillaPlugins\xxxPLIDxxx\Path
-  pref("plugin.scan.plid.all", true);
-
   // Switch the keyboard layout per window
   pref("intl.keyboard.per_window_layout", false);
-
-  // Whether Gecko sets input scope of the URL bar to IS_DEFAULT when black
-  // listed IMEs are active.  If you use tablet mode mainly and you want to
-  // use touch keyboard for URL when you set focus to the URL bar, you can
-  // set this to false.  Then, you'll see, e.g., ".com" key on the keyboard.
-  // However, if you set this to false, such IMEs set its open state to "closed"
-  // when you set focus to the URL bar.  I.e., input mode is automatically
-  // changed to English input mode.
-  // Black listed IMEs:
-  //   - Microsoft IME for Japanese
-  //   - Google Japanese Input
-  //   - Microsoft Bopomofo
-  //   - Microsoft ChangJie
-  //   - Microsoft Phonetic
-  //   - Microsoft Quick
-  //   - Microsoft New ChangJie
-  //   - Microsoft New Phonetic
-  //   - Microsoft New Quick
-  //   - Microsoft Pinyin
-  //   - Microsoft Pinyin New Experience Input Style
-  //   - Microsoft Wubi
-  //   - Microsoft IME for Korean (except on Win7)
-  //   - Microsoft Old Hangul
-  pref("intl.ime.hack.set_input_scope_of_url_bar_to_default", true);
-
-  // Enable/Disable TSF support.
-  pref("intl.tsf.enable", true);
-
-  // Support IMEs implemented with IMM in TSF mode.
-  pref("intl.tsf.support_imm", true);
-
-  // This is referred only when both "intl.tsf.enable" and
-  // "intl.tsf.support_imm" are true.  When this is true, default IMC is
-  // associated with focused window only when active keyboard layout is a
-  // legacy IMM-IME.
-  pref("intl.tsf.associate_imc_only_when_imm_ime_is_active", false);
-
-  // Enables/Disables hack for specific TIP.
-
-  // On Windows 10 Build 17643 (an Insider Preview build of RS5), Microsoft
-  // have fixed the caller of ITextACPStore::GetTextExt() to return
-  // TS_E_NOLAYOUT to TIP as-is, rather than converting to E_FAIL.
-  // Therefore, if TIP supports asynchronous layout computation perfectly, we
-  // can return TS_E_NOLAYOUT and TIP waits next OnLayoutChange()
-  // notification.  However, some TIPs still have some bugs of asynchronous
-  // layout support.  We keep hacking the result of GetTextExt() like running
-  // on Windows 10, however, there could be unknown TIP bugs if we stop
-  // hacking the result.  So, user can stop checking build ID to make Gecko
-  // hack the result forcibly.
-  #ifdef EARLY_BETA_OR_EARLIER
-    pref("intl.tsf.hack.allow_to_stop_hacking_on_build_17643_or_later", true);
-  #else
-    pref("intl.tsf.hack.allow_to_stop_hacking_on_build_17643_or_later", false);
-  #endif
-
-  // Whether creates native caret for ATOK or not.
-  pref("intl.tsf.hack.atok.create_native_caret", true);
-  // Whether use available composition string rect for result of
-  // ITextStoreACP::GetTextExt() even if the specified range is same as the
-  // range of composition string but some character rects of them are not
-  // available.  Note that this is ignored if active ATOK is or older than
-  // 2016 and create_native_caret is true.
-  pref("intl.tsf.hack.atok.do_not_return_no_layout_error_of_composition_string", true);
-  // Whether disable "search" input scope when the ATOK is active on windows.
-  // When "search" is set to the input scope, ATOK may stop their suggestions.
-  // To avoid it, turn this pref on, or changing the settings in ATOK.
-  // Note that if you enable this pref and you use the touch keyboard for touch
-  // screens, you cannot access some specific features for a "search" input
-  // field.
-  pref("intl.tsf.hack.atok.search_input_scope_disabled", false);
-  // Whether use available composition string rect for result of
-  // ITextStoreACP::GetTextExt() even if the specified range is same as or is
-  // in the range of composition string but some character rects of them are
-  // not available.
-  pref("intl.tsf.hack.japanist10.do_not_return_no_layout_error_of_composition_string", true);
-  // Whether use composition start position for the result of
-  // ITfContextView::GetTextExt() if the specified range is larger than
-  // composition start offset.
-  // For Free ChangJie 2010
-  pref("intl.tsf.hack.free_chang_jie.do_not_return_no_layout_error", true);
-  // For Microsoft Pinyin and Microsoft Wubi
-  pref("intl.tsf.hack.ms_simplified_chinese.do_not_return_no_layout_error", true);
-  // For Microsoft ChangJie and Microsoft Quick
-  pref("intl.tsf.hack.ms_traditional_chinese.do_not_return_no_layout_error", true);
-  // Whether use previous character rect for the result of
-  // ITfContextView::GetTextExt() if the specified range is the first
-  // character of selected clause of composition string.
-  pref("intl.tsf.hack.ms_japanese_ime.do_not_return_no_layout_error_at_first_char", true);
-  // Whether use previous character rect for the result of
-  // ITfContextView::GetTextExt() if the specified range is the caret of
-  // composition string.
-  pref("intl.tsf.hack.ms_japanese_ime.do_not_return_no_layout_error_at_caret", true);
-  // Whether hack ITextStoreACP::QueryInsert() or not.  The method should
-  // return new selection after specified length text is inserted at
-  // specified range. However, Microsoft's some Chinese TIPs expect that the
-  // result is same as specified range.  If following prefs are true,
-  // ITextStoreACP::QueryInsert() returns specified range only when one of
-  // the TIPs is active. For Microsoft Pinyin and Microsoft Wubi.
-  pref("intl.tsf.hack.ms_simplified_chinese.query_insert_result", true);
-  // For Microsoft ChangJie and Microsoft Quick
-  pref("intl.tsf.hack.ms_traditional_chinese.query_insert_result", true);
 
   // If composition_font is set, Gecko sets the font to IME.  IME may use
   // the fonts on their window like candidate window.  If they are empty,
@@ -2847,7 +2468,6 @@ pref("font.size.monospace.x-math", 13);
 #ifdef XP_MACOSX
   // Mac specific preference defaults
   pref("browser.drag_out_of_frame_style", 1);
-  pref("ui.key.saveLink.shift", false); // true = shift, false = meta
 
   // default fonts (in UTF8 and using canonical names)
   // to determine canonical font names, use a debug build and
@@ -3036,11 +2656,6 @@ pref("font.size.monospace.x-math", 13);
   pref("font.weight-override.HelveticaNeue-LightItalic", 300);
   pref("font.weight-override.HelveticaNeue-MediumItalic", 500); // Harmonize MediumItalic with Medium
 
-  // Override the Windows settings: no menu key, meta accelerator key. ctrl for general access key in HTML/XUL
-  // Use 17 for Ctrl, 18 for Option, 224 for Cmd, 0 for none
-  pref("ui.key.menuAccessKey", 0);
-  pref("ui.key.accelKey", 224);
-
   // See bug 404131, topmost <panel> element wins to Dashboard on MacOSX.
   pref("ui.panel.default_level_parent", false);
 
@@ -3077,10 +2692,6 @@ pref("font.size.monospace.x-math", 13);
   // A problem with using managed windows is that metacity sometimes deactivates
   // the parent window when the managed popup is shown.
   pref("ui.panel.default_level_parent", true);
-
-  // Forward downloads with known OMA MIME types to Android's download manager
-  // instead of downloading them in the browser.
-  pref("browser.download.forward_oma_android_download_manager", false);
 
 #endif // ANDROID
 
@@ -3402,25 +3013,6 @@ pref("font.size.monospace.x-math", 13);
 
 #endif
 
-#if OS_ARCH==AIX
-
-  // Override default Japanese fonts
-  pref("font.name-list.serif.ja", "dt-interface system-jisx0208.1983-0");
-  pref("font.name-list.sans-serif.ja", "dt-interface system-jisx0208.1983-0");
-  pref("font.name-list.monospace.ja", "dt-interface user-jisx0208.1983-0");
-
-  // Override default Cyrillic fonts
-  pref("font.name-list.serif.x-cyrillic", "dt-interface system-iso8859-5");
-  pref("font.name-list.sans-serif.x-cyrillic", "dt-interface system-iso8859-5");
-  pref("font.name-list.monospace.x-cyrillic", "dt-interface user-iso8859-5");
-
-  // Override default Unicode fonts
-  pref("font.name-list.serif.x-unicode", "dt-interface system-ucs2.cjk_japan-0");
-  pref("font.name-list.sans-serif.x-unicode", "dt-interface system-ucs2.cjk_japan-0");
-  pref("font.name-list.monospace.x-unicode", "dt-interface user-ucs2.cjk_japan-0");
-
-#endif // AIX
-
 // Login Manager prefs
 pref("signon.rememberSignons",              true);
 pref("signon.rememberSignons.visibilityToggle", true);
@@ -3445,13 +3037,18 @@ pref("signon.debug",                        false);
 pref("signon.recipes.path", "resource://app/defaults/settings/main/password-recipes.json");
 pref("signon.recipes.remoteRecipes.enabled", true);
 pref("signon.relatedRealms.enabled", false);
-
 pref("signon.schemeUpgrades",                     true);
 pref("signon.includeOtherSubdomainsInLookup",     true);
 // This temporarily prevents the primary password to reprompt for autocomplete.
 pref("signon.masterPasswordReprompt.timeout_ms", 900000); // 15 Minutes
 pref("signon.showAutoCompleteFooter",             false);
-pref("signon.showAutoCompleteOrigins",            true);
+pref("signon.firefoxRelay.base_url", "https://relay.firefox.com/api/v1/");
+pref("signon.firefoxRelay.learn_more_url", "https://support.mozilla.org/1/firefox/%VERSION%/%OS%/%LOCALE%/firefox-relay-integration");
+pref("signon.firefoxRelay.manage_url", "https://relay.firefox.com/accounts/profile/?utm_medium=firefox-desktop&utm_source=modal&utm_campaign=limit&utm_content=manage-masks-global");
+pref("signon.firefoxRelay.terms_of_service_url", "https://www.mozilla.org/%LOCALE%/about/legal/terms/subscription-services/");
+pref("signon.firefoxRelay.privacy_policy_url", "https://www.mozilla.org/%LOCALE%/privacy/subscription-services/");
+pref("signon.signupDetection.confidenceThreshold",     "0.75");
+pref("signon.signupDetection.enabled", true);
 
 // Satchel (Form Manager) prefs
 pref("browser.formfill.debug",            false);
@@ -3476,13 +3073,6 @@ pref("toolkit.zoomManager.zoomValues", ".3,.5,.67,.8,.9,1,1.1,1.2,1.33,1.5,1.7,2
 // by ImageAcceptHeader() in nsHttpHandler.cpp. If set, this pref overrides it.
 // There is also network.http.accept which works in scope of document.
 pref("image.http.accept", "");
-
-//
-// Image memory management prefs
-//
-
-pref("webgl.renderer-string-override", "");
-pref("webgl.vendor-string-override", "");
 
 // sendbuffer of 0 means use OS default, sendbuffer unset means use
 // gecko default which varies depending on windows version and is OS
@@ -3513,7 +3103,6 @@ pref("network.tcp.keepalive.idle_time", 600); // seconds; 10 mins
 pref("network.psl.onUpdate_notify", false);
 
 #ifdef MOZ_WIDGET_GTK
-  pref("widget.content.gtk-theme-override", "");
   pref("widget.disable-workspace-management", false);
   pref("widget.titlebar-x11-use-shape-mask", false);
 #endif
@@ -3554,9 +3143,6 @@ pref("browser.region.network.scan", false);
 pref("browser.region.timeout", 5000);
 pref("browser.region.update.enabled", true);
 
-// Enable/Disable the device storage API for content
-pref("device.storage.enabled", false);
-
 pref("browser.meta_refresh_when_inactive.disabled", false);
 
 // XPInstall prefs
@@ -3574,6 +3160,10 @@ pref("extensions.webextensions.keepUuidOnUninstall", false);
 pref("extensions.webextensions.identity.redirectDomain", "extensions.allizom.org");
 pref("extensions.webextensions.restrictedDomains", "accounts-static.cdn.mozilla.net,accounts.firefox.com,addons.cdn.mozilla.net,addons.mozilla.org,api.accounts.firefox.com,content.cdn.mozilla.net,discovery.addons.mozilla.org,install.mozilla.org,oauth.accounts.firefox.com,profile.accounts.firefox.com,support.mozilla.org,sync.services.mozilla.com");
 
+// Extensions are prevented from accessing Quarantined Domains by default.
+pref("extensions.quarantinedDomains.enabled", true);
+pref("extensions.quarantinedDomains.list", "");
+
 // Whether or not the moz-extension resource loads are remoted. For debugging
 // purposes only. Setting this to false will break moz-extension URI loading
 // unless other process sandboxing and extension remoting prefs are changed.
@@ -3584,14 +3174,6 @@ pref("extensions.webextensions.userScripts.enabled", true);
 
 // Whether or not the installed extensions should be migrated to the storage.local IndexedDB backend.
 pref("extensions.webextensions.ExtensionStorageIDB.enabled", true);
-
-// if enabled, store execution times for API calls
-pref("extensions.webextensions.enablePerformanceCounters", true);
-
-// Maximum age in milliseconds of performance counters in children
-// When reached, the counters are sent to the main process and
-// reset, so we reduce memory footprint.
-pref("extensions.webextensions.performanceCountersMaxAge", 5000);
 
 // Whether to allow the inline options browser in HTML about:addons page.
 pref("extensions.htmlaboutaddons.inline-options.enabled", true);
@@ -3615,10 +3197,10 @@ pref("extensions.webcompat-reporter.newIssueEndpoint", "https://webcompat.com/is
 #endif
 
 // Add-on content security policies.
-pref("extensions.webextensions.base-content-security-policy", "script-src 'self' https://* http://localhost:* http://127.0.0.1:* moz-extension: blob: filesystem: 'unsafe-eval' 'wasm-unsafe-eval' 'unsafe-inline'; object-src 'self' moz-extension: blob: filesystem:;");
-pref("extensions.webextensions.base-content-security-policy.v3", "script-src 'self' 'wasm-unsafe-eval' http://localhost:* http://127.0.0.1:*; object-src 'self';");
-pref("extensions.webextensions.default-content-security-policy", "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';");
-pref("extensions.webextensions.default-content-security-policy.v3", "script-src 'self'; object-src 'self';");
+pref("extensions.webextensions.base-content-security-policy", "script-src 'self' https://* http://localhost:* http://127.0.0.1:* moz-extension: blob: filesystem: 'unsafe-eval' 'wasm-unsafe-eval' 'unsafe-inline';");
+pref("extensions.webextensions.base-content-security-policy.v3", "script-src 'self' 'wasm-unsafe-eval';");
+pref("extensions.webextensions.default-content-security-policy", "script-src 'self' 'wasm-unsafe-eval';");
+pref("extensions.webextensions.default-content-security-policy.v3", "script-src 'self'; upgrade-insecure-requests;");
 
 
 pref("network.buffer.cache.count", 24);
@@ -3633,10 +3215,12 @@ pref("alerts.showFavicons", false);
 // DOM full-screen API.
 #ifdef XP_MACOSX
   // Whether to use macOS native full screen for Fullscreen API
-  pref("full-screen-api.macos-native-full-screen", false);
+  #ifdef NIGHTLY_BUILD
+    pref("full-screen-api.macos-native-full-screen", true);
+  #else
+    pref("full-screen-api.macos-native-full-screen", false);
+  #endif
 #endif
-// whether to prevent the top level widget from going fullscreen
-pref("full-screen-api.ignore-widgets", false);
 // transition duration of fade-to-black and fade-from-black, unit: ms
 #ifndef MOZ_WIDGET_GTK
   pref("full-screen-api.transition-duration.enter", "200 200");
@@ -3734,9 +3318,6 @@ pref("network.connectivity-service.DNSv6.domain", "example.org");
 pref("network.connectivity-service.IPv4.url", "http://detectportal.firefox.com/success.txt?ipv4");
 pref("network.connectivity-service.IPv6.url", "http://detectportal.firefox.com/success.txt?ipv6");
 
-// DNS Trusted Recursive Resolver
-// 0 - default off, 1 - reserved/off, 2 - TRR first, 3 - TRR only, 4 - reserved/off, 5 off by choice
-pref("network.trr.mode", 0);
 pref("network.trr.uri", "");
 // credentials to pass to DOH end-point
 pref("network.trr.credentials", "");
@@ -3747,6 +3328,8 @@ pref("network.trr.confirmationNS", "example.com");
 // Comma separated list of domains that we should not use TRR for
 pref("network.trr.excluded-domains", "");
 pref("network.trr.builtin-excluded-domains", "localhost,local");
+// Whether the checkbox to display a fallback warning error page is visible in about:preferences#privacy
+pref("network.trr_ui.show_fallback_warning_option", false);
 
 pref("captivedetect.canonicalURL", "http://detectportal.firefox.com/canonical.html");
 pref("captivedetect.canonicalContent", "<meta http-equiv=\"refresh\" content=\"0;url=https://support.mozilla.org/kb/captive-portal\"/>");
@@ -3883,12 +3466,6 @@ pref("browser.safebrowsing.provider.mozilla.lists.content", "moz-full");
 // The table and global pref for blocking plugin content
 pref("urlclassifier.blockedTable", "moztest-block-simple,mozplugin-block-digest256");
 
-// Turn off Spatial navigation by default.
-pref("snav.enabled", false);
-
-// Wakelock is disabled by default.
-pref("dom.wakelock.enabled", false);
-
 #ifdef XP_MACOSX
   #if !defined(RELEASE_OR_BETA) || defined(DEBUG)
     // In non-release builds we crash by default on insecure text input (when a
@@ -3903,7 +3480,7 @@ pref("browser.search.log", false);
 pref("browser.search.update", true);
 pref("browser.search.suggest.enabled", true);
 pref("browser.search.suggest.enabled.private", false);
-pref("browser.search.separatePrivateDefault", false);
+pref("browser.search.separatePrivateDefault", true);
 pref("browser.search.separatePrivateDefault.ui.enabled", false);
 pref("browser.search.removeEngineInfobar.enabled", true);
 
@@ -3990,10 +3567,6 @@ pref("reader.color_scheme.values", "[\"light\",\"dark\",\"sepia\",\"auto\"]");
 // The font type in reader (sans-serif, serif)
 pref("reader.font_type", "sans-serif");
 
-// Whether or not the user has interacted with the reader mode toolbar.
-// This is used to show a first-launch tip in reader mode.
-pref("reader.has_used_toolbar", false);
-
 // Whether to use a vertical or horizontal toolbar.
 pref("reader.toolbar.vertical", true);
 
@@ -4044,6 +3617,49 @@ pref("browser.storageManager.pressureNotification.usageThresholdGB", 5);
 
 pref("browser.sanitizer.loglevel", "Warn");
 
+// Enable Firefox translations powered by the Bergamot translations
+// engine https://browser.mt/. See Bug 971044. Note that this pref can be turned
+// on in different apps like Firefox Desktop, even if it's disabled by default here.
+pref("browser.translations.enable", false);
+
+// Set to "All" to see all logs, which are useful for debugging. Set to "Info" to see
+// the application logic logs, and not all of the translated messages, which can be
+// slow and overwhelming.
+pref("browser.translations.logLevel", "Error");
+// A comma-separated list of BCP-47 language tags that affect the behavior of translations.
+// Languages listed in the alwaysTranslateLanguages list will trigger auto-translate on page load.
+pref("browser.translations.alwaysTranslateLanguages", "");
+// A comma-separated list of BCP-47 language tags that affect the behavior of translations.
+// Languages listed in the neverTranslateLanguages list will signal that the translations button
+// and menus should not be displayed automatically when visiting pages in those languages.
+pref("browser.translations.neverTranslateLanguages", "");
+// By default the translations engine on about:translations uses text for translation,
+// and the full page translations uses HTML. Set this pref to true to use the HTML
+// translation behavior on about:translations. Requires a page refresh.
+pref("browser.translations.useHTML", false);
+// Normally there is a UI to ask the user to translate a page, this pref makes it
+// so that the page automatically performs a translation if one is detected as being
+// required.
+pref("browser.translations.autoTranslate", false);
+// Automatically popup an offer to translate on sites.
+pref("browser.translations.automaticallyPopup", true);
+// Simulate the behavior of using a device that does not support the translations engine.
+// Requires restart.
+pref("browser.translations.simulateUnsupportedEngine", false);
+// The translations code relies on asynchronous network request. Chaos mode simulates
+// flaky and slow network connections, so that the UI may be manually tested. The
+// "chaos.errors" makes network requests fail, while "timeoutMS" randomly times out
+// between 0ms and the timeoutMS provided.
+pref("browser.translations.chaos.errors", false);
+pref("browser.translations.chaos.timeoutMS", 0);
+
+// A pref to manage the use of fastText for language detection in Translations.
+// The feature was initially built using fastText, but we are now putting it
+// behind a pref while we investigate some performance improvements.
+// In the meantime, we will use CLD2, which is already available in tree.
+// See https://bugzilla.mozilla.org/show_bug.cgi?id=1836974
+pref("browser.translations.languageIdentification.useFastText", false);
+
 // When a user cancels this number of authentication dialogs coming from
 // a single web page in a row, all following authentication dialogs will
 // be blocked (automatically canceled) for that page. The counter resets
@@ -4056,29 +3672,12 @@ pref("prompts.authentication_dialog_abuse_limit", 2);
 // content: 1, tab: 2, window: 3
 pref("prompts.modalType.httpAuth", 2);
 
-// Payment Request API preferences
-pref("dom.payments.loglevel", "Warn");
-pref("dom.payments.defaults.saveCreditCard", false);
-pref("dom.payments.defaults.saveAddress", true);
 pref("dom.payments.request.supportedRegions", "US,CA");
 
 #ifdef MOZ_ASAN_REPORTER
   pref("asanreporter.apiurl", "https://anf1.fuzzing.mozilla.org/crashproxy/submit/");
   pref("asanreporter.clientid", "unknown");
   pref("toolkit.telemetry.overrideUpdateChannel", "nightly-asan");
-#endif
-
-// Control whether clients.openWindow() opens windows in the same process
-// that called the API vs following our normal multi-process selection
-// algorithm.  Restricting openWindow to same process improves service worker
-// web compat in the short term.  Once the SW multi-e10s refactor is complete
-// this can be removed.
-pref("dom.clients.openwindow_favors_same_process", true);
-
-#ifdef RELEASE_OR_BETA
-  pref("toolkit.aboutPerformance.showInternals", false);
-#else
-  pref("toolkit.aboutPerformance.showInternals", true);
 #endif
 
 // If `true`, about:processes shows in-process subframes.
@@ -4090,11 +3689,7 @@ pref("toolkit.aboutProcesses.showAllSubframes", false);
   pref("toolkit.aboutProcesses.showThreads", false);
 #endif
 // If `true`, about:processes will offer to profile processes.
-#ifdef NIGHTLY_BUILD
-  pref("toolkit.aboutProcesses.showProfilerIcons", true);
-#else
-  pref("toolkit.aboutProcesses.showProfilerIcons", false);
-#endif
+pref("toolkit.aboutProcesses.showProfilerIcons", true);
 // Time in seconds between when the profiler is started and when the
 // profile is captured.
 pref("toolkit.aboutProcesses.profileDuration", 5);
@@ -4340,20 +3935,18 @@ pref("devtools.dump.emit", false);
 
 // Disable device discovery logging.
 pref("devtools.discovery.log", false);
-// Whether to scan for DevTools devices via WiFi.
-pref("devtools.remote.wifi.scan", true);
 
 // The extension ID for devtools-adb-extension.
 pref("devtools.remote.adb.extensionID", "adb@mozilla.org");
 // The URL for for devtools-adb-extension (overridden in tests to a local
 // path).
-pref("devtools.remote.adb.extensionURL", "https://ftp.mozilla.org/pub/mozilla.org/labs/devtools/adb-extension/#OS#/adb-extension-latest-#OS#.xpi");
+pref("devtools.remote.adb.extensionURL", "https://ftp.mozilla.org/pub/labs/devtools/adb-extension/#OS#/adb-extension-latest-#OS#.xpi");
 
 // Enable Inactive CSS detection; used both by the client and the server.
 pref("devtools.inspector.inactive.css.enabled", true);
 
-// The F12 experiment aims at disabling f12 on selected profiles.
-pref("devtools.experiment.f12.shortcut_disabled", false);
+// Should F12 open the Developer Tools toolbox.
+pref("devtools.f12_enabled", true);
 
 #if defined(NIGHTLY_BUILD) || defined(MOZ_DEV_EDITION)
 // Define in StaticPrefList.yaml and override here since StaticPrefList.yaml
@@ -4363,9 +3956,6 @@ pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", false
 pref("dom.postMessage.sharedArrayBuffer.bypassCOOP_COEP.insecure.enabled", false, locked);
 #endif
 
-// Whether to start the private browsing mode at application startup
-pref("browser.privatebrowsing.autostart", false);
-
 // Whether sites require the open-protocol-handler permission to open a
 //preferred external application for a protocol. If a site doesn't have
 // permission we will show a prompt.
@@ -4373,47 +3963,69 @@ pref("security.external_protocol_requires_permission", true);
 
 // Preferences for the form autofill toolkit component.
 // The truthy values of "extensions.formautofill.addresses.available"
-// and "extensions.formautofill.creditCards.available" are "on" and "detect",
+// is "on" and "detect",
 // any other value means autofill isn't available.
 // "detect" means it's enabled if conditions defined in the extension are met.
-// Note: "extensions.formautofill.available" and "extensions.formautofill.creditCards.available"
-// are not being used in form autofill, but need to exist for migration purposes.
+// Note: "extensions.formautofill.available"
+// is not being used in form autofill, but need to exist for migration purposes.
 pref("extensions.formautofill.available", "detect");
 pref("extensions.formautofill.addresses.supported", "detect");
 pref("extensions.formautofill.addresses.enabled", true);
 pref("extensions.formautofill.addresses.capture.enabled", false);
+// This preference should be removed entirely once address capture v2 developing is finished
+pref("extensions.formautofill.addresses.capture.v2.enabled", false);
 pref("extensions.formautofill.addresses.ignoreAutocompleteOff", true);
 // Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
 pref("extensions.formautofill.addresses.supportedCountries", "US,CA");
-// Note: this ".available" pref is only used for migration purposes and will be removed/replaced later.
-pref("extensions.formautofill.creditCards.available", true);
 pref("extensions.formautofill.creditCards.supported", "detect");
 pref("extensions.formautofill.creditCards.enabled", true);
 pref("extensions.formautofill.creditCards.ignoreAutocompleteOff", true);
+
+#if defined(NIGHTLY_BUILD)
 // Supported countries need to follow ISO 3166-1 to align with "browser.search.region"
+pref("extensions.formautofill.creditCards.supportedCountries", "US,CA,GB,FR,DE,IT,ES,AT,BE,PL");
+#else
 pref("extensions.formautofill.creditCards.supportedCountries", "US,CA,GB,FR,DE");
-// Temporary preference to control displaying the UI elements for
-// credit card autofill used for the duration of the A/B test.
-pref("extensions.formautofill.creditCards.hideui", false);
+#endif
+
 // Algorithm used by formautofill while determine whether a field is a credit card field
 // 0:Heurstics based on regular expression string matching
 // 1:Fathom in js implementation
 // 2:Fathom in c++ implementation
 pref("extensions.formautofill.creditCards.heuristics.mode", 2);
-pref("extensions.formautofill.creditCards.heuristics.confidenceThreshold", "0.5");
-// Pref for shield/heartbeat to recognize users who have used Credit Card
-// Autofill. The valid values can be:
-// 0: none
-// 1: submitted a manually-filled credit card form (but didn't see the doorhanger
-//    because of a duplicate profile in the storage)
-// 2: saw the doorhanger
-// 3: submitted an autofill'ed credit card form
-pref("extensions.formautofill.creditCards.used", 0);
+pref("extensions.formautofill.creditCards.heuristics.fathom.types", "cc-number,cc-name");
+// Defines the threshold to identify whether a field is a cc field
+pref("extensions.formautofill.creditCards.heuristics.fathom.confidenceThreshold", "0.5");
+// Defineis the threshold to mark fields that are "high-confidence", see `isValidSection` for details
+pref("extensions.formautofill.creditCards.heuristics.fathom.highConfidenceThreshold", "0.95");
+// This is Only for testing! Set the confidence value (> 0 && <= 1) after a field is identified by fathom
+pref("extensions.formautofill.creditCards.heuristics.fathom.testConfidence", "0");
+
 pref("extensions.formautofill.firstTimeUse", true);
-pref("extensions.formautofill.heuristics.enabled", true);
-pref("extensions.formautofill.section.enabled", true);
 pref("extensions.formautofill.loglevel", "Warn");
 
 pref("toolkit.osKeyStore.loglevel", "Warn");
 
 pref("extensions.formautofill.supportRTL", false);
+
+// Controls the log level for CookieBannerListService.jsm.
+pref("cookiebanners.listService.logLevel", "Error");
+
+// Contorls the log level for Cookie Banner Auto Clicking.
+pref("cookiebanners.bannerClicking.logLevel", "Error");
+
+// Array of test rules for cookie banner handling as a JSON string. They will be
+// inserted in addition to regular rules and may override them when setting the
+// same domain. Every array item should be a valid CookieBannerRule. See
+// CookieBannerRule.schema.json.
+pref("cookiebanners.listService.testRules", "[]");
+
+// Still fetches rules from RemoteSettings, but discards them. Used in tests.
+pref("cookiebanners.listService.testSkipRemoteSettings", false);
+
+// The domains we will block from installing SitePermsAddons. Comma-separated
+// full domains: any subdomains of the domains listed will also be allowed.
+pref("dom.sitepermsaddon-provider.separatedBlocklistedDomains", "shopee.co.th,shopee.tw,shopee.co.id,shopee.com.my,shopee.vn,shopee.ph,shopee.sg,shopee.com.br,shopee.com,shopee.cn,shopee.io,shopee.pl,shopee.com.mx,shopee.com.co,shopee.cl,shopee.kr,shopee.es,shopee.in,alipay.com,miravia.es");
+
+// Log level for logger in URLQueryStrippingListService
+pref("privacy.query_stripping.listService.logLevel", "Error");

@@ -66,12 +66,13 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
 
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_AMBIGUOUS(
+  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_WRAPPERCACHE_CLASS_AMBIGUOUS(
       nsComputedDOMStyle, nsICSSDeclaration)
 
   NS_DECL_NSIDOMCSSSTYLEDECLARATION_HELPER
-  nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
-                            nsACString& aValue) override;
+
+  void GetPropertyValue(const nsCSSPropertyID aPropID,
+                        nsACString& aValue) override;
   void SetPropertyValue(const nsCSSPropertyID aPropID, const nsACString& aValue,
                         nsIPrincipal* aSubjectPrincipal,
                         mozilla::ErrorResult& aRv) override;
@@ -142,9 +143,10 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   NS_DECL_NSIMUTATIONOBSERVER_PARENTCHAINCHANGED
 
  private:
-  nsresult GetPropertyValue(const nsCSSPropertyID aPropID,
-                            const nsACString& aMaybeCustomPropertyNme,
-                            nsACString& aValue);
+  void GetPropertyValue(const nsCSSPropertyID aPropID,
+                        const nsACString& aMaybeCustomPropertyNme,
+                        nsACString& aValue);
+  using nsDOMCSSDeclaration::GetPropertyValue;
 
   virtual ~nsComputedDOMStyle();
 
@@ -262,16 +264,10 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   already_AddRefed<CSSValue> DoGetMarginLeft();
   already_AddRefed<CSSValue> DoGetMarginRight();
 
-  /* Text Properties */
-  already_AddRefed<CSSValue> DoGetLineHeight();
-
   /* Display properties */
   already_AddRefed<CSSValue> DoGetTransform();
   already_AddRefed<CSSValue> DoGetTransformOrigin();
   already_AddRefed<CSSValue> DoGetPerspectiveOrigin();
-
-  /* Column properties */
-  already_AddRefed<CSSValue> DoGetColumnRuleWidth();
 
   // For working around a MSVC bug. See related comment in
   // GenerateComputedDOMStyleGenerated.py.
@@ -280,8 +276,6 @@ class nsComputedDOMStyle final : public nsDOMCSSDeclaration,
   /* Helper functions */
   void SetValueToPosition(const mozilla::Position& aPosition,
                           nsDOMCSSValueList* aValueList);
-  void SetValueToURLValue(const mozilla::StyleComputedUrl* aURL,
-                          nsROCSSPrimitiveValue* aValue);
 
   void SetValueFromFitContentFunction(nsROCSSPrimitiveValue* aValue,
                                       const mozilla::LengthPercentage&);

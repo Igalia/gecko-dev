@@ -10,6 +10,7 @@
 #define nsLineLayout_h___
 
 #include "gfxTypes.h"
+#include "gfxTextRun.h"
 #include "JustificationUtils.h"
 #include "mozilla/ArenaAllocator.h"
 #include "mozilla/WritingModes.h"
@@ -523,6 +524,12 @@ class nsLineLayout {
                : aPSD->mFrame->mBounds.Size(mRootSpan->mWritingMode)
                      .GetPhysicalSize(mRootSpan->mWritingMode);
   }
+
+  // Get the advance of any trailing hangable whitespace. If the whitespace
+  // has directionality opposite to the line, the result is negated.
+  nscoord GetHangFrom(const PerSpanData* aSpan, bool aLineIsRTL) const;
+  gfxTextRun::TrimmableWS GetTrimFrom(const PerSpanData* aSpan,
+                                      bool aLineIsRTL) const;
 
   gfxBreakPriority mLastOptionalBreakPriority;
   int32_t mLastOptionalBreakFrameOffset;

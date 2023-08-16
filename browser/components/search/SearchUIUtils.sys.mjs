@@ -6,17 +6,34 @@
  * Various utilities for search related UI.
  */
 
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "SearchUIUtilsL10n", () => {
+ChromeUtils.defineLazyGetter(lazy, "SearchUIUtilsL10n", () => {
   return new Localization(["browser/search.ftl", "branding/brand.ftl"]);
 });
 
 export var SearchUIUtils = {
+  initialized: false,
+
+  init() {
+    if (!this.initialized) {
+      Services.obs.addObserver(this, "browser-search-engine-modified");
+
+      this.initialized = true;
+    }
+  },
+
+  observe(engine, topic, data) {
+    switch (data) {
+      case "engine-default":
+        this.updatePlaceholderNamePreference(engine, false);
+        break;
+      case "engine-default-private":
+        this.updatePlaceholderNamePreference(engine, true);
+        break;
+    }
+  },
+
   /**
    * Adds an open search engine and handles error UI.
    *
@@ -72,5 +89,32 @@ export var SearchUIUtils = {
       return false;
     }
     return true;
+  },
+
+  /**
+   * Returns the URL to use for where to get more search engines.
+   *
+   * @returns {string}
+   */
+  get searchEnginesURL() {
+    return Services.urlFormatter.formatURLPref(
+      "browser.search.searchEnginesURL"
+    );
+  },
+
+  /**
+   * Update the placeholderName preference for the default search engine.
+   *
+   * @param {SearchEngine} engine The new default search engine.
+   * @param {boolean} isPrivate Whether this change applies to private windows.
+   */
+  updatePlaceholderNamePreference(engine, isPrivate) {
+    const prefName =
+      "browser.urlbar.placeholderName" + (isPrivate ? ".private" : "");
+    if (engine.isAppProvided) {
+      Services.prefs.setStringPref(prefName, engine.name);
+    } else {
+      Services.prefs.clearUserPref(prefName);
+    }
   },
 };

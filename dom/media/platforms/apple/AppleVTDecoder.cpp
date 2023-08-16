@@ -8,9 +8,11 @@
 
 #include <CoreVideo/CVPixelBufferIOSurface.h>
 #include <IOSurface/IOSurface.h>
+#include <limits>
 
 #include "AppleDecoderModule.h"
 #include "AppleUtils.h"
+#include "CallbackThreadRegistry.h"
 #include "H264.h"
 #include "MP4Decoder.h"
 #include "MacIOSurfaceImage.h"
@@ -36,7 +38,8 @@ using namespace layers;
 AppleVTDecoder::AppleVTDecoder(const VideoInfo& aConfig,
                                layers::ImageContainer* aImageContainer,
                                CreateDecoderParams::OptionSet aOptions,
-                               layers::KnowsCompositor* aKnowsCompositor)
+                               layers::KnowsCompositor* aKnowsCompositor,
+                               Maybe<TrackingId> aTrackingId)
     : mExtraData(aConfig.mExtraData),
       mPictureWidth(aConfig.mImage.width),
       mPictureHeight(aConfig.mImage.height),
@@ -45,6 +48,8 @@ AppleVTDecoder::AppleVTDecoder(const VideoInfo& aConfig,
       mColorSpace(aConfig.mColorSpace
                       ? *aConfig.mColorSpace
                       : DefaultColorSpace({mPictureWidth, mPictureHeight})),
+      mColorPrimaries(aConfig.mColorPrimaries ? *aConfig.mColorPrimaries
+                                              : gfx::ColorSpace2::BT709),
       mTransferFunction(aConfig.mTransferFunction
                             ? *aConfig.mTransferFunction
                             : gfx::TransferFunction::BT709),
@@ -73,7 +78,9 @@ AppleVTDecoder::AppleVTDecoder(const VideoInfo& aConfig,
                              layers::WebRenderCompositor::SOFTWARE)
 #endif
       ,
+      mTrackingId(aTrackingId),
       mIsFlushing(false),
+      mCallbackThreadId(),
       mMonitor("AppleVTDecoder"),
       mPromise(&mMonitor),  // To ensure our PromiseHolder is only ever accessed
                             // with the monitor held.
@@ -158,6 +165,26 @@ void AppleVTDecoder::ProcessDecode(MediaRawData* aSample) {
     mPromise.Reject(NS_ERROR_DOM_MEDIA_CANCELED, __func__);
     return;
   }
+
+  mTrackingId.apply([&](const auto& aId) {
+    MediaInfoFlag flag = MediaInfoFlag::None;
+    flag |= (aSample->mKeyframe ? MediaInfoFlag::KeyFrame
+                                : MediaInfoFlag::NonKeyFrame);
+    flag |= (mIsHardwareAccelerated ? MediaInfoFlag::HardwareDecoding
+                                    : MediaInfoFlag::SoftwareDecoding);
+    switch (mStreamType) {
+      case StreamType::H264:
+        flag |= MediaInfoFlag::VIDEO_H264;
+        break;
+      case StreamType::VP9:
+        flag |= MediaInfoFlag::VIDEO_VP9;
+        break;
+      default:
+        break;
+    }
+    mPerformanceRecorder.Start(aSample->mTimecode.ToMicroseconds(),
+                               "AppleVTDecoder"_ns, aId, flag);
+  });
 
   AutoCFRelease<CMBlockBufferRef> block = nullptr;
   AutoCFRelease<CMSampleBufferRef> sample = nullptr;
@@ -249,6 +276,7 @@ RefPtr<MediaDataDecoder::FlushPromise> AppleVTDecoder::ProcessFlush() {
   while (!mReorderQueue.IsEmpty()) {
     mReorderQueue.Pop();
   }
+  mPerformanceRecorder.Record(std::numeric_limits<int64_t>::max());
   mSeekTargetThreshold.reset();
   mIsFlushing = false;
   return FlushPromise::CreateAndResolve(true, __func__);
@@ -334,9 +362,32 @@ void AppleVTDecoder::MaybeResolveBufferedFrames() {
   mPromise.Resolve(std::move(results), __func__);
 }
 
+void AppleVTDecoder::MaybeRegisterCallbackThread() {
+  ProfilerThreadId id = profiler_current_thread_id();
+  if (MOZ_LIKELY(id == mCallbackThreadId)) {
+    return;
+  }
+  mCallbackThreadId = id;
+  CallbackThreadRegistry::Get()->Register(mCallbackThreadId,
+                                          "AppleVTDecoderCallback");
+}
+
+nsCString AppleVTDecoder::GetCodecName() const {
+  switch (mStreamType) {
+    case StreamType::H264:
+      return "h264"_ns;
+    case StreamType::VP9:
+      return "vp9"_ns;
+    default:
+      return "unknown"_ns;
+  }
+}
+
 // Copy and return a decoded frame.
 void AppleVTDecoder::OutputFrame(CVPixelBufferRef aImage,
                                  AppleVTDecoder::AppleFrameRef aFrameRef) {
+  MaybeRegisterCallbackThread();
+
   if (mIsFlushing) {
     // We are in the process of flushing or shutting down; ignore frame.
     return;
@@ -419,6 +470,7 @@ void AppleVTDecoder::OutputFrame(CVPixelBufferRef aImage,
 
     buffer.mChromaSubsampling = gfx::ChromaSubsampling::HALF_WIDTH_AND_HEIGHT;
     buffer.mYUVColorSpace = mColorSpace;
+    buffer.mColorPrimaries = mColorPrimaries;
     buffer.mColorRange = mColorRange;
 
     gfx::IntRect visible = gfx::IntRect(0, 0, mPictureWidth, mPictureHeight);
@@ -444,13 +496,17 @@ void AppleVTDecoder::OutputFrame(CVPixelBufferRef aImage,
       CVBufferSetAttachment(aImage, kCVImageBufferYCbCrMatrixKey,
                             kCVImageBufferYCbCrMatrix_ITU_R_709_2,
                             kCVAttachmentMode_ShouldPropagate);
-      CVBufferSetAttachment(aImage, kCVImageBufferColorPrimariesKey,
-                            kCVImageBufferColorPrimaries_ITU_R_709_2,
-                            kCVAttachmentMode_ShouldPropagate);
     } else if (mColorSpace == gfx::YUVColorSpace::BT2020) {
       CVBufferSetAttachment(aImage, kCVImageBufferYCbCrMatrixKey,
                             kCVImageBufferYCbCrMatrix_ITU_R_2020,
                             kCVAttachmentMode_ShouldPropagate);
+    }
+
+    if (mColorPrimaries == gfx::ColorSpace2::BT709) {
+      CVBufferSetAttachment(aImage, kCVImageBufferColorPrimariesKey,
+                            kCVImageBufferColorPrimaries_ITU_R_709_2,
+                            kCVAttachmentMode_ShouldPropagate);
+    } else if (mColorPrimaries == gfx::ColorSpace2::BT2020) {
       CVBufferSetAttachment(aImage, kCVImageBufferColorPrimariesKey,
                             kCVImageBufferColorPrimaries_ITU_R_2020,
                             kCVAttachmentMode_ShouldPropagate);
@@ -469,6 +525,7 @@ void AppleVTDecoder::OutputFrame(CVPixelBufferRef aImage,
 
     RefPtr<MacIOSurface> macSurface = new MacIOSurface(std::move(surface));
     macSurface->SetYUVColorSpace(mColorSpace);
+    macSurface->mColorPrimaries = mColorPrimaries;
 
     RefPtr<layers::Image> image = new layers::MacIOSurfaceImage(macSurface);
 
@@ -487,6 +544,30 @@ void AppleVTDecoder::OutputFrame(CVPixelBufferRef aImage,
     mPromise.Reject(MediaResult(NS_ERROR_OUT_OF_MEMORY, __func__), __func__);
     return;
   }
+
+  mPerformanceRecorder.Record(
+      aFrameRef.decode_timestamp.ToMicroseconds(), [&](DecodeStage& aStage) {
+        aStage.SetResolution(static_cast<int>(CVPixelBufferGetWidth(aImage)),
+                             static_cast<int>(CVPixelBufferGetHeight(aImage)));
+        auto format = [&]() -> Maybe<DecodeStage::ImageFormat> {
+          switch (CVPixelBufferGetPixelFormatType(aImage)) {
+            case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange:
+            case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange:
+              return Some(DecodeStage::NV12);
+            case kCVPixelFormatType_422YpCbCr8_yuvs:
+            case kCVPixelFormatType_422YpCbCr8FullRange:
+              return Some(DecodeStage::YUV422P);
+            case kCVPixelFormatType_32BGRA:
+              return Some(DecodeStage::RGBA32);
+            default:
+              return Nothing();
+          }
+        }();
+        format.apply([&](auto aFormat) { aStage.SetImageFormat(aFormat); });
+        aStage.SetColorDepth(mColorDepth);
+        aStage.SetYUVColorSpace(mColorSpace);
+        aStage.SetColorRange(mColorRange);
+      });
 
   // Frames come out in DTS order but we need to output them
   // in composition order.

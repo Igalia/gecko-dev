@@ -13,21 +13,27 @@ end of the VS buffer table.
 
 !*/
 
+// `MTLFeatureSet` is superseded by `MTLGpuFamily`.
+// However, `MTLGpuFamily` is only supported starting MacOS 10.15, whereas our minimum target is MacOS 10.13,
+// See https://github.com/gpuweb/gpuweb/issues/1069 for minimum spec.
+// TODO: Eventually all deprecated features should be abstracted and use new api when available.
+#[allow(deprecated)]
 mod adapter;
 mod command;
 mod conv;
 mod device;
 mod surface;
+mod time;
 
 use std::{
-    iter, ops,
+    fmt, iter, ops,
     ptr::NonNull,
     sync::{atomic, Arc},
     thread,
 };
 
 use arrayvec::ArrayVec;
-use foreign_types::ForeignTypeRef as _;
+use metal::foreign_types::ForeignTypeRef as _;
 use parking_lot::Mutex;
 
 #[derive(Clone)]
@@ -66,7 +72,7 @@ pub struct Instance {
 }
 
 impl Instance {
-    pub fn create_surface_from_layer(&self, layer: &mtl::MetalLayerRef) -> Surface {
+    pub fn create_surface_from_layer(&self, layer: &metal::MetalLayerRef) -> Surface {
         unsafe { Surface::from_layer(layer) }
     }
 }
@@ -81,29 +87,29 @@ impl crate::Instance<Api> for Instance {
 
     unsafe fn create_surface(
         &self,
-        has_handle: &impl raw_window_handle::HasRawWindowHandle,
+        _display_handle: raw_window_handle::RawDisplayHandle,
+        window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<Surface, crate::InstanceError> {
-        match has_handle.raw_window_handle() {
+        match window_handle {
             #[cfg(target_os = "ios")]
             raw_window_handle::RawWindowHandle::UiKit(handle) => {
                 let _ = &self.managed_metal_layer_delegate;
-                Ok(Surface::from_view(handle.ui_view, None))
+                Ok(unsafe { Surface::from_view(handle.ui_view, None) })
             }
             #[cfg(target_os = "macos")]
-            raw_window_handle::RawWindowHandle::AppKit(handle) => Ok(Surface::from_view(
-                handle.ns_view,
-                Some(&self.managed_metal_layer_delegate),
-            )),
+            raw_window_handle::RawWindowHandle::AppKit(handle) => Ok(unsafe {
+                Surface::from_view(handle.ns_view, Some(&self.managed_metal_layer_delegate))
+            }),
             _ => Err(crate::InstanceError),
         }
     }
 
     unsafe fn destroy_surface(&self, surface: Surface) {
-        surface.dispose();
+        unsafe { surface.dispose() };
     }
 
     unsafe fn enumerate_adapters(&self) -> Vec<crate::ExposedAdapter<Api>> {
-        let devices = mtl::Device::all();
+        let devices = metal::Device::all();
         let mut adapters: Vec<crate::ExposedAdapter<Api>> = devices
             .into_iter()
             .map(|dev| {
@@ -115,6 +121,8 @@ impl crate::Instance<Api> for Instance {
                         vendor: 0,
                         device: 0,
                         device_type: shared.private_caps.device_type(),
+                        driver: String::new(),
+                        driver_info: String::new(),
                         backend: wgt::Backend::Metal,
                     },
                     features: shared.private_caps.features(),
@@ -137,9 +145,9 @@ impl crate::Instance<Api> for Instance {
 #[derive(Clone, Debug)]
 struct PrivateCapabilities {
     family_check: bool,
-    msl_version: mtl::MTLLanguageVersion,
+    msl_version: metal::MTLLanguageVersion,
     fragment_rw_storage: bool,
-    read_write_texture_tier: mtl::MTLReadWriteTextureTier,
+    read_write_texture_tier: metal::MTLReadWriteTextureTier,
     msaa_desktop: bool,
     msaa_apple3: bool,
     msaa_apple7: bool,
@@ -148,7 +156,6 @@ struct PrivateCapabilities {
     shared_textures: bool,
     mutable_comparison_samplers: bool,
     sampler_clamp_to_border: bool,
-    sampler_lod_average: bool,
     base_instance: bool,
     base_vertex_instance_drawing: bool,
     dual_source_blending: bool,
@@ -203,6 +210,7 @@ struct PrivateCapabilities {
     format_bgr10a2_all: bool,
     format_bgr10a2_no_write: bool,
     max_buffers_per_stage: ResourceIndex,
+    max_vertex_buffers: ResourceIndex,
     max_textures_per_stage: ResourceIndex,
     max_samplers_per_stage: ResourceIndex,
     buffer_alignment: u64,
@@ -215,7 +223,7 @@ struct PrivateCapabilities {
     max_varying_components: u32,
     max_threads_per_group: u32,
     max_total_threadgroup_memory: u32,
-    sample_count_mask: u8,
+    sample_count_mask: crate::TextureFormatCapabilities,
     supports_debug_markers: bool,
     supports_binary_archives: bool,
     supports_capture_manager: bool,
@@ -227,6 +235,7 @@ struct PrivateCapabilities {
     supports_mutability: bool,
     supports_depth_clip_control: bool,
     supports_preserve_invariance: bool,
+    supports_shader_primitive_index: bool,
     has_unified_memory: Option<bool>,
 }
 
@@ -245,17 +254,18 @@ struct Settings {
 }
 
 struct AdapterShared {
-    device: Mutex<mtl::Device>,
+    device: Mutex<metal::Device>,
     disabilities: PrivateDisabilities,
     private_caps: PrivateCapabilities,
     settings: Settings,
+    presentation_timer: time::PresentationTimer,
 }
 
 unsafe impl Send for AdapterShared {}
 unsafe impl Sync for AdapterShared {}
 
 impl AdapterShared {
-    fn new(device: mtl::Device) -> Self {
+    fn new(device: metal::Device) -> Self {
         let private_caps = PrivateCapabilities::new(&device);
         log::debug!("{:#?}", private_caps);
 
@@ -264,6 +274,7 @@ impl AdapterShared {
             private_caps,
             device: Mutex::new(device),
             settings: Settings::default(),
+            presentation_timer: time::PresentationTimer::new(),
         }
     }
 }
@@ -273,12 +284,19 @@ pub struct Adapter {
 }
 
 pub struct Queue {
-    raw: Arc<Mutex<mtl::CommandQueue>>,
+    raw: Arc<Mutex<metal::CommandQueue>>,
 }
 
 unsafe impl Send for Queue {}
 unsafe impl Sync for Queue {}
 
+impl Queue {
+    pub unsafe fn queue_from_raw(raw: metal::CommandQueue) -> Self {
+        Self {
+            raw: Arc::new(Mutex::new(raw)),
+        }
+    }
+}
 pub struct Device {
     shared: Arc<AdapterShared>,
     features: wgt::Features,
@@ -286,8 +304,8 @@ pub struct Device {
 
 pub struct Surface {
     view: Option<NonNull<objc::runtime::Object>>,
-    render_layer: Mutex<mtl::MetalLayer>,
-    raw_swapchain_format: mtl::MTLPixelFormat,
+    render_layer: Mutex<metal::MetalLayer>,
+    swapchain_format: Option<wgt::TextureFormat>,
     extent: wgt::Extent3d,
     main_thread_id: thread::ThreadId,
     // Useful for UI-intensive applications that are sensitive to
@@ -301,7 +319,7 @@ unsafe impl Sync for Surface {}
 #[derive(Debug)]
 pub struct SurfaceTexture {
     texture: Texture,
-    drawable: mtl::MetalDrawable,
+    drawable: metal::MetalDrawable,
     present_with_transaction: bool,
 }
 
@@ -395,7 +413,7 @@ impl crate::Queue<Api> for Queue {
 
 #[derive(Debug)]
 pub struct Buffer {
-    raw: mtl::Buffer,
+    raw: metal::Buffer,
     size: wgt::BufferAddress,
 }
 
@@ -410,9 +428,9 @@ impl Buffer {
 
 #[derive(Debug)]
 pub struct Texture {
-    raw: mtl::Texture,
-    raw_format: mtl::MTLPixelFormat,
-    raw_type: mtl::MTLTextureType,
+    raw: metal::Texture,
+    format: wgt::TextureFormat,
+    raw_type: metal::MTLTextureType,
     array_layers: u32,
     mip_levels: u32,
     copy_size: crate::CopyExtent,
@@ -423,7 +441,7 @@ unsafe impl Sync for Texture {}
 
 #[derive(Debug)]
 pub struct TextureView {
-    raw: mtl::Texture,
+    raw: metal::Texture,
     aspects: crate::FormatAspects,
 }
 
@@ -438,7 +456,7 @@ impl TextureView {
 
 #[derive(Debug)]
 pub struct Sampler {
-    raw: mtl::SamplerState,
+    raw: metal::SamplerState,
 }
 
 unsafe impl Send for Sampler {}
@@ -488,11 +506,18 @@ impl<T> ops::Index<naga::ShaderStage> for MultiStageData<T> {
 }
 
 impl<T> MultiStageData<T> {
-    fn map<Y>(&self, fun: impl Fn(&T) -> Y) -> MultiStageData<Y> {
+    fn map_ref<Y>(&self, fun: impl Fn(&T) -> Y) -> MultiStageData<Y> {
         MultiStageData {
             vs: fun(&self.vs),
             fs: fun(&self.fs),
             cs: fun(&self.cs),
+        }
+    }
+    fn map<Y>(self, fun: impl Fn(T) -> Y) -> MultiStageData<Y> {
+        MultiStageData {
+            vs: fun(self.vs),
+            fs: fun(self.fs),
+            cs: fun(self.cs),
         }
     }
     fn iter<'a>(&'a self) -> impl Iterator<Item = &'a T> {
@@ -508,6 +533,7 @@ impl<T> MultiStageData<T> {
 }
 
 type MultiStageResourceCounters = MultiStageData<ResourceData<ResourceIndex>>;
+type MultiStageResources = MultiStageData<naga::back::msl::EntryPointResources>;
 
 #[derive(Debug)]
 struct BindGroupLayoutInfo {
@@ -522,11 +548,11 @@ struct PushConstantsInfo {
 
 #[derive(Debug)]
 pub struct PipelineLayout {
-    naga_options: naga::back::msl::Options,
     bind_group_infos: ArrayVec<BindGroupLayoutInfo, { crate::MAX_BIND_GROUPS }>,
     push_constants_infos: MultiStageData<Option<PushConstantsInfo>>,
     total_counters: MultiStageResourceCounters,
     total_push_constants: u32,
+    per_stage_map: MultiStageResources,
 }
 
 trait AsNative {
@@ -535,12 +561,12 @@ trait AsNative {
     fn as_native(&self) -> &Self::Native;
 }
 
-type BufferPtr = NonNull<mtl::MTLBuffer>;
-type TexturePtr = NonNull<mtl::MTLTexture>;
-type SamplerPtr = NonNull<mtl::MTLSamplerState>;
+type BufferPtr = NonNull<metal::MTLBuffer>;
+type TexturePtr = NonNull<metal::MTLTexture>;
+type SamplerPtr = NonNull<metal::MTLSamplerState>;
 
 impl AsNative for BufferPtr {
-    type Native = mtl::BufferRef;
+    type Native = metal::BufferRef;
     #[inline]
     fn from(native: &Self::Native) -> Self {
         unsafe { NonNull::new_unchecked(native.as_ptr()) }
@@ -552,7 +578,7 @@ impl AsNative for BufferPtr {
 }
 
 impl AsNative for TexturePtr {
-    type Native = mtl::TextureRef;
+    type Native = metal::TextureRef;
     #[inline]
     fn from(native: &Self::Native) -> Self {
         unsafe { NonNull::new_unchecked(native.as_ptr()) }
@@ -564,7 +590,7 @@ impl AsNative for TexturePtr {
 }
 
 impl AsNative for SamplerPtr {
-    type Native = mtl::SamplerStateRef;
+    type Native = metal::SamplerStateRef;
     #[inline]
     fn from(native: &Self::Native) -> Self {
         unsafe { NonNull::new_unchecked(native.as_ptr()) }
@@ -580,7 +606,17 @@ struct BufferResource {
     ptr: BufferPtr,
     offset: wgt::BufferAddress,
     dynamic_index: Option<u32>,
+
+    /// The buffer's size, if it is a [`Storage`] binding. Otherwise `None`.
+    ///
+    /// Buffers with the [`wgt::BufferBindingType::Storage`] binding type can
+    /// hold WGSL runtime-sized arrays. When one does, we must pass its size to
+    /// shader entry points to implement bounds checks and WGSL's `arrayLength`
+    /// function. See [`device::CompiledShader::sized_bindings`] for details.
+    ///
+    /// [`Storage`]: wgt::BufferBindingType::Storage
     binding_size: Option<wgt::BufferSize>,
+
     binding_location: u32,
 }
 
@@ -598,12 +634,21 @@ unsafe impl Sync for BindGroup {}
 #[derive(Debug)]
 pub struct ShaderModule {
     naga: crate::NagaShader,
+    runtime_checks: bool,
 }
 
 #[derive(Debug, Default)]
 struct PipelineStageInfo {
     push_constants: Option<PushConstantsInfo>,
+
+    /// The buffer argument table index at which we pass runtime-sized arrays' buffer sizes.
+    ///
+    /// See [`device::CompiledShader::sized_bindings`] for more details.
     sizes_slot: Option<naga::back::msl::Slot>,
+
+    /// Bindings of all WGSL `storage` globals that contain runtime-sized arrays.
+    ///
+    /// See [`device::CompiledShader::sized_bindings`] for more details.
     sized_bindings: Vec<naga::ResourceBinding>,
 }
 
@@ -623,30 +668,30 @@ impl PipelineStageInfo {
 }
 
 pub struct RenderPipeline {
-    raw: mtl::RenderPipelineState,
+    raw: metal::RenderPipelineState,
     #[allow(dead_code)]
-    vs_lib: mtl::Library,
+    vs_lib: metal::Library,
     #[allow(dead_code)]
-    fs_lib: Option<mtl::Library>,
+    fs_lib: Option<metal::Library>,
     vs_info: PipelineStageInfo,
-    fs_info: PipelineStageInfo,
-    raw_primitive_type: mtl::MTLPrimitiveType,
-    raw_triangle_fill_mode: mtl::MTLTriangleFillMode,
-    raw_front_winding: mtl::MTLWinding,
-    raw_cull_mode: mtl::MTLCullMode,
-    raw_depth_clip_mode: Option<mtl::MTLDepthClipMode>,
-    depth_stencil: Option<(mtl::DepthStencilState, wgt::DepthBiasState)>,
+    fs_info: Option<PipelineStageInfo>,
+    raw_primitive_type: metal::MTLPrimitiveType,
+    raw_triangle_fill_mode: metal::MTLTriangleFillMode,
+    raw_front_winding: metal::MTLWinding,
+    raw_cull_mode: metal::MTLCullMode,
+    raw_depth_clip_mode: Option<metal::MTLDepthClipMode>,
+    depth_stencil: Option<(metal::DepthStencilState, wgt::DepthBiasState)>,
 }
 
 unsafe impl Send for RenderPipeline {}
 unsafe impl Sync for RenderPipeline {}
 
 pub struct ComputePipeline {
-    raw: mtl::ComputePipelineState,
+    raw: metal::ComputePipelineState,
     #[allow(dead_code)]
-    cs_lib: mtl::Library,
+    cs_lib: metal::Library,
     cs_info: PipelineStageInfo,
-    work_group_size: mtl::MTLSize,
+    work_group_size: metal::MTLSize,
     work_group_memory_sizes: Vec<u32>,
 }
 
@@ -655,7 +700,7 @@ unsafe impl Sync for ComputePipeline {}
 
 #[derive(Debug)]
 pub struct QuerySet {
-    raw_buffer: mtl::Buffer,
+    raw_buffer: metal::Buffer,
     ty: wgt::QueryType,
 }
 
@@ -666,7 +711,7 @@ unsafe impl Sync for QuerySet {}
 pub struct Fence {
     completed_value: Arc<atomic::AtomicU64>,
     /// The pending fence values have to be ascending.
-    pending_command_buffers: Vec<(crate::FenceValue, mtl::CommandBuffer)>,
+    pending_command_buffers: Vec<(crate::FenceValue, metal::CommandBuffer)>,
 }
 
 unsafe impl Send for Fence {}
@@ -676,7 +721,7 @@ impl Fence {
     fn get_latest(&self) -> crate::FenceValue {
         let mut max_value = self.completed_value.load(atomic::Ordering::Acquire);
         for &(value, ref cmd_buf) in self.pending_command_buffers.iter() {
-            if cmd_buf.status() == mtl::MTLCommandBufferStatus::Completed {
+            if cmd_buf.status() == metal::MTLCommandBufferStatus::Completed {
                 max_value = value;
             }
         }
@@ -694,7 +739,7 @@ struct IndexState {
     buffer_ptr: BufferPtr,
     offset: wgt::BufferAddress,
     stride: wgt::BufferAddress,
-    raw_type: mtl::MTLIndexType,
+    raw_type: metal::MTLIndexType,
 }
 
 #[derive(Default)]
@@ -703,31 +748,62 @@ struct Temp {
 }
 
 struct CommandState {
-    blit: Option<mtl::BlitCommandEncoder>,
-    render: Option<mtl::RenderCommandEncoder>,
-    compute: Option<mtl::ComputeCommandEncoder>,
-    raw_primitive_type: mtl::MTLPrimitiveType,
+    blit: Option<metal::BlitCommandEncoder>,
+    render: Option<metal::RenderCommandEncoder>,
+    compute: Option<metal::ComputeCommandEncoder>,
+    raw_primitive_type: metal::MTLPrimitiveType,
     index: Option<IndexState>,
-    raw_wg_size: mtl::MTLSize,
+    raw_wg_size: metal::MTLSize,
     stage_infos: MultiStageData<PipelineStageInfo>,
-    storage_buffer_length_map: fxhash::FxHashMap<naga::ResourceBinding, wgt::BufferSize>,
+
+    /// Sizes of currently bound [`wgt::BufferBindingType::Storage`] buffers.
+    ///
+    /// Specifically:
+    ///
+    /// - The keys are ['ResourceBinding`] values (that is, the WGSL `@group`
+    ///   and `@binding` attributes) for `var<storage>` global variables in the
+    ///   current module that contain runtime-sized arrays.
+    ///
+    /// - The values are the actual sizes of the buffers currently bound to
+    ///   provide those globals' contents, which are needed to implement bounds
+    ///   checks and the WGSL `arrayLength` function.
+    ///
+    /// For each stage `S` in `stage_infos`, we consult this to find the sizes
+    /// of the buffers listed in [`stage_infos.S.sized_bindings`], which we must
+    /// pass to the entry point.
+    ///
+    /// See [`device::CompiledShader::sized_bindings`] for more details.
+    ///
+    /// [`ResourceBinding`]: naga::ResourceBinding
+    storage_buffer_length_map: rustc_hash::FxHashMap<naga::ResourceBinding, wgt::BufferSize>,
+
     work_group_memory_sizes: Vec<u32>,
     push_constants: Vec<u32>,
 }
 
 pub struct CommandEncoder {
     shared: Arc<AdapterShared>,
-    raw_queue: Arc<Mutex<mtl::CommandQueue>>,
-    raw_cmd_buf: Option<mtl::CommandBuffer>,
+    raw_queue: Arc<Mutex<metal::CommandQueue>>,
+    raw_cmd_buf: Option<metal::CommandBuffer>,
     state: CommandState,
     temp: Temp,
+}
+
+impl fmt::Debug for CommandEncoder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommandEncoder")
+            .field("raw_queue", &self.raw_queue)
+            .field("raw_cmd_buf", &self.raw_cmd_buf)
+            .finish()
+    }
 }
 
 unsafe impl Send for CommandEncoder {}
 unsafe impl Sync for CommandEncoder {}
 
+#[derive(Debug)]
 pub struct CommandBuffer {
-    raw: mtl::CommandBuffer,
+    raw: metal::CommandBuffer,
 }
 
 unsafe impl Send for CommandBuffer {}

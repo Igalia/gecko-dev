@@ -123,7 +123,7 @@ impl ToComputedValue for LineHeight {
                     LengthPercentage::Calc(ref calc) => {
                         let computed_calc =
                             calc.to_computed_value_zoomed(context, FontBaseSize::CurrentStyle);
-                        let base = context.style().get_font().clone_font_size().size();
+                        let base = context.style().get_font().clone_font_size().computed_size();
                         computed_calc.resolve(base)
                     },
                 };
@@ -232,7 +232,7 @@ impl ToComputedValue for TextOverflow {
 }
 
 bitflags! {
-    #[derive(MallocSizeOf, Parse, Serialize, SpecifiedValueInfo, ToCss, ToComputedValue, ToResolvedValue, ToShmem)]
+    #[derive(Clone, Copy, Eq, MallocSizeOf, PartialEq, Parse, Serialize, SpecifiedValueInfo, ToCss, ToComputedValue, ToResolvedValue, ToShmem)]
     #[css(bitflags(single = "none", mixed = "underline,overline,line-through,blink"))]
     #[repr(C)]
     /// Specified keyword values for the text-decoration-line property.
@@ -341,6 +341,11 @@ impl Parse for TextTransform {
                 "capitalize" if result.case_ == TextTransformCase::None => {
                     result.case_ = TextTransformCase::Capitalize
                 },
+                "math-auto" if result.case_ == TextTransformCase::None &&
+                    result.other_.is_empty() => {
+                    result.case_ = TextTransformCase::MathAuto;
+                    return Ok(result);
+                },
                 "full-width" if !result.other_.intersects(TextTransformOther::FULL_WIDTH) => {
                     result.other_.insert(TextTransformOther::FULL_WIDTH)
                 },
@@ -373,7 +378,7 @@ impl ToCss for TextTransform {
         if self.case_ != TextTransformCase::None {
             self.case_.to_css(dest)?;
             if !self.other_.is_empty() {
-                dest.write_str(" ")?;
+                dest.write_char(' ')?;
             }
         }
 
@@ -405,11 +410,13 @@ pub enum TextTransformCase {
     Lowercase,
     /// Capitalize each word.
     Capitalize,
+    /// Automatic italicization of math variables.
+    MathAuto,
 }
 
 bitflags! {
-    #[derive(MallocSizeOf, SpecifiedValueInfo, ToComputedValue, ToResolvedValue, ToShmem)]
-    #[value_info(other_values = "none,full-width,full-size-kana")]
+    #[derive(Clone, Copy, Eq, MallocSizeOf, PartialEq, Parse, Serialize, SpecifiedValueInfo, ToCss, ToComputedValue, ToResolvedValue, ToShmem)]
+    #[css(bitflags(mixed = "full-width,full-size-kana"))]
     #[repr(C)]
     /// Specified keyword values for non-case transforms in the text-transform property. (Non-exclusive.)
     pub struct TextTransformOther: u8 {
@@ -417,31 +424,6 @@ bitflags! {
         const FULL_WIDTH = 1 << 0;
         /// full-size-kana
         const FULL_SIZE_KANA = 1 << 1;
-    }
-}
-
-impl ToCss for TextTransformOther {
-    fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
-    where
-        W: Write,
-    {
-        let mut writer = SequenceWriter::new(dest, " ");
-        let mut any = false;
-        macro_rules! maybe_write {
-            ($ident:ident => $str:expr) => {
-                if self.contains(TextTransformOther::$ident) {
-                    writer.raw_item($str)?;
-                    any = true;
-                }
-            };
-        }
-
-        maybe_write!(FULL_WIDTH => "full-width");
-        maybe_write!(FULL_SIZE_KANA => "full-size-kana");
-
-        debug_assert!(any || self.is_empty());
-
-        Ok(())
     }
 }
 
@@ -772,146 +754,36 @@ impl Parse for TextEmphasisStyle {
     }
 }
 
-/// The allowed horizontal values for the `text-emphasis-position` property.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    MallocSizeOf,
-    Parse,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-)]
-pub enum TextEmphasisHorizontalWritingModeValue {
-    /// Draw marks over the text in horizontal writing mode.
-    Over,
-    /// Draw marks under the text in horizontal writing mode.
-    Under,
+bitflags! {
+    #[derive(Clone, Copy, Eq, MallocSizeOf, PartialEq, Parse, Serialize, SpecifiedValueInfo, ToCss, ToComputedValue, ToResolvedValue, ToShmem)]
+    #[repr(C)]
+    #[css(bitflags(mixed="over,under,left,right", validate_mixed="Self::validate_and_simplify"))]
+    /// Values for text-emphasis-position:
+    /// <https://drafts.csswg.org/css-text-decor/#text-emphasis-position-property>
+    pub struct TextEmphasisPosition: u8 {
+        /// Draws marks to the right of the text in vertical writing mode.
+        const OVER = 1 << 0;
+        /// Draw marks under the text in horizontal writing mode.
+        const UNDER = 1 << 1;
+        /// Draw marks to the left of the text in vertical writing mode.
+        const LEFT = 1 << 2;
+        /// Draws marks to the right of the text in vertical writing mode.
+        const RIGHT = 1 << 3;
+    }
 }
-
-/// The allowed vertical values for the `text-emphasis-position` property.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    MallocSizeOf,
-    Parse,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-)]
-pub enum TextEmphasisVerticalWritingModeValue {
-    /// Draws marks to the right of the text in vertical writing mode.
-    Right,
-    /// Draw marks to the left of the text in vertical writing mode.
-    Left,
-}
-
-/// Specified value of `text-emphasis-position` property.
-#[derive(
-    Clone,
-    Copy,
-    Debug,
-    MallocSizeOf,
-    PartialEq,
-    SpecifiedValueInfo,
-    ToComputedValue,
-    ToCss,
-    ToResolvedValue,
-    ToShmem,
-)]
-pub struct TextEmphasisPosition(
-    pub TextEmphasisHorizontalWritingModeValue,
-    pub TextEmphasisVerticalWritingModeValue,
-);
 
 impl TextEmphasisPosition {
-    #[inline]
-    /// Returns the initial value of `text-emphasis-position`
-    pub fn over_right() -> Self {
-        TextEmphasisPosition(
-            TextEmphasisHorizontalWritingModeValue::Over,
-            TextEmphasisVerticalWritingModeValue::Right,
-        )
-    }
-
-    #[cfg(feature = "gecko")]
-    /// Converts an enumerated value coming from Gecko to a `TextEmphasisPosition`.
-    pub fn from_gecko_keyword(kw: u32) -> Self {
-        use crate::gecko_bindings::structs;
-
-        let vert = if kw & structs::NS_STYLE_TEXT_EMPHASIS_POSITION_RIGHT != 0 {
-            TextEmphasisVerticalWritingModeValue::Right
-        } else {
-            debug_assert!(kw & structs::NS_STYLE_TEXT_EMPHASIS_POSITION_LEFT != 0);
-            TextEmphasisVerticalWritingModeValue::Left
-        };
-        let horiz = if kw & structs::NS_STYLE_TEXT_EMPHASIS_POSITION_OVER != 0 {
-            TextEmphasisHorizontalWritingModeValue::Over
-        } else {
-            debug_assert!(kw & structs::NS_STYLE_TEXT_EMPHASIS_POSITION_UNDER != 0);
-            TextEmphasisHorizontalWritingModeValue::Under
-        };
-        TextEmphasisPosition(horiz, vert)
-    }
-}
-
-impl Parse for TextEmphasisPosition {
-    fn parse<'i, 't>(
-        _context: &ParserContext,
-        input: &mut Parser<'i, 't>,
-    ) -> Result<Self, ParseError<'i>> {
-        if let Ok(horizontal) =
-            input.try_parse(|input| TextEmphasisHorizontalWritingModeValue::parse(input))
-        {
-            let vertical = TextEmphasisVerticalWritingModeValue::parse(input)?;
-            Ok(TextEmphasisPosition(horizontal, vertical))
-        } else {
-            let vertical = TextEmphasisVerticalWritingModeValue::parse(input)?;
-            let horizontal = TextEmphasisHorizontalWritingModeValue::parse(input)?;
-            Ok(TextEmphasisPosition(horizontal, vertical))
+    fn validate_and_simplify(&mut self) -> bool {
+        if self.intersects(Self::OVER) == self.intersects(Self::UNDER) {
+            return false;
         }
-    }
-}
 
-#[cfg(feature = "gecko")]
-impl From<u8> for TextEmphasisPosition {
-    fn from(bits: u8) -> Self {
-        TextEmphasisPosition::from_gecko_keyword(bits as u32)
-    }
-}
+        if self.intersects(Self::LEFT) {
+            return !self.intersects(Self::RIGHT);
+        }
 
-#[cfg(feature = "gecko")]
-impl From<TextEmphasisPosition> for u8 {
-    fn from(v: TextEmphasisPosition) -> u8 {
-        use crate::gecko_bindings::structs;
-
-        let mut result = match v.0 {
-            TextEmphasisHorizontalWritingModeValue::Over => {
-                structs::NS_STYLE_TEXT_EMPHASIS_POSITION_OVER
-            },
-            TextEmphasisHorizontalWritingModeValue::Under => {
-                structs::NS_STYLE_TEXT_EMPHASIS_POSITION_UNDER
-            },
-        };
-        match v.1 {
-            TextEmphasisVerticalWritingModeValue::Right => {
-                result |= structs::NS_STYLE_TEXT_EMPHASIS_POSITION_RIGHT;
-            },
-            TextEmphasisVerticalWritingModeValue::Left => {
-                result |= structs::NS_STYLE_TEXT_EMPHASIS_POSITION_LEFT;
-            },
-        };
-        result as u8
+        self.remove(Self::RIGHT); // Right is the default
+        true
     }
 }
 
@@ -1095,7 +967,7 @@ impl TextDecorationLength {
 }
 
 bitflags! {
-    #[derive(MallocSizeOf, SpecifiedValueInfo, ToComputedValue, ToResolvedValue, ToShmem)]
+    #[derive(Clone, Copy, Eq, MallocSizeOf, PartialEq, SpecifiedValueInfo, ToComputedValue, ToResolvedValue, ToShmem)]
     #[value_info(other_values = "auto,from-font,under,left,right")]
     #[repr(C)]
     /// Specified keyword values for the text-underline-position property.

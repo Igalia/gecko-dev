@@ -6,6 +6,7 @@
 
 #include "FluentBundle.h"
 #include "nsContentUtils.h"
+#include "mozilla/dom/ToJSValue.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/intl/NumberFormat.h"
 #include "mozilla/intl/DateTimeFormat.h"
@@ -48,9 +49,6 @@ class SizeableUTF8Buffer {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(FluentPattern, mParent)
 
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(FluentPattern, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(FluentPattern, Release)
-
 FluentPattern::FluentPattern(nsISupports* aParent, const nsACString& aId)
     : mId(aId), mParent(aParent) {
   MOZ_COUNT_CTOR(FluentPattern);
@@ -71,9 +69,6 @@ FluentPattern::~FluentPattern() { MOZ_COUNT_DTOR(FluentPattern); };
 /* FluentBundle */
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(FluentBundle, mParent)
-
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(FluentBundle, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(FluentBundle, Release)
 
 FluentBundle::FluentBundle(nsISupports* aParent,
                            UniquePtr<ffi::FluentBundleRc> aRaw)

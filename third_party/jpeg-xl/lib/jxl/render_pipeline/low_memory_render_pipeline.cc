@@ -9,8 +9,8 @@
 #include <queue>
 #include <tuple>
 
-#include "lib/jxl/aux_out.h"
 #include "lib/jxl/base/arch_macros.h"
+#include "lib/jxl/image_ops.h"
 
 namespace jxl {
 std::pair<size_t, size_t>
@@ -294,7 +294,7 @@ void LowMemoryRenderPipeline::Init() {
   }
   for (size_t i = first_image_dim_stage_; i < stages_.size(); i++) {
     if (stages_[i]->SwitchToImageDimensions()) {
-      JXL_ABORT("Cannot switch to image dimensions multiple times");
+      JXL_UNREACHABLE("Cannot switch to image dimensions multiple times");
     }
     std::vector<std::pair<size_t, size_t>> input_sizes(shifts.size());
     for (size_t c = 0; c < shifts.size(); c++) {

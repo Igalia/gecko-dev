@@ -319,7 +319,8 @@ static RefPtr<DataChannelConnection> GetConnectionFromSocket(
 // Called when the buffer empties to the threshold value.  This is called
 // from SctpDtlsInput() through the sctp stack.  SctpDtlsInput() calls
 // usrsctp_conninput() under lock
-static int threshold_event(struct socket* sock, uint32_t sb_free) {
+static int threshold_event(struct socket* sock, uint32_t sb_free,
+                           void* ulp_info) {
   RefPtr<DataChannelConnection> connection = GetConnectionFromSocket(sock);
   connection->mLock.AssertCurrentThreadOwns();
   if (connection) {
@@ -409,7 +410,7 @@ void DataChannelConnection::DestroyOnSTS(struct socket* aMasterSocket,
 
   disconnect_all();
   mTransportHandler = nullptr;
-  GetMainThreadEventTarget()->Dispatch(NS_NewRunnableFunction(
+  GetMainThreadSerialEventTarget()->Dispatch(NS_NewRunnableFunction(
       "DataChannelConnection::Destroy",
       [id = mId]() { DataChannelRegistry::Deregister(id); }));
 }
@@ -864,9 +865,21 @@ void DataChannelConnection::CompleteConnect() {
       if (r < 0) {
         DC_ERROR(("usrsctp_getsockopt failed: %d", r));
       } else {
-        // draft-ietf-rtcweb-data-channel-13 section 5: max initial MTU IPV4
-        // 1200, IPV6 1280
-        paddrparams.spp_pathmtu = 1200;  // safe for either
+        // This field is misnamed. |spp_pathmtu| represents the maximum
+        // _payload_ size in libusrsctp. So:
+        // 1280 (a reasonable IPV6 MTU according to RFC 8831)
+        //  -12 (sctp header)
+        //  -24 (GCM sipher)
+        //  -13 (DTLS record header)
+        //   -8 (UDP header)
+        //   -4 (TURN ChannelData)
+        //  -40 (IPV6 header)
+        // = 1179
+        // We could further restrict this, because RFC 8831 suggests a starting
+        // IPV4 path MTU of 1200, which would lead to a value of 1115.
+        // I suspect that in practice the path MTU for IPV4 is substantially
+        // larger than 1200.
+        paddrparams.spp_pathmtu = 1179;
         paddrparams.spp_flags &= ~SPP_PMTUD_ENABLE;
         paddrparams.spp_flags |= SPP_PMTUD_DISABLE;
         opt_len = (socklen_t)sizeof(struct sctp_paddrparams);
@@ -1679,7 +1692,8 @@ void DataChannelConnection::HandleDataMessage(const void* data, size_t length,
   const char* info = "";
 
   if (ppid == DATA_CHANNEL_PPID_DOMSTRING_PARTIAL ||
-      ppid == DATA_CHANNEL_PPID_DOMSTRING) {
+      ppid == DATA_CHANNEL_PPID_DOMSTRING ||
+      ppid == DATA_CHANNEL_PPID_DOMSTRING_EMPTY) {
     is_binary = false;
   }
   if (is_binary != channel->mIsRecvBinary && !channel->mRecvBuffer.IsEmpty()) {
@@ -1735,6 +1749,8 @@ void DataChannelConnection::HandleDataMessage(const void* data, size_t length,
          data_length, WEBRTC_DATACHANNEL_MAX_MESSAGE_SIZE_LOCAL));
   }
 
+  bool is_empty = false;
+
   switch (ppid) {
     case DATA_CHANNEL_PPID_DOMSTRING:
       DC_DEBUG(
@@ -1749,6 +1765,18 @@ void DataChannelConnection::HandleDataMessage(const void* data, size_t length,
       // WebSockets checks IsUTF8() here; we can try to deliver it
       break;
 
+    case DATA_CHANNEL_PPID_DOMSTRING_EMPTY:
+      DC_DEBUG(
+          ("DataChannel: Received empty string message of length %u on channel "
+           "%u",
+           data_length, channel->mStream));
+      type = DataChannelOnMessageAvailable::ON_DATA_STRING;
+      if (bufferFlags & DATA_CHANNEL_BUFFER_MESSAGE_FLAGS_BUFFERED) {
+        info = " (string fragmented)";
+      }
+      is_empty = true;
+      break;
+
     case DATA_CHANNEL_PPID_BINARY:
       DC_DEBUG(
           ("DataChannel: Received binary message of length %u on channel id %u",
@@ -1759,6 +1787,18 @@ void DataChannelConnection::HandleDataMessage(const void* data, size_t length,
       }
 
       // else send using recvData normally
+      break;
+
+    case DATA_CHANNEL_PPID_BINARY_EMPTY:
+      DC_DEBUG(
+          ("DataChannel: Received empty binary message of length %u on channel "
+           "id %u",
+           data_length, channel->mStream));
+      type = DataChannelOnMessageAvailable::ON_DATA_BINARY;
+      if (bufferFlags & DATA_CHANNEL_BUFFER_MESSAGE_FLAGS_BUFFERED) {
+        info = " (binary fragmented)";
+      }
+      is_empty = true;
       break;
 
     default:
@@ -1783,7 +1823,8 @@ void DataChannelConnection::HandleDataMessage(const void* data, size_t length,
         type, this, channel, channel->mRecvBuffer));
     channel->mRecvBuffer.Truncate(0);
   } else {
-    nsAutoCString recvData(buffer, data_length);  // copies (<64) or allocates
+    nsAutoCString recvData(is_empty ? "" : buffer,
+                           is_empty ? 0 : data_length);  // allocates >64
     channel->SendOrQueue(
         new DataChannelOnMessageAvailable(type, this, channel, recvData));
   }
@@ -1874,8 +1915,10 @@ void DataChannelConnection::HandleMessage(const void* buffer, size_t length,
       break;
     case DATA_CHANNEL_PPID_DOMSTRING_PARTIAL:
     case DATA_CHANNEL_PPID_DOMSTRING:
+    case DATA_CHANNEL_PPID_DOMSTRING_EMPTY:
     case DATA_CHANNEL_PPID_BINARY_PARTIAL:
     case DATA_CHANNEL_PPID_BINARY:
+    case DATA_CHANNEL_PPID_BINARY_EMPTY:
       HandleDataMessage(buffer, length, ppid, stream, flags);
       break;
     default:
@@ -2380,30 +2423,31 @@ int DataChannelConnection::ReceiveCallback(
   ASSERT_WEBRTC(!NS_IsMainThread());
   DC_DEBUG(("In ReceiveCallback"));
 
-  if (!data) {
-    DC_DEBUG(("ReceiveCallback: SCTP has finished shutting down"));
-  } else {
-    bool locked = false;
-    if (!IsSTSThread()) {
-      mLock.Lock();
-      locked = true;
-    } else {
-      mLock.AssertCurrentThreadOwns();
-    }
-    if (flags & MSG_NOTIFICATION) {
-      HandleNotification(static_cast<union sctp_notification*>(data), datalen);
-    } else {
-      HandleMessage(data, datalen, ntohl(rcv.rcv_ppid), rcv.rcv_sid, flags);
-    }
-    if (locked) {
-      mLock.Unlock();
-    }
-    // sctp allocates 'data' with malloc(), and expects the receiver to free
-    // it (presumably with free).
-    // XXX future optimization: try to deliver messages without an internal
-    // alloc/copy, and if so delay the free until later.
-    free(data);
-  }
+  // libusrsctp just went reentrant on us. Put a stop to this.
+  mSTS->Dispatch(NS_NewRunnableFunction(
+      "DataChannelConnection::ReceiveCallback",
+      [data, datalen, rcv, flags, this,
+       self = RefPtr<DataChannelConnection>(this)]() mutable {
+        if (!data) {
+          DC_DEBUG(("ReceiveCallback: SCTP has finished shutting down"));
+        } else {
+          mLock.Lock();
+          if (flags & MSG_NOTIFICATION) {
+            HandleNotification(static_cast<union sctp_notification*>(data),
+                               datalen);
+          } else {
+            HandleMessage(data, datalen, ntohl(rcv.rcv_ppid), rcv.rcv_sid,
+                          flags);
+          }
+          mLock.Unlock();
+          // sctp allocates 'data' with malloc(), and expects the receiver to
+          // free it (presumably with free).
+          // XXX future optimization: try to deliver messages without an
+          // internal alloc/copy, and if so delay the free until later.
+          free(data);
+        }
+      }));
+
   // usrsctp defines the callback as returning an int, but doesn't use it
   return 1;
 }
@@ -2761,7 +2805,8 @@ int DataChannelConnection::SendDataMsgInternalOrBuffer(DataChannel& channel,
   int error =
       SendMsgInternalOrBuffer(channel.mBufferedData, msg, buffered, &written);
   mDeferSend = false;
-  if (written) {
+  if (written && ppid != DATA_CHANNEL_PPID_DOMSTRING_EMPTY &&
+      ppid != DATA_CHANNEL_PPID_BINARY_EMPTY) {
     channel.DecrementBufferedAmount(written);
   }
 
@@ -2969,16 +3014,23 @@ int DataChannelConnection::SendDataMsgCommon(uint16_t stream,
   if (NS_WARN_IF(!channelPtr)) {
     return EINVAL;  // TODO: Find a better error code
   }
-
+  bool is_empty = len == 0;
+  const uint8_t byte = 0;
+  if (is_empty) {
+    data = &byte;
+    len = 1;
+  }
   auto& channel = *channelPtr;
   int err = 0;
   MutexAutoLock lock(mLock);
   if (isBinary) {
-    err = SendDataMsg(channel, data, len, DATA_CHANNEL_PPID_BINARY_PARTIAL,
-                      DATA_CHANNEL_PPID_BINARY);
+    err = SendDataMsg(
+        channel, data, len, DATA_CHANNEL_PPID_BINARY_PARTIAL,
+        is_empty ? DATA_CHANNEL_PPID_BINARY_EMPTY : DATA_CHANNEL_PPID_BINARY);
   } else {
     err = SendDataMsg(channel, data, len, DATA_CHANNEL_PPID_DOMSTRING_PARTIAL,
-                      DATA_CHANNEL_PPID_DOMSTRING);
+                      is_empty ? DATA_CHANNEL_PPID_DOMSTRING_EMPTY
+                               : DATA_CHANNEL_PPID_DOMSTRING);
   }
   if (!err) {
     channel.WithTrafficCounters([&len](DataChannel::TrafficCounters& counters) {
@@ -3232,11 +3284,17 @@ void DataChannel::AnnounceOpen() {
         auto state = GetReadyState();
         // Special-case; spec says to put brand-new remote-created DataChannel
         // in "open", but queue the firing of the "open" event.
-        if (state != CLOSING && state != CLOSED && mListener) {
+        if (state != CLOSING && state != CLOSED) {
+          if (!mEverOpened && mConnection && mConnection->mListener) {
+            mEverOpened = true;
+            mConnection->mListener->NotifyDataChannelOpen(this);
+          }
           SetReadyState(OPEN);
           DC_DEBUG(("%s: sending ON_CHANNEL_OPEN for %s/%s: %u", __FUNCTION__,
                     mLabel.get(), mProtocol.get(), mStream));
-          mListener->OnChannelConnected(mContext);
+          if (mListener) {
+            mListener->OnChannelConnected(mContext);
+          }
         }
       }));
 }
@@ -3246,6 +3304,9 @@ void DataChannel::AnnounceClosed() {
       "DataChannel::AnnounceClosed", [this, self = RefPtr<DataChannel>(this)] {
         if (GetReadyState() == CLOSED) {
           return;
+        }
+        if (mEverOpened && mConnection && mConnection->mListener) {
+          mConnection->mListener->NotifyDataChannelClosed(this);
         }
         SetReadyState(CLOSED);
         mBufferedData.Clear();

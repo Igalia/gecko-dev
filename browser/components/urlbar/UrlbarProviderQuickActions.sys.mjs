@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 import {
   UrlbarProvider,
   UrlbarUtils,
@@ -18,13 +16,15 @@ ChromeUtils.defineESModuleGetters(lazy, {
 });
 
 // These prefs are relative to the `browser.urlbar` branch.
-const ENABLED_PREF = "suggest.quickactions";
+const ENABLED_PREF = "quickactions.enabled";
+const SUGGEST_PREF = "suggest.quickactions";
 const MATCH_IN_PHRASE_PREF = "quickactions.matchInPhrase";
+const MIN_SEARCH_PREF = "quickactions.minimumSearchString";
 const DYNAMIC_TYPE_NAME = "quickactions";
 
 // When the urlbar is first focused and no search term has been
 // entered we show a limited number of results.
-const ACTIONS_SHOWN_FOCUS = 5;
+const ACTIONS_SHOWN_FOCUS = 4;
 
 // Default icon shown for actions if no custom one is provided.
 const DEFAULT_ICON = "chrome://global/skin/icons/settings.svg";
@@ -47,6 +47,7 @@ class ProviderQuickActions extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -55,6 +56,8 @@ class ProviderQuickActions extends UrlbarProvider {
 
   /**
    * The type of the provider.
+   *
+   * @returns {UrlbarUtils.PROVIDER_TYPE}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -71,23 +74,38 @@ class ProviderQuickActions extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
   isActive(queryContext) {
-    return lazy.UrlbarPrefs.get(ENABLED_PREF);
+    return (
+      queryContext.trimmedSearchString.length < 50 &&
+      lazy.UrlbarPrefs.get(ENABLED_PREF) &&
+      ((lazy.UrlbarPrefs.get(SUGGEST_PREF) && !queryContext.searchMode) ||
+        queryContext.searchMode?.source == UrlbarUtils.RESULT_SOURCE.ACTIONS)
+    );
   }
 
   /**
-   * Starts querying.
+   * Starts querying. Extended classes should return a Promise resolved when the
+   * provider is done searching AND returning results.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        result. A UrlbarResult should be passed to it.
-   * @note Extended classes should return a Promise resolved when the provider
-   *       is done searching AND returning results.
+   * @returns {Promise}
    */
   async startQuery(queryContext, addCallback) {
     let input = queryContext.trimmedSearchString.toLowerCase();
+
+    if (
+      !queryContext.searchMode &&
+      input.length < lazy.UrlbarPrefs.get(MIN_SEARCH_PREF)
+    ) {
+      return;
+    }
+
     let results = [...(this.#prefixes.get(input) ?? [])];
 
     if (lazy.UrlbarPrefs.get(MATCH_IN_PHRASE_PREF)) {
@@ -97,7 +115,26 @@ class ProviderQuickActions extends UrlbarProvider {
         }
       }
     }
+    // Ensure results are unique.
+    results = [...new Set(results)];
+
+    // Remove invisible actions.
+    results = results.filter(key => {
+      const action = this.#actions.get(key);
+      return !action.isVisible || action.isVisible();
+    });
+
     if (!results?.length) {
+      return;
+    }
+
+    // If all actions are inactive, don't show anything.
+    if (
+      results.every(key => {
+        const action = this.#actions.get(key);
+        return action.isActive && !action.isActive();
+      })
+    ) {
       return;
     }
 
@@ -105,7 +142,7 @@ class ProviderQuickActions extends UrlbarProvider {
     // but not when we are in the normal url mode on first focus.
     if (
       results.length > ACTIONS_SHOWN_FOCUS &&
-      !queryContext.searchString &&
+      !input &&
       !queryContext.searchMode
     ) {
       results.length = ACTIONS_SHOWN_FOCUS;
@@ -117,62 +154,68 @@ class ProviderQuickActions extends UrlbarProvider {
       {
         results: results.map(key => ({ key })),
         dynamicType: DYNAMIC_TYPE_NAME,
+        inputLength: input.length,
+        inQuickActionsSearchMode:
+          queryContext.searchMode?.source == UrlbarUtils.RESULT_SOURCE.ACTIONS,
       }
     );
     result.suggestedIndex = SUGGESTED_INDEX;
     addCallback(this, result);
+    this.#resultFromLastQuery = result;
   }
 
   getViewTemplate(result) {
     return {
-      attributes: {
-        selectable: false,
-      },
-      children: result.payload.results.map(({ key }, i) => {
-        let action = this.#actions.get(key);
-        let inActive = "isActive" in action && !action.isActive();
-        let row = {
-          name: `button-${i}`,
-          tag: "span",
+      children: [
+        {
+          name: "buttons",
+          tag: "div",
           attributes: {
-            "data-key": key,
-            class: "urlbarView-quickaction-row",
-            role: inActive ? "" : "button",
+            "data-is-quickactions-searchmode":
+              result.payload.inQuickActionsSearchMode,
           },
-          children: [
-            {
-              name: `icon-${i}`,
-              tag: "div",
-              attributes: { class: "urlbarView-favicon" },
+          children: result.payload.results.map(({ key }, i) => {
+            let action = this.#actions.get(key);
+            let inActive = "isActive" in action && !action.isActive();
+            let row = {
+              name: `button-${i}`,
+              tag: "span",
+              attributes: {
+                "data-key": key,
+                "data-input-length": result.payload.inputLength,
+                class: "urlbarView-quickaction-row",
+                role: inActive ? "" : "button",
+              },
               children: [
                 {
-                  name: `image-${i}`,
-                  tag: "img",
-                  attributes: {
-                    class: "urlbarView-favicon-img",
-                    src: action.icon || DEFAULT_ICON,
-                  },
+                  name: `icon-${i}`,
+                  tag: "div",
+                  attributes: { class: "urlbarView-favicon" },
+                  children: [
+                    {
+                      name: `image-${i}`,
+                      tag: "img",
+                      attributes: {
+                        class: "urlbarView-favicon-img",
+                        src: action.icon || DEFAULT_ICON,
+                      },
+                    },
+                  ],
                 },
-              ],
-            },
-            {
-              name: `div-${i}`,
-              tag: "div",
-              children: [
                 {
                   name: `label-${i}`,
                   tag: "span",
                   attributes: { class: "urlbarView-label" },
                 },
               ],
-            },
-          ],
-        };
-        if (inActive) {
-          row.attributes.disabled = "disabled";
-        }
-        return row;
-      }),
+            };
+            if (inActive) {
+              row.attributes.disabled = "disabled";
+            }
+            return row;
+          }),
+        },
+      ],
     };
   }
 
@@ -187,15 +230,57 @@ class ProviderQuickActions extends UrlbarProvider {
     return viewUpdate;
   }
 
-  pickResult(result, itemPicked) {
+  #pickResult(result, itemPicked) {
+    let { key, inputLength } = itemPicked.dataset;
+    // We clamp the input length to limit the number of keys to
+    // the number of actions * 10.
+    inputLength = Math.min(inputLength, 10);
+    Services.telemetry.keyedScalarAdd(
+      `quickaction.picked`,
+      `${key}-${inputLength}`,
+      1
+    );
     let options = this.#actions.get(itemPicked.dataset.key).onPick() ?? {};
     if (options.focusContent) {
       itemPicked.ownerGlobal.gBrowser.selectedBrowser.focus();
     }
   }
 
+  onEngagement(state, queryContext, details, controller) {
+    // Ignore engagements on other results that didn't end the session.
+    if (details.result?.providerName != this.name && details.isSessionOngoing) {
+      return;
+    }
+
+    if (state == "engagement" && queryContext) {
+      // Get the result that's visible in the view. `details.result` is the
+      // engaged result, if any; if it's from this provider, then that's the
+      // visible result. Otherwise fall back to #getVisibleResultFromLastQuery.
+      let { result } = details;
+      if (result?.providerName != this.name) {
+        result = this.#getVisibleResultFromLastQuery(controller.view);
+      }
+
+      result?.payload.results.forEach(({ key }) => {
+        Services.telemetry.keyedScalarAdd(
+          `quickaction.impression`,
+          `${key}-${queryContext.trimmedSearchString.length}`,
+          1
+        );
+      });
+    }
+
+    // Handle picks.
+    if (details.result?.providerName == this.name) {
+      this.#pickResult(details.result, details.element);
+    }
+
+    this.#resultFromLastQuery = null;
+  }
+
   /**
    * Adds a new QuickAction.
+   *
    * @param {string} key A key to identify this action.
    * @param {string} definition An object that describes the action.
    */
@@ -217,6 +302,7 @@ class ProviderQuickActions extends UrlbarProvider {
 
   /**
    * Removes an action.
+   *
    * @param {string} key A key to identify this action.
    */
   removeAction(key) {
@@ -226,7 +312,7 @@ class ProviderQuickActions extends UrlbarProvider {
     this.#loopOverPrefixes(definition.commands, prefix => {
       let result = this.#prefixes.get(prefix);
       if (result) {
-        result = result.filter(val => val == key);
+        result = result.filter(val => val != key);
       }
       this.#prefixes.set(prefix, result);
     });
@@ -241,6 +327,9 @@ class ProviderQuickActions extends UrlbarProvider {
   // The actions that have been added.
   #actions = new Map();
 
+  // The result we added during the most recent query.
+  #resultFromLastQuery = null;
+
   #loopOverPrefixes(commands, fun) {
     for (const command of commands) {
       // Loop over all the prefixes of the word, ie
@@ -252,6 +341,21 @@ class ProviderQuickActions extends UrlbarProvider {
         fun(prefix);
       }
     }
+  }
+
+  #getVisibleResultFromLastQuery(view) {
+    let result = this.#resultFromLastQuery;
+
+    if (
+      result?.rowIndex >= 0 &&
+      view?.visibleResults?.[result.rowIndex] == result
+    ) {
+      // The result was visible.
+      return result;
+    }
+
+    // Find a visible result.
+    return view?.visibleResults?.find(r => r.providerName == this.name);
   }
 }
 

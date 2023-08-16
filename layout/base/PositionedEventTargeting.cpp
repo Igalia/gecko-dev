@@ -181,8 +181,7 @@ static bool IsDescendant(nsIFrame* aFrame, nsIContent* aAncestor,
   for (nsIContent* content = aFrame->GetContent(); content;
        content = content->GetFlattenedTreeParent()) {
     if (aLabelTargetId && content->IsHTMLElement(nsGkAtoms::label)) {
-      content->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::_for,
-                                    *aLabelTargetId);
+      content->AsElement()->GetAttr(nsGkAtoms::_for, *aLabelTargetId);
     }
     if (content == aAncestor) {
       return true;
@@ -245,8 +244,7 @@ static nsIContent* GetClickableAncestor(
     }
     if (content->IsHTMLElement(nsGkAtoms::label)) {
       if (aLabelTargetId) {
-        content->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::_for,
-                                      *aLabelTargetId);
+        content->AsElement()->GetAttr(nsGkAtoms::_for, *aLabelTargetId);
       }
       return content;
     }
@@ -518,6 +516,13 @@ nsIFrame* FindFrameTargetedByInputEvent(
     }
     return aRootFrame.mFrame;
   }();
+
+  // Ignore retarget if target is editable.
+  nsIContent* targetContent = target ? target->GetContent() : nullptr;
+  if (targetContent && targetContent->IsEditable()) {
+    PET_LOG("Target %p is editable\n", target);
+    return target;
+  }
 
   // If the target element inside an element with a z-index, restrict the
   // search to other elements inside that z-index. This is a heuristic

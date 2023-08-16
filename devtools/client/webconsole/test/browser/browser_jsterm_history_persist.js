@@ -14,9 +14,9 @@ const INPUT_HISTORY_COUNT = 10;
 
 const {
   getHistoryEntries,
-} = require("devtools/client/webconsole/selectors/history");
+} = require("resource://devtools/client/webconsole/selectors/history.js");
 
-add_task(async function() {
+add_task(async function () {
   info("Setting custom input history pref to " + INPUT_HISTORY_COUNT);
   Services.prefs.setIntPref(
     "devtools.webconsole.inputHistoryCount",

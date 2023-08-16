@@ -33,7 +33,7 @@ var gPrevRemoteTypeRegularTab;
 var gPrevRemoteTypeContainerTab;
 var gPrevRemoteTypePrivateTab;
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["privacy.userContext.enabled", true],
@@ -140,7 +140,7 @@ async function loadURIAndCheckRemoteType(
   );
   let loaded = BrowserTestUtils.browserLoaded(aBrowser, false, aURI);
   info(`About to load ${aURI} in ${aText}`);
-  await BrowserTestUtils.loadURI(aBrowser, aURI);
+  await BrowserTestUtils.loadURIString(aBrowser, aURI);
   await loaded;
 
   // Verify correct remote type

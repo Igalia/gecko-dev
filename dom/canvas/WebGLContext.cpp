@@ -25,7 +25,6 @@
 #include "GLScreenBuffer.h"
 #include "ImageContainer.h"
 #include "ImageEncoder.h"
-#include "Layers.h"
 #include "LayerUserData.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/Document.h"
@@ -119,16 +118,12 @@ WebGLContext::LruPosition::LruPosition(WebGLContext& context) {
   mItr = sLru.insert(sLru.end(), &context);
 }
 
-void WebGLContext::LruPosition::AssignLocked(
-    WebGLContext& aContext, const StaticMutexAutoLock& aProofOfLock) {
-  sLruMutex.AssertCurrentThreadOwns();
-  ResetLocked(aProofOfLock);
+void WebGLContext::LruPosition::AssignLocked(WebGLContext& aContext) {
+  ResetLocked();
   mItr = sLru.insert(sLru.end(), &aContext);
 }
 
-void WebGLContext::LruPosition::ResetLocked(
-    const StaticMutexAutoLock& aProofOfLock) {
-  sLruMutex.AssertCurrentThreadOwns();
+void WebGLContext::LruPosition::ResetLocked() {
   const auto end = sLru.end();
   if (mItr != end) {
     sLru.erase(mItr);
@@ -138,7 +133,11 @@ void WebGLContext::LruPosition::ResetLocked(
 
 void WebGLContext::LruPosition::Reset() {
   StaticMutexAutoLock lock(sLruMutex);
-  ResetLocked(lock);
+  ResetLocked();
+}
+
+bool WebGLContext::LruPosition::IsInsertedLocked() const {
+  return mItr != sLru.end();
 }
 
 WebGLContext::WebGLContext(HostWebGLContext& host,
@@ -148,6 +147,7 @@ WebGLContext::WebGLContext(HostWebGLContext& host,
       mResistFingerprinting(desc.resistFingerprinting),
       mOptions(desc.options),
       mPrincipalKey(desc.principalKey),
+      mPendingContextLoss(false),
       mMaxPerfWarnings(StaticPrefs::webgl_perf_max_warnings()),
       mMaxAcceptableFBStatusInvals(
           StaticPrefs::webgl_perf_max_acceptable_fb_status_invals()),
@@ -285,9 +285,30 @@ bool WebGLContext::CreateAndInitGL(
   bool tryNativeGL = true;
   bool tryANGLE = false;
 
-  if (forceEnabled) {
-    flags |= gl::CreateContextFlags::FORCE_ENABLE_HARDWARE;
+  // -
+
+  if (StaticPrefs::webgl_forbid_hardware()) {
+    flags |= gl::CreateContextFlags::FORBID_HARDWARE;
   }
+  if (StaticPrefs::webgl_forbid_software()) {
+    flags |= gl::CreateContextFlags::FORBID_SOFTWARE;
+  }
+
+  if (forceEnabled) {
+    flags &= ~gl::CreateContextFlags::FORBID_HARDWARE;
+    flags &= ~gl::CreateContextFlags::FORBID_SOFTWARE;
+  }
+
+  if ((flags & gl::CreateContextFlags::FORBID_HARDWARE) &&
+      (flags & gl::CreateContextFlags::FORBID_SOFTWARE)) {
+    FailureReason reason;
+    reason.info = "Both hardware and software were forbidden by config.";
+    out_failReasons->push_back(reason);
+    GenerateWarning("%s", reason.info.BeginReading());
+    return false;
+  }
+
+  // -
 
   if (StaticPrefs::webgl_cgl_multithreaded()) {
     flags |= gl::CreateContextFlags::PREFER_MULTITHREADED;
@@ -615,6 +636,9 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
     if (kIsAndroid) {
       types[layers::SurfaceDescriptor::TSurfaceTextureDescriptor] = true;
     }
+    if (kIsLinux) {
+      types[layers::SurfaceDescriptor::TSurfaceDescriptorDMABuf] = true;
+    }
     return types;
   };
 
@@ -623,6 +647,7 @@ RefPtr<WebGLContext> WebGLContext::Create(HostWebGLContext& host,
   out->options = webgl->mOptions;
   out->limits = *webgl->mLimits;
   out->uploadableSdTypes = UploadableSdTypes();
+  out->vendor = webgl->gl->Vendor();
 
   return webgl;
 }
@@ -691,14 +716,17 @@ void WebGLContext::SetCompositableHost(
   mCompositableHost = aCompositableHost;
 }
 
-void WebGLContext::BumpLruLocked(const StaticMutexAutoLock& aProofOfLock) {
-  sLruMutex.AssertCurrentThreadOwns();
-  mLruPosition.AssignLocked(*this, aProofOfLock);
+void WebGLContext::BumpLruLocked() {
+  if (!mIsContextLost && !mPendingContextLoss) {
+    mLruPosition.AssignLocked(*this);
+  } else {
+    MOZ_ASSERT(!mLruPosition.IsInsertedLocked());
+  }
 }
 
 void WebGLContext::BumpLru() {
   StaticMutexAutoLock lock(sLruMutex);
-  BumpLruLocked(lock);
+  BumpLruLocked();
 }
 
 void WebGLContext::LoseLruContextIfLimitExceeded() {
@@ -711,7 +739,7 @@ void WebGLContext::LoseLruContextIfLimitExceeded() {
   // it's important to update the index on a new context before losing old
   // contexts, otherwise new unused contexts would all have index 0 and we
   // couldn't distinguish older ones when choosing which one to lose first.
-  BumpLruLocked(lock);
+  BumpLruLocked();
 
   {
     size_t forPrincipal = 0;
@@ -731,7 +759,7 @@ void WebGLContext::LoseLruContextIfLimitExceeded() {
       for (const auto& context : sLru) {
         if (context->mPrincipalKey == mPrincipalKey) {
           MOZ_ASSERT(context != this);
-          context->LoseContextLruLocked(webgl::ContextLossReason::None, lock);
+          context->LoseContextLruLocked(webgl::ContextLossReason::None);
           forPrincipal -= 1;
           break;
         }
@@ -749,7 +777,7 @@ void WebGLContext::LoseLruContextIfLimitExceeded() {
 
     const auto& context = sLru.front();
     MOZ_ASSERT(context != this);
-    context->LoseContextLruLocked(webgl::ContextLossReason::None, lock);
+    context->LoseContextLruLocked(webgl::ContextLossReason::None);
     total -= 1;
   }
 }
@@ -894,10 +922,14 @@ constexpr auto MakeArray(Args... args) -> std::array<T, sizeof...(Args)> {
 }
 
 inline gfx::ColorSpace2 ToColorSpace2(const WebGLContextOptions& options) {
-  if (options.ignoreColorSpace) {
-    return gfx::ColorSpace2::UNKNOWN;
+  auto ret = gfx::ColorSpace2::UNKNOWN;
+  if (true) {
+    ret = gfx::ColorSpace2::SRGB;
   }
-  return gfx::ToColorSpace2(options.colorSpace);
+  if (!options.ignoreColorSpace) {
+    ret = gfx::ToColorSpace2(options.colorSpace);
+  }
+  return ret;
 }
 
 // -
@@ -937,6 +969,12 @@ bool WebGLContext::PresentInto(gl::SwapChain& swapChain) {
 #ifdef DEBUG
     if (!mOptions.alpha) {
       gl->fBindFramebuffer(LOCAL_GL_FRAMEBUFFER, destFb);
+      gl->fPixelStorei(LOCAL_GL_PACK_ALIGNMENT, 4);
+      if (IsWebGL2()) {
+        gl->fPixelStorei(LOCAL_GL_PACK_ROW_LENGTH, 0);
+        gl->fPixelStorei(LOCAL_GL_PACK_SKIP_PIXELS, 0);
+        gl->fPixelStorei(LOCAL_GL_PACK_SKIP_ROWS, 0);
+      }
       uint32_t pixel = 0xffbadbad;
       gl->fReadPixels(0, 0, 1, 1, LOCAL_GL_RGBA, LOCAL_GL_UNSIGNED_BYTE,
                       &pixel);
@@ -1085,6 +1123,10 @@ bool WebGLContext::PushRemoteTexture(WebGLFramebuffer* fb,
   const auto onFailure = [&]() -> bool {
     GenerateWarning("Remote texture creation failed.");
     LoseContext();
+    if (mRemoteTextureOwner) {
+      mRemoteTextureOwner->PushDummyTexture(options.remoteTextureId,
+                                            options.remoteTextureOwnerId);
+    }
     return false;
   };
 
@@ -1109,7 +1151,9 @@ bool WebGLContext::PushRemoteTexture(WebGLFramebuffer* fb,
     };
 
     swapChain.SetDestroyedCallback(destroyedCallback);
-    mRemoteTextureOwner->RegisterTextureOwner(ownerId);
+    mRemoteTextureOwner->RegisterTextureOwner(
+        ownerId,
+        /* aIsSyncMode */ gfx::gfxVars::WebglOopAsyncPresentForceSync());
   }
 
   MOZ_ASSERT(fb || surf);
@@ -1180,6 +1224,8 @@ bool WebGLContext::PushRemoteTexture(WebGLFramebuffer* fb,
   switch (desc->type()) {
     case layers::SurfaceDescriptor::TSurfaceDescriptorD3D10:
     case layers::SurfaceDescriptor::TSurfaceDescriptorMacIOSurface:
+    case layers::SurfaceDescriptor::TSurfaceTextureDescriptor:
+    case layers::SurfaceDescriptor::TSurfaceDescriptorAndroidHardwareBuffer:
       keepAlive = surf;
       break;
     default:
@@ -1435,20 +1481,26 @@ void WebGLContext::CheckForContextLoss() {
   LoseContext(reason);
 }
 
-void WebGLContext::LoseContextLruLocked(
-    const webgl::ContextLossReason reason,
-    const StaticMutexAutoLock& aProofOfLock) {
+void WebGLContext::HandlePendingContextLoss() {
+  mIsContextLost = true;
+  mHost->OnContextLoss(mPendingContextLossReason);
+}
+
+void WebGLContext::LoseContextLruLocked(const webgl::ContextLossReason reason) {
   printf_stderr("WebGL(%p)::LoseContext(%u)\n", this,
                 static_cast<uint32_t>(reason));
-  sLruMutex.AssertCurrentThreadOwns();
-  mIsContextLost = true;
-  mLruPosition.ResetLocked(aProofOfLock);
-  mHost->OnContextLoss(reason);
+  mLruPosition.ResetLocked();
+  mPendingContextLossReason = reason;
+  mPendingContextLoss = true;
 }
 
 void WebGLContext::LoseContext(const webgl::ContextLossReason reason) {
   StaticMutexAutoLock lock(sLruMutex);
-  LoseContextLruLocked(reason, lock);
+  LoseContextLruLocked(reason);
+  HandlePendingContextLoss();
+  if (mRemoteTextureOwner) {
+    mRemoteTextureOwner->NotifyContextLost();
+  }
 }
 
 void WebGLContext::DidRefresh() {
@@ -1985,7 +2037,7 @@ static std::vector<std::string> ExplodeName(const std::string& str) {
 
 //-
 
-//#define DUMP_MakeLinkResult
+// #define DUMP_MakeLinkResult
 
 webgl::LinkActiveInfo GetLinkActiveInfo(
     gl::GLContext& gl, const GLuint prog, const bool webgl2,
@@ -2143,6 +2195,7 @@ webgl::LinkActiveInfo GetLinkActiveInfo(
         }();
 
         const auto userName = fnUnmapName(mappedName);
+        if (StartsWith(userName, "webgl_")) continue;
 
         // -
 

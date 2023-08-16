@@ -104,6 +104,8 @@ bool ThreadEventQueue::PutEventInternal(already_AddRefed<nsIRunnable>&& aEvent,
           aPriority = EventQueuePriority::DeferredTimers;
         } else if (prio == nsIRunnablePriority::PRIORITY_IDLE) {
           aPriority = EventQueuePriority::Idle;
+        } else if (prio == nsIRunnablePriority::PRIORITY_LOW) {
+          aPriority = EventQueuePriority::Low;
         }
       }
 
@@ -207,7 +209,7 @@ already_AddRefed<nsISerialEventTarget> ThreadEventQueue::PushEventQueue() {
   auto queue = MakeUnique<EventQueue>();
   RefPtr<NestedSink> sink = new NestedSink(queue.get(), this);
   RefPtr<ThreadEventTarget> eventTarget =
-      new ThreadEventTarget(sink, NS_IsMainThread());
+      new ThreadEventTarget(sink, NS_IsMainThread(), false);
 
   MutexAutoLock lock(mLock);
 
@@ -248,10 +250,9 @@ size_t ThreadEventQueue::SizeOfExcludingThis(
     mozilla::MallocSizeOf aMallocSizeOf) {
   size_t n = 0;
 
-  n += mBaseQueue->SizeOfIncludingThis(aMallocSizeOf);
-
   {
     MutexAutoLock lock(mLock);
+    n += mBaseQueue->SizeOfIncludingThis(aMallocSizeOf);
     n += mNestedQueues.ShallowSizeOfExcludingThis(aMallocSizeOf);
     for (auto& queue : mNestedQueues) {
       n += queue.mEventTarget->SizeOfIncludingThis(aMallocSizeOf);

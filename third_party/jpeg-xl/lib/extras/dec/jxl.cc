@@ -5,12 +5,14 @@
 
 #include "lib/extras/dec/jxl.h"
 
-#include "jxl/decode.h"
-#include "jxl/decode_cxx.h"
-#include "jxl/types.h"
+#include <jxl/decode.h>
+#include <jxl/decode_cxx.h>
+#include <jxl/types.h>
+
 #include "lib/extras/dec/color_description.h"
 #include "lib/extras/enc/encode.h"
 #include "lib/jxl/base/printf_macros.h"
+#include "lib/jxl/exif.h"
 
 namespace jxl {
 namespace extras {
@@ -68,11 +70,48 @@ struct BoxProcessor {
   }
 };
 
+void SetBitDepthFromDataType(JxlDataType data_type, uint32_t* bits_per_sample,
+                             uint32_t* exponent_bits_per_sample) {
+  switch (data_type) {
+    case JXL_TYPE_UINT8:
+      *bits_per_sample = 8;
+      *exponent_bits_per_sample = 0;
+      break;
+    case JXL_TYPE_UINT16:
+      *bits_per_sample = 16;
+      *exponent_bits_per_sample = 0;
+      break;
+    case JXL_TYPE_FLOAT16:
+      *bits_per_sample = 16;
+      *exponent_bits_per_sample = 5;
+      break;
+    case JXL_TYPE_FLOAT:
+      *bits_per_sample = 32;
+      *exponent_bits_per_sample = 8;
+      break;
+  }
+}
+
+template <typename T>
+void UpdateBitDepth(JxlBitDepth bit_depth, JxlDataType data_type, T* info) {
+  if (bit_depth.type == JXL_BIT_DEPTH_FROM_PIXEL_FORMAT) {
+    SetBitDepthFromDataType(data_type, &info->bits_per_sample,
+                            &info->exponent_bits_per_sample);
+  } else if (bit_depth.type == JXL_BIT_DEPTH_CUSTOM) {
+    info->bits_per_sample = bit_depth.bits_per_sample;
+    info->exponent_bits_per_sample = bit_depth.exponent_bits_per_sample;
+  }
+}
+
 }  // namespace
 
 bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
                     const JXLDecompressParams& dparams, size_t* decoded_bytes,
                     PackedPixelFile* ppf, std::vector<uint8_t>* jpeg_bytes) {
+  JxlSignature sig = JxlSignatureCheck(bytes, bytes_size);
+  // silently return false if this is not a JXL file
+  if (sig == JXL_SIG_INVALID) return false;
+
   auto decoder = JxlDecoderMake(/*memory_manager=*/nullptr);
   JxlDecoder* dec = decoder.get();
   ppf->frames.clear();
@@ -107,7 +146,9 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
   bool can_reconstruct_jpeg = false;
   std::vector<uint8_t> jpeg_data_chunk;
   if (jpeg_bytes != nullptr) {
-    jpeg_data_chunk.resize(16384);
+    // This bound is very likely to be enough to hold the entire
+    // reconstructed JPEG, to avoid having to do expensive retries.
+    jpeg_data_chunk.resize(bytes_size * 3 / 2 + 1024);
     jpeg_bytes->resize(0);
   }
 
@@ -185,8 +226,12 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
         }
         break;
       }
+      size_t released_size = JxlDecoderReleaseInput(dec);
       fprintf(stderr,
-              "Input file is truncated and allow_partial_input was disabled.");
+              "Input file is truncated (total bytes: %" PRIuS
+              ", processed bytes: %" PRIuS
+              ") and --allow_partial_files is not present.\n",
+              bytes_size, bytes_size - released_size);
       return false;
     } else if (status == JXL_DEC_BOX) {
       boxes.FinalizeOutput();
@@ -245,6 +290,10 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
         // color space.
         ppf->info.num_color_channels = num_color_channels;
       }
+      if (dparams.output_bitdepth.type == JXL_BIT_DEPTH_CUSTOM) {
+        // Select format based on custom bits per sample.
+        ppf->info.bits_per_sample = dparams.output_bitdepth.bits_per_sample;
+      }
       // Select format according to accepted formats.
       if (!jxl::extras::SelectFormat(accepted_formats, ppf->info, &format)) {
         fprintf(stderr, "SelectFormat failed\n");
@@ -254,9 +303,11 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
       if (!have_alpha) {
         // Mark in the basic info that alpha channel was dropped.
         ppf->info.alpha_bits = 0;
-      } else if (dparams.unpremultiply_alpha) {
-        // Mark in the basic info that alpha was unpremultiplied.
-        ppf->info.alpha_premultiplied = false;
+      } else {
+        if (dparams.unpremultiply_alpha) {
+          // Mark in the basic info that alpha was unpremultiplied.
+          ppf->info.alpha_premultiplied = false;
+        }
       }
       bool alpha_found = false;
       for (uint32_t i = 0; i < ppf->info.num_extra_channels; ++i) {
@@ -296,34 +347,35 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
       }
       size_t icc_size = 0;
       JxlColorProfileTarget target = JXL_COLOR_PROFILE_TARGET_DATA;
-      if (JXL_DEC_SUCCESS !=
-          JxlDecoderGetICCProfileSize(dec, nullptr, target, &icc_size)) {
-        fprintf(stderr, "JxlDecoderGetICCProfileSize failed\n");
-      }
-      if (icc_size != 0) {
-        ppf->icc.resize(icc_size);
-        if (JXL_DEC_SUCCESS !=
-            JxlDecoderGetColorAsICCProfile(dec, nullptr, target,
-                                           ppf->icc.data(), icc_size)) {
-          fprintf(stderr, "JxlDecoderGetColorAsICCProfile failed\n");
-          return false;
-        }
-      }
+      ppf->color_encoding.color_space = JXL_COLOR_SPACE_UNKNOWN;
       if (JXL_DEC_SUCCESS != JxlDecoderGetColorAsEncodedProfile(
-                                 dec, nullptr, target, &ppf->color_encoding)) {
-        ppf->color_encoding.color_space = JXL_COLOR_SPACE_UNKNOWN;
+                                 dec, target, &ppf->color_encoding) ||
+          dparams.need_icc) {
+        // only get ICC if it is not an Enum color encoding
+        if (JXL_DEC_SUCCESS !=
+            JxlDecoderGetICCProfileSize(dec, target, &icc_size)) {
+          fprintf(stderr, "JxlDecoderGetICCProfileSize failed\n");
+        }
+        if (icc_size != 0) {
+          ppf->icc.resize(icc_size);
+          if (JXL_DEC_SUCCESS != JxlDecoderGetColorAsICCProfile(
+                                     dec, target, ppf->icc.data(), icc_size)) {
+            fprintf(stderr, "JxlDecoderGetColorAsICCProfile failed\n");
+            return false;
+          }
+        }
       }
       icc_size = 0;
       target = JXL_COLOR_PROFILE_TARGET_ORIGINAL;
       if (JXL_DEC_SUCCESS !=
-          JxlDecoderGetICCProfileSize(dec, nullptr, target, &icc_size)) {
+          JxlDecoderGetICCProfileSize(dec, target, &icc_size)) {
         fprintf(stderr, "JxlDecoderGetICCProfileSize failed\n");
       }
       if (icc_size != 0) {
         ppf->orig_icc.resize(icc_size);
         if (JXL_DEC_SUCCESS !=
-            JxlDecoderGetColorAsICCProfile(dec, nullptr, target,
-                                           ppf->orig_icc.data(), icc_size)) {
+            JxlDecoderGetColorAsICCProfile(dec, target, ppf->orig_icc.data(),
+                                           icc_size)) {
           fprintf(stderr, "JxlDecoderGetColorAsICCProfile failed\n");
           return false;
         }
@@ -421,9 +473,21 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
           return false;
         }
       }
+      if (JXL_DEC_SUCCESS !=
+          JxlDecoderSetImageOutBitDepth(dec, &dparams.output_bitdepth)) {
+        fprintf(stderr, "JxlDecoderSetImageOutBitDepth failed\n");
+        return false;
+      }
+      UpdateBitDepth(dparams.output_bitdepth, format.data_type, &ppf->info);
+      bool have_alpha = (format.num_channels == 2 || format.num_channels == 4);
+      if (have_alpha) {
+        // Interleaved alpha channels has the same bit depth as color channels.
+        ppf->info.alpha_bits = ppf->info.bits_per_sample;
+        ppf->info.alpha_exponent_bits = ppf->info.exponent_bits_per_sample;
+      }
       JxlPixelFormat ec_format = format;
       ec_format.num_channels = 1;
-      for (const auto& eci : ppf->extra_channels_info) {
+      for (auto& eci : ppf->extra_channels_info) {
         frame.extra_channels.emplace_back(jxl::extras::PackedImage(
             ppf->info.xsize, ppf->info.ysize, ec_format));
         auto& ec = frame.extra_channels.back();
@@ -446,6 +510,8 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
           fprintf(stderr, "JxlDecoderSetExtraChannelBuffer failed\n");
           return false;
         }
+        UpdateBitDepth(dparams.output_bitdepth, ec_format.data_type,
+                       &eci.ec_info);
       }
     } else if (status == JXL_DEC_SUCCESS) {
       // Decoding finished successfully.
@@ -463,6 +529,28 @@ bool DecodeImageJXL(const uint8_t* bytes, size_t bytes_size,
     }
   }
   boxes.FinalizeOutput();
+  if (!ppf->metadata.exif.empty()) {
+    // Verify that Exif box has a valid TIFF header at the specified offset.
+    // Discard bytes preceding the header.
+    if (ppf->metadata.exif.size() >= 4) {
+      uint32_t offset = LoadBE32(ppf->metadata.exif.data());
+      if (offset <= ppf->metadata.exif.size() - 8) {
+        std::vector<uint8_t> exif(ppf->metadata.exif.begin() + 4 + offset,
+                                  ppf->metadata.exif.end());
+        bool bigendian;
+        if (IsExif(exif, &bigendian)) {
+          ppf->metadata.exif = std::move(exif);
+        } else {
+          fprintf(stderr, "Warning: invalid TIFF header in Exif\n");
+        }
+      } else {
+        fprintf(stderr, "Warning: invalid Exif offset: %" PRIu32 "\n", offset);
+      }
+    } else {
+      fprintf(stderr, "Warning: invalid Exif length: %" PRIuS "\n",
+              ppf->metadata.exif.size());
+    }
+  }
   if (jpeg_bytes != nullptr) {
     if (!can_reconstruct_jpeg) return false;
     size_t used_jpeg_output =

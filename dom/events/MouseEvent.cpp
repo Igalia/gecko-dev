@@ -6,6 +6,7 @@
 
 #include "mozilla/dom/MouseEvent.h"
 #include "mozilla/MouseEvents.h"
+#include "mozilla/BasePrincipal.h"
 #include "nsContentUtils.h"
 #include "nsIContent.h"
 #include "nsIScreenManager.h"
@@ -28,7 +29,6 @@ MouseEvent::MouseEvent(EventTarget* aOwner, nsPresContext* aPresContext,
     mEventIsInternal = false;
   } else {
     mEventIsInternal = true;
-    mEvent->mTime = PR_Now();
     mEvent->mRefPoint = LayoutDeviceIntPoint(0, 0);
     mouseEvent->mInputSource = MouseEvent_Binding::MOZ_SOURCE_UNKNOWN;
   }
@@ -215,16 +215,15 @@ already_AddRefed<EventTarget> MouseEvent::GetRelatedTarget() {
   return EnsureWebAccessibleRelatedTarget(relatedTarget);
 }
 
-void MouseEvent::GetRegion(nsAString& aRegion) {
-  SetDOMStringToNull(aRegion);
-}
+void MouseEvent::GetRegion(nsAString& aRegion) { SetDOMStringToNull(aRegion); }
 
 CSSIntPoint MouseEvent::ScreenPoint(CallerType aCallerType) const {
   if (mEvent->mFlags.mIsPositionless) {
     return {};
   }
 
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsContentUtils::ShouldResistFingerprinting(
+          aCallerType, GetParentObject(), RFPTarget::MouseEventScreenPoint)) {
     // Sanitize to something sort of like client cooords, but not quite
     // (defaulting to (0,0) instead of our pre-specified client coords).
     return Event::GetClientCoords(mPresContext, mEvent, mEvent->mRefPoint,
@@ -305,13 +304,32 @@ float MouseEvent::MozPressure() const {
   return mEvent->AsMouseEventBase()->mPressure;
 }
 
-uint16_t MouseEvent::MozInputSource() const {
+uint16_t MouseEvent::InputSource() const {
   return mEvent->AsMouseEventBase()->mInputSource;
 }
 
 }  // namespace mozilla::dom
 
 using namespace mozilla;
+
+void WidgetDragEvent::UpdateDefaultPreventedOnContent(
+    dom::EventTarget* aTarget) {
+  MOZ_ASSERT(DefaultPrevented());
+  nsIPrincipal* principal = nullptr;
+  nsINode* node = nsINode::FromEventTargetOrNull(aTarget);
+  if (node) {
+    principal = node->NodePrincipal();
+  } else {
+    nsCOMPtr<nsIScriptObjectPrincipal> sop = do_QueryInterface(aTarget);
+    if (sop) {
+      principal = sop->GetPrincipal();
+    }
+  }
+  if (principal && !principal->IsSystemPrincipal()) {
+    mDefaultPreventedOnContent = true;
+  }
+}
+
 using namespace mozilla::dom;
 
 already_AddRefed<MouseEvent> NS_NewDOMMouseEvent(EventTarget* aOwner,

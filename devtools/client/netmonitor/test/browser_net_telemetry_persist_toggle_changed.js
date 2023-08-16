@@ -6,8 +6,8 @@
 /**
  * Tests the log persistence telemetry event
  */
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 function togglePersistLogsOption(monitor) {
@@ -20,7 +20,7 @@ function ensurePersistLogsCheckedState(monitor, isChecked) {
   return !!persistNode?.getAttribute("aria-checked") === isChecked;
 }
 
-add_task(async function() {
+add_task(async function () {
   const { monitor } = await initNetMonitor(SINGLE_GET_URL, { requestCount: 1 });
   info("Starting test... ");
 

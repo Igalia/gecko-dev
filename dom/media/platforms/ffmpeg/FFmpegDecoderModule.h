@@ -41,7 +41,8 @@ class FFmpegDecoderModule : public PlatformDecoderModule {
         aParams.mImageContainer,
         aParams.mOptions.contains(CreateDecoderParams::Option::LowLatency),
         aParams.mOptions.contains(
-            CreateDecoderParams::Option::HardwareDecoderNotAllowed));
+            CreateDecoderParams::Option::HardwareDecoderNotAllowed),
+        aParams.mTrackingId);
     return decoder.forget();
   }
 
@@ -69,6 +70,11 @@ class FFmpegDecoderModule : public PlatformDecoderModule {
   media::DecodeSupportSet Supports(
       const SupportDecoderParams& aParams,
       DecoderDoctorDiagnostics* aDiagnostics) const override {
+    // This should only be supported by MFMediaEngineDecoderModule.
+    if (aParams.mMediaEngineId) {
+      return media::DecodeSupport::Unsupported;
+    }
+
     const auto& trackInfo = aParams.mConfig;
     const nsACString& mimeType = trackInfo.mMimeType;
 

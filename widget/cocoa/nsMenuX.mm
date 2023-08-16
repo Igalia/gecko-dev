@@ -29,7 +29,6 @@
 #include "nsString.h"
 #include "nsReadableUtils.h"
 #include "nsUnicharUtils.h"
-#include "plstr.h"
 #include "nsGkAtoms.h"
 #include "nsCRT.h"
 #include "nsBaseWidget.h"
@@ -68,6 +67,11 @@ static void SwizzleDynamicIndexingMethods() {
   nsToolkit::SwizzleMethods(SCTGRLIndexClass, @selector(indexMenuBarDynamically),
                             @selector(nsMenuX_SCTGRLIndex_indexMenuBarDynamically));
 
+  Class NSServicesMenuUpdaterClass = ::NSClassFromString(@"_NSServicesMenuUpdater");
+  nsToolkit::SwizzleMethods(NSServicesMenuUpdaterClass,
+                            @selector(populateMenu:withServiceEntries:forDisplay:),
+                            @selector(nsMenuX_populateMenu:withServiceEntries:forDisplay:));
+
   gMenuMethodsSwizzled = true;
 }
 
@@ -91,7 +95,7 @@ nsMenuX::nsMenuX(nsMenuParentX* aParent, nsMenuGroupOwnerX* aMenuGroupOwner, nsI
   }
 
   if (mContent->IsElement()) {
-    mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::label, mLabel);
+    mContent->AsElement()->GetAttr(nsGkAtoms::label, mLabel);
   }
   mNativeMenu = CreateMenuWithGeckoString(mLabel);
 
@@ -116,6 +120,11 @@ nsMenuX::nsMenuX(nsMenuParentX* aParent, nsMenuGroupOwnerX* aMenuGroupOwner, nsI
   // is actually selected, then we can't access keyboard commands until the
   // menu gets selected, which is bad.
   RebuildMenu();
+
+  if (IsXULWindowMenu(mContent)) {
+    // Let the OS know that this is our Window menu.
+    NSApp.windowsMenu = mNativeMenu;
+  }
 
   mIcon = MakeUnique<nsMenuItemIconX>(this);
 
@@ -781,9 +790,6 @@ GeckoNSMenu* nsMenuX::CreateMenuWithGeckoString(nsString& aMenuTitle) {
   // overrides our decisions and things get incorrectly enabled/disabled.
   myMenu.autoenablesItems = NO;
 
-  // Disable the Services item for now. Bug 660452 tracks turning this on for the appropriate menus.
-  myMenu.allowsContextMenuPlugIns = NO;
-
   // we used to install Carbon event handlers here, but since NSMenu* doesn't
   // create its underlying MenuRef until just before display, we delay until
   // that happens. Now we install the event handlers when Cocoa notifies
@@ -809,7 +815,7 @@ RefPtr<nsMenuItemX> nsMenuX::CreateMenuItem(nsIContent* aMenuItemContent) {
 
   nsAutoString menuitemName;
   if (aMenuItemContent->IsElement()) {
-    aMenuItemContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::label, menuitemName);
+    aMenuItemContent->AsElement()->GetAttr(nsGkAtoms::label, menuitemName);
   }
 
   EMenuItemType itemType = eRegularMenuItemType;
@@ -877,7 +883,7 @@ void nsMenuX::DidFirePopupShowing() {
 
   nsXULPopupManager* pm = nsXULPopupManager::GetInstance();
   if (pm) {
-    pm->UpdateMenuItems(popupContent);
+    pm->UpdateMenuItems(popupContent->AsElement());
   }
 }
 
@@ -906,8 +912,20 @@ bool nsMenuX::IsXULHelpMenu(nsIContent* aMenuContent) {
   bool retval = false;
   if (aMenuContent && aMenuContent->IsElement()) {
     nsAutoString id;
-    aMenuContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::id, id);
+    aMenuContent->AsElement()->GetAttr(nsGkAtoms::id, id);
     if (id.Equals(u"helpMenu"_ns)) {
+      retval = true;
+    }
+  }
+  return retval;
+}
+
+bool nsMenuX::IsXULWindowMenu(nsIContent* aMenuContent) {
+  bool retval = false;
+  if (aMenuContent && aMenuContent->IsElement()) {
+    nsAutoString id;
+    aMenuContent->AsElement()->GetAttr(nsGkAtoms::id, id);
+    if (id.Equals(u"windowMenu"_ns)) {
       retval = true;
     }
   }
@@ -931,7 +949,7 @@ void nsMenuX::ObserveAttributeChanged(dom::Document* aDocument, nsIContent* aCon
     SetEnabled(!mContent->AsElement()->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
                                                    nsGkAtoms::_true, eCaseMatters));
   } else if (aAttribute == nsGkAtoms::label) {
-    mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::label, mLabel);
+    mContent->AsElement()->GetAttr(nsGkAtoms::label, mLabel);
     NSString* newCocoaLabelString = nsMenuUtilsX::GetTruncatedCocoaLabel(mLabel);
     mNativeMenu.title = newCocoaLabelString;
     mNativeMenuItem.title = newCocoaLabelString;
@@ -1142,7 +1160,7 @@ void nsMenuX::Dump(uint32_t aIndent) const {
     if (rollupListener) {
       nsCOMPtr<nsIWidget> rollupWidget = rollupListener->GetRollupWidget();
       if (rollupWidget) {
-        rollupListener->Rollup(0, true, nullptr, nullptr);
+        rollupListener->Rollup({0, nsIRollupListener::FlushViews::Yes});
         [menu cancelTracking];
         return;
       }
@@ -1343,6 +1361,43 @@ static NSMutableDictionary* gShadowKeyEquivDB = nil;
   ++nsMenuX::sIndexingMenuLevel;
   [self nsMenuX_SCTGRLIndex_indexMenuBarDynamically];
   --nsMenuX::sIndexingMenuLevel;
+}
+
+@end
+
+@interface NSObject (NSServicesMenuUpdaterSwizzling)
+- (void)nsMenuX_populateMenu:(NSMenu*)aMenu
+          withServiceEntries:(NSArray*)aServices
+                  forDisplay:(BOOL)aForDisplay;
+@end
+
+@interface _NSServiceEntry : NSObject
+- (NSString*)bundleIdentifier;
+@end
+
+@implementation NSObject (NSServicesMenuUpdaterSwizzling)
+
+- (void)nsMenuX_populateMenu:(NSMenu*)aMenu
+          withServiceEntries:(NSArray*)aServices
+                  forDisplay:(BOOL)aForDisplay {
+  NSMutableArray* filteredServices = [NSMutableArray array];
+
+  // We need to filter some services, such as "Search with Google", since this
+  // service is duplicating functionality already exposed by our "Search Google
+  // for..." context menu entry and because it opens in Safari, which can cause
+  // confusion for users.
+  for (_NSServiceEntry* service in aServices) {
+    NSString* bundleId = [service bundleIdentifier];
+    NSString* msg = [service valueForKey:@"message"];
+    bool shouldSkip = ([bundleId isEqualToString:@"com.apple.Safari"]) ||
+                      ([bundleId isEqualToString:@"com.apple.systemuiserver"] &&
+                       [msg isEqualToString:@"openURL"]);
+    if (!shouldSkip) {
+      [filteredServices addObject:service];
+    }
+  }
+
+  [self nsMenuX_populateMenu:aMenu withServiceEntries:filteredServices forDisplay:aForDisplay];
 }
 
 @end

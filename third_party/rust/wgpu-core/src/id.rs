@@ -42,10 +42,10 @@ type Dummy = hal::api::Empty;
 /// `X<Empty>` type with the resource type `X<A>`, for some specific backend
 /// `A`.
 ///
-/// [`Global`]: crate::hub::Global
+/// [`Global`]: crate::global::Global
 /// [`Hub`]: crate::hub::Hub
 /// [`Hub<A>`]: crate::hub::Hub
-/// [`Storage`]: crate::hub::Storage
+/// [`Storage`]: crate::storage::Storage
 /// [`Texture<A>`]: crate::resource::Texture
 /// [`Index`]: std::ops::Index
 /// [`IndexMut`]: std::ops::IndexMut
@@ -93,6 +93,13 @@ impl<T> From<SerialId> for Id<T> {
 }
 
 impl<T> Id<T> {
+    /// # Safety
+    ///
+    /// The raw id must be valid for the type.
+    pub unsafe fn from_raw(raw: NonZeroId) -> Self {
+        Self(raw, PhantomData)
+    }
+
     #[allow(dead_code)]
     pub(crate) fn dummy(index: u32) -> Valid<Self> {
         Valid(Id::zip(index, 1, Backend::Empty))
@@ -167,6 +174,7 @@ pub(crate) struct Valid<I>(pub I);
 pub trait TypedId: Copy {
     fn zip(index: Index, epoch: Epoch, backend: Backend) -> Self;
     fn unzip(self) -> (Index, Epoch, Backend);
+    fn into_raw(self) -> NonZeroId;
 }
 
 #[allow(trivial_numeric_casts)]
@@ -187,6 +195,10 @@ impl<T> TypedId for Id<T> {
             self.backend(),
         )
     }
+
+    fn into_raw(self) -> NonZeroId {
+        self.0
+    }
 }
 
 pub type AdapterId = Id<crate::instance::Adapter<Dummy>>;
@@ -196,6 +208,7 @@ pub type DeviceId = Id<crate::device::Device<Dummy>>;
 pub type QueueId = DeviceId;
 // Resource
 pub type BufferId = Id<crate::resource::Buffer<Dummy>>;
+pub type StagingBufferId = Id<crate::resource::StagingBuffer<Dummy>>;
 pub type TextureViewId = Id<crate::resource::TextureView<Dummy>>;
 pub type TextureId = Id<crate::resource::Texture<Dummy>>;
 pub type SamplerId = Id<crate::resource::Sampler<Dummy>>;

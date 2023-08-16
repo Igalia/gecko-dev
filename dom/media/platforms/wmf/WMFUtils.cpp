@@ -29,7 +29,6 @@
 #include "nsWindowsHelpers.h"
 #include "prenv.h"
 #include "mozilla/mscom/EnsureMTA.h"
-#include "mozilla/WindowsVersion.h"
 
 #ifndef WAVE_FORMAT_OPUS
 #  define WAVE_FORMAT_OPUS 0x704F
@@ -275,8 +274,6 @@ const char* MFTMessageTypeToStr(MFT_MESSAGE_TYPE aMsg) {
       return "MFT_MESSAGE_NOTIFY_END_OF_STREAM";
     case MFT_MESSAGE_NOTIFY_START_OF_STREAM:
       return "MFT_MESSAGE_NOTIFY_START_OF_STREAM";
-#if !defined(__MINGW32__)
-    // These messages are not defined in MinGW header. See bug 1740359.
     case MFT_MESSAGE_DROP_SAMPLES:
       return "MFT_MESSAGE_DROP_SAMPLES";
     case MFT_MESSAGE_COMMAND_TICK:
@@ -291,7 +288,6 @@ const char* MFTMessageTypeToStr(MFT_MESSAGE_TYPE aMsg) {
       return "MFT_MESSAGE_COMMAND_SET_OUTPUT_STREAM_STATE";
     case MFT_MESSAGE_COMMAND_FLUSH_OUTPUT_STREAM:
       return "MFT_MESSAGE_COMMAND_FLUSH_OUTPUT_STREAM";
-#endif
     default:
       return "Invalid message?";
   }
@@ -452,16 +448,6 @@ LoadDLLs() {
 
 HRESULT
 MediaFoundationInitializer::MFStartup() {
-  if (IsWin7AndPre2000Compatible()) {
-    /*
-     * Specific exclude the usage of WMF on Win 7 with compatibility mode
-     * prior to Win 2000 as we may crash while trying to startup WMF.
-     * Using GetVersionEx API which takes compatibility mode into account.
-     * See Bug 1279171.
-     */
-    return E_FAIL;
-  }
-
   HRESULT hr = LoadDLLs();
   if (FAILED(hr)) {
     return hr;
@@ -600,6 +586,35 @@ HRESULT MFCreatePresentationDescriptor(
 HRESULT MFCreateMemoryBuffer(DWORD cbMaxLength, IMFMediaBuffer** ppBuffer) {
   ENSURE_FUNCTION_PTR(MFCreateMemoryBuffer, mfplat.dll);
   return (MFCreateMemoryBufferPtr)(cbMaxLength, ppBuffer);
+}
+
+HRESULT MFLockDXGIDeviceManager(UINT* pResetToken,
+                                IMFDXGIDeviceManager** ppManager) {
+  ENSURE_FUNCTION_PTR(MFLockDXGIDeviceManager, mfplat.dll);
+  return (MFLockDXGIDeviceManagerPtr)(pResetToken, ppManager);
+}
+
+HRESULT MFUnlockDXGIDeviceManager() {
+  ENSURE_FUNCTION_PTR(MFUnlockDXGIDeviceManager, mfplat.dll);
+  return (MFUnlockDXGIDeviceManagerPtr)();
+}
+
+HRESULT MFPutWorkItem(DWORD dwQueue, IMFAsyncCallback* pCallback,
+                      IUnknown* pState) {
+  ENSURE_FUNCTION_PTR(MFPutWorkItem, mfplat.dll);
+  return (MFPutWorkItemPtr)(dwQueue, pCallback, pState);
+}
+
+HRESULT MFSerializeAttributesToStream(IMFAttributes* pAttr, DWORD dwOptions,
+                                      IStream* pStm) {
+  ENSURE_FUNCTION_PTR(MFSerializeAttributesToStream, mfplat.dll);
+  return (MFSerializeAttributesToStreamPtr)(pAttr, dwOptions, pStm);
+}
+
+HRESULT MFWrapMediaType(IMFMediaType* pOrig, REFGUID MajorType, REFGUID SubType,
+                        IMFMediaType** ppWrap) {
+  ENSURE_FUNCTION_PTR(MFWrapMediaType, mfplat.dll);
+  return (MFWrapMediaTypePtr)(pOrig, MajorType, SubType, ppWrap);
 }
 
 }  // end namespace wmf

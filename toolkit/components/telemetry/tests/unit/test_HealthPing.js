@@ -6,11 +6,9 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "TelemetryHealthPing",
-  "resource://gre/modules/HealthPing.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  TelemetryHealthPing: "resource://gre/modules/HealthPing.sys.mjs",
+});
 
 function checkHealthPingStructure(ping, expectedFailuresDict) {
   let payload = ping.payload;
@@ -30,25 +28,34 @@ function checkHealthPingStructure(ping, expectedFailuresDict) {
 }
 
 function fakeHealthSchedulerTimer(set, clear) {
-  let { Policy } = ChromeUtils.import("resource://gre/modules/HealthPing.jsm");
+  let { Policy } = ChromeUtils.importESModule(
+    "resource://gre/modules/HealthPing.sys.mjs"
+  );
   Policy.setSchedulerTickTimeout = set;
   Policy.clearSchedulerTickTimeout = clear;
 }
 
-add_task(async function setup() {
+add_setup(async function setup() {
   // Trigger a proper telemetry init.
   do_get_profile(true);
   // Make sure we don't generate unexpected pings due to pref changes.
   await setEmptyPrefWatchlist();
-  Preferences.set(TelemetryUtils.Preferences.HealthPingEnabled, true);
+  Services.prefs.setBoolPref(
+    TelemetryUtils.Preferences.HealthPingEnabled,
+    true
+  );
 
   await TelemetryController.testSetup();
   PingServer.start();
   TelemetrySend.setServer("http://localhost:" + PingServer.port);
-  Preferences.set(
+  Services.prefs.setStringPref(
     TelemetryUtils.Preferences.Server,
     "http://localhost:" + PingServer.port
   );
+});
+
+registerCleanupFunction(async function cleanup() {
+  await PingServer.stop();
 });
 
 add_task(async function test_sendImmediately() {
@@ -227,7 +234,7 @@ add_task(async function test_discardedForSizePending() {
 add_task(async function test_usePingSenderOnShutdown() {
   if (
     gIsAndroid ||
-    (AppConstants.platform == "linux" && OS.Constants.Sys.bits == 32)
+    (AppConstants.platform == "linux" && !Services.appinfo.is64Bit)
   ) {
     // We don't support the pingsender on Android, yet, see bug 1335917.
     // We also don't support the pingsender testing on Treeherder for
@@ -272,8 +279,4 @@ add_task(async function test_usePingSenderOnShutdown() {
     "1.0",
     "Should have received the correct PingSender version string."
   );
-});
-
-add_task(async function cleanup() {
-  await PingServer.stop();
 });

@@ -31,7 +31,6 @@ const char* GetLayersBackendName(LayersBackend aBackend) {
     case LayersBackend::LAYERS_NONE:
       return "none";
     case LayersBackend::LAYERS_WR:
-      MOZ_ASSERT(gfx::gfxVars::UseWebRender());
       if (gfx::gfxVars::UseSoftwareWebRender()) {
 #ifdef XP_WIN
         if (gfx::gfxVars::AllowSoftwareWebRenderD3D11() &&
@@ -68,6 +67,17 @@ RemoteTextureId RemoteTextureId::GetNext() {
 RemoteTextureOwnerId RemoteTextureOwnerId::GetNext() {
   static std::atomic<uint64_t> sCounter = 0;
   return RemoteTextureOwnerId{++sCounter};
+}
+
+/* static */
+GpuProcessTextureId GpuProcessTextureId::GetNext() {
+  if (!XRE_IsGPUProcess()) {
+    MOZ_ASSERT_UNREACHABLE("unexpected to be called");
+    return GpuProcessTextureId{};
+  }
+
+  static std::atomic<uint64_t> sCounter = 0;
+  return GpuProcessTextureId{++sCounter};
 }
 
 }  // namespace layers

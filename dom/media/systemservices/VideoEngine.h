@@ -10,9 +10,11 @@
 #include "MediaEngine.h"
 #include "VideoFrameUtils.h"
 #include "mozilla/media/MediaUtils.h"
+#include "mozilla/StaticPrefs_media.h"
 #include "modules/video_capture/video_capture_impl.h"
 #include "modules/video_capture/video_capture_defines.h"
 #include "modules/video_capture/video_capture_factory.h"
+#include "modules/video_capture/video_capture_options.h"
 #include <memory>
 #include <functional>
 
@@ -50,7 +52,7 @@ struct CaptureDeviceInfo {
 // it was removed (and reimplemented in Talk)
 class VideoEngine {
  private:
-  virtual ~VideoEngine() = default;
+  virtual ~VideoEngine();
 
   // Base cache expiration period
   // Note because cameras use HW plug event detection, this
@@ -58,7 +60,6 @@ class VideoEngine {
   static const int64_t kCacheExpiryPeriodMs = 2000;
 
  public:
-  VideoEngine() : mId(0){};
   NS_INLINE_DECL_REFCOUNTING(VideoEngine)
 
   static already_AddRefed<VideoEngine> Create(
@@ -66,25 +67,34 @@ class VideoEngine {
 #if defined(ANDROID)
   static int SetAndroidObjects();
 #endif
-  // Returns a non-negative capture identifier or -1 on failure.
-  int32_t CreateVideoCapture(const char* deviceUniqueIdUTF8);
+  /** Returns a non-negative capture identifier or -1 on failure.
+   *   @value aOptions can be used to specify options for the new VideoCapture.
+   *   This option is currently used only with PipeWire implementation and
+   *   provides access to PipeWire remote for which we were granted permissions.
+   */
+  int32_t CreateVideoCapture(const char* aDeviceUniqueIdUTF8,
+                             webrtc::VideoCaptureOptions* aOptions = nullptr);
 
-  int ReleaseVideoCapture(const int32_t id);
+  int ReleaseVideoCapture(const int32_t aId);
 
   // VideoEngine is responsible for any cleanup in its modules
-  static void Delete(VideoEngine* engine) {}
+  static void Delete(VideoEngine* aEngine) {}
 
   /** Returns an existing or creates a new new DeviceInfo.
    *   Camera info is cached to prevent repeated lengthy polling for "realness"
    *   of the hardware devices.  Other types of capture, e.g. screen share info,
    *   are cached for 1 second. This could be handled in a more elegant way in
    *   the future.
+   *   @value aOptions can be used to specify options for the new DeviceInfo.
+   *   This option is currently used only with PipeWire implementation and
+   *   provides access to PipeWire remote for which we were granted permissions.
    *   @return on failure the shared_ptr will be null, otherwise it will contain
    *   a DeviceInfo.
    *   @see bug 1305212 https://bugzilla.mozilla.org/show_bug.cgi?id=1305212
    */
   std::shared_ptr<webrtc::VideoCaptureModule::DeviceInfo>
-  GetOrCreateVideoCaptureDeviceInfo();
+  GetOrCreateVideoCaptureDeviceInfo(
+      webrtc::VideoCaptureOptions* aOptions = nullptr);
 
   class CaptureEntry {
    public:
@@ -106,7 +116,7 @@ class VideoEngine {
  private:
   explicit VideoEngine(const CaptureDeviceType& aCaptureDeviceType);
   int32_t mId;
-  CaptureDeviceInfo mCaptureDevInfo;
+  const CaptureDeviceInfo mCaptureDevInfo;
   std::shared_ptr<webrtc::VideoCaptureModule::DeviceInfo> mDeviceInfo;
   std::map<int32_t, CaptureEntry> mCaps;
   std::map<int32_t, int32_t> mIdMap;

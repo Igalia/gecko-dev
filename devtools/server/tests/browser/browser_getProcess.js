@@ -56,12 +56,10 @@ add_task(async () => {
     ok(targetForm.consoleActor, "Got the console actor");
     ok(targetForm.threadActor, "Got the thread actor");
 
-    // Ensure sending at least one request to an actor
-    const commands = await CommandsFactory.forProcess(osPid);
-    await commands.targetCommand.startListening();
-    const { result } = await commands.scriptCommand.execute("var a = 42; a");
-
-    is(result, 42, "console.eval worked");
+    // Process target are no longer really used/supported beyond listing their workers
+    // from RootFront.
+    const { workers } = await front.listWorkers();
+    is(workers.length, 0, "listWorkers worked and reported no workers");
 
     return [front, content.id];
   }
@@ -80,7 +78,7 @@ add_task(async () => {
 
   function processScript() {
     /* eslint-env mozilla/process-script */
-    const listener = function() {
+    const listener = function () {
       Services.obs.removeObserver(listener, "devtools:loader:destroy");
       sendAsyncMessage("test:getProcess-destroy", null);
     };
@@ -89,7 +87,7 @@ add_task(async () => {
 
   async function closeClient() {
     const onLoaderDestroyed = new Promise(done => {
-      const processListener = function() {
+      const processListener = function () {
         Services.ppmm.removeMessageListener(
           "test:getProcess-destroy",
           processListener

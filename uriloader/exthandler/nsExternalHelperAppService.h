@@ -112,6 +112,14 @@ class nsExternalHelperAppService : public nsIExternalHelperAppService,
   NS_IMETHOD OSProtocolHandlerExists(const char* aScheme, bool* aExists) = 0;
 
   /**
+   * Given an extension, get a MIME type string from the builtin list of
+   * mime types.
+   * @return true if we successfully found a mimetype.
+   */
+  virtual bool GetMIMETypeFromDefaultForExtension(const nsACString& aExtension,
+                                                  nsACString& aMIMEType);
+
+  /**
    * Given an extension, get a MIME type string. If not overridden by
    * the OS-specific nsOSHelperAppService, will call into GetMIMEInfoFromOS
    * with an empty mimetype.
@@ -207,6 +215,10 @@ class nsExternalHelperAppService : public nsIExternalHelperAppService,
       nsAString& aFileName, const nsACString& aMimeType, nsIURI* aURI,
       nsIURI* aOriginalURI, uint32_t aFlags, bool aAllowURLExtension);
 
+  // If aFileName is blank or just an extension, set aFileName to the
+  // default filename.
+  void CheckDefaultFileName(nsAString& aFileName, uint32_t aFlags);
+
   // Ensure that the filename is safe for the file system. This will remove or
   // replace any invalid characters and trim extra whitespace as needed. If the
   // filename is too long, it will be truncated but the existing period and
@@ -226,6 +238,7 @@ class nsExternalHelperAppService : public nsIExternalHelperAppService,
     ModifyExtension_Ignore = 2
   };
   ModifyExtensionType ShouldModifyExtension(nsIMIMEInfo* aMimeInfo,
+                                            bool aForceAppend,
                                             const nsCString& aFileExt);
 
   /**
@@ -304,9 +317,6 @@ class nsExternalAppHandler final : public nsIStreamListener,
   void SetShouldCloseWindow() { mShouldCloseWindow = true; }
 
  protected:
-  // Record telemetry about a download that was attempted.
-  void RecordDownloadTelemetry(nsIChannel* aChannel, const char* aAction);
-
   bool IsDownloadSpam(nsIChannel* aChannel);
 
   ~nsExternalAppHandler();

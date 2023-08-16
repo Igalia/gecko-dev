@@ -47,7 +47,7 @@ BlockReflowState::BlockReflowState(const ReflowInput& aReflowInput,
       mPrevBEndMargin(),
       mMinLineHeight(aReflowInput.GetLineHeight()),
       mLineNumber(0),
-      mFloatBreakType(StyleClear::None),
+      mTrailingClearFromPIF(StyleClear::None),
       mConsumedBSize(aConsumedBSize) {
   NS_ASSERTION(mConsumedBSize != NS_UNCONSTRAINEDSIZE,
                "The consumed block-size should be constrained!");
@@ -87,14 +87,8 @@ BlockReflowState::BlockReflowState(const ReflowInput& aReflowInput,
     mFlags.mBlockNeedsFloatManager = true;
   }
 
-  // We need to check mInsideLineClamp here since we are here before the block
-  // has been reflowed, and CanHaveOverflowMarkers() relies on the block's
-  // NS_BLOCK_HAS_LINE_CLAMP_ELLIPSIS state bit to know if a -webkit-line-clamp
-  // ellipsis is set on one of the block's lines.  And that state bit is only
-  // set after we do the bsize measuring reflow of the flex item.
-  mFlags.mCanHaveOverflowMarkers =
-      aReflowInput.mFlags.mInsideLineClamp ||
-      css::TextOverflow::CanHaveOverflowMarkers(mBlock);
+  mFlags.mCanHaveOverflowMarkers = css::TextOverflow::CanHaveOverflowMarkers(
+      mBlock, css::TextOverflow::BeforeReflow::Yes);
 
   MOZ_ASSERT(FloatManager(),
              "Float manager should be valid when creating BlockReflowState!");
@@ -453,9 +447,7 @@ void BlockReflowState::RecoverFloats(nsLineList::iterator aLine,
   if (aLine->HasFloats()) {
     // Place the floats into the float manager again. Also slide
     // them, just like the regular frames on the line.
-    nsFloatCache* fc = aLine->GetFirstFloat();
-    while (fc) {
-      nsIFrame* floatFrame = fc->mFloat;
+    for (nsIFrame* floatFrame : aLine->Floats()) {
       if (aDeltaBCoord != 0) {
         floatFrame->MovePositionBy(nsPoint(0, aDeltaBCoord));
         nsContainerFrame::PositionFrameView(floatFrame);
@@ -480,7 +472,6 @@ void BlockReflowState::RecoverFloats(nsLineList::iterator aLine,
           floatFrame,
           nsFloatManager::GetRegionFor(wm, floatFrame, ContainerSize()), wm,
           ContainerSize());
-      fc = fc->Next();
     }
   } else if (aLine->IsBlock()) {
     nsBlockFrame::RecoverFloatsFor(aLine->mFirstChild, *FloatManager(), wm,
@@ -605,7 +596,7 @@ bool BlockReflowState::AddFloat(nsLineLayout* aLineLayout, nsIFrame* aFloat,
                              floatAvailSpace.mRect.BSize(wm));
       aLineLayout->UpdateBand(wm, availSpace, aFloat);
       // Record this float in the current-line list
-      mCurrentLineFloats.Append(mFloatCacheFreeList.Alloc(aFloat));
+      mCurrentLineFloats.AppendElement(aFloat);
     } else if (result == PlaceFloatResult::ShouldPlaceInNextContinuation) {
       (*aLineLayout->GetLine())->SetHadFloatPushed();
     } else {
@@ -622,7 +613,7 @@ bool BlockReflowState::AddFloat(nsLineLayout* aLineLayout, nsIFrame* aFloat,
     placed = true;
     // This float will be placed after the line is done (it is a
     // below-current-line float).
-    mBelowCurrentLineFloats.Append(mFloatCacheFreeList.Alloc(aFloat));
+    mBelowCurrentLineFloats.AppendElement(aFloat);
   }
 
   // Restore coordinate system
@@ -732,9 +723,9 @@ BlockReflowState::PlaceFloatResult BlockReflowState::FlowAndPlaceFloat(
   // See if the float should clear any preceding floats...
   // XXX We need to mark this float somehow so that it gets reflowed
   // when floats are inserted before it.
-  if (StyleClear::None != floatDisplay->mBreakType) {
+  if (StyleClear::None != floatDisplay->mClear) {
     // XXXldb Does this handle vertical margins correctly?
-    auto [bCoord, result] = ClearFloats(mBCoord, floatDisplay->mBreakType);
+    auto [bCoord, result] = ClearFloats(mBCoord, floatDisplay->mClear);
     if (result == ClearFloatsResult::FloatsPushedOrSplit) {
       PushFloatPastBreak(aFloat);
       return PlaceFloatResult::ShouldPlaceInNextContinuation;
@@ -769,12 +760,10 @@ BlockReflowState::PlaceFloatResult BlockReflowState::FlowAndPlaceFloat(
   }
 
   // Now we've computed the float's margin inline-size.
-  if (!HasFloatPushedDown() && aAvailableISizeInCurrentLine &&
+  if (aAvailableISizeInCurrentLine &&
       floatMarginISize > *aAvailableISizeInCurrentLine) {
-    // We haven't needed to push down the float-placement block-dir coordinate
-    // (for float clearance), but the float cannot fit in the available
-    // inline-size of the current line. Let's notify our caller to place it
-    // later.
+    // The float cannot fit in the available inline-size of the current line.
+    // Let's notify our caller to place it later.
     return PlaceFloatResult::ShouldPlaceBelowCurrentLine;
   }
 
@@ -1019,34 +1008,35 @@ void BlockReflowState::PushFloatPastBreak(nsIFrame* aFloat) {
  * Place below-current-line floats.
  */
 void BlockReflowState::PlaceBelowCurrentLineFloats(nsLineBox* aLine) {
-  MOZ_ASSERT(mBelowCurrentLineFloats.NotEmpty());
-  nsFloatCache* fc = mBelowCurrentLineFloats.Head();
-  while (fc) {
+  MOZ_ASSERT(!mBelowCurrentLineFloats.IsEmpty());
+  nsTArray<nsIFrame*> floatsPlacedInLine;
+  for (nsIFrame* f : mBelowCurrentLineFloats) {
 #ifdef DEBUG
     if (nsBlockFrame::gNoisyReflow) {
       nsIFrame::IndentBy(stdout, nsBlockFrame::gNoiseIndent);
       printf("placing bcl float: ");
-      fc->mFloat->ListTag(stdout);
+      f->ListTag(stdout);
       printf("\n");
     }
 #endif
     // Place the float
-    PlaceFloatResult result = FlowAndPlaceFloat(fc->mFloat);
+    PlaceFloatResult result = FlowAndPlaceFloat(f);
     MOZ_ASSERT(result != PlaceFloatResult::ShouldPlaceBelowCurrentLine,
                "We are already dealing with below current line floats!");
-    nsFloatCache* next = fc->Next();
-    if (result == PlaceFloatResult::ShouldPlaceInNextContinuation) {
-      mBelowCurrentLineFloats.Remove(fc);
-      delete fc;
-      aLine->SetHadFloatPushed();
+    if (result == PlaceFloatResult::Placed) {
+      floatsPlacedInLine.AppendElement(f);
     }
-    fc = next;
   }
-  aLine->AppendFloats(mBelowCurrentLineFloats);
+  if (floatsPlacedInLine.Length() != mBelowCurrentLineFloats.Length()) {
+    // We have some floats having ShouldPlaceInNextContinuation result.
+    aLine->SetHadFloatPushed();
+  }
+  aLine->AppendFloats(std::move(floatsPlacedInLine));
+  mBelowCurrentLineFloats.Clear();
 }
 
 std::tuple<nscoord, BlockReflowState::ClearFloatsResult>
-BlockReflowState::ClearFloats(nscoord aBCoord, StyleClear aBreakType,
+BlockReflowState::ClearFloats(nscoord aBCoord, StyleClear aClearType,
                               nsIFrame* aFloatAvoidingBlock) {
 #ifdef DEBUG
   if (nsBlockFrame::gNoisyReflow) {
@@ -1061,10 +1051,10 @@ BlockReflowState::ClearFloats(nscoord aBCoord, StyleClear aBreakType,
 
   nscoord newBCoord = aBCoord;
 
-  if (aBreakType != StyleClear::None) {
-    newBCoord = FloatManager()->ClearFloats(newBCoord, aBreakType);
+  if (aClearType != StyleClear::None) {
+    newBCoord = FloatManager()->ClearFloats(newBCoord, aClearType);
 
-    if (FloatManager()->ClearContinues(aBreakType)) {
+    if (FloatManager()->ClearContinues(aClearType)) {
       return {newBCoord, ClearFloatsResult::FloatsPushedOrSplit};
     }
   }

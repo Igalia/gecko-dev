@@ -35,6 +35,8 @@
 
 package nu.validator.htmlparser.impl;
 
+import java.util.HashMap;
+
 import org.xml.sax.ErrorHandler;
 import org.xml.sax.Locator;
 import org.xml.sax.ext.Locator2;
@@ -684,6 +686,15 @@ public class Tokenizer implements Locator, Locator2 {
 
     public ErrorHandler getErrorHandler() {
         return this.errorHandler;
+    }
+
+    /**
+     * Gets the errorProfile.
+     *
+     * @param errorProfile
+     */
+    public HashMap getErrorProfile() {
+        return null;
     }
 
     /**
@@ -1390,6 +1401,9 @@ public class Tokenizer implements Locator, Locator2 {
     public void start() throws SAXException {
         initializeWithoutStarting();
         tokenHandler.startTokenization(this);
+        // CPPONLY: line = 0;
+        // CPPONLY: col = 1;
+        // CPPONLY: nextCharOnNewLine = true;
         // [NOCPP[
         startErrorReporting();
         // ]NOCPP]
@@ -6328,6 +6342,8 @@ public class Tokenizer implements Locator, Locator2 {
         appendStrBuf('\n');
     }
 
+    // [NOCPP[
+
     @Inline protected void silentCarriageReturn() {
         ++line;
         lastCR = true;
@@ -6336,6 +6352,8 @@ public class Tokenizer implements Locator, Locator2 {
     @Inline protected void silentLineFeed() {
         ++line;
     }
+
+    // ]NOCPP]
 
     private void emitCarriageReturn(@NoLength char[] buf, int pos)
             throws SAXException {
@@ -7154,10 +7172,14 @@ public class Tokenizer implements Locator, Locator2 {
         return suspendAfterCurrentNonTextToken;
     }
 
+    // [NOCPP[
+
     @Inline protected char checkChar(@NoLength char[] buf, int pos)
             throws SAXException {
         return buf[pos];
     }
+
+    // ]NOCPP]
 
     public boolean internalEncodingDeclaration(String internalCharset)
             throws SAXException {

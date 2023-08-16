@@ -4,15 +4,17 @@
 
 use std::sync::Arc;
 
+use crate::common_metric_data::CommonMetricDataInternal;
 use crate::error_recording::{record_error, test_get_num_recorded_errors, ErrorType};
 use crate::metrics::Metric;
 use crate::metrics::MetricType;
 use crate::storage::StorageManager;
+use crate::util::truncate_string_at_boundary_with_error;
 use crate::CommonMetricData;
 use crate::Glean;
 
 // The maximum number of characters a URL Metric may have, before encoding.
-const MAX_URL_LENGTH: usize = 2048;
+const MAX_URL_LENGTH: usize = 8192;
 
 /// A URL metric.
 ///
@@ -20,11 +22,11 @@ const MAX_URL_LENGTH: usize = 2048;
 /// The URL is length-limited to `MAX_URL_LENGTH` bytes.
 #[derive(Clone, Debug)]
 pub struct UrlMetric {
-    meta: Arc<CommonMetricData>,
+    meta: Arc<CommonMetricDataInternal>,
 }
 
 impl MetricType for UrlMetric {
-    fn meta(&self) -> &CommonMetricData {
+    fn meta(&self) -> &CommonMetricDataInternal {
         &self.meta
     }
 }
@@ -37,7 +39,7 @@ impl UrlMetric {
     /// Creates a new string metric.
     pub fn new(meta: CommonMetricData) -> Self {
         Self {
-            meta: Arc::new(meta),
+            meta: Arc::new(meta.into()),
         }
     }
 
@@ -80,16 +82,7 @@ impl UrlMetric {
             return;
         }
 
-        let s = value.into();
-        if s.len() > MAX_URL_LENGTH {
-            let msg = format!(
-                "Value length {} exceeds maximum of {}",
-                s.len(),
-                MAX_URL_LENGTH
-            );
-            record_error(glean, &self.meta, ErrorType::InvalidOverflow, msg, None);
-            return;
-        }
+        let s = truncate_string_at_boundary_with_error(glean, &self.meta, value, MAX_URL_LENGTH);
 
         if s.starts_with("data:") {
             record_error(
@@ -120,13 +113,13 @@ impl UrlMetric {
     ) -> Option<String> {
         let queried_ping_name = ping_name
             .into()
-            .unwrap_or_else(|| &self.meta().send_in_pings[0]);
+            .unwrap_or_else(|| &self.meta().inner.send_in_pings[0]);
 
         match StorageManager.snapshot_metric_for_test(
             glean.storage(),
             queried_ping_name,
             &self.meta.identifier(glean),
-            self.meta.lifetime,
+            self.meta.inner.lifetime,
         ) {
             Some(Metric::Url(s)) => Some(s),
             _ => None,
@@ -175,7 +168,7 @@ mod test {
 
     #[test]
     fn payload_is_correct() {
-        let (glean, _) = new_glean(None);
+        let (glean, _t) = new_glean(None);
 
         let metric = UrlMetric::new(CommonMetricData {
             name: "url_metric".into(),
@@ -193,7 +186,7 @@ mod test {
 
     #[test]
     fn does_not_record_url_exceeding_maximum_length() {
-        let (glean, _) = new_glean(None);
+        let (glean, _t) = new_glean(None);
 
         let metric = UrlMetric::new(CommonMetricData {
             name: "url_metric".into(),
@@ -204,12 +197,24 @@ mod test {
             dynamic_label: None,
         });
 
-        let long_path = "testing".repeat(2000);
-        let test_url = format!("glean://{}", long_path);
+        // Whenever the URL is longer than our MAX_URL_LENGTH, we truncate the URL to the
+        // MAX_URL_LENGTH.
+        //
+        // This 8-character string was chosen so we could have an even number that is
+        // a divisor of our MAX_URL_LENGTH.
+        let long_path_base = "abcdefgh";
+
+        // Using 2000 creates a string > 16000 characters, well over MAX_URL_LENGTH.
+        let test_url = format!("glean://{}", long_path_base.repeat(2000));
         metric.set_sync(&glean, test_url);
 
-        assert!(metric.get_value(&glean, "store1").is_none());
+        // "glean://" is 8 characters
+        // "abcdefgh" (long_path_base) is 8 characters
+        // `long_path_base` is repeated 1023 times (8184)
+        // 8 + 8184 = 8192 (MAX_URL_LENGTH)
+        let expected = format!("glean://{}", long_path_base.repeat(1023));
 
+        assert_eq!(metric.get_value(&glean, "store1").unwrap(), expected);
         assert_eq!(
             1,
             test_get_num_recorded_errors(&glean, metric.meta(), ErrorType::InvalidOverflow)
@@ -219,7 +224,7 @@ mod test {
 
     #[test]
     fn does_not_record_data_urls() {
-        let (glean, _) = new_glean(None);
+        let (glean, _t) = new_glean(None);
 
         let metric = UrlMetric::new(CommonMetricData {
             name: "url_metric".into(),
@@ -243,7 +248,7 @@ mod test {
 
     #[test]
     fn url_validation_works_and_records_errors() {
-        let (glean, _) = new_glean(None);
+        let (glean, _t) = new_glean(None);
 
         let metric = UrlMetric::new(CommonMetricData {
             name: "url_metric".into(),

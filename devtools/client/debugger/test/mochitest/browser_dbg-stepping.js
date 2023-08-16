@@ -8,8 +8,15 @@
 requestLongerTimeout(5);
 
 add_task(async function test() {
-  const dbg = await initDebugger("big-sourcemap.html", "bundle.js");
+  const dbg = await initDebugger(
+    "big-sourcemap.html",
+    "bundle.js",
+    "step-in-test.js"
+  );
   invokeInTab("hitDebugStatement");
+  // Bug 1829860 - The sourcemap for this file is broken and we couldn't resolve the paused location
+  // to the related original file. The debugger fallbacks to the generated source,
+  // but that highlights a bug in the example page.
   await waitForPaused(dbg, "bundle.js");
   assertPausedAtSourceAndLine(dbg, findSource(dbg, "bundle.js").id, 52411);
 
@@ -34,5 +41,7 @@ add_task(async function test() {
   await stepIn(dbg);
   await stepIn(dbg);
 
+  // Note that we are asserting against an original source here,
+  // See earlier comment about paused in bundle.js
   assertPausedAtSourceAndLine(dbg, findSource(dbg, "step-in-test.js").id, 7679);
 });

@@ -98,6 +98,7 @@ load 809762.html
 load 812824.html
 load 822766-1.html
 load 822877.html
+load 827213-1.html
 load 827220.html
 load 827591-1.html
 load 829817.html
@@ -146,7 +147,7 @@ load 1228789-1.html
 load 1230408-1.html
 load 1233135-1.html
 load 1233135-2.html
-# load 1236398.xhtml bug 1467917
+load 1236398.xhtml
 load 1238660-1.html
 load 1245260-1.html
 load 1247865-1.html
@@ -168,7 +169,7 @@ load 1290994-4.html
 load 1314531.html
 load 1315889-1.html
 load 1315894-1.html
-load 1319072-1.html
+pref(widget.windows.window_occlusion_tracking.enabled,false) load 1319072-1.html # Bug 1819154
 HTTP load 1320423-1.html
 load 1321357-1.html
 load 1328535-1.html
@@ -309,13 +310,15 @@ load 1566684.html
 load 1579788.html
 load 1580307.html
 load 1581579.html
-skip-if(release_or_beta) pref(dom.paintWorklet.enabled,true) pref(dom.worklet.enabled,true) load 1593766.html # bug 1581896
+skip-if(release_or_beta) pref(dom.paintWorklet.enabled,true) load 1593766.html # bug 1581896
 pref(layout.css.motion-path.enabled,true) load 1594949.html
 pref(layout.css.motion-path.enabled,true) pref(layout.css.individual-transform.enabled,true) load 1594960.html
 load 1586444.html
 load 1599286.html
 pref(layout.css.motion-path.enabled,true) load 1609786.html
-pref(layout.css.constructable-stylesheets.enabled,true) load 1616433.html
-pref(layout.css.constructable-stylesheets.enabled,true) load 1616407.html
+load 1616433.html
+load 1616407.html
 load 1639533.html
 pref(layout.accessiblecaret.enabled,true) load 1640040.html
+load 1806189-1.html
+pref(layout.css.scroll-driven-animations.enabled,true) load 1821416.html

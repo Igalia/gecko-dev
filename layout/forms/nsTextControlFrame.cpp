@@ -115,17 +115,7 @@ class nsTextControlFrame::nsAnonDivObserver final
 nsTextControlFrame::nsTextControlFrame(ComputedStyle* aStyle,
                                        nsPresContext* aPresContext,
                                        nsIFrame::ClassID aClassID)
-    : nsContainerFrame(aStyle, aPresContext, aClassID),
-      mFirstBaseline(NS_INTRINSIC_ISIZE_UNKNOWN),
-      mEditorHasBeenInitialized(false),
-      mIsProcessing(false)
-#ifdef DEBUG
-      ,
-      mInEditorInitialization(false)
-#endif
-{
-  ClearCachedValue();
-}
+    : nsContainerFrame(aStyle, aPresContext, aClassID) {}
 
 nsTextControlFrame::~nsTextControlFrame() = default;
 
@@ -188,40 +178,32 @@ LogicalSize nsTextControlFrame::CalcIntrinsicSize(
     gfxContext* aRenderingContext, WritingMode aWM,
     float aFontSizeInflation) const {
   LogicalSize intrinsicSize(aWM);
-  // Get leading and the Average/MaxAdvance char width
-  nscoord lineHeight = 0;
-  nscoord charWidth = 0;
-  nscoord charMaxAdvance = 0;
-
   RefPtr<nsFontMetrics> fontMet =
       nsLayoutUtils::GetFontMetricsForFrame(this, aFontSizeInflation);
-
-  lineHeight =
-      ReflowInput::CalcLineHeight(GetContent(), Style(), PresContext(),
+  const nscoord lineHeight =
+      ReflowInput::CalcLineHeight(*Style(), PresContext(), GetContent(),
                                   NS_UNCONSTRAINEDSIZE, aFontSizeInflation);
-  charWidth = fontMet->AveCharWidth();
-  charMaxAdvance = fontMet->MaxAdvance();
+  // Use the larger of the font's "average" char width or the width of the
+  // zero glyph (if present) as the basis for resolving the size attribute.
+  const nscoord charWidth =
+      std::max(fontMet->ZeroOrAveCharWidth(), fontMet->AveCharWidth());
+  const nscoord charMaxAdvance = fontMet->MaxAdvance();
 
-  // Set the width equal to the width in characters
-  int32_t cols = GetCols();
+  // Initialize based on the width in characters.
+  const int32_t cols = GetCols();
   intrinsicSize.ISize(aWM) = cols * charWidth;
 
-  // To better match IE, take the maximum character width(in twips) and remove
-  // 4 pixels add this on as additional padding(internalPadding). But only do
-  // this if we think we have a fixed-width font.
-  if (mozilla::Abs(charWidth - charMaxAdvance) >
-      (unsigned)nsPresContext::CSSPixelsToAppUnits(1)) {
+  // If we do not have what appears to be a fixed-width font, add a "slop"
+  // amount based on the max advance of the font (clamped to twice charWidth,
+  // because some fonts have a few extremely-wide outliers that would result
+  // in excessive width here; e.g. the triple-emdash ligature in SFNS Text),
+  // minus 4px. This helps avoid input fields becoming unusably narrow with
+  // small size values.
+  if (charMaxAdvance - charWidth > AppUnitsPerCSSPixel()) {
     nscoord internalPadding =
-        std::max(0, charMaxAdvance - nsPresContext::CSSPixelsToAppUnits(4));
-    nscoord t = nsPresContext::CSSPixelsToAppUnits(1);
-    // Round to a multiple of t
-    nscoord rest = internalPadding % t;
-    if (rest < t - rest) {
-      internalPadding -= rest;
-    } else {
-      internalPadding += t - rest;
-    }
-    // Now add the extra padding on (so that small input sizes work well)
+        std::max(0, std::min(charMaxAdvance, charWidth * 2) -
+                        nsPresContext::CSSPixelsToAppUnits(4));
+    internalPadding = RoundToMultiple(internalPadding, AppUnitsPerCSSPixel());
     intrinsicSize.ISize(aWM) += internalPadding;
   } else {
     // This is to account for the anonymous <br> having a 1 twip width
@@ -247,12 +229,9 @@ LogicalSize nsTextControlFrame::CalcIntrinsicSize(
   if (IsTextArea()) {
     nsIScrollableFrame* scrollableFrame = GetScrollTargetFrame();
     NS_ASSERTION(scrollableFrame, "Child must be scrollable");
-
     if (scrollableFrame) {
-      LogicalMargin scrollbarSizes(
-          aWM, scrollableFrame->GetDesiredScrollbarSizes(PresContext(),
-                                                         aRenderingContext));
-
+      LogicalMargin scrollbarSizes(aWM,
+                                   scrollableFrame->GetDesiredScrollbarSizes());
       intrinsicSize.ISize(aWM) += scrollbarSizes.IStartEnd(aWM);
       intrinsicSize.BSize(aWM) += scrollbarSizes.BStartEnd(aWM);
     }
@@ -343,7 +322,7 @@ nsresult nsTextControlFrame::EnsureEditorInitialized() {
       // but only if the contents has changed (bug 1337392).
       if (textControlElement->ValueChanged()) {
         nsAutoString val;
-        textControlElement->GetTextEditorValue(val, true);
+        textControlElement->GetTextEditorValue(val);
         position = val.Length();
       }
 
@@ -631,7 +610,6 @@ LogicalSize nsTextControlFrame::ComputeAutoSize(
       LogicalSize ancestorAutoSize = nsContainerFrame::ComputeAutoSize(
           aRenderingContext, aWM, aCBSize, aAvailableISize, aMargin,
           aBorderPadding, aSizeOverrides, aFlags);
-      // Disabled when there's inflation; see comment in GetXULPrefSize.
       MOZ_ASSERT(inflation != 1.0f ||
                      ancestorAutoSize.ISize(aWM) == autoSize.ISize(aWM),
                  "Incorrect size computed by ComputeAutoSize?");
@@ -650,16 +628,14 @@ Maybe<nscoord> nsTextControlFrame::ComputeBaseline(
   }
   WritingMode wm = aReflowInput.GetWritingMode();
 
-  // Calculate the baseline and store it in mFirstBaseline.
   nscoord lineHeight = aReflowInput.ComputedBSize();
-  float inflation = nsLayoutUtils::FontSizeInflationFor(aFrame);
   if (!aForSingleLineControl || lineHeight == NS_UNCONSTRAINEDSIZE) {
-    lineHeight = ReflowInput::CalcLineHeight(
-        aFrame->GetContent(), aFrame->Style(), aFrame->PresContext(),
-        NS_UNCONSTRAINEDSIZE, inflation);
+    lineHeight = NS_CSS_MINMAX(aReflowInput.GetLineHeight(),
+                               aReflowInput.ComputedMinBSize(),
+                               aReflowInput.ComputedMaxBSize());
   }
   RefPtr<nsFontMetrics> fontMet =
-      nsLayoutUtils::GetFontMetricsForFrame(aFrame, inflation);
+      nsLayoutUtils::GetInflatedFontMetricsForFrame(aFrame);
   return Some(nsLayoutUtils::GetCenteredFontBaseline(fontMet, lineHeight,
                                                      wm.IsLineInverted()) +
               aReflowInput.ComputedLogicalBorderPadding(wm).BStart(wm));
@@ -686,6 +662,7 @@ void nsTextControlFrame::Reflow(nsPresContext* aPresContext,
   aDesiredSize.SetSize(wm, aReflowInput.ComputedSizeWithBorderPadding(wm));
 
   {
+    // Calculate the baseline and store it in mFirstBaseline.
     auto baseline =
         ComputeBaseline(this, aReflowInput, IsSingleLineTextControl());
     mFirstBaseline = baseline.valueOr(NS_INTRINSIC_ISIZE_UNKNOWN);
@@ -818,16 +795,6 @@ void nsTextControlFrame::ReflowTextControlChild(
 
   // consider the overflow
   aParentDesiredSize.mOverflowAreas.UnionWith(desiredSize.mOverflowAreas);
-}
-
-nsSize nsTextControlFrame::GetXULMinSize(nsBoxLayoutState& aState) {
-  // XXXbz why?  Why not the nsBoxFrame sizes?
-  return nsIFrame::GetUncachedXULMinSize(aState);
-}
-
-bool nsTextControlFrame::IsXULCollapsed() {
-  // We're never collapsed in the box sense.
-  return false;
 }
 
 // IMPLEMENTING NS_IFORMCONTROLFRAME
@@ -1133,46 +1100,6 @@ nsresult nsTextControlFrame::AttributeChanged(int32_t aNameSpaceID,
   return nsContainerFrame::AttributeChanged(aNameSpaceID, aAttribute, aModType);
 }
 
-void nsTextControlFrame::GetText(nsString& aText) {
-  if (HTMLInputElement* inputElement = HTMLInputElement::FromNode(mContent)) {
-    if (IsSingleLineTextControl()) {
-      // There will be no line breaks so we can ignore the wrap property.
-      inputElement->GetTextEditorValue(aText, true);
-      return;
-    }
-    aText.Truncate();
-    return;
-  }
-
-  MOZ_ASSERT(!IsSingleLineTextControl());
-  if (HTMLTextAreaElement* textAreaElement =
-          HTMLTextAreaElement::FromNode(mContent)) {
-    textAreaElement->GetValue(aText);
-    return;
-  }
-
-  MOZ_ASSERT(aText.IsEmpty());
-  aText.Truncate();
-}
-
-bool nsTextControlFrame::TextEquals(const nsAString& aText) const {
-  if (HTMLInputElement* inputElement = HTMLInputElement::FromNode(mContent)) {
-    if (IsSingleLineTextControl()) {
-      // There will be no line breaks so we can ignore the wrap property.
-      return inputElement->TextEditorValueEquals(aText);
-    }
-    return aText.IsEmpty();
-  }
-
-  MOZ_ASSERT(!IsSingleLineTextControl());
-  if (HTMLTextAreaElement* textAreaElement =
-          HTMLTextAreaElement::FromNode(mContent)) {
-    return textAreaElement->ValueEquals(aText);
-  }
-
-  return aText.IsEmpty();
-}
-
 /// END NSIFRAME OVERLOADS
 
 // NOTE(emilio): This is needed because the root->primary frame map is not set
@@ -1191,9 +1118,9 @@ static nsIFrame* FindRootNodeFrame(const nsFrameList& aChildList,
 }
 
 void nsTextControlFrame::SetInitialChildList(ChildListID aListID,
-                                             nsFrameList& aChildList) {
-  nsContainerFrame::SetInitialChildList(aListID, aChildList);
-  if (aListID != kPrincipalList) {
+                                             nsFrameList&& aChildList) {
+  nsContainerFrame::SetInitialChildList(aListID, std::move(aChildList));
+  if (aListID != FrameChildListID::Principal) {
     return;
   }
 
@@ -1262,7 +1189,7 @@ nsresult nsTextControlFrame::UpdateValueDisplay(bool aNotify,
   if (aValue) {
     value = *aValue;
   } else {
-    textControlElement->GetTextEditorValue(value, true);
+    textControlElement->GetTextEditorValue(value);
   }
 
   return textContent->SetText(value, aNotify);
@@ -1315,7 +1242,7 @@ nsTextControlFrame::RestoreState(PresState* aState) {
   return NS_OK;
 }
 
-nsresult nsTextControlFrame::PeekOffset(nsPeekOffsetStruct* aPos) {
+nsresult nsTextControlFrame::PeekOffset(PeekOffsetStruct* aPos) {
   return NS_ERROR_FAILURE;
 }
 

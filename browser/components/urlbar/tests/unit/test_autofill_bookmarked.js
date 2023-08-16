@@ -6,7 +6,7 @@
 // state of an origin. Regardless of the order of origins, we should always pick
 // the correct bookmarked status.
 
-add_task(async function() {
+add_task(async function () {
   registerCleanupFunction(async () => {
     Services.prefs.clearUserPref("browser.urlbar.suggest.searches");
     Services.prefs.clearUserPref("browser.urlbar.suggest.quickactions");
@@ -56,7 +56,6 @@ add_task(async function() {
       context,
       autofilled: `${host}/`,
       completed: `https://${host}/`,
-      hasAutofillTitle: true,
       matches: [
         makeVisitResult(context, {
           uri: `https://${host}/`,
@@ -112,11 +111,10 @@ add_task(async function test_www() {
     context,
     autofilled: `www.${host}/`,
     completed: `http://www.${host}/`,
-    hasAutofillTitle: false,
     matches: [
       makeVisitResult(context, {
         uri: `http://www.${host}/`,
-        title: `www.${host}`,
+        fallbackTitle: `www.${host}`,
         heuristic: true,
       }),
     ],
@@ -127,11 +125,10 @@ add_task(async function test_www() {
     context,
     autofilled: `www.${host}/`,
     completed: `http://www.${host}/`,
-    hasAutofillTitle: false,
     matches: [
       makeVisitResult(context, {
         uri: `http://www.${host}/`,
-        title: `www.${host}`,
+        fallbackTitle: `www.${host}`,
         heuristic: true,
       }),
     ],
@@ -142,11 +139,10 @@ add_task(async function test_www() {
     context,
     autofilled: `${host}/`,
     completed: `http://www.${host}/`,
-    hasAutofillTitle: false,
     matches: [
       makeVisitResult(context, {
         uri: `http://www.${host}/`,
-        title: `www.${host}`,
+        fallbackTitle: `www.${host}`,
         heuristic: true,
       }),
     ],

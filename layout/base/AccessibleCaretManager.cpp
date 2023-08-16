@@ -468,9 +468,10 @@ void AccessibleCaretManager::UpdateCaretsForAlwaysTilt(
 
 void AccessibleCaretManager::ProvideHapticFeedback() {
   if (StaticPrefs::layout_accessiblecaret_hapticfeedback()) {
-    nsCOMPtr<nsIHapticFeedback> haptic =
-        do_GetService("@mozilla.org/widget/hapticfeedback;1");
-    haptic->PerformSimpleAction(haptic->LongPress);
+    if (nsCOMPtr<nsIHapticFeedback> haptic =
+            do_GetService("@mozilla.org/widget/hapticfeedback;1")) {
+      haptic->PerformSimpleAction(haptic->LongPress);
+    }
   }
 }
 
@@ -693,6 +694,7 @@ nsresult AccessibleCaretManager::SelectWordOrShortcut(const nsPoint& aPoint) {
 void AccessibleCaretManager::OnScrollStart() {
   AC_LOG("%s", __FUNCTION__);
 
+  nsAutoScriptBlocker scriptBlocker;
   AutoRestore<bool> saveAllowFlushingLayout(mLayoutFlusher.mAllowFlushing);
   mLayoutFlusher.mAllowFlushing = false;
 
@@ -711,6 +713,7 @@ void AccessibleCaretManager::OnScrollStart() {
 }
 
 void AccessibleCaretManager::OnScrollEnd() {
+  nsAutoScriptBlocker scriptBlocker;
   AutoRestore<bool> saveAllowFlushingLayout(mLayoutFlusher.mAllowFlushing);
   mLayoutFlusher.mAllowFlushing = false;
 
@@ -729,9 +732,10 @@ void AccessibleCaretManager::OnScrollEnd() {
     }
   }
 
-  // For mouse input we don't want to show the carets.
+  // For mouse and keyboard input, we don't want to show the carets.
   if (StaticPrefs::layout_accessiblecaret_hide_carets_for_mouse_input() &&
-      mLastInputSource == MouseEvent_Binding::MOZ_SOURCE_MOUSE) {
+      (mLastInputSource == MouseEvent_Binding::MOZ_SOURCE_MOUSE ||
+       mLastInputSource == MouseEvent_Binding::MOZ_SOURCE_KEYBOARD)) {
     AC_LOG("%s: HideCaretsAndDispatchCaretStateChangedEvent()", __FUNCTION__);
     HideCaretsAndDispatchCaretStateChangedEvent();
     return;
@@ -742,6 +746,7 @@ void AccessibleCaretManager::OnScrollEnd() {
 }
 
 void AccessibleCaretManager::OnScrollPositionChanged() {
+  nsAutoScriptBlocker scriptBlocker;
   AutoRestore<bool> saveAllowFlushingLayout(mLayoutFlusher.mAllowFlushing);
   mLayoutFlusher.mAllowFlushing = false;
 
@@ -766,6 +771,7 @@ void AccessibleCaretManager::OnScrollPositionChanged() {
 }
 
 void AccessibleCaretManager::OnReflow() {
+  nsAutoScriptBlocker scriptBlocker;
   AutoRestore<bool> saveAllowFlushingLayout(mLayoutFlusher.mAllowFlushing);
   mLayoutFlusher.mAllowFlushing = false;
 
@@ -790,11 +796,6 @@ void AccessibleCaretManager::OnKeyboardEvent() {
     AC_LOG("%s: HideCaretsAndDispatchCaretStateChangedEvent()", __FUNCTION__);
     HideCaretsAndDispatchCaretStateChangedEvent();
   }
-}
-
-void AccessibleCaretManager::OnFrameReconstruction() {
-  mCarets.GetFirst()->EnsureApzAware();
-  mCarets.GetSecond()->EnsureApzAware();
 }
 
 void AccessibleCaretManager::SetLastInputSource(uint16_t aInputSource) {
@@ -938,17 +939,16 @@ void AccessibleCaretManager::SetSelectionDragState(bool aState) const {
   }
 }
 
-bool AccessibleCaretManager::IsPhoneNumber(nsAString& aCandidate) const {
+bool AccessibleCaretManager::IsPhoneNumber(const nsAString& aCandidate) const {
   RefPtr<Document> doc = mPresShell->GetDocument();
-  nsAutoString phoneNumberRegex(u"(^\\+)?[0-9 ,\\-.()*#pw]{1,30}$"_ns);
-  return nsContentUtils::IsPatternMatching(aCandidate, phoneNumberRegex, doc)
+  nsAutoString phoneNumberRegex(u"(^\\+)?[0-9 ,\\-.\\(\\)*#pw]{1,30}$"_ns);
+  return nsContentUtils::IsPatternMatching(aCandidate,
+                                           std::move(phoneNumberRegex), doc)
       .valueOr(false);
 }
 
 void AccessibleCaretManager::SelectMoreIfPhoneNumber() const {
-  nsAutoString selectedText = StringifiedSelection();
-
-  if (IsPhoneNumber(selectedText)) {
+  if (IsPhoneNumber(StringifiedSelection())) {
     SetSelectionDirection(eDirNext);
     ExtendPhoneNumberSelection(u"forward"_ns);
 
@@ -1155,8 +1155,9 @@ bool AccessibleCaretManager::RestrictCaretDraggingOffsets(
 
   // Move one character (in the direction of dir) from the inactive caret's
   // position. This is the limit for the active caret's new position.
-  nsPeekOffsetStruct limit(eSelectCluster, dir, offset, nsPoint(0, 0), true,
-                           true, false, false, false);
+  PeekOffsetStruct limit(
+      eSelectCluster, dir, offset, nsPoint(0, 0),
+      {PeekOffsetOption::JumpLines, PeekOffsetOption::ScrollViewStop});
   nsresult rv = frame->PeekOffset(&limit);
   if (NS_FAILED(rv)) {
     limit.mResultContent = content;

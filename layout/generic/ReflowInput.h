@@ -76,7 +76,8 @@ struct StyleSizeOverrides {
  * @return aValue clamped to [aMinValue, aMaxValue].
  *
  * @note This function needs to handle aMinValue > aMaxValue. In that case,
- *       aMinValue is returned.
+ *       aMinValue is returned. That's why we cannot use std::clamp() and
+ *       mozilla::clamped() since they both assert max >= min.
  * @see http://www.w3.org/TR/CSS21/visudet.html#min-max-widths
  * @see http://www.w3.org/TR/CSS21/visudet.html#min-max-heights
  */
@@ -96,7 +97,7 @@ namespace mozilla {
 struct SizeComputationInput {
  public:
   // The frame being reflowed.
-  nsIFrame* mFrame;
+  nsIFrame* const mFrame;
 
   // Rendering context to use for measurement.
   gfxContext* mRenderingContext;
@@ -144,7 +145,10 @@ struct SizeComputationInput {
 
  protected:
   // cached copy of the frame's writing-mode, for logical coordinates
-  mozilla::WritingMode mWritingMode;
+  const mozilla::WritingMode mWritingMode;
+
+  // Cached mFrame->IsThemed().
+  const bool mIsThemed = false;
 
   // Computed margin values
   mozilla::LogicalMargin mComputedMargin;
@@ -211,11 +215,9 @@ struct SizeComputationInput {
  protected:
   void InitOffsets(mozilla::WritingMode aCBWM, nscoord aPercentBasis,
                    mozilla::LayoutFrameType aFrameType,
-                   mozilla::ComputeSizeFlags aFlags = {},
-                   const mozilla::Maybe<mozilla::LogicalMargin>& aBorder =
-                       mozilla::Nothing(),
-                   const mozilla::Maybe<mozilla::LogicalMargin>& aPadding =
-                       mozilla::Nothing(),
+                   mozilla::ComputeSizeFlags aFlags,
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aBorder,
+                   const mozilla::Maybe<mozilla::LogicalMargin>& aPadding,
                    const nsStyleDisplay* aDisplay = nullptr);
 
   /*
@@ -340,12 +342,18 @@ struct ReflowInput : public SizeComputationInput {
     mAvailableSize.BSize(mWritingMode) = aAvailableBSize;
   }
 
-  nscoord& ComputedISize() { return mComputedSize.ISize(mWritingMode); }
-  nscoord& ComputedBSize() { return mComputedSize.BSize(mWritingMode); }
-  nscoord& ComputedMinISize() { return mComputedMinSize.ISize(mWritingMode); }
-  nscoord& ComputedMaxISize() { return mComputedMaxSize.ISize(mWritingMode); }
-  nscoord& ComputedMinBSize() { return mComputedMinSize.BSize(mWritingMode); }
-  nscoord& ComputedMaxBSize() { return mComputedMaxSize.BSize(mWritingMode); }
+  void SetComputedMinISize(nscoord aMinISize) {
+    mComputedMinSize.ISize(mWritingMode) = aMinISize;
+  }
+  void SetComputedMaxISize(nscoord aMaxISize) {
+    mComputedMaxSize.ISize(mWritingMode) = aMaxISize;
+  }
+  void SetComputedMinBSize(nscoord aMinBSize) {
+    mComputedMinSize.BSize(mWritingMode) = aMinBSize;
+  }
+  void SetComputedMaxBSize(nscoord aMaxBSize) {
+    mComputedMaxSize.BSize(mWritingMode) = aMaxBSize;
+  }
 
   mozilla::LogicalSize AvailableSize() const { return mAvailableSize; }
   mozilla::LogicalSize ComputedSize() const { return mComputedSize; }
@@ -537,20 +545,6 @@ struct ReflowInput : public SizeComputationInput {
     bool mIOffsetsNeedCSSAlign : 1;
     bool mBOffsetsNeedCSSAlign : 1;
 
-    // Are we somewhere inside an element with -webkit-line-clamp set?
-    // This flag is inherited into descendant ReflowInputs, but we don't bother
-    // resetting it to false when crossing over into a block descendant that
-    // -webkit-line-clamp skips over (such as a BFC).
-    bool mInsideLineClamp : 1;
-
-    // Is this a flex item, and should we add or remove a -webkit-line-clamp
-    // ellipsis on a descendant line?  It's possible for this flag to be true
-    // when mInsideLineClamp is false if we previously had a numeric
-    // -webkit-line-clamp value, but now have 'none' and we need to find the
-    // line with the ellipsis flag and clear it.
-    // This flag is not inherited into descendant ReflowInputs.
-    bool mApplyLineClamp : 1;
-
     // Is this frame or one of its ancestors being reflowed in a different
     // continuation than the one in which it was previously reflowed?  In
     // other words, has it moved to a different column or page than it was in
@@ -568,6 +562,10 @@ struct ReflowInput : public SizeComputationInput {
     // children's block-size (after reflowing them).
     // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
     bool mIsBSizeSetByAspectRatio : 1;
+
+    // If true, then children of this frame can generate class A breakpoints
+    // for paginated reflow.
+    bool mCanHaveClassABreakpoints : 1;
   };
   Flags mFlags;
 
@@ -731,10 +729,16 @@ struct ReflowInput : public SizeComputationInput {
    *                           or 1.0 if during intrinsic size
    *                           calculation.
    */
-  static nscoord CalcLineHeight(nsIContent* aContent,
-                                const ComputedStyle* aComputedStyle,
+  static nscoord CalcLineHeight(const ComputedStyle&,
                                 nsPresContext* aPresContext,
-                                nscoord aBlockBSize, float aFontSizeInflation);
+                                const nsIContent* aContent, nscoord aBlockBSize,
+                                float aFontSizeInflation);
+
+  static nscoord CalcLineHeight(const StyleLineHeight&,
+                                const nsStyleFont& aRelativeToFont,
+                                nsPresContext* aPresContext, bool aIsVertical,
+                                const nsIContent* aContent, nscoord aBlockBSize,
+                                float aFontSizeInflation);
 
   mozilla::LogicalSize ComputeContainingBlockRectangle(
       nsPresContext* aPresContext, const ReflowInput* aContainingBlockRI) const;
@@ -827,21 +831,19 @@ struct ReflowInput : public SizeComputationInput {
     }
   }
 
+  // Use "No" to request SetComputedISize/SetComputedBSize not to reset resize
+  // flags.
+  enum class ResetResizeFlags : bool { No, Yes };
+
   // This method doesn't apply min/max computed inline-sizes to the value passed
   // in.
-  void SetComputedISize(nscoord aComputedISize);
+  void SetComputedISize(nscoord aComputedISize,
+                        ResetResizeFlags aFlags = ResetResizeFlags::Yes);
 
   // These methods don't apply min/max computed block-sizes to the value passed
   // in.
-  void SetComputedBSize(nscoord aComputedBSize);
-  void SetComputedBSizeWithoutResettingResizeFlags(nscoord aComputedBSize) {
-    // Viewport frames reset the computed block size on a copy of their reflow
-    // input when reflowing fixed-pos kids.  In that case we actually don't
-    // want to mess with the resize flags, because comparing the frame's rect
-    // to the munged computed isize is pointless.
-    MOZ_ASSERT(aComputedBSize >= 0, "Invalid computed block-size!");
-    ComputedBSize() = aComputedBSize;
-  }
+  void SetComputedBSize(nscoord aComputedBSize,
+                        ResetResizeFlags aFlags = ResetResizeFlags::Yes);
 
   bool WillReflowAgainForClearance() const {
     return mDiscoveredClearance && *mDiscoveredClearance;
@@ -855,6 +857,19 @@ struct ReflowInput : public SizeComputationInput {
   //
   // https://drafts.csswg.org/css-sizing-4/#aspect-ratio-minimum
   bool ShouldApplyAutomaticMinimumOnBlockAxis() const;
+
+  // Returns true if mFrame has a constrained available block-size, or if mFrame
+  // is a continuation. When this method returns true, mFrame can be considered
+  // to be in a "fragmented context."
+  //
+  // Note: this method usually returns true when mFrame is in a paged
+  // environment (e.g. printing) or has a multi-column container ancestor.
+  // However, this doesn't include several cases when we're intentionally
+  // performing layout in a fragmentation-ignoring way, e.g. 1) mFrame is a flex
+  // or grid item, and this ReflowInput is for a measuring reflow with an
+  // unconstrained available block-size, or 2) mFrame is (or is inside of) an
+  // element that forms an orthogonal writing-mode.
+  bool IsInFragmentedContext() const;
 
   // Compute the offsets for a relative position element
   //

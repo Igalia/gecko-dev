@@ -14,6 +14,7 @@
 #include "nsRefreshDriver.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_dom.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContext.h"
@@ -145,19 +146,21 @@ static void LazyLoadCallback(
     MOZ_ASSERT(entry->Target()->IsHTMLElement(nsGkAtoms::img));
     if (entry->IsIntersecting()) {
       static_cast<HTMLImageElement*>(entry->Target())
-          ->StopLazyLoading(HTMLImageElement::FromIntersectionObserver::Yes,
-                            HTMLImageElement::StartLoading::Yes);
+          ->StopLazyLoading(HTMLImageElement::StartLoading::Yes);
     }
   }
 }
 
-static void LazyLoadCallbackReachViewport(
+static void ContentVisibilityCallback(
     const Sequence<OwningNonNull<DOMIntersectionObserverEntry>>& aEntries) {
   for (const auto& entry : aEntries) {
-    MOZ_ASSERT(entry->Target()->IsHTMLElement(nsGkAtoms::img));
-    if (entry->IsIntersecting()) {
-      static_cast<HTMLImageElement*>(entry->Target())
-          ->LazyLoadImageReachedViewport();
+    entry->Target()->SetVisibleForContentVisibility(entry->IsIntersecting());
+
+    if (RefPtr<Document> doc = entry->Target()->GetComposedDoc()) {
+      if (RefPtr<PresShell> presShell = doc->GetPresShell()) {
+        presShell->ScheduleContentRelevancyUpdate(
+            ContentRelevancyReason::Visible);
+      }
     }
   }
 }
@@ -178,7 +181,7 @@ already_AddRefed<DOMIntersectionObserver>
 DOMIntersectionObserver::CreateLazyLoadObserver(Document& aDocument) {
   RefPtr<DOMIntersectionObserver> observer =
       new DOMIntersectionObserver(aDocument, LazyLoadCallback);
-  observer->mThresholds.AppendElement(std::numeric_limits<double>::min());
+  observer->mThresholds.AppendElement(0.0f);
 
 #define SET_MARGIN(side_, side_lower_)                                 \
   observer->mRootMargin.Get(eSide##side_) = PrefMargin(                \
@@ -195,10 +198,21 @@ DOMIntersectionObserver::CreateLazyLoadObserver(Document& aDocument) {
 }
 
 already_AddRefed<DOMIntersectionObserver>
-DOMIntersectionObserver::CreateLazyLoadObserverViewport(Document& aDocument) {
+DOMIntersectionObserver::CreateContentVisibilityObserver(Document& aDocument) {
   RefPtr<DOMIntersectionObserver> observer =
-      new DOMIntersectionObserver(aDocument, LazyLoadCallbackReachViewport);
-  observer->mThresholds.AppendElement(std::numeric_limits<double>::min());
+      new DOMIntersectionObserver(aDocument, ContentVisibilityCallback);
+
+  observer->mThresholds.AppendElement(0.0f);
+
+  auto margin = LengthPercentage::FromPercentage(
+      StaticPrefs::layout_css_content_visibility_relevant_content_margin() /
+      100.0f);
+
+  observer->mRootMargin.Get(eSideTop) = margin;
+  observer->mRootMargin.Get(eSideRight) = margin;
+  observer->mRootMargin.Get(eSideBottom) = margin;
+  observer->mRootMargin.Get(eSideLeft) = margin;
+
   return observer.forget();
 }
 
@@ -620,7 +634,8 @@ IntersectionInput DOMIntersectionObserver::ComputeInput(
 // https://w3c.github.io/IntersectionObserver/#update-intersection-observations-algo
 // (steps 2.1 - 2.5)
 IntersectionOutput DOMIntersectionObserver::Intersect(
-    const IntersectionInput& aInput, Element& aTarget) {
+    const IntersectionInput& aInput, Element& aTarget,
+    IgnoreContentVisibility aIgnoreContentVisibility) {
   const bool isSimilarOrigin = SimilarOrigin(aTarget, aInput.mRootNode) ==
                                BrowsingContextOrigin::Similar;
   nsIFrame* targetFrame = aTarget.GetPrimaryFrame();
@@ -633,7 +648,12 @@ IntersectionOutput DOMIntersectionObserver::Intersect(
   // true even if both the root and the target elements are in the skipped
   // contents."
   // https://drafts.csswg.org/css-contain/#cv-notes
-  if (targetFrame->AncestorHidesContent()) {
+  //
+  // Skip the intersection if the element is hidden, unless this is the
+  // DOMIntersectionObserver used specifically to track the visibility of
+  // `content-visibility: auto` elements.
+  if (aIgnoreContentVisibility == IgnoreContentVisibility::No &&
+      targetFrame->IsHiddenByContentVisibilityOnAnyAncestor()) {
     return {isSimilarOrigin};
   }
 
@@ -674,17 +694,39 @@ IntersectionOutput DOMIntersectionObserver::Intersect(
   return {isSimilarOrigin, rootBounds, targetRect, intersectionRect};
 }
 
+IntersectionOutput DOMIntersectionObserver::Intersect(
+    const IntersectionInput& aInput, const nsRect& aTargetRect) {
+  nsRect rootBounds = aInput.mRootRect;
+  rootBounds.Inflate(aInput.mRootMargin);
+  auto intersectionRect =
+      EdgeInclusiveIntersection(aInput.mRootRect, aTargetRect);
+  if (intersectionRect && aInput.mRemoteDocumentVisibleRect) {
+    intersectionRect = EdgeInclusiveIntersection(
+        *intersectionRect, *aInput.mRemoteDocumentVisibleRect);
+  }
+  return {true, rootBounds, aTargetRect, intersectionRect};
+}
+
 // https://w3c.github.io/IntersectionObserver/#update-intersection-observations-algo
 // (step 2)
-void DOMIntersectionObserver::Update(Document* aDocument,
+void DOMIntersectionObserver::Update(Document& aDocument,
                                      DOMHighResTimeStamp time) {
-  auto input = ComputeInput(*aDocument, mRoot, &mRootMargin);
+  auto input = ComputeInput(aDocument, mRoot, &mRootMargin);
+
+  // If this observer is used to determine content relevancy for
+  // `content-visiblity: auto` content, then do not skip intersection
+  // for content that is hidden by `content-visibility: auto`.
+  IgnoreContentVisibility ignoreContentVisibility =
+      aDocument.GetContentVisibilityObserver() == this
+          ? IgnoreContentVisibility::Yes
+          : IgnoreContentVisibility::No;
 
   // 2. For each target in observer’s internal [[ObservationTargets]] slot,
   // processed in the same order that observe() was called on each target:
   for (Element* target : mObservationTargets) {
     // 2.1 - 2.4.
-    IntersectionOutput output = Intersect(input, *target);
+    IntersectionOutput output =
+        Intersect(input, *target, ignoreContentVisibility);
 
     // 2.5. Let targetArea be targetRect’s area.
     int64_t targetArea = (int64_t)output.mTargetRect.Width() *

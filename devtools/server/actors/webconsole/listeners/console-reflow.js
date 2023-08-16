@@ -4,9 +4,6 @@
 
 "use strict";
 
-const { components } = require("chrome");
-const ChromeUtils = require("ChromeUtils");
-
 /**
  * A ReflowObserver that listens for reflow events from the page.
  * Implements nsIReflowObserver.
@@ -43,7 +40,7 @@ ConsoleReflowListener.prototype = {
    * @param boolean interruptible
    */
   sendReflow(start, end, interruptible) {
-    const frame = components.stack.caller.caller;
+    const frame = Components.stack.caller.caller;
 
     let filename = frame ? frame.filename : null;
 

@@ -8,9 +8,6 @@ const DUMMY_URL =
     "http://example.com"
   ) + "/dummy.html";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 const HAS_THREAD_NAMES =
   AppConstants.platform != "win" ||
   AppConstants.isPlatformAndVersionAtLeast("win", 10);
@@ -57,7 +54,7 @@ add_task(async function test_proc_info() {
 
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: DUMMY_URL },
-    async function(browser) {
+    async function (browser) {
       // We test `SAMPLE_SIZE` times to increase a tad the chance of encountering race conditions.
       for (let z = 0; z < SAMPLE_SIZE; z++) {
         let parentProc = await ChromeUtils.requestProcInfo();

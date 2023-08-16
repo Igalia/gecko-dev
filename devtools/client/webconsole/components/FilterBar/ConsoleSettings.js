@@ -5,27 +5,33 @@
 "use strict";
 
 // React & Redux
-const { Component } = require("devtools/client/shared/vendor/react");
-const { createFactory } = require("devtools/client/shared/vendor/react");
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const {
+  Component,
+} = require("resource://devtools/client/shared/vendor/react.js");
+const {
+  createFactory,
+} = require("resource://devtools/client/shared/vendor/react.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
 
-const actions = require("devtools/client/webconsole/actions/index");
-const { l10n } = require("devtools/client/webconsole/utils/messages");
+const actions = require("resource://devtools/client/webconsole/actions/index.js");
+const {
+  l10n,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
 // Additional Components
 const MenuButton = createFactory(
-  require("devtools/client/shared/components/menu/MenuButton")
+  require("resource://devtools/client/shared/components/menu/MenuButton.js")
 );
 
-loader.lazyGetter(this, "MenuItem", function() {
+loader.lazyGetter(this, "MenuItem", function () {
   return createFactory(
-    require("devtools/client/shared/components/menu/MenuItem")
+    require("resource://devtools/client/shared/components/menu/MenuItem.js")
   );
 });
 
-loader.lazyGetter(this, "MenuList", function() {
+loader.lazyGetter(this, "MenuList", function () {
   return createFactory(
-    require("devtools/client/shared/components/menu/MenuList")
+    require("resource://devtools/client/shared/components/menu/MenuList.js")
   );
 });
 
@@ -36,7 +42,6 @@ class ConsoleSettings extends Component {
       eagerEvaluation: PropTypes.bool.isRequired,
       groupWarnings: PropTypes.bool.isRequired,
       persistLogs: PropTypes.bool.isRequired,
-      showContentMessages: PropTypes.bool.isRequired,
       timestampsVisible: PropTypes.bool.isRequired,
       webConsoleUI: PropTypes.object.isRequired,
       autocomplete: PropTypes.bool.isRequired,
@@ -50,7 +55,6 @@ class ConsoleSettings extends Component {
       eagerEvaluation,
       groupWarnings,
       persistLogs,
-      showContentMessages,
       timestampsVisible,
       autocomplete,
       webConsoleUI,
@@ -82,30 +86,10 @@ class ConsoleSettings extends Component {
     }
 
     if (webConsoleUI.isBrowserConsole || webConsoleUI.isBrowserToolboxConsole) {
-      // Only show the filter when the ChromeDebugToolbar is not displayed.
-      // Ultimately this should be removed and only be handled by the ChromeDebugToolbar
-      if (!webConsoleUI.fissionSupport) {
-        // Show Content Messages
-        items.push(
-          MenuItem({
-            key: "webconsole-console-settings-menu-item-content-messages",
-            checked: showContentMessages,
-            className:
-              "menu-item webconsole-console-settings-menu-item-contentMessages",
-            label: l10n.getStr("browserconsole.contentMessagesCheckbox.label"),
-            tooltip: l10n.getStr(
-              "browserconsole.contentMessagesCheckbox.tooltip"
-            ),
-            onClick: () => dispatch(actions.contentMessagesToggle()),
-          })
-        );
-      }
-
       // Enable network monitoring
       items.push(
         MenuItem({
-          key:
-            "webconsole-console-settings-menu-item-enable-network-monitoring",
+          key: "webconsole-console-settings-menu-item-enable-network-monitoring",
           checked: enableNetworkMonitoring,
           className:
             "menu-item webconsole-console-settings-menu-item-enableNetworkMonitoring",

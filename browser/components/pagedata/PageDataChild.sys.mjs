@@ -2,18 +2,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   PageDataSchema: "resource:///modules/pagedata/PageDataSchema.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 
 // We defer any attempt to check for page data for a short time after a page
@@ -32,6 +27,7 @@ export class PageDataChild extends JSWindowActorChild {
   #isContentWindowPrivate = true;
   /**
    * Used to debounce notifications about a page being ready.
+   *
    * @type {Timer | null}
    */
   #deferTimer = null;
@@ -40,9 +36,8 @@ export class PageDataChild extends JSWindowActorChild {
    * Called when the actor is created for a new page.
    */
   actorCreated() {
-    this.#isContentWindowPrivate = lazy.PrivateBrowsingUtils.isContentWindowPrivate(
-      this.contentWindow
-    );
+    this.#isContentWindowPrivate =
+      lazy.PrivateBrowsingUtils.isContentWindowPrivate(this.contentWindow);
   }
 
   /**

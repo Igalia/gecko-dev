@@ -109,8 +109,6 @@ ia2Accessible::get_relation(long aRelationIndex,
         new ia2AccessibleRelation(relationType, &rel);
     if (ia2Relation->HasTargets()) {
       if (relIdx == aRelationIndex) {
-        MsaaAccessible* msaa = static_cast<MsaaAccessible*>(this);
-        msaa->AssociateCOMObjectForDisconnection(ia2Relation);
         ia2Relation.forget(aRelation);
         return S_OK;
       }
@@ -144,8 +142,6 @@ ia2Accessible::get_relations(long aMaxRelations,
     RefPtr<ia2AccessibleRelation> ia2Rel =
         new ia2AccessibleRelation(relationType, &rel);
     if (ia2Rel->HasTargets()) {
-      MsaaAccessible* msaa = static_cast<MsaaAccessible*>(this);
-      msaa->AssociateCOMObjectForDisconnection(ia2Rel);
       ia2Rel.forget(aRelation + (*aNRelations));
       (*aNRelations)++;
     }
@@ -161,8 +157,8 @@ ia2Accessible::role(long* aRole) {
   Accessible* acc = Acc();
   if (!acc) return CO_E_OBJNOTCONNECTED;
 
-#define ROLE(_geckoRole, stringRole, atkRole, macRole, macSubrole, msaaRole, \
-             ia2Role, androidClass, nameRule)                                \
+#define ROLE(_geckoRole, stringRole, ariaRole, atkRole, macRole, macSubrole, \
+             msaaRole, ia2Role, androidClass, nameRule)                      \
   case roles::_geckoRole:                                                    \
     *aRole = ia2Role;                                                        \
     break;
@@ -203,12 +199,9 @@ ia2Accessible::scrollTo(enum IA2ScrollType aScrollType) {
 STDMETHODIMP
 ia2Accessible::scrollToPoint(enum IA2CoordinateType aCoordType, long aX,
                              long aY) {
-  if (!Acc()) {
-    return CO_E_OBJNOTCONNECTED;
-  }
-  AccessibleWrap* acc = LocalAcc();
+  Accessible* acc = Acc();
   if (!acc) {
-    return E_NOTIMPL;  // XXX Not supported for RemoteAccessible yet.
+    return CO_E_OBJNOTCONNECTED;
   }
 
   uint32_t geckoCoordType =
@@ -387,12 +380,9 @@ ia2Accessible::get_locale(IA2Locale* aLocale) {
   // Two-letter primary codes are reserved for [ISO639] language abbreviations.
   // Any two-letter subcode is understood to be a [ISO3166] country code.
 
-  if (!Acc()) {
-    return CO_E_OBJNOTCONNECTED;
-  }
-  AccessibleWrap* acc = LocalAcc();
+  Accessible* acc = Acc();
   if (!acc) {
-    return E_NOTIMPL;  // XXX Not supported for RemoteAccessible yet.
+    return CO_E_OBJNOTCONNECTED;
   }
 
   nsAutoString lang;

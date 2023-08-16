@@ -22,7 +22,7 @@ const HTML = `
 
 const TEST_URI = "data:text/html;charset=utf-8," + encodeURI(HTML);
 
-add_task(async function() {
+add_task(async function () {
   const tab = await addTab(TEST_URI);
   await testToolboxInitialization(tab);
   await testContextMenuInitialization();
@@ -38,7 +38,6 @@ async function testToolboxInitialization(tab) {
 
   ok(true, "Inspector started, and notification received.");
   ok(inspector, "Inspector instance is accessible.");
-  is(inspector.currentTarget.localTab, tab, "Valid target.");
 
   await selectNode("p", inspector);
   await testMarkupView("p", inspector);

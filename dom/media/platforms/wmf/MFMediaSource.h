@@ -12,11 +12,12 @@
 #include "MediaEventSource.h"
 #include "MFMediaEngineExtra.h"
 #include "MFMediaEngineStream.h"
-#include "mozilla/Atomics.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/TaskQueue.h"
 
 namespace mozilla {
+
+class MFCDMProxy;
 
 // An event to indicate a need for a certain type of sample.
 struct SampleRequest {
@@ -34,15 +35,18 @@ struct SampleRequest {
  *
  * https://docs.microsoft.com/en-us/windows/win32/api/mfidl/nn-mfidl-imfmediasource
  */
-// TODO : support IMFTrustedInput/IMFRateSupport/IMFRateControl/IMFGetService
 class MFMediaSource : public Microsoft::WRL::RuntimeClass<
                           Microsoft::WRL::RuntimeClassFlags<
                               Microsoft::WRL::RuntimeClassType::ClassicCom>,
-                          IMFMediaSource> {
+                          IMFMediaSource, IMFRateControl, IMFRateSupport,
+                          IMFGetService, IMFTrustedInput> {
  public:
   MFMediaSource();
+  ~MFMediaSource();
+
   HRESULT RuntimeClassInitialize(const Maybe<AudioInfo>& aAudio,
-                                 const Maybe<VideoInfo>& aVideo);
+                                 const Maybe<VideoInfo>& aVideo,
+                                 nsISerialEventTarget* aManagerThread);
 
   // Methods for IMFMediaSource
   IFACEMETHODIMP GetCharacteristics(DWORD* aCharacteristics) override;
@@ -66,10 +70,36 @@ class MFMediaSource : public Microsoft::WRL::RuntimeClass<
                             HRESULT aStatus,
                             const PROPVARIANT* aValue) override;
 
-  MFMediaEngineStream* GetAudioStream() { return mAudioStream.Get(); }
-  MFMediaEngineStream* GetVideoStream() { return mVideoStream.Get(); }
+  // IMFGetService
+  IFACEMETHODIMP GetService(REFGUID aGuidService, REFIID aRiid,
+                            LPVOID* aResult) override;
 
-  TaskQueue* GetTaskQueue() { return mTaskQueue; }
+  // IMFRateSupport
+  IFACEMETHODIMP GetSlowestRate(MFRATE_DIRECTION aDirection,
+                                BOOL aSupportsThinning, float* aRate) override;
+  IFACEMETHODIMP GetFastestRate(MFRATE_DIRECTION aDirection,
+                                BOOL aSupportsThinning, float* aRate) override;
+  IFACEMETHODIMP IsRateSupported(BOOL aSupportsThinning, float aNewRate,
+                                 float* aSupportedRate) override;
+
+  // IMFRateControl
+  IFACEMETHODIMP SetRate(BOOL aSupportsThinning, float aRate) override;
+  IFACEMETHODIMP GetRate(BOOL* aSupportsThinning, float* aRate) override;
+
+  // IMFTrustedInput
+  IFACEMETHODIMP GetInputTrustAuthority(DWORD aStreamId, REFIID aRiid,
+                                        IUnknown** aITAOut) override;
+
+  MFMediaEngineStream* GetAudioStream();
+  MFMediaEngineStream* GetVideoStream();
+
+  MFMediaEngineStream* GetStreamByIndentifier(DWORD aStreamId) const;
+
+#ifdef MOZ_WMF_CDM
+  void SetCDMProxy(MFCDMProxy* aCDMProxy);
+#endif
+
+  TaskQueue* GetTaskQueue() const { return mTaskQueue; }
 
   MediaEventSource<SampleRequest>& RequestSampleEvent() {
     return mRequestSampleEvent;
@@ -77,12 +107,7 @@ class MFMediaSource : public Microsoft::WRL::RuntimeClass<
 
   // Called from the content process to notify that no more encoded data in that
   // type of track.
-  void NotifyEndOfStream(TrackInfo::TrackType aType) {
-    Unused << GetTaskQueue()->Dispatch(NS_NewRunnableFunction(
-        "MFMediaSource::NotifyEndOfStream", [aType, self = RefPtr{this}]() {
-          self->NotifyEndOfStreamInternal(aType);
-        }));
-  }
+  void NotifyEndOfStream(TrackInfo::TrackType aType);
 
   // Called from the MF stream to indicate that the stream has provided last
   // encoded sample to the media engine.
@@ -95,24 +120,31 @@ class MFMediaSource : public Microsoft::WRL::RuntimeClass<
     Paused,
     Shutdowned,
   };
-  State GetState() const { return mState; }
+  State GetState() const;
+
+  void SetDCompSurfaceHandle(HANDLE aDCompSurfaceHandle, gfx::IntSize aDisplay);
+
+  void ShutdownTaskQueue();
+
+  bool IsEncrypted() const;
 
  private:
-  void AssertOnTaskQueue() const;
+  void AssertOnManagerThread() const;
   void AssertOnMFThreadPool() const;
 
   void NotifyEndOfStreamInternal(TrackInfo::TrackType aType);
 
   bool IsSeekable() const;
-  MFMediaEngineStream* GetStreamByDescriptorId(DWORD aId) const;
 
   // A thread-safe event queue.
   // https://docs.microsoft.com/en-us/windows/win32/medfound/media-event-generators#implementing-imfmediaeventgenerator
   Microsoft::WRL::ComPtr<IMFMediaEventQueue> mMediaEventQueue;
-  Microsoft::WRL::ComPtr<MFMediaEngineStream> mAudioStream;
-  Microsoft::WRL::ComPtr<MFMediaEngineStream> mVideoStream;
 
+  // The thread used to run the engine streams' tasks.
   RefPtr<TaskQueue> mTaskQueue;
+
+  // The thread used to run the media source's tasks.
+  RefPtr<nsISerialEventTarget> mManagerThread;
 
   // MFMediaEngineStream will notify us when we need more sample.
   friend class MFMediaEngineStream;
@@ -121,18 +153,34 @@ class MFMediaSource : public Microsoft::WRL::RuntimeClass<
   MediaEventListener mAudioStreamEndedListener;
   MediaEventListener mVideoStreamEndedListener;
 
-  // This class would be run on two threads, MF thread pool and the source's
-  // task queue. Following members would be used across both threads so they
-  // need to be thread-safe.
+  // This class would be run/accessed on two threads, MF thread pool and the
+  // manager thread. Following members could be used across threads so they need
+  // to be thread-safe.
 
-  // True if the playback is ended. Use and modify on both task queue and MF
-  // thread pool.
-  Atomic<bool> mPresentationEnded;
+  mutable Mutex mMutex{"MFMediaEngineSource"};
 
-  // Modify on MF thread pool, read on any threads.
-  Atomic<State> mState;
+  // True if the playback is ended. Use and modify on both the manager thread
+  // and MF thread pool.
+  bool mPresentationEnded MOZ_GUARDED_BY(mMutex);
+  bool mIsAudioEnded MOZ_GUARDED_BY(mMutex);
+  bool mIsVideoEnded MOZ_GUARDED_BY(mMutex);
+
+  // Modify on MF thread pool and the manager thread, read on any threads.
+  State mState MOZ_GUARDED_BY(mMutex);
+
+  Microsoft::WRL::ComPtr<MFMediaEngineStream> mAudioStream
+      MOZ_GUARDED_BY(mMutex);
+  Microsoft::WRL::ComPtr<MFMediaEngineStream> mVideoStream
+      MOZ_GUARDED_BY(mMutex);
 
   // Thread-safe members END
+
+  // Modify and access on MF thread pool.
+  float mPlaybackRate = 0.0f;
+
+#ifdef MOZ_WMF_CDM
+  RefPtr<MFCDMProxy> mCDMProxy;
+#endif
 };
 
 }  // namespace mozilla

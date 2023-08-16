@@ -9,8 +9,6 @@
  * state, and an init method.  A separate object is easier.
  */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
@@ -62,6 +60,7 @@ class SearchUtils {
    * @param {string} prefix
    *   String containing the first part of the matching domain name(s).
    * @param {object} [options]
+   *   Options object.
    * @param {boolean} [options.matchAllDomainLevels]
    *   Match at each sub domain, for example "a.b.c.com" will be matched at
    *   "a.b.c.com", "b.c.com", and "c.com". Partial matches are always returned
@@ -76,27 +75,19 @@ class SearchUtils {
     prefix,
     { matchAllDomainLevels = false, onlyEnabled = false } = {}
   ) {
-    await this.init();
+    try {
+      await this.init();
+    } catch {
+      return [];
+    }
     prefix = prefix.toLowerCase();
-
-    let disabledEngines = onlyEnabled
-      ? Services.prefs
-          .getStringPref("browser.search.hiddenOneOffs", "")
-          .split(",")
-          .filter(e => !!e)
-      : [];
 
     // Array of partially matched engines, added through matchPrefix().
     let partialMatchEngines = [];
     function matchPrefix(engine, engineHost) {
       let parts = engineHost.split(".");
       for (let i = 1; i < parts.length - 1; ++i) {
-        if (
-          parts
-            .slice(i)
-            .join(".")
-            .startsWith(prefix)
-        ) {
+        if (parts.slice(i).join(".").startsWith(prefix)) {
           partialMatchEngines.push(engine);
         }
       }
@@ -106,10 +97,10 @@ class SearchUtils {
     let perfectMatchEngines = [];
     let perfectMatchEngineSet = new Set();
     for (let engine of await Services.search.getVisibleEngines()) {
-      if (disabledEngines.includes(engine.name)) {
+      if (engine.hideOneOffButton) {
         continue;
       }
-      let domain = engine.getResultDomain();
+      let domain = engine.searchUrlDomain;
       if (domain.startsWith(prefix) || domain.startsWith("www." + prefix)) {
         perfectMatchEngines.push(engine);
         perfectMatchEngineSet.add(engine);
@@ -155,7 +146,12 @@ class SearchUtils {
    *   The matching engine or null if there isn't one.
    */
   async engineForAlias(alias, searchString = null) {
-    await Promise.all([this.init(), this._refreshEnginesByAliasPromise]);
+    try {
+      await Promise.all([this.init(), this._refreshEnginesByAliasPromise]);
+    } catch {
+      return null;
+    }
+
     let engine = this._enginesByAlias.get(alias.toLocaleLowerCase());
     if (engine && searchString) {
       let query = lazy.UrlbarUtils.substringAfter(searchString, alias);
@@ -171,11 +167,17 @@ class SearchUtils {
   /**
    * The list of engines with token ("@") aliases.
    *
-   * @returns {array}
-   *   Array of objects { engine, tokenAliases } for token alias engines.
+   * @returns {Array}
+   *   Array of objects { engine, tokenAliases } for token alias engines or
+   *   null if SearchService has not initialized.
    */
   async tokenAliasEngines() {
-    await this.init();
+    try {
+      await this.init();
+    } catch {
+      return [];
+    }
+
     let tokenAliasEngines = [];
     for (let engine of await Services.search.getVisibleEngines()) {
       let tokenAliases = this._aliasesForEngine(engine).filter(a =>
@@ -190,13 +192,14 @@ class SearchUtils {
 
   /**
    * @param {nsISearchEngine} engine
+   *   The engine to get the root domain of
    * @returns {string}
    *   The root domain of a search engine. e.g. If `engine` has the domain
    *   www.subdomain.rootdomain.com, `rootdomain` is returned. Returns the
    *   engine's domain if the engine's URL does not have a valid TLD.
    */
   getRootDomainFromEngine(engine) {
-    let domain = engine.getResultDomain();
+    let domain = engine.searchUrlDomain;
     let suffix = engine.searchUrlPublicSuffix;
     if (!suffix) {
       if (domain.endsWith(".test")) {
@@ -214,7 +217,17 @@ class SearchUtils {
     return domainParts.pop();
   }
 
+  /**
+   * @param {boolean} [isPrivate]
+   *   True if in a private context.
+   * @returns {nsISearchEngine}
+   *   The default engine or null if SearchService has not initialized.
+   */
   getDefaultEngine(isPrivate = false) {
+    if (!Services.search.hasSuccessfullyInitialized) {
+      return null;
+    }
+
     return this.separatePrivateDefaultUIEnabled &&
       this.separatePrivateDefault &&
       isPrivate
@@ -236,7 +249,7 @@ class SearchUtils {
     let scalarKey;
     if (searchMode.engineName) {
       let engine = Services.search.getEngineByName(searchMode.engineName);
-      let resultDomain = engine.getResultDomain();
+      let resultDomain = engine.searchUrlDomain;
       // For built-in engines, sanitize the data in a few special cases to make
       // analysis easier.
       if (!engine.isAppProvided) {
@@ -279,11 +292,70 @@ class SearchUtils {
   }
 
   /**
+   * Checks if the given uri is constructed by the default search engine.
+   * When passing URI's to check against, it's best to use the "original" URI
+   * that was requested, as the server may have redirected the request.
+   *
+   * @param {nsIURI | string} uri
+   *   The uri to check.
+   * @returns {string}
+   *   The search terms used.
+   *   Will return an empty string if it's not a default SERP, the string
+   *   exceeds the maximum characters, or the default engine hasn't been
+   *   initialized.
+   */
+  getSearchTermIfDefaultSerpUri(uri) {
+    if (!Services.search.hasSuccessfullyInitialized || !uri) {
+      return "";
+    }
+
+    // Creating a URI can throw.
+    try {
+      if (typeof uri == "string") {
+        uri = Services.io.newURI(uri);
+      }
+    } catch (e) {
+      return "";
+    }
+
+    let searchTerm = Services.search.defaultEngine.searchTermFromResult(uri);
+
+    if (!searchTerm || searchTerm.length > lazy.UrlbarUtils.MAX_TEXT_LENGTH) {
+      return "";
+    }
+
+    let searchTermWithSpacesRemoved = searchTerm.replaceAll(/\s/g, "");
+
+    if (
+      searchTermWithSpacesRemoved.startsWith("https://") ||
+      searchTermWithSpacesRemoved.startsWith("http://")
+    ) {
+      return "";
+    }
+
+    try {
+      let info = Services.uriFixup.getFixupURIInfo(
+        searchTermWithSpacesRemoved,
+        Ci.nsIURIFixup.FIXUP_FLAG_FIX_SCHEME_TYPOS |
+          Ci.nsIURIFixup.FIXUP_FLAG_ALLOW_KEYWORD_LOOKUP
+      );
+      if (info.keywordAsSent) {
+        return searchTerm;
+      }
+    } catch (e) {}
+    return "";
+  }
+
+  /**
    * Compares the query parameters of two SERPs to see if one is equivalent to
    * the other. URL `x` is equivalent to URL `y` if
    *   (a) `y` contains at least all the query parameters contained in `x`, and
    *   (b) The values of the query parameters contained in both `x` and `y `are
    *       the same.
+   *
+   * This function does not compare the SERPs' origins or pathnames.
+   * `historySerp` can have a different origin and/or pathname than
+   * `generatedSerp` and still be considered equivalent.
    *
    * @param {string} historySerp
    *   The SERP from history whose params should be contained in
@@ -291,14 +363,10 @@ class SearchUtils {
    * @param {string} generatedSerp
    *   The search URL we would generate for a search result with the same search
    *   string used in `historySerp`.
-   * @param {array} [ignoreParams]
+   * @param {Array} [ignoreParams]
    *   A list of params to ignore in the matching, i.e. params that can be
    *   contained in `historySerp` but not be in `generatedSerp`.
    * @returns {boolean} True if `historySerp` can be deduped by `generatedSerp`.
-   *
-   * @note This function does not compare the SERPs' origins or pathnames.
-   *   `historySerp` can have a different origin and/or pathname than
-   *   `generatedSerp` and still be considered equivalent.
    */
   serpsAreEquivalent(historySerp, generatedSerp, ignoreParams = []) {
     let historyParams = new URL(historySerp).searchParams;
@@ -325,7 +393,7 @@ class SearchUtils {
    *
    * @param {nsISearchEngine} engine
    *   The aliases of this search engine will be returned.
-   * @returns {array}
+   * @returns {Array}
    *   An array of lower-cased string aliases as described above.
    */
   _aliasesForEngine(engine) {
@@ -338,6 +406,21 @@ class SearchUtils {
       }
       return aliases;
     }, []);
+  }
+
+  /**
+   * @param {string} engineName
+   *   Name of the search engine.
+   * @returns {nsISearchEngine}
+   *   The engine based on engineName or null if SearchService has not
+   *   initialized.
+   */
+  getEngineByName(engineName) {
+    if (!Services.search.hasSuccessfullyInitialized) {
+      return null;
+    }
+
+    return Services.search.getEngineByName(engineName);
   }
 
   observe(subject, topic, data) {

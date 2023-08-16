@@ -10,7 +10,9 @@
 #include "mozilla/TelemetryProcessEnums.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/gfx/GPUParent.h"
+#include "mozilla/RDDParent.h"
 #include "mozilla/net/SocketProcessChild.h"
+#include "mozilla/ipc/UtilityProcessChild.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPrefs_toolkit.h"
@@ -311,8 +313,15 @@ void TelemetryIPCAccumulator::IPCTimerFired(nsITimer* aTimer, void* aClosure) {
     case GeckoProcessType_GPU:
       SendAccumulatedData(mozilla::gfx::GPUParent::GetSingleton());
       break;
+    case GeckoProcessType_RDD:
+      SendAccumulatedData(mozilla::RDDParent::GetSingleton());
+      break;
     case GeckoProcessType_Socket:
       SendAccumulatedData(mozilla::net::SocketProcessChild::GetSingleton());
+      break;
+    case GeckoProcessType_Utility:
+      SendAccumulatedData(
+          mozilla::ipc::UtilityProcessChild::GetSingleton().get());
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unsupported process type");

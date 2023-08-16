@@ -2,14 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-import sys
 import logging
+import sys
 
-from mach.decorators import CommandArgument, Command, SubCommand
+from mach.decorators import Command, CommandArgument, SubCommand
 
-from mozbuild.vendor.moz_yaml import load_moz_yaml, MozYamlVerifyError
+from mozbuild.vendor.moz_yaml import MozYamlVerifyError, load_moz_yaml
 
 
 # Fun quirk of ./mach - you can specify a default argument as well as subcommands.
@@ -88,6 +86,11 @@ def vendor(
     except MozYamlVerifyError as e:
         print(e)
         sys.exit(1)
+
+    if "vendoring" not in manifest:
+        raise Exception(
+            "Cannot perform update actions if we don't have a 'vendoring' section in the moz.yaml"
+        )
 
     if patch_mode and patch_mode not in ["none", "only"]:
         print(
@@ -179,13 +182,9 @@ Please commit or stash these changes before vendoring, or re-run with `--ignore-
     default=False,
 )
 @CommandArgument(
-    "--build-peers-said-large-imports-were-ok",
+    "--force",
     action="store_true",
-    help=(
-        "Permit overly-large files to be added to the repository. "
-        "To get permission to set this, raise a question in the #build "
-        "channel at https://chat.mozilla.org."
-    ),
+    help=("Ignore any kind of error that happens during vendoring"),
     default=False,
 )
 @CommandArgument(
@@ -201,7 +200,11 @@ def vendor_rust(command_context, **kwargs):
     if issues_json:
         with open(issues_json, "w") as fh:
             fh.write(vendor_command.serialize_issues_json())
-    sys.exit(0 if ok else 1)
+    if ok:
+        sys.exit(0)
+    else:
+        print("Errors occured; new rust crates were not vendored.")
+        sys.exit(1)
 
 
 # =====================================================================

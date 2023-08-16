@@ -16,8 +16,6 @@ extern crate derive_more;
 extern crate fxhash;
 #[macro_use]
 extern crate log;
-#[macro_use]
-extern crate matches;
 extern crate phf;
 extern crate precomputed_hash;
 extern crate servo_arc;
@@ -33,6 +31,7 @@ pub mod context;
 pub mod matching;
 mod nth_index_cache;
 pub mod parser;
+pub mod relative_selector;
 pub mod sink;
 mod tree;
 pub mod visitor;

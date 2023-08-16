@@ -4,49 +4,52 @@
 
 "use strict";
 
-const flags = require("devtools/shared/flags");
-const ToolDefinitions = require("devtools/client/definitions").Tools;
-const CssLogic = require("devtools/shared/inspector/css-logic");
+const flags = require("resource://devtools/shared/flags.js");
+const ToolDefinitions =
+  require("resource://devtools/client/definitions.js").Tools;
+const CssLogic = require("resource://devtools/shared/inspector/css-logic.js");
 const {
   style: { ELEMENT_STYLE },
-} = require("devtools/shared/constants");
-const OutputParser = require("devtools/client/shared/output-parser");
-const { PrefObserver } = require("devtools/client/shared/prefs");
-const { createChild } = require("devtools/client/inspector/shared/utils");
+} = require("resource://devtools/shared/constants.js");
+const OutputParser = require("resource://devtools/client/shared/output-parser.js");
+const { PrefObserver } = require("resource://devtools/client/shared/prefs.js");
+const {
+  createChild,
+} = require("resource://devtools/client/inspector/shared/utils.js");
 const {
   VIEW_NODE_SELECTOR_TYPE,
   VIEW_NODE_PROPERTY_TYPE,
   VIEW_NODE_VALUE_TYPE,
   VIEW_NODE_IMAGE_URL_TYPE,
   VIEW_NODE_FONT_TYPE,
-} = require("devtools/client/inspector/shared/node-types");
-const TooltipsOverlay = require("devtools/client/inspector/shared/tooltips-overlay");
+} = require("resource://devtools/client/inspector/shared/node-types.js");
+const TooltipsOverlay = require("resource://devtools/client/inspector/shared/tooltips-overlay.js");
 
 loader.lazyRequireGetter(
   this,
   "StyleInspectorMenu",
-  "devtools/client/inspector/shared/style-inspector-menu"
+  "resource://devtools/client/inspector/shared/style-inspector-menu.js"
 );
 loader.lazyRequireGetter(
   this,
   "KeyShortcuts",
-  "devtools/client/shared/key-shortcuts"
+  "resource://devtools/client/shared/key-shortcuts.js"
 );
 loader.lazyRequireGetter(
   this,
   "clipboardHelper",
-  "devtools/shared/platform/clipboard"
+  "resource://devtools/shared/platform/clipboard.js"
 );
 loader.lazyRequireGetter(
   this,
   "openContentLink",
-  "devtools/client/shared/link",
+  "resource://devtools/client/shared/link.js",
   true
 );
 
 const STYLE_INSPECTOR_PROPERTIES =
   "devtools/shared/locales/styleinspector.properties";
-const { LocalizationHelper } = require("devtools/shared/l10n");
+const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const STYLE_INSPECTOR_L10N = new LocalizationHelper(STYLE_INSPECTOR_PROPERTIES);
 
 const FILTER_CHANGED_TIMEOUT = 150;
@@ -74,10 +77,10 @@ function UpdateProcess(win, array, options) {
   this.index = 0;
   this.array = array;
 
-  this.onItem = options.onItem || function() {};
-  this.onBatch = options.onBatch || function() {};
-  this.onDone = options.onDone || function() {};
-  this.onCancel = options.onCancel || function() {};
+  this.onItem = options.onItem || function () {};
+  this.onBatch = options.onBatch || function () {};
+  this.onDone = options.onDone || function () {};
+  this.onCancel = options.onCancel || function () {};
   this.threshold = options.threshold || 45;
 
   this.canceled = false;
@@ -264,7 +267,7 @@ function CssComputedView(inspector, document) {
  *        The key to lookup.
  * @returns {String} localized version of the given key.
  */
-CssComputedView.l10n = function(name) {
+CssComputedView.l10n = function (name) {
   try {
     return STYLE_INSPECTOR_L10N.getStr(name);
   } catch (ex) {
@@ -617,8 +620,7 @@ CssComputedView.prototype = {
                 const searchBox = this.searchField.parentNode;
                 searchBox.classList.toggle(
                   "devtools-searchbox-no-match",
-                  this.searchField.value.length > 0 &&
-                    !this.numVisibleProperties
+                  !!this.searchField.value.length && !this.numVisibleProperties
                 );
 
                 this.inspector.emit("computed-view-refreshed");
@@ -673,8 +675,9 @@ CssComputedView.prototype = {
       clearTimeout(this._filterChangedTimeout);
     }
 
-    const filterTimeout =
-      this.searchField.value.length > 0 ? FILTER_CHANGED_TIMEOUT : 0;
+    const filterTimeout = this.searchField.value.length
+      ? FILTER_CHANGED_TIMEOUT
+      : 0;
     this.searchClearButton.hidden = this.searchField.value.length === 0;
 
     this._filterChangedTimeout = setTimeout(() => {
@@ -808,10 +811,7 @@ CssComputedView.prototype = {
    */
   _onCopy(event) {
     const win = this.styleWindow;
-    const text = win
-      .getSelection()
-      .toString()
-      .trim();
+    const text = win.getSelection().toString().trim();
     if (text !== "") {
       this.copySelection();
       event.preventDefault();
@@ -824,10 +824,7 @@ CssComputedView.prototype = {
   copySelection() {
     try {
       const win = this.styleWindow;
-      const text = win
-        .getSelection()
-        .toString()
-        .trim();
+      const text = win.getSelection().toString().trim();
 
       clipboardHelper.copyString(text);
     } catch (e) {
@@ -1011,7 +1008,7 @@ PropertyView.prototype = {
     }
 
     const searchTerm = this.tree.searchField.value.toLowerCase();
-    const isValidSearchTerm = searchTerm.trim().length > 0;
+    const isValidSearchTerm = !!searchTerm.trim().length;
     if (
       isValidSearchTerm &&
       !this.name.toLowerCase().includes(searchTerm) &&
@@ -1260,10 +1257,11 @@ PropertyView.prototype = {
       const span = createChild(p, "span", {
         class: "rule-link",
       });
+
       const link = createChild(span, "a", {
         target: "_blank",
         class: "computed-link theme-link",
-        title: selector.href,
+        title: selector.longSource,
         sourcelocation: selector.source,
         tabindex: "0",
         textContent: selector.source,
@@ -1386,10 +1384,13 @@ function SelectorView(tree, selectorInfo) {
   const rule = this.selectorInfo.rule;
   if (!rule || !rule.parentStyleSheet || rule.type == ELEMENT_STYLE) {
     this.source = CssLogic.l10n("rule.sourceElement");
+    this.longSource = this.source;
   } else {
     // This always refers to the generated location.
     const sheet = rule.parentStyleSheet;
-    this.source = CssLogic.shortSource(sheet) + ":" + rule.line;
+    const sourceSuffix = rule.line > 0 ? ":" + rule.line : "";
+    this.source = CssLogic.shortSource(sheet) + sourceSuffix;
+    this.longSource = CssLogic.longSource(sheet) + sourceSuffix;
 
     this.generatedLocation = {
       sheet,
@@ -1399,8 +1400,7 @@ function SelectorView(tree, selectorInfo) {
     };
     this.sourceMapURLService = this.tree.inspector.toolbox.sourceMapURLService;
     this._unsubscribeCallback = this.sourceMapURLService.subscribeByID(
-      this.generatedLocation.sheet.resourceId ||
-        this.generatedLocation.sheet.actorID,
+      this.generatedLocation.sheet.resourceId,
       this.generatedLocation.line,
       this.generatedLocation.column,
       this._updateLocation
@@ -1550,7 +1550,7 @@ SelectorView.prototype = {
 
     const { sheet, line, column } = this.generatedLocation;
     if (ToolDefinitions.styleEditor.isToolSupported(inspector.toolbox)) {
-      inspector.toolbox.viewSourceInStyleEditorByFront(sheet, line, column);
+      inspector.toolbox.viewSourceInStyleEditorByResource(sheet, line, column);
     }
   },
 

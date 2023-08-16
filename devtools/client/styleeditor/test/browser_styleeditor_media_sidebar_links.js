@@ -9,13 +9,14 @@
 loader.lazyRequireGetter(
   this,
   "ResponsiveUIManager",
-  "devtools/client/responsive/manager"
+  "resource://devtools/client/responsive/manager.js"
 );
 
 const TESTCASE_URI = TEST_BASE_HTTPS + "media-rules.html";
 const responsiveModeToggleClass = ".media-responsive-mode-toggle";
 
-add_task(async function() {
+add_task(async function () {
+  await pushPref("layout.css.nesting.enabled", true);
   const { ui } = await openStyleEditorForURL(TESTCASE_URI);
 
   const editor = ui.editors[1];
@@ -29,14 +30,14 @@ add_task(async function() {
   const onMediaChange = waitForManyEvents(ui, 1000);
   await closeRDM(tab);
 
-  info("Wait for media-list-changed events to settle on StyleEditorUI");
+  info("Wait for at-rules-list-changed events to settle on StyleEditorUI");
   await onMediaChange;
   doFinalChecks(editor);
 });
 
 function testNumberOfLinks(editor) {
   const sidebar = editor.details.querySelector(".stylesheet-sidebar");
-  const conditions = sidebar.querySelectorAll(".media-rule-condition");
+  const conditions = sidebar.querySelectorAll(".at-rule-condition");
 
   info("Testing if media rules have the appropriate number of links");
   ok(
@@ -60,9 +61,9 @@ function testNumberOfLinks(editor) {
 
 async function testMediaLink(editor, tab, ui, itemIndex, type, value) {
   const sidebar = editor.details.querySelector(".stylesheet-sidebar");
-  let conditions = sidebar.querySelectorAll(".media-rule-condition");
+  let conditions = sidebar.querySelectorAll(".at-rule-condition");
 
-  const onMediaChange = once(ui, "media-list-changed");
+  const onMediaChange = once(ui, "at-rules-list-changed");
   const onRDMOpened = once(ui, "responsive-mode-opened");
 
   info("Launching responsive mode");
@@ -86,7 +87,7 @@ async function testMediaLink(editor, tab, ui, itemIndex, type, value) {
     ResponsiveUIManager.isActiveForTab(tab),
     "Responsive mode should be active."
   );
-  conditions = sidebar.querySelectorAll(".media-rule-condition");
+  conditions = sidebar.querySelectorAll(".at-rule-condition");
   ok(
     !conditions[itemIndex].classList.contains("media-condition-unmatched"),
     "media rule should now be matched after responsive mode is active"
@@ -98,8 +99,8 @@ async function testMediaLink(editor, tab, ui, itemIndex, type, value) {
 
 function doFinalChecks(editor) {
   const sidebar = editor.details.querySelector(".stylesheet-sidebar");
-  let conditions = sidebar.querySelectorAll(".media-rule-condition");
-  conditions = sidebar.querySelectorAll(".media-rule-condition");
+  let conditions = sidebar.querySelectorAll(".at-rule-condition");
+  conditions = sidebar.querySelectorAll(".at-rule-condition");
   ok(
     conditions[2].classList.contains("media-condition-unmatched"),
     "The width condition should now be unmatched"
@@ -127,7 +128,7 @@ function waitForResizeTo(rdmUI, type, value) {
 }
 
 function promiseContentReflow(ui) {
-  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function() {
+  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function () {
     return new Promise(resolve => {
       content.window.requestAnimationFrame(() => {
         content.window.requestAnimationFrame(resolve);
@@ -138,7 +139,7 @@ function promiseContentReflow(ui) {
 
 async function getSizing(rdmUI) {
   const browser = rdmUI.getViewportBrowser();
-  const sizing = await SpecialPowers.spawn(browser, [], async function() {
+  const sizing = await SpecialPowers.spawn(browser, [], async function () {
     return {
       width: content.innerWidth,
       height: content.innerHeight,

@@ -1,6 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
-/* import-globals-from ../../../shared/test/shared-head.js */
+
 /* exported promiseWaitForFocus, setup, ch, teardown, loadHelperScript,
             limit, ch, read, codemirrorSetStatus */
 
@@ -12,10 +12,10 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-const Editor = require("devtools/client/shared/sourceeditor/editor");
+const Editor = require("resource://devtools/client/shared/sourceeditor/editor.js");
 const {
   getClientCssProperties,
-} = require("devtools/client/fronts/css-properties");
+} = require("resource://devtools/client/fronts/css-properties.js");
 
 function promiseWaitForFocus(el) {
   return new Promise(resolve => waitForFocus(resolve, el));

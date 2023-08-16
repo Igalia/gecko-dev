@@ -8,15 +8,15 @@
 const {
   EVENTS,
   TEST_EVENTS,
-} = require("devtools/client/netmonitor/src/constants");
-const { CurlUtils } = require("devtools/client/shared/curl");
+} = require("resource://devtools/client/netmonitor/src/constants.js");
+const { CurlUtils } = require("resource://devtools/client/shared/curl.js");
 const {
   fetchHeaders,
-} = require("devtools/client/netmonitor/src/utils/request-utils");
+} = require("resource://devtools/client/netmonitor/src/utils/request-utils.js");
 
 const {
   getLongStringFullText,
-} = require("devtools/client/shared/string-utils");
+} = require("resource://devtools/client/shared/string-utils.js");
 
 /**
  * This object is responsible for fetching additional HTTP
@@ -71,9 +71,8 @@ class FirefoxDataProvider {
     this.getLongString = this.getLongString.bind(this);
 
     // Event handlers
-    this.onNetworkResourceAvailable = this.onNetworkResourceAvailable.bind(
-      this
-    );
+    this.onNetworkResourceAvailable =
+      this.onNetworkResourceAvailable.bind(this);
     this.onNetworkResourceUpdated = this.onNetworkResourceUpdated.bind(this);
 
     this.onWebSocketOpened = this.onWebSocketOpened.bind(this);
@@ -81,9 +80,8 @@ class FirefoxDataProvider {
     this.onFrameSent = this.onFrameSent.bind(this);
     this.onFrameReceived = this.onFrameReceived.bind(this);
 
-    this.onEventSourceConnectionClosed = this.onEventSourceConnectionClosed.bind(
-      this
-    );
+    this.onEventSourceConnectionClosed =
+      this.onEventSourceConnectionClosed.bind(this);
     this.onEventReceived = this.onEventReceived.bind(this);
     this.setEventStreamFlag = this.setEventStreamFlag.bind(this);
   }
@@ -403,11 +401,8 @@ class FirefoxDataProvider {
 
     // Check if a stacktrace resource already exists for this network resource.
     if (this.stackTraces.has(stacktraceResourceId)) {
-      const {
-        stacktraceAvailable,
-        lastFrame,
-        targetFront,
-      } = this.stackTraces.get(stacktraceResourceId);
+      const { stacktraceAvailable, lastFrame, targetFront } =
+        this.stackTraces.get(stacktraceResourceId);
 
       resource.cause.stacktraceAvailable = stacktraceAvailable;
       resource.cause.lastFrame = lastFrame;

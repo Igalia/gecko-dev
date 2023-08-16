@@ -5,8 +5,8 @@
 
 const appStartup = Services.startup;
 
-const { ResetProfile } = ChromeUtils.import(
-  "resource://gre/modules/ResetProfile.jsm"
+const { ResetProfile } = ChromeUtils.importESModule(
+  "resource://gre/modules/ResetProfile.sys.mjs"
 );
 
 var defaultToReset = false;
@@ -17,10 +17,7 @@ function restartApp() {
 
 function resetProfile() {
   // Set the reset profile environment variable.
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  env.set("MOZ_RESET_PROFILE_RESTART", "1");
+  Services.env.set("MOZ_RESET_PROFILE_RESTART", "1");
 }
 
 function showResetDialog() {

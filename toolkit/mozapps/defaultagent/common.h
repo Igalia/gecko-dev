@@ -7,6 +7,8 @@
 #ifndef __DEFAULT_BROWSER_AGENT_COMMON_H__
 #define __DEFAULT_BROWSER_AGENT_COMMON_H__
 
+#include "mozilla/WinHeaderOnlyUtils.h"
+
 #define AGENT_REGKEY_NAME \
   L"SOFTWARE\\" MOZ_APP_VENDOR "\\" MOZ_APP_BASENAME "\\Default Browser Agent"
 
@@ -17,5 +19,7 @@ ULONGLONG SecondsPassedSince(ULONGLONG initialTime, ULONGLONG currentTime = 0);
 
 using FilePathResult = mozilla::WindowsErrorResult<std::wstring>;
 FilePathResult GenerateUUIDStr();
+
+FilePathResult GetRelativeBinaryPath(const wchar_t* suffix);
 
 #endif  // __DEFAULT_BROWSER_AGENT_COMMON_H__

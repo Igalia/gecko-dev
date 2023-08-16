@@ -435,7 +435,19 @@ class nsTArray_base {
   // @return False if insufficient memory is available; true otherwise.
   template <typename ActualAlloc>
   typename ActualAlloc::ResultTypeProxy EnsureCapacity(size_type aCapacity,
-                                                       size_type aElemSize);
+                                                       size_type aElemSize) {
+    // Do this check here so that our callers can inline it.
+    if (aCapacity <= mHdr->mCapacity) {
+      return ActualAlloc::SuccessResult();
+    }
+    return EnsureCapacityImpl<ActualAlloc>(aCapacity, aElemSize);
+  }
+
+  // The rest of EnsureCapacity. Should only be called if aCapacity >
+  // mHdr->mCapacity.
+  template <typename ActualAlloc>
+  typename ActualAlloc::ResultTypeProxy EnsureCapacityImpl(size_type aCapacity,
+                                                           size_type aElemSize);
 
   // Extend the storage to accommodate aCount extra elements.
   // @param aLength The current size of the array.
@@ -2385,6 +2397,12 @@ class nsTArray_Impl
                      });
   }
 
+  // A variation on the StableSort method defined above that assumes that
+  // 'operator<' is defined for value_type.
+  void StableSort() {
+    StableSort(nsDefaultComparator<value_type, value_type>());
+  }
+
   // This method reverses the array in place.
   void Reverse() {
     value_type* elements = Elements();
@@ -3221,6 +3239,44 @@ Span(nsTArray_Impl<E, Alloc>&) -> Span<E>;
 
 template <typename E, class Alloc>
 Span(const nsTArray_Impl<E, Alloc>&) -> Span<const E>;
+
+// Provides a view on a nsTArray through which the existing array elements can
+// be accessed in a non-const way, but the array itself cannot be modified, so
+// that references to elements are guaranteed to be stable.
+template <typename E>
+class nsTArrayView {
+ public:
+  using element_type = E;
+  using pointer = element_type*;
+  using reference = element_type&;
+  using index_type = typename Span<element_type>::index_type;
+  using size_type = typename Span<element_type>::index_type;
+
+  explicit nsTArrayView(nsTArray<element_type> aArray)
+      : mArray(std::move(aArray)), mSpan(mArray) {}
+
+  element_type& operator[](index_type aIndex) { return mSpan[aIndex]; }
+
+  const element_type& operator[](index_type aIndex) const {
+    return mSpan[aIndex];
+  }
+
+  size_type Length() const { return mSpan.Length(); }
+
+  auto begin() { return mSpan.begin(); }
+  auto end() { return mSpan.end(); }
+  auto begin() const { return mSpan.begin(); }
+  auto end() const { return mSpan.end(); }
+  auto cbegin() const { return mSpan.cbegin(); }
+  auto cend() const { return mSpan.cend(); }
+
+  Span<element_type> AsSpan() { return mSpan; }
+  Span<const element_type> AsSpan() const { return mSpan; }
+
+ private:
+  nsTArray<element_type> mArray;
+  const Span<element_type> mSpan;
+};
 
 template <typename Range, typename = std::enable_if_t<std::is_same_v<
                               typename std::iterator_traits<

@@ -4,23 +4,21 @@
 
 "use strict";
 
-const Services = require("Services");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
-const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
 const BROWSERTOOLBOX_SCOPE_PREF = "devtools.browsertoolbox.scope";
 // Possible values of the previous pref:
 const BROWSERTOOLBOX_SCOPE_EVERYTHING = "everything";
 const BROWSERTOOLBOX_SCOPE_PARENTPROCESS = "parent-process";
 
 // eslint-disable-next-line mozilla/reject-some-requires
-const createStore = require("devtools/client/shared/redux/create-store");
-const reducer = require("devtools/shared/commands/target/reducers/targets");
+const createStore = require("resource://devtools/client/shared/redux/create-store.js");
+const reducer = require("resource://devtools/shared/commands/target/reducers/targets.js");
 
 loader.lazyRequireGetter(
   this,
   ["refreshTargets", "registerTarget", "unregisterTarget"],
-  "devtools/shared/commands/target/actions/targets",
+  "resource://devtools/shared/commands/target/actions/targets.js",
   true
 );
 
@@ -43,23 +41,25 @@ class TargetCommand extends EventEmitter {
    *
    * @param {DescriptorFront} descriptorFront
    *        The context to inspector identified by this descriptor.
+   * @param {WatcherFront} watcherFront
+   *        If available, a reference to the related Watcher Front.
    * @param {Object} commands
    *        The commands object with all interfaces defined from devtools/shared/commands/
    */
-  constructor({ descriptorFront, commands }) {
+  constructor({ descriptorFront, watcherFront, commands }) {
     super();
 
     this.commands = commands;
     this.descriptorFront = descriptorFront;
+    this.watcherFront = watcherFront;
     this.rootFront = descriptorFront.client.mainRoot;
 
     this.store = createStore(reducer);
     // Name of the store used when calling createProvider.
     this.storeId = "target-store";
 
-    this._updateBrowserToolboxScope = this._updateBrowserToolboxScope.bind(
-      this
-    );
+    this._updateBrowserToolboxScope =
+      this._updateBrowserToolboxScope.bind(this);
 
     Services.prefs.addObserver(
       BROWSERTOOLBOX_SCOPE_PREF,
@@ -67,9 +67,8 @@ class TargetCommand extends EventEmitter {
     );
     // Until Watcher actor notify about new top level target when navigating to another process
     // we have to manually switch to a new target from the client side
-    this.onLocalTabRemotenessChange = this.onLocalTabRemotenessChange.bind(
-      this
-    );
+    this.onLocalTabRemotenessChange =
+      this.onLocalTabRemotenessChange.bind(this);
     if (this.descriptorFront.isTabDescriptor) {
       this.descriptorFront.on(
         "remoteness-change",
@@ -101,6 +100,11 @@ class TargetCommand extends EventEmitter {
     this._onTargetAvailable = this._onTargetAvailable.bind(this);
     this._onTargetDestroyed = this._onTargetDestroyed.bind(this);
     this._onTargetSelected = this._onTargetSelected.bind(this);
+    // Bug 1675763: Watcher actor is not available in all situations yet.
+    if (this.watcherFront) {
+      this.watcherFront.on("target-available", this._onTargetAvailable);
+      this.watcherFront.on("target-destroyed", this._onTargetDestroyed);
+    }
 
     this.legacyImplementation = {};
 
@@ -135,12 +139,6 @@ class TargetCommand extends EventEmitter {
    * When disabled we will only watch for FRAME and WORKER and restrict ourself to parent process resources.
    */
   _updateBrowserToolboxScope() {
-    const fissionBrowserToolboxEnabled = Services.prefs.getBoolPref(
-      BROWSERTOOLBOX_FISSION_ENABLED
-    );
-    if (!fissionBrowserToolboxEnabled) {
-      return;
-    }
     const browserToolboxScope = Services.prefs.getCharPref(
       BROWSERTOOLBOX_SCOPE_PREF
     );
@@ -430,16 +428,6 @@ class TargetCommand extends EventEmitter {
    *          optional targetTypeOrTrait
    */
   hasTargetWatcherSupport(targetTypeOrTrait) {
-    // If we're in the browser console or browser toolbox and the browser
-    // toolbox fission pref is disabled, we don't want to use watchers
-    // (even if traits on the server are enabled).
-    if (
-      this.descriptorFront.isBrowserProcessDescriptor &&
-      !Services.prefs.getBoolPref(BROWSERTOOLBOX_FISSION_ENABLED, false)
-    ) {
-      return false;
-    }
-
     if (targetTypeOrTrait) {
       // Target types are also exposed as traits, where resource types are
       // exposed under traits.resources (cf hasResourceWatcherSupport
@@ -473,18 +461,6 @@ class TargetCommand extends EventEmitter {
       !this._gotFirstTopLevelTarget
     ) {
       await this._createFirstTarget();
-    }
-
-    // Cache the Watcher once for all, the first time we call `startListening()`.
-    // This `watcherFront` attribute may be then used in any function in TargetCommand or ResourceCommand after this.
-    if (!this.watcherFront) {
-      // Bug 1675763: Watcher actor is not available in all situations yet.
-      const supportsWatcher = this.descriptorFront.traits?.watcher;
-      if (supportsWatcher) {
-        this.watcherFront = await this.descriptorFront.getWatcher();
-        this.watcherFront.on("target-available", this._onTargetAvailable);
-        this.watcherFront.on("target-destroyed", this._onTargetDestroyed);
-      }
     }
 
     // If no pref are set to true, nor is listenForWorkers set to true,
@@ -570,16 +546,10 @@ class TargetCommand extends EventEmitter {
     ) {
       types = [TargetCommand.TYPES.FRAME];
     } else if (this.descriptorFront.isBrowserProcessDescriptor) {
-      const fissionBrowserToolboxEnabled = Services.prefs.getBoolPref(
-        BROWSERTOOLBOX_FISSION_ENABLED
-      );
       const browserToolboxScope = Services.prefs.getCharPref(
         BROWSERTOOLBOX_SCOPE_PREF
       );
-      if (
-        fissionBrowserToolboxEnabled &&
-        browserToolboxScope == BROWSERTOOLBOX_SCOPE_EVERYTHING
-      ) {
+      if (browserToolboxScope == BROWSERTOOLBOX_SCOPE_EVERYTHING) {
         types = TargetCommand.ALL_TYPES;
       }
     }
@@ -760,7 +730,7 @@ class TargetCommand extends EventEmitter {
     const unsupportedKeys = Object.keys(options).filter(
       key => !availableOptions.includes(key)
     );
-    if (unsupportedKeys.length > 0) {
+    if (unsupportedKeys.length) {
       throw new Error(
         `TargetCommand.watchTargets does not expect the following options: ${unsupportedKeys.join(
           ", "
@@ -861,7 +831,7 @@ class TargetCommand extends EventEmitter {
     const unsupportedKeys = Object.keys(options).filter(
       key => !availableOptions.includes(key)
     );
-    if (unsupportedKeys.length > 0) {
+    if (unsupportedKeys.length) {
       throw new Error(
         `TargetCommand.unwatchTargets does not expect the following options: ${unsupportedKeys.join(
           ", "
@@ -968,9 +938,12 @@ class TargetCommand extends EventEmitter {
     for (const target of targets) {
       // For still-attaching worker targets, the thread or console front may not yet be available,
       // whereas TargetMixin.getFront will throw if the actorID isn't available in targetForm.
+      // Also ignore destroyed targets. For some reason the previous methods fetching targets
+      // can sometime return destroyed targets.
       if (
         (frontType == "thread" && !target.targetForm.threadActor) ||
-        (frontType == "console" && !target.targetForm.consoleActor)
+        (frontType == "console" && !target.targetForm.consoleActor) ||
+        target.isDestroyed()
       ) {
         continue;
       }
@@ -997,7 +970,7 @@ class TargetCommand extends EventEmitter {
     // TabDescriptor may emit the event with a null targetFront, interpret that as if the previous target
     // has already been destroyed
     if (targetFront) {
-      // Wait for the target to be destroyed so that TabDescriptorFactory clears its memoized target for this tab
+      // Wait for the target to be destroyed so that LocalTabCommandsFactory clears its memoized target for this tab
       await targetFront.once("target-destroyed");
     }
 
@@ -1033,17 +1006,16 @@ class TargetCommand extends EventEmitter {
     // Wait for waitForNextResource completion before reloading, otherwise we might miss the dom-complete event.
     // This can happen if `ResourceCommand.watchResources` made by `waitForNextResource` is still pending
     // while the reload already started and finished loading the document early.
-    const {
-      onResource: onReloaded,
-    } = await this.commands.resourceCommand.waitForNextResource(
-      this.commands.resourceCommand.TYPES.DOCUMENT_EVENT,
-      {
-        ignoreExistingResources: true,
-        predicate(resource) {
-          return resource.name == "dom-complete";
-        },
-      }
-    );
+    const { onResource: onReloaded } =
+      await this.commands.resourceCommand.waitForNextResource(
+        this.commands.resourceCommand.TYPES.DOCUMENT_EVENT,
+        {
+          ignoreExistingResources: true,
+          predicate(resource) {
+            return resource.name == "dom-complete";
+          },
+        }
+      );
 
     await this.descriptorFront.reloadDescriptor({ bypassCache });
 
@@ -1180,22 +1152,22 @@ const LegacyTargetWatchers = {};
 loader.lazyRequireGetter(
   LegacyTargetWatchers,
   TargetCommand.TYPES.PROCESS,
-  "devtools/shared/commands/target/legacy-target-watchers/legacy-processes-watcher"
+  "resource://devtools/shared/commands/target/legacy-target-watchers/legacy-processes-watcher.js"
 );
 loader.lazyRequireGetter(
   LegacyTargetWatchers,
   TargetCommand.TYPES.WORKER,
-  "devtools/shared/commands/target/legacy-target-watchers/legacy-workers-watcher"
+  "resource://devtools/shared/commands/target/legacy-target-watchers/legacy-workers-watcher.js"
 );
 loader.lazyRequireGetter(
   LegacyTargetWatchers,
   TargetCommand.TYPES.SHARED_WORKER,
-  "devtools/shared/commands/target/legacy-target-watchers/legacy-sharedworkers-watcher"
+  "resource://devtools/shared/commands/target/legacy-target-watchers/legacy-sharedworkers-watcher.js"
 );
 loader.lazyRequireGetter(
   LegacyTargetWatchers,
   TargetCommand.TYPES.SERVICE_WORKER,
-  "devtools/shared/commands/target/legacy-target-watchers/legacy-serviceworkers-watcher"
+  "resource://devtools/shared/commands/target/legacy-target-watchers/legacy-serviceworkers-watcher.js"
 );
 
 module.exports = TargetCommand;

@@ -2,7 +2,7 @@
 //!
 //! [github]: https://img.shields.io/badge/github-8da0cb?style=for-the-badge&labelColor=555555&logo=github
 //! [crates-io]: https://img.shields.io/badge/crates.io-fc8d62?style=for-the-badge&labelColor=555555&logo=rust
-//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logoColor=white&logo=data:image/svg+xml;base64,PHN2ZyByb2xlPSJpbWciIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyIgdmlld0JveD0iMCAwIDUxMiA1MTIiPjxwYXRoIGZpbGw9IiNmNWY1ZjUiIGQ9Ik00ODguNiAyNTAuMkwzOTIgMjE0VjEwNS41YzAtMTUtOS4zLTI4LjQtMjMuNC0zMy43bC0xMDAtMzcuNWMtOC4xLTMuMS0xNy4xLTMuMS0yNS4zIDBsLTEwMCAzNy41Yy0xNC4xIDUuMy0yMy40IDE4LjctMjMuNCAzMy43VjIxNGwtOTYuNiAzNi4yQzkuMyAyNTUuNSAwIDI2OC45IDAgMjgzLjlWMzk0YzAgMTMuNiA3LjcgMjYuMSAxOS45IDMyLjJsMTAwIDUwYzEwLjEgNS4xIDIyLjEgNS4xIDMyLjIgMGwxMDMuOS01MiAxMDMuOSA1MmMxMC4xIDUuMSAyMi4xIDUuMSAzMi4yIDBsMTAwLTUwYzEyLjItNi4xIDE5LjktMTguNiAxOS45LTMyLjJWMjgzLjljMC0xNS05LjMtMjguNC0yMy40LTMzLjd6TTM1OCAyMTQuOGwtODUgMzEuOXYtNjguMmw4NS0zN3Y3My4zek0xNTQgMTA0LjFsMTAyLTM4LjIgMTAyIDM4LjJ2LjZsLTEwMiA0MS40LTEwMi00MS40di0uNnptODQgMjkxLjFsLTg1IDQyLjV2LTc5LjFsODUtMzguOHY3NS40em0wLTExMmwtMTAyIDQxLjQtMTAyLTQxLjR2LS42bDEwMi0zOC4yIDEwMiAzOC4ydi42em0yNDAgMTEybC04NSA0Mi41di03OS4xbDg1LTM4Ljh2NzUuNHptMC0xMTJsLTEwMiA0MS40LTEwMi00MS40di0uNmwxMDItMzguMiAxMDIgMzguMnYuNnoiPjwvcGF0aD48L3N2Zz4K
+//! [docs-rs]: https://img.shields.io/badge/docs.rs-66c2a5?style=for-the-badge&labelColor=555555&logo=docs.rs
 //!
 //! <br>
 //!
@@ -79,9 +79,20 @@
 //!     }
 //! };
 //! ```
+//!
+//! <br>
+//!
+//! # Non-macro code generators
+//!
+//! When using `quote` in a build.rs or main.rs and writing the output out to a
+//! file, consider having the code generator pass the tokens through
+//! [prettyplease] before writing. This way if an error occurs in the generated
+//! code it is convenient for a human to read and debug.
+//!
+//! [prettyplease]: https://github.com/dtolnay/prettyplease
 
 // Quote types in rustdoc of other crates get linked to here.
-#![doc(html_root_url = "https://docs.rs/quote/1.0.18")]
+#![doc(html_root_url = "https://docs.rs/quote/1.0.28")]
 #![allow(
     clippy::doc_markdown,
     clippy::missing_errors_doc,
@@ -91,10 +102,7 @@
     clippy::wrong_self_convention,
 )]
 
-#[cfg(all(
-    not(all(target_arch = "wasm32", target_os = "unknown")),
-    feature = "proc-macro"
-))]
+#[cfg(feature = "proc-macro")]
 extern crate proc_macro;
 
 mod ext;
@@ -486,7 +494,7 @@ macro_rules! quote {
     // Special case rule for a single tt, for performance.
     ($tt:tt) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        $crate::quote_token!($tt _s);
+        $crate::quote_token!{$tt _s}
         _s
     }};
 
@@ -498,15 +506,15 @@ macro_rules! quote {
     }};
     ($tt1:tt $tt2:tt) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        $crate::quote_token!($tt1 _s);
-        $crate::quote_token!($tt2 _s);
+        $crate::quote_token!{$tt1 _s}
+        $crate::quote_token!{$tt2 _s}
         _s
     }};
 
     // Rule for any other number of tokens.
     ($($tt:tt)*) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        $crate::quote_each_token!(_s $($tt)*);
+        $crate::quote_each_token!{_s $($tt)*}
         _s
     }};
 }
@@ -619,38 +627,38 @@ macro_rules! quote_spanned {
 #[macro_export]
 macro_rules! quote_spanned {
     ($span:expr=>) => {{
-        let _: $crate::__private::Span = $span;
+        let _: $crate::__private::Span = $crate::__private::get_span($span).__into_span();
         $crate::__private::TokenStream::new()
     }};
 
     // Special case rule for a single tt, for performance.
     ($span:expr=> $tt:tt) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        let _span: $crate::__private::Span = $span;
-        $crate::quote_token_spanned!($tt _s _span);
+        let _span: $crate::__private::Span = $crate::__private::get_span($span).__into_span();
+        $crate::quote_token_spanned!{$tt _s _span}
         _s
     }};
 
     // Special case rules for two tts, for performance.
     ($span:expr=> # $var:ident) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        let _: $crate::__private::Span = $span;
+        let _: $crate::__private::Span = $crate::__private::get_span($span).__into_span();
         $crate::ToTokens::to_tokens(&$var, &mut _s);
         _s
     }};
     ($span:expr=> $tt1:tt $tt2:tt) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        let _span: $crate::__private::Span = $span;
-        $crate::quote_token_spanned!($tt1 _s _span);
-        $crate::quote_token_spanned!($tt2 _s _span);
+        let _span: $crate::__private::Span = $crate::__private::get_span($span).__into_span();
+        $crate::quote_token_spanned!{$tt1 _s _span}
+        $crate::quote_token_spanned!{$tt2 _s _span}
         _s
     }};
 
     // Rule for any other number of tokens.
     ($span:expr=> $($tt:tt)*) => {{
         let mut _s = $crate::__private::TokenStream::new();
-        let _span: $crate::__private::Span = $span;
-        $crate::quote_each_token_spanned!(_s _span $($tt)*);
+        let _span: $crate::__private::Span = $crate::__private::get_span($span).__into_span();
+        $crate::quote_each_token_spanned!{_s _span $($tt)*}
         _s
     }};
 }
@@ -665,10 +673,10 @@ macro_rules! quote_spanned {
 #[doc(hidden)]
 macro_rules! pounded_var_names {
     ($call:ident! $extra:tt $($tts:tt)*) => {
-        $crate::pounded_var_names_with_context!($call! $extra
+        $crate::pounded_var_names_with_context!{$call! $extra
             (@ $($tts)*)
             ($($tts)* @)
-        )
+        }
     };
 }
 
@@ -677,7 +685,7 @@ macro_rules! pounded_var_names {
 macro_rules! pounded_var_names_with_context {
     ($call:ident! $extra:tt ($($b1:tt)*) ($($curr:tt)*)) => {
         $(
-            $crate::pounded_var_with_context!($call! $extra $b1 $curr);
+            $crate::pounded_var_with_context!{$call! $extra $b1 $curr}
         )*
     };
 }
@@ -686,15 +694,15 @@ macro_rules! pounded_var_names_with_context {
 #[doc(hidden)]
 macro_rules! pounded_var_with_context {
     ($call:ident! $extra:tt $b1:tt ( $($inner:tt)* )) => {
-        $crate::pounded_var_names!($call! $extra $($inner)*);
+        $crate::pounded_var_names!{$call! $extra $($inner)*}
     };
 
     ($call:ident! $extra:tt $b1:tt [ $($inner:tt)* ]) => {
-        $crate::pounded_var_names!($call! $extra $($inner)*);
+        $crate::pounded_var_names!{$call! $extra $($inner)*}
     };
 
     ($call:ident! $extra:tt $b1:tt { $($inner:tt)* }) => {
-        $crate::pounded_var_names!($call! $extra $($inner)*);
+        $crate::pounded_var_names!{$call! $extra $($inner)*}
     };
 
     ($call:ident!($($extra:tt)*) # $var:ident) => {
@@ -798,7 +806,7 @@ macro_rules! quote_bind_next_or_break {
 #[doc(hidden)]
 macro_rules! quote_each_token {
     ($tokens:ident $($tts:tt)*) => {
-        $crate::quote_tokens_with_context!($tokens
+        $crate::quote_tokens_with_context!{$tokens
             (@ @ @ @ @ @ $($tts)*)
             (@ @ @ @ @ $($tts)* @)
             (@ @ @ @ $($tts)* @ @)
@@ -806,7 +814,7 @@ macro_rules! quote_each_token {
             (@ @ $($tts)* @ @ @ @)
             (@ $($tts)* @ @ @ @ @)
             ($($tts)* @ @ @ @ @ @)
-        );
+        }
     };
 }
 
@@ -815,7 +823,7 @@ macro_rules! quote_each_token {
 #[doc(hidden)]
 macro_rules! quote_each_token_spanned {
     ($tokens:ident $span:ident $($tts:tt)*) => {
-        $crate::quote_tokens_with_context_spanned!($tokens $span
+        $crate::quote_tokens_with_context_spanned!{$tokens $span
             (@ @ @ @ @ @ $($tts)*)
             (@ @ @ @ @ $($tts)* @)
             (@ @ @ @ $($tts)* @ @)
@@ -823,7 +831,7 @@ macro_rules! quote_each_token_spanned {
             (@ @ $($tts)* @ @ @ @)
             (@ $($tts)* @ @ @ @ @)
             ($($tts)* @ @ @ @ @ @)
-        );
+        }
     };
 }
 
@@ -837,7 +845,7 @@ macro_rules! quote_tokens_with_context {
         ($($a1:tt)*) ($($a2:tt)*) ($($a3:tt)*)
     ) => {
         $(
-            $crate::quote_token_with_context!($tokens $b3 $b2 $b1 $curr $a1 $a2 $a3);
+            $crate::quote_token_with_context!{$tokens $b3 $b2 $b1 $curr $a1 $a2 $a3}
         )*
     };
 }
@@ -852,7 +860,7 @@ macro_rules! quote_tokens_with_context_spanned {
         ($($a1:tt)*) ($($a2:tt)*) ($($a3:tt)*)
     ) => {
         $(
-            $crate::quote_token_with_context_spanned!($tokens $span $b3 $b2 $b1 $curr $a1 $a2 $a3);
+            $crate::quote_token_with_context_spanned!{$tokens $span $b3 $b2 $b1 $curr $a1 $a2 $a3}
         )*
     };
 }
@@ -869,7 +877,7 @@ macro_rules! quote_token_with_context {
     ($tokens:ident $b3:tt $b2:tt $b1:tt (#) ( $($inner:tt)* ) * $a3:tt) => {{
         use $crate::__private::ext::*;
         let has_iter = $crate::__private::ThereIsNoIteratorInRepetition;
-        $crate::pounded_var_names!(quote_bind_into_iter!(has_iter) () $($inner)*);
+        $crate::pounded_var_names!{quote_bind_into_iter!(has_iter) () $($inner)*}
         let _: $crate::__private::HasIterator = has_iter;
         // This is `while true` instead of `loop` because if there are no
         // iterators used inside of this repetition then the body would not
@@ -878,8 +886,8 @@ macro_rules! quote_token_with_context {
         // fail to compile when there are no iterators, so here we just work
         // around the unneeded extra warning.
         while true {
-            $crate::pounded_var_names!(quote_bind_next_or_break!() () $($inner)*);
-            $crate::quote_each_token!($tokens $($inner)*);
+            $crate::pounded_var_names!{quote_bind_next_or_break!() () $($inner)*}
+            $crate::quote_each_token!{$tokens $($inner)*}
         }
     }};
     // ... and one step later.
@@ -892,15 +900,15 @@ macro_rules! quote_token_with_context {
         use $crate::__private::ext::*;
         let mut _i = 0usize;
         let has_iter = $crate::__private::ThereIsNoIteratorInRepetition;
-        $crate::pounded_var_names!(quote_bind_into_iter!(has_iter) () $($inner)*);
+        $crate::pounded_var_names!{quote_bind_into_iter!(has_iter) () $($inner)*}
         let _: $crate::__private::HasIterator = has_iter;
         while true {
-            $crate::pounded_var_names!(quote_bind_next_or_break!() () $($inner)*);
+            $crate::pounded_var_names!{quote_bind_next_or_break!() () $($inner)*}
             if _i > 0 {
-                $crate::quote_token!($sep $tokens);
+                $crate::quote_token!{$sep $tokens}
             }
             _i += 1;
-            $crate::quote_each_token!($tokens $($inner)*);
+            $crate::quote_each_token!{$tokens $($inner)*}
         }
     }};
     // ... and one step later.
@@ -911,7 +919,7 @@ macro_rules! quote_token_with_context {
     // repetition symbol and the second `*` is treated as an ordinary token.)
     ($tokens:ident # ( $($inner:tt)* ) * (*) $a1:tt $a2:tt $a3:tt) => {
         // https://github.com/dtolnay/quote/issues/130
-        $crate::quote_token!(* $tokens);
+        $crate::quote_token!{* $tokens}
     };
     // ... and one step later.
     ($tokens:ident # ( $($inner:tt)* ) $sep:tt (*) $a1:tt $a2:tt $a3:tt) => {};
@@ -925,7 +933,7 @@ macro_rules! quote_token_with_context {
 
     // An ordinary token, not part of any interpolation.
     ($tokens:ident $b3:tt $b2:tt $b1:tt ($curr:tt) $a1:tt $a2:tt $a3:tt) => {
-        $crate::quote_token!($curr $tokens);
+        $crate::quote_token!{$curr $tokens}
     };
 }
 
@@ -939,11 +947,11 @@ macro_rules! quote_token_with_context_spanned {
     ($tokens:ident $span:ident $b3:tt $b2:tt $b1:tt (#) ( $($inner:tt)* ) * $a3:tt) => {{
         use $crate::__private::ext::*;
         let has_iter = $crate::__private::ThereIsNoIteratorInRepetition;
-        $crate::pounded_var_names!(quote_bind_into_iter!(has_iter) () $($inner)*);
+        $crate::pounded_var_names!{quote_bind_into_iter!(has_iter) () $($inner)*}
         let _: $crate::__private::HasIterator = has_iter;
         while true {
-            $crate::pounded_var_names!(quote_bind_next_or_break!() () $($inner)*);
-            $crate::quote_each_token_spanned!($tokens $span $($inner)*);
+            $crate::pounded_var_names!{quote_bind_next_or_break!() () $($inner)*}
+            $crate::quote_each_token_spanned!{$tokens $span $($inner)*}
         }
     }};
     ($tokens:ident $span:ident $b3:tt $b2:tt # (( $($inner:tt)* )) * $a2:tt $a3:tt) => {};
@@ -953,22 +961,22 @@ macro_rules! quote_token_with_context_spanned {
         use $crate::__private::ext::*;
         let mut _i = 0usize;
         let has_iter = $crate::__private::ThereIsNoIteratorInRepetition;
-        $crate::pounded_var_names!(quote_bind_into_iter!(has_iter) () $($inner)*);
+        $crate::pounded_var_names!{quote_bind_into_iter!(has_iter) () $($inner)*}
         let _: $crate::__private::HasIterator = has_iter;
         while true {
-            $crate::pounded_var_names!(quote_bind_next_or_break!() () $($inner)*);
+            $crate::pounded_var_names!{quote_bind_next_or_break!() () $($inner)*}
             if _i > 0 {
-                $crate::quote_token_spanned!($sep $tokens $span);
+                $crate::quote_token_spanned!{$sep $tokens $span}
             }
             _i += 1;
-            $crate::quote_each_token_spanned!($tokens $span $($inner)*);
+            $crate::quote_each_token_spanned!{$tokens $span $($inner)*}
         }
     }};
     ($tokens:ident $span:ident $b3:tt $b2:tt # (( $($inner:tt)* )) $sep:tt * $a3:tt) => {};
     ($tokens:ident $span:ident $b3:tt # ( $($inner:tt)* ) ($sep:tt) * $a2:tt $a3:tt) => {};
     ($tokens:ident $span:ident # ( $($inner:tt)* ) * (*) $a1:tt $a2:tt $a3:tt) => {
         // https://github.com/dtolnay/quote/issues/130
-        $crate::quote_token_spanned!(* $tokens $span);
+        $crate::quote_token_spanned!{* $tokens $span}
     };
     ($tokens:ident $span:ident # ( $($inner:tt)* ) $sep:tt (*) $a1:tt $a2:tt $a3:tt) => {};
 
@@ -978,7 +986,7 @@ macro_rules! quote_token_with_context_spanned {
     ($tokens:ident $span:ident $b3:tt $b2:tt # ($var:ident) $a1:tt $a2:tt $a3:tt) => {};
 
     ($tokens:ident $span:ident $b3:tt $b2:tt $b1:tt ($curr:tt) $a1:tt $a2:tt $a3:tt) => {
-        $crate::quote_token_spanned!($curr $tokens $span);
+        $crate::quote_token_spanned!{$curr $tokens $span}
     };
 }
 

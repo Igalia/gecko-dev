@@ -13,10 +13,10 @@
 .meta {
   display: flex;
   align-items: center;
-  padding: 9px 16px;
+  padding: 0 16px 16px;
   border-bottom: 1px solid var(--in-content-border-color);
   background-color: var(--in-content-box-background);
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
   font-size: 0.8em;
 }
 
@@ -25,12 +25,9 @@
 }
 
 #login-sort {
-  background-color: transparent;
+  --logical-padding: 0px;
   margin: 0;
-  padding-inline: 0 16px;
-  min-height: initial;
-  font: inherit;
-  font-weight: 600;
+  background-color: transparent;
   color: var(--in-content-text-color) !important;
 }
 
@@ -50,6 +47,14 @@
 
 .container {
   display: contents;
+}
+
+.listHeader {
+  display: flex;
+  justify-content: center;
+  align-content: center;
+  gap: 16px;
+  padding: 16px;
 }
 
 :host(.no-logins) .empty-search-message,
@@ -82,21 +87,12 @@
 }
 
 ol {
+  outline-offset: var(--in-content-focus-outline-inset);
   margin-block: 0;
   padding-inline-start: 0;
   overflow: hidden auto;
   flex-grow: 1;
   scroll-padding-top: 24px; /* there is the section header that is sticky to the top */
-}
-
-.create-login-button {
-  margin: 16px;
-}
-
-.create-login-button-container {
-  border-top: 1px solid var(--in-content-border-color);
-  display: flex;
-  flex-direction: column;
 }
 
 .login-list-item {
@@ -117,6 +113,8 @@ ol {
   padding: 4px 16px;
   border-bottom: 1px solid var(--in-content-border-color);
   background-color: var(--in-content-box-background);
+  margin-block-start: 2px;
+  margin-inline: 2px;
 }
 
 .login-list-item:not(.selected):hover {
@@ -126,6 +124,7 @@ ol {
 
 .login-list-item:not(.selected):hover:active {
   background-color: var(--in-content-button-background-active);
+  color: var(--in-content-button-text-color-active);
 }
 
 .login-list-item.keyboard-selected {
@@ -170,7 +169,7 @@ ol {
 
 .username {
   font-size: 0.85em;
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
 }
 
 .alert-icon {

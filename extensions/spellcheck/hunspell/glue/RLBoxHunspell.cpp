@@ -4,9 +4,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/Assertions.h"
-#ifdef MOZ_WASM_SANDBOXING_HUNSPELL
-#  include "mozilla/ipc/LibrarySandboxPreload.h"
-#endif
 #include "RLBoxHunspell.h"
 #include "mozHunspellRLBoxGlue.h"
 #include "mozHunspellRLBoxHost.h"
@@ -31,24 +28,23 @@ RLBoxHunspell* RLBoxHunspell::Create(const nsCString& affpath,
                                      const nsCString& dpath) {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
 
-  mozilla::UniquePtr<rlbox_sandbox_hunspell, RLBoxDeleter> sandbox(
+  mozilla::UniquePtr<rlbox_sandbox_hunspell> sandbox(
       new rlbox_sandbox_hunspell());
 
 #if defined(MOZ_WASM_SANDBOXING_HUNSPELL) && !defined(HAVE_64BIT_BUILD)
   // By default, the rlbox sandbox size is smaller on 32-bit builds than the max
-  // 4GB We may need to ask for a larger sandbox size for hunspell to spellcheck
-  // in some locales See Bug 1739669 for more details
+  // 4GB. We may need to ask for a larger sandbox size for hunspell to
+  // spellcheck in some locales See Bug 1739669 for more details
 
-  const uint64_t defaultMaxSizeForSandbox =
-      wasm_rt_get_default_max_linear_memory_size();
-
-  // We first get the size of the dictionary
+  // We first get the size of the dictionary. This is actually the first read we
+  // try on dpath and it might fail for whatever filesystem reasons (invalid
+  // path, unaccessible, ...).
   Result<int64_t, nsresult> dictSizeResult =
       mozHunspellFileMgrHost::GetSize(dpath);
-  MOZ_RELEASE_ASSERT(dictSizeResult.isOk());
+  NS_ENSURE_TRUE(dictSizeResult.isOk(), nullptr);
 
   int64_t dictSize = dictSizeResult.unwrap();
-  MOZ_RELEASE_ASSERT(dictSize >= 0);
+  NS_ENSURE_TRUE(dictSize >= 0, nullptr);
 
   // Next, we compute the expected memory needed for hunspell spell checking.
   // This will vary based on the size of the dictionary file, which varies by
@@ -57,13 +53,12 @@ RLBoxHunspell* RLBoxHunspell::Create(const nsCString& affpath,
   // and bug 1739761 for the analysis behind this.
   const uint64_t expectedMaxMemory = static_cast<uint64_t>(4.8 * dictSize);
 
-  // If we expect a higher memory usage, override the defaults
-  // else stick with the defaults for the sandbox
-  const uint64_t selectedMaxMemory =
-      std::max(expectedMaxMemory, defaultMaxSizeForSandbox);
+  // Get a capacity of at least the expected size
+  const w2c_mem_capacity capacity = get_valid_wasm2c_memory_capacity(
+      expectedMaxMemory, true /* wasm's 32-bit memory */);
 
-  bool success = sandbox->create_sandbox(/* shouldAbortOnFailure = */ false,
-                                         selectedMaxMemory);
+  bool success =
+      sandbox->create_sandbox(/* shouldAbortOnFailure = */ false, &capacity);
 #elif defined(MOZ_WASM_SANDBOXING_HUNSPELL)
   bool success = sandbox->create_sandbox(/* shouldAbortOnFailure = */ false);
 #else
@@ -73,6 +68,9 @@ RLBoxHunspell* RLBoxHunspell::Create(const nsCString& affpath,
 
   NS_ENSURE_TRUE(success, nullptr);
 
+  mozilla::UniquePtr<rlbox_sandbox_hunspell, RLBoxDeleter> sandbox_initialized(
+      sandbox.release());
+
   // Add the aff and dict files to allow list
   if (!affpath.IsEmpty()) {
     mozHunspellCallbacks::AllowFile(affpath);
@@ -81,7 +79,8 @@ RLBoxHunspell* RLBoxHunspell::Create(const nsCString& affpath,
     mozHunspellCallbacks::AllowFile(dpath);
   }
 
-  return new RLBoxHunspell(std::move(sandbox), affpath, dpath);
+  // TODO Bug 1788857: Verify error handling in case of inaccessible file
+  return new RLBoxHunspell(std::move(sandbox_initialized), affpath, dpath);
 }
 
 RLBoxHunspell::RLBoxHunspell(
@@ -154,14 +153,26 @@ RLBoxHunspell::~RLBoxHunspell() {
   mozHunspellCallbacks::Clear();
 }
 
+// Invoking hunspell with words larger than a certain size will cause the
+// Hunspell sandbox to run out of memory. So we pick an arbitrary limit of
+// 200000 here to ensure this doesn't happen.
+static const size_t gWordSizeLimit = 200000;
+
 int RLBoxHunspell::spell(const std::string& stdWord) {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
+
+  const int ok = 1;
+
+  if (stdWord.length() >= gWordSizeLimit) {
+    // Fail gracefully assuming the word is spelt correctly
+    return ok;
+  }
+
   // Copy word into the sandbox
   tainted_hunspell<char*> t_word = allocStrInSandbox(*mSandbox, stdWord);
   if (!t_word) {
     // Ran out of memory in the hunspell sandbox
     // Fail gracefully assuming the word is spelt correctly
-    const int ok = 1;
     return ok;
   }
 
@@ -183,6 +194,11 @@ const std::string& RLBoxHunspell::get_dict_encoding() const {
 // sandbox, we return empty suggestion list
 std::vector<std::string> RLBoxHunspell::suggest(const std::string& stdWord) {
   MOZ_DIAGNOSTIC_ASSERT(NS_IsMainThread());
+
+  if (stdWord.length() >= gWordSizeLimit) {
+    return {};
+  }
+
   // Copy word into the sandbox
   tainted_hunspell<char*> t_word = allocStrInSandbox(*mSandbox, stdWord);
   if (!t_word) {

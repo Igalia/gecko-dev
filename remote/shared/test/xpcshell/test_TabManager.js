@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { TabManager } = ChromeUtils.import(
-  "chrome://remote/content/shared/TabManager.jsm"
+const { TabManager } = ChromeUtils.importESModule(
+  "chrome://remote/content/shared/TabManager.sys.mjs"
 );
 
 class MockTopBrowsingContext {
@@ -43,4 +43,14 @@ add_task(async function test_getIdForBrowsingContext() {
     TabManager.getIdForBrowsingContext(mockTopBrowsingContext),
     TabManager.getIdForBrowser(browser)
   );
+});
+
+add_task(async function test_removeTab() {
+  // Tab not defined.
+  await TabManager.removeTab(null);
+});
+
+add_task(async function test_selectTab() {
+  // Tab not defined.
+  await TabManager.selectTab(null);
 });

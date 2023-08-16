@@ -281,7 +281,7 @@ class CycleCollectedJSRuntime {
                               const JS::GCDescription& aDesc);
   static void GCNurseryCollectionCallback(JSContext* aContext,
                                           JS::GCNurseryProgress aProgress,
-                                          JS::GCReason aReason);
+                                          JS::GCReason aReason, void* data);
   static void OutOfMemoryCallback(JSContext* aContext, void* aData);
 
   static bool ContextCallback(JSContext* aCx, unsigned aOperation, void* aData);
@@ -343,6 +343,10 @@ class CycleCollectedJSRuntime {
   };
 
   const char* OOMStateToString(const OOMState aOomState) const;
+
+  // Returns true if OOM was reported and a new successful GC cycle hasn't
+  // occurred since.
+  bool OOMReported();
 
   void SetLargeAllocationFailure(OOMState aNewState);
 
@@ -446,7 +450,6 @@ class CycleCollectedJSRuntime {
   bool mHasPendingIdleGCTask;
 
   JS::GCSliceCallback mPrevGCSliceCallback;
-  JS::GCNurseryCollectionCallback mPrevGCNurseryCollectionCallback;
 
   mozilla::TimeStamp mLatestNurseryCollectionStart;
 

@@ -42,32 +42,50 @@ add_task(async () => {
         subtitles,
         pause,
         mute,
+        fullscreenEnter,
+        fullscreenExit,
       ] = l10n.formatMessagesSync([
         {
-          id: "pictureinpicture-close-cmd",
+          id: "pictureinpicture-close-btn",
           args: {
             shortcut: ShortcutUtils.prettifyShortcut(
               pipWin.document.getElementById("closeShortcut")
             ),
           },
         },
-        { id: "pictureinpicture-play-cmd" },
+        { id: "pictureinpicture-play-btn" },
         {
-          id: "pictureinpicture-unmute-cmd",
+          id: "pictureinpicture-unmute-btn",
           args: {
             shortcut: ShortcutUtils.prettifyShortcut(
               pipWin.document.getElementById("unMuteShortcut")
             ),
           },
         },
-        { id: "pictureinpicture-unpip-cmd" },
-        { id: "pictureinpicture-subtitles-cmd" },
-        { id: "pictureinpicture-pause-cmd" },
+        { id: "pictureinpicture-unpip-btn" },
+        { id: "pictureinpicture-subtitles-btn" },
+        { id: "pictureinpicture-pause-btn" },
         {
-          id: "pictureinpicture-mute-cmd",
+          id: "pictureinpicture-mute-btn",
           args: {
             shortcut: ShortcutUtils.prettifyShortcut(
               pipWin.document.getElementById("muteShortcut")
+            ),
+          },
+        },
+        {
+          id: "pictureinpicture-fullscreen-btn2",
+          args: {
+            shortcut: ShortcutUtils.prettifyShortcut(
+              pipWin.document.getElementById("fullscreenToggleShortcut")
+            ),
+          },
+        },
+        {
+          id: "pictureinpicture-exit-fullscreen-btn2",
+          args: {
+            shortcut: ShortcutUtils.prettifyShortcut(
+              pipWin.document.getElementById("fullscreenToggleShortcut")
             ),
           },
         },
@@ -78,12 +96,13 @@ add_task(async () => {
       let unpipButton = pipWin.document.getElementById("unpip");
       let muteUnmuteButton = pipWin.document.getElementById("audio");
       let subtitlesButton = pipWin.document.getElementById("closed-caption");
+      let fullscreenButton = pipWin.document.getElementById("fullscreen");
 
       // checks hover title for close button
       await pipWin.document.l10n.translateFragment(closeButton);
       Assert.equal(
         close.attributes[1].value,
-        closeButton.title,
+        closeButton.getAttribute("tooltip"),
         "The close button title matches Fluent string"
       );
 
@@ -91,7 +110,7 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(playPauseButton);
       Assert.equal(
         pause.attributes[1].value,
-        playPauseButton.title,
+        playPauseButton.getAttribute("tooltip"),
         "The play button title matches Fluent string"
       );
 
@@ -99,7 +118,7 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(unpipButton);
       Assert.equal(
         unpip.attributes[1].value,
-        unpipButton.title,
+        unpipButton.getAttribute("tooltip"),
         "The unpip button title matches Fluent string"
       );
 
@@ -107,7 +126,7 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(subtitlesButton);
       Assert.equal(
         subtitles.attributes[1].value,
-        subtitlesButton.title,
+        subtitlesButton.getAttribute("tooltip"),
         "The subtitles button title matches Fluent string"
       );
 
@@ -115,7 +134,7 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(muteUnmuteButton);
       Assert.equal(
         mute.attributes[1].value,
-        muteUnmuteButton.title,
+        muteUnmuteButton.getAttribute("tooltip"),
         "The Unmute button title matches Fluent string"
       );
 
@@ -129,7 +148,7 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(playPauseButton);
       Assert.equal(
         play.attributes[1].value,
-        playPauseButton.title,
+        playPauseButton.getAttribute("tooltip"),
         "The pause button title matches Fluent string"
       );
 
@@ -143,8 +162,29 @@ add_task(async () => {
       await pipWin.document.l10n.translateFragment(muteUnmuteButton);
       Assert.equal(
         unmute.attributes[1].value,
-        muteUnmuteButton.title,
+        muteUnmuteButton.getAttribute("tooltip"),
         "The mute button title matches Fluent string"
+      );
+
+      // checks hover title for enter fullscreen button
+      await pipWin.document.l10n.translateFragment(fullscreenButton);
+      Assert.equal(
+        fullscreenEnter.attributes[1].value,
+        fullscreenButton.getAttribute("tooltip"),
+        "The enter fullscreen button title matches Fluent string"
+      );
+
+      // enable fullscreen
+      await promiseFullscreenEntered(pipWin, async () => {
+        EventUtils.synthesizeMouseAtCenter(fullscreenButton, {}, pipWin);
+      });
+
+      // checks hover title for exit fullscreen button
+      await pipWin.document.l10n.translateFragment(fullscreenButton);
+      Assert.equal(
+        fullscreenExit.attributes[1].value,
+        fullscreenButton.getAttribute("tooltip"),
+        "The exit fullscreen button title matches Fluent string"
       );
     }
   );

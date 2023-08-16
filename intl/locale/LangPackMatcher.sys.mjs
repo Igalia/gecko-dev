@@ -1,17 +1,12 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
-"use strict";
-
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
 });
 
 if (Services.appinfo.processType !== Services.appinfo.PROCESS_TYPE_DEFAULT) {
@@ -55,11 +50,19 @@ async function negotiateLangPackForLanguageMismatch() {
    * @type {LangPack | null}
    */
   const langPack =
-    // First look for a langpack that matches the baseName.
+    // First look for a langpack that matches the baseName, which may include a script.
     // e.g. system "fr-FR" matches langpack "fr-FR"
     //      system "en-GB" matches langpack "en-GB".
+    //      system "zh-Hant-CN" matches langpack "zh-Hant-CN".
     availableLangpacks.find(
       ({ target_locale }) => target_locale === localeInfo.systemLocale.baseName
+    ) ||
+    // Next try matching language and region while excluding script
+    // e.g. system "zh-Hant-TW" matches langpack "zh-TW" but not "zh-CN".
+    availableLangpacks.find(
+      ({ target_locale }) =>
+        target_locale ===
+        `${localeInfo.systemLocale.language}-${localeInfo.systemLocale.region}`
     ) ||
     // Next look for langpacks that just match the language.
     // e.g. system "fr-FR" matches langpack "fr".
@@ -151,7 +154,7 @@ const mockable = {
     try {
       return lazy.AddonRepository.getAvailableLangpacks();
     } catch (error) {
-      Cu.reportError(
+      console.error(
         `Failed to get the list of available language packs: ${error?.message}`
       );
       return null;
@@ -172,14 +175,14 @@ const mockable = {
         },
       });
     } catch (error) {
-      Cu.reportError(error);
+      console.error(error);
       return false;
     }
 
     try {
       await install.install();
     } catch (error) {
-      Cu.reportError(error);
+      console.error(error);
       return false;
     }
     return true;

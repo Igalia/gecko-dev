@@ -4,68 +4,62 @@
 
 "use strict";
 
-const Services = require("Services");
-const flags = require("devtools/shared/flags");
-const { l10n } = require("devtools/shared/inspector/css-logic");
+const flags = require("resource://devtools/shared/flags.js");
+const { l10n } = require("resource://devtools/shared/inspector/css-logic.js");
 const {
   style: { ELEMENT_STYLE },
-} = require("devtools/shared/constants");
-const { PSEUDO_CLASSES } = require("devtools/shared/css/constants");
-const OutputParser = require("devtools/client/shared/output-parser");
-const { PrefObserver } = require("devtools/client/shared/prefs");
-const ElementStyle = require("devtools/client/inspector/rules/models/element-style");
-const RuleEditor = require("devtools/client/inspector/rules/views/rule-editor");
-const TooltipsOverlay = require("devtools/client/inspector/shared/tooltips-overlay");
+} = require("resource://devtools/shared/constants.js");
+const {
+  PSEUDO_CLASSES,
+} = require("resource://devtools/shared/css/constants.js");
+const OutputParser = require("resource://devtools/client/shared/output-parser.js");
+const { PrefObserver } = require("resource://devtools/client/shared/prefs.js");
+const ElementStyle = require("resource://devtools/client/inspector/rules/models/element-style.js");
+const RuleEditor = require("resource://devtools/client/inspector/rules/views/rule-editor.js");
+const TooltipsOverlay = require("resource://devtools/client/inspector/shared/tooltips-overlay.js");
 const {
   createChild,
   promiseWarn,
-} = require("devtools/client/inspector/shared/utils");
-const { debounce } = require("devtools/shared/debounce");
-const EventEmitter = require("devtools/shared/event-emitter");
-const DOUBLESPACE = "  ";
+} = require("resource://devtools/client/inspector/shared/utils.js");
+const { debounce } = require("resource://devtools/shared/debounce.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
 loader.lazyRequireGetter(
   this,
   ["flashElementOn", "flashElementOff"],
-  "devtools/client/inspector/markup/utils",
+  "resource://devtools/client/inspector/markup/utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "ClassListPreviewer",
-  "devtools/client/inspector/rules/views/class-list-previewer"
+  "resource://devtools/client/inspector/rules/views/class-list-previewer.js"
 );
 loader.lazyRequireGetter(
   this,
-  "getNodeInfo",
-  "devtools/client/inspector/rules/utils/utils",
-  true
-);
-loader.lazyRequireGetter(
-  this,
-  "getNodeCompatibilityInfo",
-  "devtools/client/inspector/rules/utils/utils",
+  ["getNodeInfo", "getNodeCompatibilityInfo", "getRuleFromNode"],
+  "resource://devtools/client/inspector/rules/utils/utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "StyleInspectorMenu",
-  "devtools/client/inspector/shared/style-inspector-menu"
+  "resource://devtools/client/inspector/shared/style-inspector-menu.js"
 );
 loader.lazyRequireGetter(
   this,
   "AutocompletePopup",
-  "devtools/client/shared/autocomplete-popup"
+  "resource://devtools/client/shared/autocomplete-popup.js"
 );
 loader.lazyRequireGetter(
   this,
   "KeyShortcuts",
-  "devtools/client/shared/key-shortcuts"
+  "resource://devtools/client/shared/key-shortcuts.js"
 );
 loader.lazyRequireGetter(
   this,
   "clipboardHelper",
-  "devtools/shared/platform/clipboard"
+  "resource://devtools/shared/platform/clipboard.js"
 );
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -156,12 +150,10 @@ function CssRuleView(inspector, document, store) {
   this._onTogglePseudoClassPanel = this._onTogglePseudoClassPanel.bind(this);
   this._onTogglePseudoClass = this._onTogglePseudoClass.bind(this);
   this._onToggleClassPanel = this._onToggleClassPanel.bind(this);
-  this._onToggleLightColorSchemeSimulation = this._onToggleLightColorSchemeSimulation.bind(
-    this
-  );
-  this._onToggleDarkColorSchemeSimulation = this._onToggleDarkColorSchemeSimulation.bind(
-    this
-  );
+  this._onToggleLightColorSchemeSimulation =
+    this._onToggleLightColorSchemeSimulation.bind(this);
+  this._onToggleDarkColorSchemeSimulation =
+    this._onToggleDarkColorSchemeSimulation.bind(this);
   this._onTogglePrintSimulation = this._onTogglePrintSimulation.bind(this);
   this.highlightElementRule = this.highlightElementRule.bind(this);
   this.highlightProperty = this.highlightProperty.bind(this);
@@ -239,9 +231,8 @@ function CssRuleView(inspector, document, store) {
 
   this._handlePrefChange = this._handlePrefChange.bind(this);
   this._handleUAStylePrefChange = this._handleUAStylePrefChange.bind(this);
-  this._handleDefaultColorUnitPrefChange = this._handleDefaultColorUnitPrefChange.bind(
-    this
-  );
+  this._handleDefaultColorUnitPrefChange =
+    this._handleDefaultColorUnitPrefChange.bind(this);
   this._handleDraggablePrefChange = this._handleDraggablePrefChange.bind(this);
 
   this._prefObserver = new PrefObserver("devtools.");
@@ -251,6 +242,8 @@ function CssRuleView(inspector, document, store) {
     this._handleDefaultColorUnitPrefChange
   );
   this._prefObserver.on(PREF_DRAGGABLE, this._handleDraggablePrefChange);
+  // Initialize value of this.draggablePropertiesEnabled
+  this._handleDraggablePrefChange();
 
   this.pseudoClassCheckboxes = this._createPseudoClassCheckboxes();
   this.showUserAgentStyles = Services.prefs.getBoolPref(PREF_UA_STYLES);
@@ -416,31 +409,55 @@ CssRuleView.prototype = {
    *
    * @param {MouseEvent} event
    */
-  handleClickEvent(event) {
+  async handleClickEvent(event) {
     const target = event.target;
 
     // Handle click on the icon next to a CSS selector.
     if (target.classList.contains("js-toggle-selector-highlighter")) {
-      this.toggleSelectorHighlighter(target.dataset.selector);
       event.stopPropagation();
+      let selector = target.dataset.computedSelector;
+      // dataset.computedSelector will be initially empty for inline styles (inherited or not)
+      // Rules associated with a regular selector should have this data-attribute
+      // set in devtools/client/inspector/rules/views/rule-editor.js
+      if (selector === "") {
+        try {
+          const rule = getRuleFromNode(target, this._elementStyle);
+          if (rule.inherited) {
+            // This is an inline style from an inherited rule. Need to resolve the
+            // unique selector from the node which this rule is inherited from.
+            selector = await rule.inherited.getUniqueSelector();
+          } else {
+            // This is an inline style from the current node.
+            selector =
+              await this.inspector.selection.nodeFront.getUniqueSelector();
+          }
+
+          // Now that the selector was computed, we can store it for subsequent usage.
+          target.dataset.computedSelector = selector;
+        } finally {
+          // Could not resolve a unique selector for the inline style.
+        }
+      }
+
+      this.toggleSelectorHighlighter(selector);
     }
 
     // Handle click on swatches next to flex and inline-flex CSS properties
     if (target.classList.contains("js-toggle-flexbox-highlighter")) {
+      event.stopPropagation();
       this.inspector.highlighters.toggleFlexboxHighlighter(
         this.inspector.selection.nodeFront,
         "rule"
       );
-      event.stopPropagation();
     }
 
     // Handle click on swatches next to grid CSS properties
     if (target.classList.contains("js-toggle-grid-highlighter")) {
+      event.stopPropagation();
       this.inspector.highlighters.toggleGridHighlighter(
         this.inspector.selection.nodeFront,
         "rule"
       );
-      event.stopPropagation();
     }
   },
 
@@ -466,7 +483,7 @@ CssRuleView.prototype = {
             return;
           }
 
-          const query = `.js-toggle-selector-highlighter[data-selector='${selector}']`;
+          const query = `.js-toggle-selector-highlighter[data-computed-selector='${selector}']`;
           for (const node of this.styleDocument.querySelectorAll(query)) {
             node.classList.toggle(
               "highlighted",
@@ -515,27 +532,27 @@ CssRuleView.prototype = {
   },
 
   /**
-   * Enables the print and color scheme simulation if they are supported in the
-   * current target.
+   * Enables the print and color scheme simulation only for local and remote tab debugging.
    */
   async _initSimulationFeatures() {
-    if (!this.currentTarget.chrome) {
-      this.colorSchemeLightSimulationButton.removeAttribute("hidden");
-      this.colorSchemeDarkSimulationButton.removeAttribute("hidden");
-      this.printSimulationButton.removeAttribute("hidden");
-      this.printSimulationButton.addEventListener(
-        "click",
-        this._onTogglePrintSimulation
-      );
-      this.colorSchemeLightSimulationButton.addEventListener(
-        "click",
-        this._onToggleLightColorSchemeSimulation
-      );
-      this.colorSchemeDarkSimulationButton.addEventListener(
-        "click",
-        this._onToggleDarkColorSchemeSimulation
-      );
+    if (!this.inspector.commands.descriptorFront.isTabDescriptor) {
+      return;
     }
+    this.colorSchemeLightSimulationButton.removeAttribute("hidden");
+    this.colorSchemeDarkSimulationButton.removeAttribute("hidden");
+    this.printSimulationButton.removeAttribute("hidden");
+    this.printSimulationButton.addEventListener(
+      "click",
+      this._onTogglePrintSimulation
+    );
+    this.colorSchemeLightSimulationButton.addEventListener(
+      "click",
+      this._onToggleLightColorSchemeSimulation
+    );
+    this.colorSchemeDarkSimulationButton.addEventListener(
+      "click",
+      this._onToggleDarkColorSchemeSimulation
+    );
   },
 
   /**
@@ -638,9 +655,6 @@ CssRuleView.prototype = {
 
         // Remove any double newlines.
         text = text.replace(/(\r?\n)\r?\n/g, "$1");
-
-        // Replace 4 space indentation with 2 Spaces.
-        text = text.replace(/\ {4}/g, DOUBLESPACE);
       }
 
       clipboardHelper.copyString(text);
@@ -694,7 +708,7 @@ CssRuleView.prototype = {
   get isEditing() {
     return (
       this.tooltips.isEditing ||
-      this.element.querySelectorAll(".styleinspector-propertyeditor").length > 0
+      !!this.element.querySelectorAll(".styleinspector-propertyeditor").length
     );
   },
 
@@ -708,6 +722,10 @@ CssRuleView.prototype = {
   },
 
   _handleDraggablePrefChange() {
+    this.draggablePropertiesEnabled = Services.prefs.getBoolPref(
+      PREF_DRAGGABLE,
+      false
+    );
     // This event is consumed by text-property-editor instances in order to
     // update their draggable behavior. Preferences observer are costly, so
     // we are forwarding the preference update via the EventEmitter.
@@ -741,8 +759,7 @@ CssRuleView.prototype = {
       clearTimeout(this._filterChangedTimeout);
     }
 
-    const filterTimeout =
-      this.searchValue.length > 0 ? FILTER_CHANGED_TIMEOUT : 0;
+    const filterTimeout = this.searchValue.length ? FILTER_CHANGED_TIMEOUT : 0;
     this.searchClearButton.hidden = this.searchValue.length === 0;
 
     this._filterChangedTimeout = setTimeout(() => {
@@ -767,7 +784,8 @@ CssRuleView.prototype = {
             this.searchData.searchPropertyMatch[1]
           )[1];
         } else {
-          this.searchData.searchPropertyName = this.searchData.searchPropertyMatch[1];
+          this.searchData.searchPropertyName =
+            this.searchData.searchPropertyMatch[1];
         }
 
         if (FILTER_STRICT_RE.test(this.searchData.searchPropertyMatch[2])) {
@@ -776,7 +794,8 @@ CssRuleView.prototype = {
             this.searchData.searchPropertyMatch[2]
           )[1];
         } else {
-          this.searchData.searchPropertyValue = this.searchData.searchPropertyMatch[2];
+          this.searchData.searchPropertyValue =
+            this.searchData.searchPropertyMatch[2];
         }
 
         // Strict search for stylesheets will match the property line regex.
@@ -1479,9 +1498,12 @@ CssRuleView.prototype = {
       return false;
     }
 
+    const ancestorSelectors = element.querySelectorAll(
+      ".ruleview-rule-ancestor-selectorcontainer"
+    );
+
     let isHighlighted = false;
-    for (let i = 0; i < element.childNodes.length; i++) {
-      const child = element.childNodes[i];
+    for (const child of ancestorSelectors) {
       const dataText = child.innerText.toLowerCase();
       const matches = this.searchData.strictSearchValue
         ? dataText === this.searchData.strictSearchValue
@@ -1788,13 +1810,11 @@ CssRuleView.prototype = {
   },
 
   async _onToggleLightColorSchemeSimulation() {
-    const shouldSimulateLightScheme = this.colorSchemeLightSimulationButton.classList.toggle(
-      "checked"
-    );
+    const shouldSimulateLightScheme =
+      this.colorSchemeLightSimulationButton.classList.toggle("checked");
 
-    const darkColorSchemeEnabled = this.colorSchemeDarkSimulationButton.classList.contains(
-      "checked"
-    );
+    const darkColorSchemeEnabled =
+      this.colorSchemeDarkSimulationButton.classList.contains("checked");
     if (shouldSimulateLightScheme && darkColorSchemeEnabled) {
       this.colorSchemeDarkSimulationButton.classList.toggle("checked");
     }
@@ -1809,13 +1829,11 @@ CssRuleView.prototype = {
   },
 
   async _onToggleDarkColorSchemeSimulation() {
-    const shouldSimulateDarkScheme = this.colorSchemeDarkSimulationButton.classList.toggle(
-      "checked"
-    );
+    const shouldSimulateDarkScheme =
+      this.colorSchemeDarkSimulationButton.classList.toggle("checked");
 
-    const lightColorSchemeEnabled = this.colorSchemeLightSimulationButton.classList.contains(
-      "checked"
-    );
+    const lightColorSchemeEnabled =
+      this.colorSchemeLightSimulationButton.classList.contains("checked");
     if (shouldSimulateDarkScheme && lightColorSchemeEnabled) {
       this.colorSchemeLightSimulationButton.classList.toggle("checked");
     }

@@ -34,7 +34,7 @@ function test() {
       )
   );
   gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser);
-  BrowserTestUtils.loadURI(
+  BrowserTestUtils.loadURIString(
     gBrowser,
     TESTROOT + "installtrigger_frame.html?" + inner_url
   );
@@ -49,7 +49,7 @@ function install_ended(install, addon) {
   return addon.uninstall();
 }
 
-const finish_test = async function(count) {
+const finish_test = async function (count) {
   is(count, 1, "1 Add-on should have been successfully installed");
 
   PermissionTestUtils.remove("http://example.com", "install");

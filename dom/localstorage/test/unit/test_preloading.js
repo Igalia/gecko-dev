@@ -3,7 +3,7 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-async function testSteps() {
+add_task(async function testSteps() {
   const principals = [
     getPrincipal("http://example.com", {}),
     getPrincipal("http://example.com", { privateBrowsingId: 1 }),
@@ -73,7 +73,10 @@ async function testSteps() {
 
     info("Clearing origin");
 
-    let request = clearOrigin(principal, "default");
+    let request = clearOrigin(
+      principal,
+      principal.privateBrowsingId > 0 ? "private" : "default"
+    );
     await requestFinished(request);
 
     ok(
@@ -81,4 +84,4 @@ async function testSteps() {
       "Data is not preloaded after clearing origin"
     );
   }
-}
+});

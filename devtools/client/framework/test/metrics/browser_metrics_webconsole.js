@@ -12,7 +12,7 @@
 const TEST_URL =
   "data:text/html;charset=UTF-8,<div>Webconsole modules load test</div>";
 
-add_task(async function() {
+add_task(async function () {
   const toolbox = await openNewTabAndToolbox(TEST_URL, "webconsole");
   const toolboxBrowserLoader = toolbox.win.getBrowserLoaderForWindow();
 
@@ -29,7 +29,6 @@ add_task(async function() {
   const allowedDupes = [
     "@loader/unload.js",
     "@loader/options.js",
-    "chrome.js",
     "resource://devtools/client/webconsole/constants.js",
     "resource://devtools/client/webconsole/utils.js",
     "resource://devtools/client/webconsole/utils/messages.js",

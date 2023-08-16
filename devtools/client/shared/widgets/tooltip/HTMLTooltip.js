@@ -4,31 +4,30 @@
 
 "use strict";
 
-const Services = require("Services");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
 loader.lazyRequireGetter(
   this,
   "focusableSelector",
-  "devtools/client/shared/focus",
+  "resource://devtools/client/shared/focus.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "TooltipToggle",
-  "devtools/client/shared/widgets/tooltip/TooltipToggle",
+  "resource://devtools/client/shared/widgets/tooltip/TooltipToggle.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "listenOnce",
-  "devtools/shared/async-utils",
+  "resource://devtools/shared/async-utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "DevToolsUtils",
-  "devtools/shared/DevToolsUtils"
+  "resource://devtools/shared/DevToolsUtils.js"
 );
 
 const XUL_NS = "http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul";
@@ -285,7 +284,7 @@ const calculateHorizontalPosition = (
  * reference element (instead of the default for getBoundingClientRect which
  * is always the element's ownerDocument).
  */
-const getRelativeRect = function(node, relativeTo) {
+const getRelativeRect = function (node, relativeTo) {
   // getBoxQuads is a non-standard WebAPI which will not work on non-firefox
   // browser when running launchpad on Chrome.
   if (
@@ -561,10 +560,8 @@ HTMLTooltip.prototype = {
       if (this.preferredHeight === "auto") {
         this.container.style.height = "auto";
       }
-      ({
-        width: preferredWidth,
-        height: measuredHeight,
-      } = this._measureContainerSize());
+      ({ width: preferredWidth, height: measuredHeight } =
+        this._measureContainerSize());
     } else {
       const themeWidth = 2 * EXTRA_BORDER[this.type];
       preferredWidth = this.preferredWidth + themeWidth;
@@ -704,12 +701,8 @@ HTMLTooltip.prototype = {
       // etc...)
       // availWidth/Height are the dimensions available to applications
       // excluding all the OS reserved space
-      const {
-        availLeft,
-        availTop,
-        availHeight,
-        availWidth,
-      } = this.doc.defaultView.screen;
+      const { availLeft, availTop, availHeight, availWidth } =
+        this.doc.defaultView.screen;
       viewportRect = {
         top: availTop,
         right: availLeft + availWidth,
@@ -719,12 +712,8 @@ HTMLTooltip.prototype = {
         height: availHeight,
       };
 
-      const {
-        screenX,
-        screenY,
-        outerWidth,
-        outerHeight,
-      } = this.doc.defaultView;
+      const { screenX, screenY, outerWidth, outerHeight } =
+        this.doc.defaultView;
       windowRect = {
         top: screenY,
         right: screenX + outerWidth,
@@ -753,7 +742,8 @@ HTMLTooltip.prototype = {
         viewportRect.width += diffWidth;
       }
     } else {
-      viewportRect = windowRect = this.doc.documentElement.getBoundingClientRect();
+      viewportRect = windowRect =
+        this.doc.documentElement.getBoundingClientRect();
     }
 
     return { viewportRect, windowRect };
@@ -915,6 +905,13 @@ HTMLTooltip.prototype = {
   _isInTooltipContainer(node) {
     // Check if the target is the tooltip arrow.
     if (this.arrow && this.arrow === node) {
+      return true;
+    }
+
+    if (typeof node.closest == "function" && node.closest("menupopup")) {
+      // Ignore events from menupopup elements which will not be children of the
+      // tooltip container even if their owner element is in the tooltip.
+      // See Bug 1811002.
       return true;
     }
 

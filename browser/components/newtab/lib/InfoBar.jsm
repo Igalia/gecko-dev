@@ -3,15 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.sys.mjs",
 });
 
 class InfoBarNotification {
@@ -156,9 +152,9 @@ const InfoBar = {
       return null;
     }
 
-    const win = browser.ownerGlobal;
+    const win = browser?.ownerGlobal;
 
-    if (lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
+    if (!win || lazy.PrivateBrowsingUtils.isWindowPrivate(win)) {
       return null;
     }
 

@@ -11,6 +11,7 @@
 #include "nsCOMPtr.h"
 #include "nsWrapperCache.h"
 #include "nsTArray.h"
+#include "mozilla/dom/TestInterfaceJSMaplikeSetlikeIterableBinding.h"
 
 class nsPIDOMWindowInner;
 
@@ -21,44 +22,57 @@ class ErrorResult;
 namespace dom {
 
 class GlobalObject;
+struct TestInterfaceAsyncIterableSingleOptions;
 
 // Implementation of test binding for webidl iterable interfaces, using
 // primitives for value type
-class TestInterfaceAsyncIterableSingle final : public nsISupports,
-                                               public nsWrapperCache {
+class TestInterfaceAsyncIterableSingle : public nsISupports,
+                                         public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(TestInterfaceAsyncIterableSingle)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(TestInterfaceAsyncIterableSingle)
 
-  explicit TestInterfaceAsyncIterableSingle(nsPIDOMWindowInner* aParent);
+  explicit TestInterfaceAsyncIterableSingle(nsPIDOMWindowInner* aParent,
+                                            bool aFailToInit = false);
   nsPIDOMWindowInner* GetParentObject() const;
   virtual JSObject* WrapObject(JSContext* aCx,
                                JS::Handle<JSObject*> aGivenProto) override;
   static already_AddRefed<TestInterfaceAsyncIterableSingle> Constructor(
-      const GlobalObject& aGlobal, ErrorResult& rv);
+      const GlobalObject& aGlobal,
+      const TestInterfaceAsyncIterableSingleOptions& aOptions, ErrorResult& rv);
 
   using Iterator = AsyncIterableIterator<TestInterfaceAsyncIterableSingle>;
-  void InitAsyncIterator(Iterator* aIterator);
-  void DestroyAsyncIterator(Iterator* aIterator);
-  already_AddRefed<Promise> GetNextPromise(JSContext* aCx, Iterator* aIterator,
-                                           ErrorResult& aRv);
+  already_AddRefed<Promise> GetNextIterationResult(Iterator* aIterator,
+                                                   ErrorResult& aRv);
+
+  struct IteratorData {
+    void Traverse(nsCycleCollectionTraversalCallback& cb);
+    void Unlink();
+
+    uint32_t mIndex = 0;
+    uint32_t mMultiplier = 1;
+    Sequence<OwningNonNull<Promise>> mBlockingPromises;
+    size_t mBlockingPromisesIndex = 0;
+    uint32_t mFailNextAfter = 4294967295;
+    bool mThrowFromNext = false;
+    RefPtr<TestThrowingCallback> mThrowFromReturn;
+  };
+
+  void InitAsyncIteratorData(IteratorData& aData, Iterator::IteratorType aType,
+                             ErrorResult& aError);
+
+ protected:
+  already_AddRefed<Promise> GetNextIterationResult(
+      IterableIteratorBase* aIterator, IteratorData& aData, ErrorResult& aRv);
+
+  virtual ~TestInterfaceAsyncIterableSingle() = default;
 
  private:
-  struct IteratorData {
-    explicit IteratorData(int32_t aIndex) : mIndex(aIndex) {}
-    ~IteratorData() {
-      if (mPromise) {
-        mPromise->MaybeReject(NS_ERROR_DOM_ABORT_ERR);
-        mPromise = nullptr;
-      }
-    }
-    RefPtr<Promise> mPromise;
-    uint32_t mIndex;
-  };
-  virtual ~TestInterfaceAsyncIterableSingle() = default;
-  void ResolvePromise(IteratorData* aData);
+  void ResolvePromise(IterableIteratorBase* aIterator, IteratorData& aData,
+                      Promise* aPromise);
 
   nsCOMPtr<nsPIDOMWindowInner> mParent;
+  bool mFailToInit;
 };
 
 }  // namespace dom

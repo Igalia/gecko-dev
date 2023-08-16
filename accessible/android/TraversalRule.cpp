@@ -9,7 +9,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/a11y/Accessible.h"
 
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "HTMLListAccessible.h"
 #include "SessionAccessibility.h"
 #include "nsAccUtils.h"
@@ -53,8 +53,7 @@ uint16_t TraversalRule::Match(Accessible* aAcc) {
     return result;
   }
 
-  auto opacity = aAcc->Opacity();
-  if (opacity && *opacity == 0.0f) {
+  if (aAcc->Opacity() == 0.0f) {
     return result | nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
   }
 
@@ -175,7 +174,6 @@ uint16_t TraversalRule::ControlMatch(Accessible* aAccessible) {
     case roles::SPINBUTTON:
     case roles::TOGGLE_BUTTON:
     case roles::BUTTONDROPDOWN:
-    case roles::BUTTONDROPDOWNGRID:
     case roles::COMBOBOX:
     case roles::LISTBOX:
     case roles::ENTRY:
@@ -235,7 +233,6 @@ uint16_t TraversalRule::DefaultMatch(Accessible* aAccessible) {
         return nsIAccessibleTraversalRule::FILTER_MATCH;
       }
       break;
-    case roles::HEADER:
     case roles::HEADING:
     case roles::COLUMNHEADER:
     case roles::ROWHEADER:
@@ -248,12 +245,6 @@ uint16_t TraversalRule::DefaultMatch(Accessible* aAccessible) {
       break;
     case roles::GRID_CELL:
       if (IsSingleLineage(aAccessible) || IsFlatSubtree(aAccessible)) {
-        return nsIAccessibleTraversalRule::FILTER_MATCH |
-               nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
-      }
-      break;
-    case roles::LISTITEM:
-      if (IsFlatSubtree(aAccessible) || IsSingleLineage(aAccessible)) {
         return nsIAccessibleTraversalRule::FILTER_MATCH |
                nsIAccessibleTraversalRule::FILTER_IGNORE_SUBTREE;
       }

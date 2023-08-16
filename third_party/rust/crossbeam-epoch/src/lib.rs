@@ -88,7 +88,6 @@ mod primitive {
         }
         pub(crate) use loom::sync::Arc;
     }
-    pub(crate) use loom::lazy_static;
     pub(crate) use loom::thread_local;
 }
 #[cfg(not(crossbeam_no_atomic_cas))]
@@ -108,7 +107,7 @@ mod primitive {
         // https://github.com/tokio-rs/loom#handling-loom-api-differences
         impl<T> UnsafeCell<T> {
             #[inline]
-            pub(crate) fn new(data: T) -> UnsafeCell<T> {
+            pub(crate) const fn new(data: T) -> UnsafeCell<T> {
                 UnsafeCell(::core::cell::UnsafeCell::new(data))
             }
 
@@ -135,9 +134,6 @@ mod primitive {
 
     #[cfg(feature = "std")]
     pub(crate) use std::thread_local;
-
-    #[cfg(feature = "std")]
-    pub(crate) use lazy_static::lazy_static;
 }
 
 #[cfg(not(crossbeam_no_atomic_cas))]

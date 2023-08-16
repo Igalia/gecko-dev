@@ -5,8 +5,13 @@ extern crate wgpu_hal as hal;
 use hal::{
     Adapter as _, CommandEncoder as _, Device as _, Instance as _, Queue as _, Surface as _,
 };
+use raw_window_handle::{HasRawDisplayHandle, HasRawWindowHandle};
 
-use std::{borrow::Borrow, iter, mem, num::NonZeroU32, ptr, time::Instant};
+use std::{
+    borrow::{Borrow, Cow},
+    iter, mem, ptr,
+    time::Instant,
+};
 
 const MAX_BUNNIES: usize = 1 << 20;
 const BUNNY_SIZE: f32 = 0.15 * 256.0;
@@ -89,9 +94,15 @@ impl<A: hal::Api> Example<A> {
             } else {
                 hal::InstanceFlags::empty()
             },
+            // Can't rely on having DXC available, so use FXC instead
+            dx12_shader_compiler: wgt::Dx12Compiler::Fxc,
         };
         let instance = unsafe { A::Instance::init(&instance_desc)? };
-        let mut surface = unsafe { instance.create_surface(window).unwrap() };
+        let mut surface = unsafe {
+            instance
+                .create_surface(window.raw_display_handle(), window.raw_window_handle())
+                .unwrap()
+        };
 
         let (adapter, capabilities) = unsafe {
             let mut adapters = instance.enumerate_adapters();
@@ -113,11 +124,12 @@ impl<A: hal::Api> Example<A> {
 
         let window_size: (u32, u32) = window.inner_size().into();
         let surface_config = hal::SurfaceConfiguration {
-            swap_chain_size: DESIRED_FRAMES
-                .max(*surface_caps.swap_chain_sizes.start())
-                .min(*surface_caps.swap_chain_sizes.end()),
+            swap_chain_size: DESIRED_FRAMES.clamp(
+                *surface_caps.swap_chain_sizes.start(),
+                *surface_caps.swap_chain_sizes.end(),
+            ),
             present_mode: wgt::PresentMode::Fifo,
-            composite_alpha_mode: hal::CompositeAlphaMode::Opaque,
+            composite_alpha_mode: wgt::CompositeAlphaMode::Opaque,
             format: wgt::TextureFormat::Bgra8UnormSrgb,
             extent: wgt::Extent3d {
                 width: window_size.0,
@@ -125,6 +137,7 @@ impl<A: hal::Api> Example<A> {
                 depth_or_array_layers: 1,
             },
             usage: hal::TextureUses::COLOR_TARGET,
+            view_formats: vec![],
         };
         unsafe {
             surface.configure(&device, &surface_config).unwrap();
@@ -136,14 +149,17 @@ impl<A: hal::Api> Example<A> {
                 .join("halmark")
                 .join("shader.wgsl");
             let source = std::fs::read_to_string(shader_file).unwrap();
-            let module = naga::front::wgsl::Parser::new().parse(&source).unwrap();
+            let module = naga::front::wgsl::Frontend::new().parse(&source).unwrap();
             let info = naga::valid::Validator::new(
                 naga::valid::ValidationFlags::all(),
                 naga::valid::Capabilities::empty(),
             )
             .validate(&module)
             .unwrap();
-            hal::NagaShader { module, info }
+            hal::NagaShader {
+                module: Cow::Owned(module),
+                info,
+            }
         };
         let shader_desc = hal::ShaderModuleDescriptor {
             label: None,
@@ -282,6 +298,7 @@ impl<A: hal::Api> Example<A> {
             format: wgt::TextureFormat::Rgba8UnormSrgb,
             usage: hal::TextureUses::COPY_DST | hal::TextureUses::RESOURCE,
             memory_flags: hal::MemoryFlags::empty(),
+            view_formats: vec![],
         };
         let texture = unsafe { device.create_texture(&texture_desc).unwrap() };
 
@@ -309,7 +326,7 @@ impl<A: hal::Api> Example<A> {
             let copy = hal::BufferTextureCopy {
                 buffer_layout: wgt::ImageDataLayout {
                     offset: 0,
-                    bytes_per_row: NonZeroU32::new(4),
+                    bytes_per_row: Some(4),
                     rows_per_image: None,
                 },
                 texture_base: hal::TextureCopyBase {
@@ -338,9 +355,9 @@ impl<A: hal::Api> Example<A> {
             mag_filter: wgt::FilterMode::Linear,
             min_filter: wgt::FilterMode::Nearest,
             mipmap_filter: wgt::FilterMode::Nearest,
-            lod_clamp: None,
+            lod_clamp: 0.0..32.0,
             compare: None,
-            anisotropy_clamp: None,
+            anisotropy_clamp: 1,
             border_color: None,
         };
         let sampler = unsafe { device.create_sampler(&sampler_desc).unwrap() };
@@ -378,7 +395,7 @@ impl<A: hal::Api> Example<A> {
             buffer
         };
 
-        let local_alignment = hal::auxil::align_to(
+        let local_alignment = wgt::math::align_to(
             mem::size_of::<Locals>() as u32,
             capabilities.limits.min_uniform_buffer_offset_alignment,
         );
@@ -734,26 +751,28 @@ impl<A: hal::Api> Example<A> {
     }
 }
 
-#[cfg(all(feature = "metal"))]
-type Api = hal::api::Metal;
-#[cfg(all(feature = "vulkan", not(feature = "metal")))]
-type Api = hal::api::Vulkan;
-#[cfg(all(feature = "gles", not(feature = "metal"), not(feature = "vulkan")))]
-type Api = hal::api::Gles;
-#[cfg(all(
-    feature = "dx12",
-    not(feature = "metal"),
-    not(feature = "vulkan"),
-    not(feature = "gles")
-))]
-type Api = hal::api::Dx12;
-#[cfg(not(any(
-    feature = "metal",
-    feature = "vulkan",
-    feature = "gles",
-    feature = "dx12"
-)))]
-type Api = hal::api::Empty;
+cfg_if::cfg_if! {
+    // Apple + Metal
+    if #[cfg(all(any(target_os = "macos", target_os = "ios"), feature = "metal"))] {
+        type Api = hal::api::Metal;
+    }
+    // Wasm + Vulkan
+    else if #[cfg(all(not(target_arch = "wasm32"), feature = "vulkan"))] {
+        type Api = hal::api::Vulkan;
+    }
+    // Windows + DX12
+    else if #[cfg(all(windows, feature = "dx12"))] {
+        type Api = hal::api::Dx12;
+    }
+    // Anything + GLES
+    else if #[cfg(feature = "gles")] {
+        type Api = hal::api::Gles;
+    }
+    // Fallback
+    else {
+        type Api = hal::api::Empty;
+    }
+}
 
 fn main() {
     env_logger::init();

@@ -31,7 +31,7 @@ add_task(async function test_update_preferences_ui() {
     "about:preferences"
   );
 
-  await SpecialPowers.spawn(tab.linkedBrowser, [], async function() {
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async function () {
     let setting = content.document.getElementById("updateSettingsContainer");
     is(
       setting.hidden,
@@ -55,6 +55,15 @@ add_task(async function test_update_about_ui() {
     aboutDialog.gAppUpdater.selectedPanel.id,
     panelId,
     "The About Dialog panel Id should equal " + panelId
+  );
+
+  // Make sure that we still remain on the "disabled by policy" panel after
+  // `AppUpdater.stop()` is called.
+  aboutDialog.gAppUpdater._appUpdater.stop();
+  is(
+    aboutDialog.gAppUpdater.selectedPanel.id,
+    panelId,
+    "The About Dialog panel Id should still equal " + panelId
   );
 
   aboutDialog.close();

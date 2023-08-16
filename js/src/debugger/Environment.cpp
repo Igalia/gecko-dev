@@ -13,17 +13,17 @@
 #include <string.h>  // for strlen, size_t
 #include <utility>   // for move
 
-#include "debugger/Debugger.h"          // for Env, Debugger, ValueToIdentifier
-#include "debugger/Object.h"            // for DebuggerObject
-#include "debugger/Script.h"            // for DebuggerScript
-#include "frontend/BytecodeCompiler.h"  // for IsIdentifier
+#include "debugger/Debugger.h"  // for Env, Debugger, ValueToIdentifier
+#include "debugger/Object.h"    // for DebuggerObject
+#include "debugger/Script.h"    // for DebuggerScript
 #include "gc/Tracer.h"    // for TraceManuallyBarrieredCrossCompartmentEdge
 #include "js/CallArgs.h"  // for CallArgs
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
 #include "js/HeapAPI.h"               // for IsInsideNursery
 #include "js/RootingAPI.h"            // for Rooted, MutableHandle
+#include "util/Identifier.h"          // for IsIdentifier
 #include "vm/Compartment.h"           // for Compartment
-#include "vm/JSAtom.h"                // for Atomize
+#include "vm/JSAtomUtils.h"           // for Atomize
 #include "vm/JSContext.h"             // for JSContext
 #include "vm/JSFunction.h"            // for JSFunction
 #include "vm/JSObject.h"              // for JSObject, RequireObject,
@@ -32,6 +32,7 @@
 #include "vm/Scope.h"                 // for ScopeKind, ScopeKindString
 #include "vm/StringType.h"            // for JSAtom
 
+#include "gc/StableCellHasher-inl.h"
 #include "vm/Compartment-inl.h"        // for Compartment::wrap
 #include "vm/EnvironmentObject-inl.h"  // for JSObject::enclosingEnvironment
 #include "vm/JSObject-inl.h"  // for IsInternalFunctionObject, NewObjectWithGivenProtoAndKind
@@ -44,7 +45,6 @@ class GlobalObject;
 
 using namespace js;
 
-using js::frontend::IsIdentifier;
 using mozilla::Maybe;
 using mozilla::Nothing;
 using mozilla::Some;
@@ -73,7 +73,9 @@ void DebuggerEnvironment::trace(JSTracer* trc) {
   if (Env* referent = maybeReferent()) {
     TraceManuallyBarrieredCrossCompartmentEdge(trc, this, &referent,
                                                "Debugger.Environment referent");
-    setReservedSlotGCThingAsPrivateUnbarriered(ENV_SLOT, referent);
+    if (referent != maybeReferent()) {
+      setReservedSlotGCThingAsPrivateUnbarriered(ENV_SLOT, referent);
+    }
   }
 }
 
@@ -90,17 +92,7 @@ static DebuggerEnvironment* DebuggerEnvironment_checkThis(
     return nullptr;
   }
 
-  // Forbid Debugger.Environment.prototype, which is of class
-  // DebuggerEnvironment::class_ but isn't a real working Debugger.Environment.
-  DebuggerEnvironment* nthisobj = &thisobj->as<DebuggerEnvironment>();
-  if (!nthisobj->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger.Environment",
-                              "method", "prototype object");
-    return nullptr;
-  }
-
-  return nthisobj;
+  return &thisobj->as<DebuggerEnvironment>();
 }
 
 struct MOZ_STACK_CLASS DebuggerEnvironment::CallData {
@@ -385,8 +377,8 @@ const JSFunctionSpec DebuggerEnvironment::methods_[] = {
 NativeObject* DebuggerEnvironment::initClass(JSContext* cx,
                                              Handle<GlobalObject*> global,
                                              HandleObject dbgCtor) {
-  return InitClass(cx, dbgCtor, nullptr, &DebuggerEnvironment::class_,
-                   construct, 0, properties_, methods_, nullptr, nullptr);
+  return InitClass(cx, dbgCtor, nullptr, nullptr, "Environment", construct, 0,
+                   properties_, methods_, nullptr, nullptr);
 }
 
 /* static */

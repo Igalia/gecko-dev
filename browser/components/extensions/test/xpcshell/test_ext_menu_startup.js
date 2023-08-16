@@ -1,19 +1,12 @@
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionParent",
-  "resource://gre/modules/ExtensionParent.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
+  Management: "resource://gre/modules/Extension.sys.mjs",
+});
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Management",
-  "resource://gre/modules/Extension.jsm"
-);
-
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 AddonTestUtils.init(this);
@@ -31,7 +24,7 @@ function getExtension(id, background, useAddonManager) {
   return ExtensionTestUtils.loadExtension({
     useAddonManager,
     manifest: {
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
       permissions: ["menus"],
       background: { persistent: false },
     },

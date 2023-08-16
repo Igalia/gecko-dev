@@ -19,12 +19,11 @@
           {
             "value": {
               "id": "test-experiment:treatment-a",
-              "groups": [
-                "backgroundTaskMessage"
-              ],
+              "groups": ["backgroundTaskMessage"],
               "content": {
                 "body": "Body A",
-                "title": "Treatment A"
+                "title": "Treatment A",
+                "tag": "should_be_overridden_a"
               },
               "trigger": {
                 "id": "backgroundTask"
@@ -53,9 +52,7 @@
           {
             "value": {
               "id": "test-experiment:treatment-b",
-              "groups": [
-                "backgroundTaskMessage"
-              ],
+              "groups": ["backgroundTaskMessage"],
               "content": {
                 "body": "Body B",
                 "title": "Treatment B"
@@ -82,9 +79,7 @@
     "probeSets": [],
     "startDate": null,
     "targeting": "('app.shield.optoutstudies.enabled'|preferenceValue) && (version|versionCompare('102.!') >= 0)",
-    "featureIds": [
-      "backgroundTaskMessage"
-    ],
+    "featureIds": ["backgroundTaskMessage"],
     "application": "firefox-desktop",
     "bucketConfig": {
       "count": 10000,

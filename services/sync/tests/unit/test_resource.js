@@ -1,12 +1,14 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { Observers } = ChromeUtils.import(
-  "resource://services-common/observers.js"
+const { Observers } = ChromeUtils.importESModule(
+  "resource://services-common/observers.sys.mjs"
 );
-const { Resource } = ChromeUtils.import("resource://services-sync/resource.js");
-const { SyncAuthManager } = ChromeUtils.import(
-  "resource://services-sync/sync_auth.js"
+const { Resource } = ChromeUtils.importESModule(
+  "resource://services-sync/resource.sys.mjs"
+);
+const { SyncAuthManager } = ChromeUtils.importESModule(
+  "resource://services-sync/sync_auth.sys.mjs"
 );
 
 var fetched = false;
@@ -162,14 +164,14 @@ function server_headers(metadata, response) {
 }
 
 var quotaValue;
-Observers.add("weave:service:quota:remaining", function(subject) {
+Observers.add("weave:service:quota:remaining", function (subject) {
   quotaValue = subject;
 });
 
 function run_test() {
   Log.repository.rootLogger.addAppender(new Log.DumpAppender());
 
-  Svc.Prefs.set("network.numRetries", 1); // speed up test
+  Svc.PrefBranch.setIntPref("network.numRetries", 1); // speed up test
   run_next_test();
 }
 
@@ -279,7 +281,7 @@ add_task(async function test_get() {
   let resLogger = res._log;
   let dbg = resLogger.debug;
   let debugMessages = [];
-  resLogger.debug = function(msg, extra) {
+  resLogger.debug = function (msg, extra) {
     debugMessages.push(`${msg}: ${JSON.stringify(extra)}`);
     dbg.call(this, msg);
   };
@@ -537,11 +539,7 @@ add_test(function test_uri_construction() {
     Ci.nsIURL
   );
   let uri2 = CommonUtils.makeURI("http://foo/").QueryInterface(Ci.nsIURL);
-  uri2 = uri2
-    .mutate()
-    .setQuery(query)
-    .finalize()
-    .QueryInterface(Ci.nsIURL);
+  uri2 = uri2.mutate().setQuery(query).finalize().QueryInterface(Ci.nsIURL);
   Assert.equal(uri1.query, uri2.query);
 
   run_next_test();

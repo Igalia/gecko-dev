@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "ServiceWorkerManager.h"
-#include "ServiceWorkerPrivateImpl.h"
 
 #include <algorithm>
 
@@ -469,10 +468,6 @@ void ServiceWorkerManager::Init(ServiceWorkerRegistrar* aRegistrar) {
 
   MOZ_DIAGNOSTIC_ASSERT(aRegistrar);
 
-  nsTArray<ServiceWorkerRegistrationData> data;
-  aRegistrar->GetRegistrations(data);
-  LoadRegistrations(data);
-
   PBackgroundChild* actorChild = BackgroundChild::GetOrCreateForCurrentThread();
   if (NS_WARN_IF(!actorChild)) {
     MaybeStartShutdown();
@@ -487,6 +482,12 @@ void ServiceWorkerManager::Init(ServiceWorkerRegistrar* aRegistrar) {
   }
 
   mActor = static_cast<ServiceWorkerManagerChild*>(actor);
+
+  // mActor must be set before LoadRegistrations is called because it can purge
+  // service workers if preferences are disabled.
+  nsTArray<ServiceWorkerRegistrationData> data;
+  aRegistrar->GetRegistrations(data);
+  LoadRegistrations(data);
 
   mTelemetryLastChange = TimeStamp::Now();
 }
@@ -702,7 +703,7 @@ void ServiceWorkerManager::MaybeFinishShutdown() {
   mActor = nullptr;
 
   // This also submits final telemetry
-  ServiceWorkerPrivateImpl::RunningShutdown();
+  ServiceWorkerPrivate::RunningShutdown();
 }
 
 class ServiceWorkerResolveWindowPromiseOnRegisterCallback final
@@ -1366,8 +1367,8 @@ ServiceWorkerManager::Unregister(nsIPrincipal* aPrincipal,
   NS_ConvertUTF16toUTF8 scope(aScope);
   RefPtr<ServiceWorkerJobQueue> queue = GetOrCreateJobQueue(scopeKey, scope);
 
-  RefPtr<ServiceWorkerUnregisterJob> job = new ServiceWorkerUnregisterJob(
-      aPrincipal, scope, true /* send to parent */);
+  RefPtr<ServiceWorkerUnregisterJob> job =
+      new ServiceWorkerUnregisterJob(aPrincipal, scope);
 
   if (aCallback) {
     RefPtr<UnregisterJobCallback> cb = new UnregisterJobCallback(aCallback);
@@ -1499,6 +1500,14 @@ void ServiceWorkerManager::HandleError(
                      aColumnNumber, aFlags);
 }
 
+void ServiceWorkerManager::PurgeServiceWorker(
+    const ServiceWorkerRegistrationData& aRegistration,
+    nsIPrincipal* aPrincipal) {
+  MOZ_ASSERT(mActor);
+  serviceWorkerScriptCache::PurgeCache(aPrincipal, aRegistration.cacheName());
+  MaybeSendUnregister(aPrincipal, aRegistration.scope());
+}
+
 void ServiceWorkerManager::LoadRegistration(
     const ServiceWorkerRegistrationData& aRegistration) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -1509,6 +1518,13 @@ void ServiceWorkerManager::LoadRegistration(
   }
   nsCOMPtr<nsIPrincipal> principal = principalOrErr.unwrap();
 
+  if (!StaticPrefs::dom_serviceWorkers_enabled()) {
+    // If service workers are disabled, remove the registration from disk
+    // instead of loading.
+    PurgeServiceWorker(aRegistration, principal);
+    return;
+  }
+
   // Purge extensions registrations if they are disabled by prefs.
   if (!StaticPrefs::extensions_backgroundServiceWorker_enabled_AtStartup()) {
     nsCOMPtr<nsIURI> uri = principal->GetURI();
@@ -1517,8 +1533,7 @@ void ServiceWorkerManager::LoadRegistration(
     // the extension may not have been loaded yet and the WebExtensionPolicy
     // may not exist yet.
     if (uri->SchemeIs("moz-extension")) {
-      const auto& cacheName = aRegistration.cacheName();
-      serviceWorkerScriptCache::PurgeCache(principal, cacheName);
+      PurgeServiceWorker(aRegistration, principal);
       return;
     }
   }

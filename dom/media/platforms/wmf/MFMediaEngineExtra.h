@@ -17,6 +17,8 @@
 // we include copies of the relevant classes/interfaces we need.
 #if !defined(WINVER) || WINVER < 0x0602
 
+#  define WS_EX_NOREDIRECTIONBITMAP 0x00200000L
+
 EXTERN_GUID(MF_MEDIA_ENGINE_CALLBACK, 0xc60381b8, 0x83a4, 0x41f8, 0xa3, 0xd0,
             0xde, 0x05, 0x07, 0x68, 0x49, 0xa9);
 EXTERN_GUID(MF_MEDIA_ENGINE_DXGI_MANAGER, 0x065702da, 0x1094, 0x486d, 0x86,
@@ -198,6 +200,11 @@ typedef enum MF_MEDIA_ENGINE_PRELOAD {
   MF_MEDIA_ENGINE_PRELOAD_AUTOMATIC = 4
 } MF_MEDIA_ENGINE_PRELOAD;
 
+typedef enum _MF3DVideoOutputType {
+  MF3DVideoOutputType_BaseView = 0,
+  MF3DVideoOutputType_Stereo = 1
+} MF3DVideoOutputType;
+
 #  ifndef __IMFMediaEngineNotify_INTERFACE_DEFINED__
 #    define __IMFMediaEngineNotify_INTERFACE_DEFINED__
 
@@ -292,6 +299,27 @@ IMFMediaEngineClassFactory : public IUnknown {
 };
 
 #  endif /* __IMFMediaEngineClassFactory_INTERFACE_DEFINED__ */
+
+#  ifndef __IMFMediaEngineClassFactory4_INTERFACE_DEFINED__
+#    define __IMFMediaEngineClassFactory4_INTERFACE_DEFINED__
+
+/* interface IMFMediaEngineClassFactory4 */
+/* [local][uuid][object] */
+
+EXTERN_C const IID IID_IMFMediaEngineClassFactory4;
+
+MIDL_INTERFACE("fbe256c1-43cf-4a9b-8cb8-ce8632a34186")
+IMFMediaEngineClassFactory4 : public IUnknown {
+ public:
+  virtual HRESULT STDMETHODCALLTYPE CreateContentDecryptionModuleFactory(
+      /* [annotation][in] */
+      _In_ LPCWSTR keySystem,
+      /* [annotation][in] */
+      _In_ REFIID riid,
+      /* [annotation][iid_is][out] */
+      _Outptr_ LPVOID * ppvObject) = 0;
+};
+#  endif  // __IMFMediaEngineClassFactory4_INTERFACE_DEFINED__
 
 #  ifndef __IMFMediaEngine_INTERFACE_DEFINED__
 #    define __IMFMediaEngine_INTERFACE_DEFINED__
@@ -442,6 +470,246 @@ IMFMediaEngine : public IUnknown {
       _Out_ LONGLONG * pPts) = 0;
 };
 #  endif /* __IMFMediaEngine_INTERFACE_DEFINED__ */
+
+#  ifndef __IMFMediaEngineEx_INTERFACE_DEFINED__
+#    define __IMFMediaEngineEx_INTERFACE_DEFINED__
+
+/* interface IMFMediaEngineEx */
+/* [local][unique][uuid][object] */
+
+EXTERN_C const IID IID_IMFMediaEngineEx;
+MIDL_INTERFACE("83015ead-b1e6-40d0-a98a-37145ffe1ad1")
+IMFMediaEngineEx : public IMFMediaEngine {
+ public:
+  virtual HRESULT STDMETHODCALLTYPE SetSourceFromByteStream(
+      /* [annotation][in] */
+      _In_ IMFByteStream * pByteStream,
+      /* [annotation][in] */
+      _In_ BSTR pURL) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetStatistics(
+      /* [annotation][in] */
+      _In_ MF_MEDIA_ENGINE_STATISTIC StatisticID,
+      /* [annotation][out] */
+      _Out_ PROPVARIANT * pStatistic) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE UpdateVideoStream(
+      /* [annotation][in] */
+      _In_opt_ const MFVideoNormalizedRect* pSrc,
+      /* [annotation][in] */
+      _In_opt_ const RECT* pDst,
+      /* [annotation][in] */
+      _In_opt_ const MFARGB* pBorderClr) = 0;
+
+  virtual double STDMETHODCALLTYPE GetBalance(void) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetBalance(
+      /* [annotation][in] */
+      _In_ double balance) = 0;
+
+  virtual BOOL STDMETHODCALLTYPE IsPlaybackRateSupported(
+      /* [annotation][in] */
+      _In_ double rate) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE FrameStep(
+      /* [annotation][in] */
+      _In_ BOOL Forward) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetResourceCharacteristics(
+      /* [annotation][out] */
+      _Out_ DWORD * pCharacteristics) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetPresentationAttribute(
+      /* [annotation][in] */
+      _In_ REFGUID guidMFAttribute,
+      /* [annotation][out] */
+      _Out_ PROPVARIANT * pvValue) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetNumberOfStreams(
+      /* [annotation][out] */
+      _Out_ DWORD * pdwStreamCount) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetStreamAttribute(
+      /* [annotation][in] */
+      _In_ DWORD dwStreamIndex,
+      /* [annotation][in] */
+      _In_ REFGUID guidMFAttribute,
+      /* [annotation][out] */
+      _Out_ PROPVARIANT * pvValue) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetStreamSelection(
+      /* [annotation][in] */
+      _In_ DWORD dwStreamIndex,
+      /* [annotation][out] */
+      _Out_ BOOL * pEnabled) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetStreamSelection(
+      /* [annotation][in] */
+      _In_ DWORD dwStreamIndex,
+      /* [annotation][in] */
+      _In_ BOOL Enabled) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE ApplyStreamSelections(void) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE IsProtected(
+      /* [annotation][out] */
+      _Out_ BOOL * pProtected) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE InsertVideoEffect(
+      /* [annotation][in] */
+      _In_ IUnknown * pEffect,
+      /* [annotation][in] */
+      _In_ BOOL fOptional) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE InsertAudioEffect(
+      /* [annotation][in] */
+      _In_ IUnknown * pEffect,
+      /* [annotation][in] */
+      _In_ BOOL fOptional) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE RemoveAllEffects(void) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetTimelineMarkerTimer(
+      /* [annotation][in] */
+      _In_ double timeToFire) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetTimelineMarkerTimer(
+      /* [annotation][out] */
+      _Out_ double* pTimeToFire) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE CancelTimelineMarkerTimer(void) = 0;
+
+  virtual BOOL STDMETHODCALLTYPE IsStereo3D(void) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetStereo3DFramePackingMode(
+      /* [annotation][out] */
+      _Out_ MF_MEDIA_ENGINE_S3D_PACKING_MODE * packMode) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetStereo3DFramePackingMode(
+      /* [annotation][in] */
+      _In_ MF_MEDIA_ENGINE_S3D_PACKING_MODE packMode) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetStereo3DRenderMode(
+      /* [annotation][out] */
+      _Out_ MF3DVideoOutputType * outputType) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetStereo3DRenderMode(
+      /* [annotation][in] */
+      _In_ MF3DVideoOutputType outputType) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE EnableWindowlessSwapchainMode(
+      /* [annotation][in] */
+      _In_ BOOL fEnable) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetVideoSwapchainHandle(
+      /* [annotation][out] */
+      _Out_ HANDLE * phSwapchain) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE EnableHorizontalMirrorMode(
+      /* [annotation][in] */
+      _In_ BOOL fEnable) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetAudioStreamCategory(
+      /* [annotation][out] */
+      _Out_ UINT32 * pCategory) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetAudioStreamCategory(
+      /* [annotation][in] */
+      _In_ UINT32 category) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetAudioEndpointRole(
+      /* [annotation][out] */
+      _Out_ UINT32 * pRole) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetAudioEndpointRole(
+      /* [annotation][in] */
+      _In_ UINT32 role) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetRealTimeMode(
+      /* [annotation][out] */
+      _Out_ BOOL * pfEnabled) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetRealTimeMode(
+      /* [annotation][in] */
+      _In_ BOOL fEnable) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetCurrentTimeEx(
+      /* [annotation][in] */
+      _In_ double seekTime,
+      /* [annotation][in] */
+      _In_ MF_MEDIA_ENGINE_SEEK_MODE seekMode) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE EnableTimeUpdateTimer(
+      /* [annotation][in] */
+      _In_ BOOL fEnableTimer) = 0;
+};
+#  endif /* __IMFMediaEngineEx_INTERFACE_DEFINED__ */
+
+#  ifndef __IMFCdmSuspendNotify_INTERFACE_DEFINED__
+#    define __IMFCdmSuspendNotify_INTERFACE_DEFINED__
+
+/* interface IMFCdmSuspendNotify */
+/* [unique][uuid][object] */
+
+EXTERN_C const IID IID_IMFCdmSuspendNotify;
+
+MIDL_INTERFACE("7a5645d2-43bd-47fd-87b7-dcd24cc7d692")
+IMFCdmSuspendNotify : public IUnknown {
+ public:
+  virtual HRESULT STDMETHODCALLTYPE Begin(void) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE End(void) = 0;
+};
+
+#  endif /* __IMFCdmSuspendNotify_INTERFACE_DEFINED__ */
+
+#  ifndef __IMFMediaEngineProtectedContent_INTERFACE_DEFINED__
+#    define __IMFMediaEngineProtectedContent_INTERFACE_DEFINED__
+
+/* interface IMFMediaEngineProtectedContent */
+/* [local][uuid][object] */
+
+EXTERN_C const IID IID_IMFMediaEngineProtectedContent;
+
+MIDL_INTERFACE("9f8021e8-9c8c-487e-bb5c-79aa4779938c")
+IMFMediaEngineProtectedContent : public IUnknown {
+ public:
+  virtual HRESULT STDMETHODCALLTYPE ShareResources(
+      /* [annotation] */
+      _In_ IUnknown * pUnkDeviceContext) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE GetRequiredProtections(
+      /* [annotation][out] */
+      _Out_ DWORD * pFrameProtectionFlags) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetOPMWindow(
+      /* [annotation][in] */
+      _In_ HWND hwnd) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE TransferVideoFrame(
+      /* [annotation][in] */
+      _In_ IUnknown * pDstSurf,
+      /* [annotation][in] */
+      _In_opt_ const MFVideoNormalizedRect* pSrc,
+      /* [annotation][in] */
+      _In_ const RECT* pDst,
+      /* [annotation][in] */
+      _In_opt_ const MFARGB* pBorderClr,
+      /* [annotation][out] */
+      _Out_ DWORD* pFrameProtectionFlags) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetContentProtectionManager(
+      /* [annotation][in] */
+      _In_opt_ IMFContentProtectionManager * pCPM) = 0;
+
+  virtual HRESULT STDMETHODCALLTYPE SetApplicationCertificate(
+      /* [annotation][in] */
+      _In_reads_bytes_(cbBlob) const BYTE* pbBlob,
+      /* [annotation][in] */
+      _In_ DWORD cbBlob) = 0;
+};
+
+#  endif /* __IMFMediaEngineProtectedContent_INTERFACE_DEFINED__ */
 
 #endif  // extra class copy from mfmediaengine.h
 #endif  // DOM_MEDIA_PLATFORM_WMF_MFMEDIAENGINENOTIFY_H

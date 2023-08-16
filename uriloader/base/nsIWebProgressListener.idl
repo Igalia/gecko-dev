@@ -265,6 +265,13 @@ interface nsIWebProgressListener : nsISupports
    * STATE_LOADED_FINGERPRINTING_CONTENT
    *   Fingerprinting content has been loaded.
    *
+   * STATE_REPLACED_FINGERPRINTING_CONTENT
+   *   Fingerprinting content which should be blocked from loading was replaced with a
+   *   shim.
+   *
+   * STATE_ALLOWED_FINGERPRINTING_CONTENT
+   *   Fingerprinting content which should be blocked from loading was allowed.
+   *
    * STATE_BLOCKED_CRYPTOMINING_CONTENT
    *   Cryptomining content has been blocked from loading.
    *
@@ -339,6 +346,8 @@ interface nsIWebProgressListener : nsISupports
   const unsigned long STATE_LOADED_LEVEL_2_TRACKING_CONTENT      = 0x00100000;
   const unsigned long STATE_BLOCKED_FINGERPRINTING_CONTENT       = 0x00000040;
   const unsigned long STATE_LOADED_FINGERPRINTING_CONTENT        = 0x00000400;
+  const unsigned long STATE_REPLACED_FINGERPRINTING_CONTENT      = 0x08000000;
+  const unsigned long STATE_ALLOWED_FINGERPRINTING_CONTENT       = 0x00000200;
   const unsigned long STATE_BLOCKED_CRYPTOMINING_CONTENT         = 0x00000800;
   const unsigned long STATE_LOADED_CRYPTOMINING_CONTENT          = 0x00200000;
   const unsigned long STATE_BLOCKED_UNSAFE_CONTENT               = 0x00004000;
@@ -360,16 +369,20 @@ interface nsIWebProgressListener : nsISupports
   const unsigned long STATE_LOADED_EMAILTRACKING_LEVEL_2_CONTENT = 0x00000100;
 
   /**
-   * Flag for HTTPS-Only Mode upgrades
+   * Flags for HTTPS-Only and HTTPS-First Mode upgrades
    *
    * STATE_HTTPS_ONLY_MODE_UPGRADED
    *   When a request has been upgraded by HTTPS-Only Mode
    *
    * STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED
    *   When an upgraded request failed.
+   *
+   * STATE_HTTPS_ONLY_MODE_UPGRADED_FIRST
+   *   When a request has been upgraded by HTTPS-First Mode
    */
   const unsigned long STATE_HTTPS_ONLY_MODE_UPGRADED        = 0x00400000;
   const unsigned long STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED  = 0x00800000;
+  const unsigned long STATE_HTTPS_ONLY_MODE_UPGRADED_FIRST  = 0x08000000;
 
   /**
    * Notification indicating the state has changed for one of the requests

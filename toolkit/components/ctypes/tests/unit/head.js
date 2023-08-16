@@ -3,7 +3,9 @@
 try {
   // We might be running without privileges, in which case it's up to the
   // harness to give us the 'ctypes' object.
-  var { ctypes } = ChromeUtils.import("resource://gre/modules/ctypes.jsm");
+  var { ctypes } = ChromeUtils.importESModule(
+    "resource://gre/modules/ctypes.sys.mjs"
+  );
 } catch (e) {}
 
 function open_ctypes_test_lib() {
@@ -98,7 +100,7 @@ function structural_check_eq_aux(a, b) {
     }
     return;
   }
-  ak.forEach(function(k) {
+  ak.forEach(function (k) {
     let av = a[k];
     let bv = b[k];
     structural_check_eq_aux(av, bv);

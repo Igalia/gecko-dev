@@ -49,7 +49,7 @@
  */
 
 .search-panel-current-engine {
-  -moz-box-align: center;
+  align-items: center;
   border-top: none !important;
   padding-inline: 8px;
 }
@@ -58,7 +58,7 @@
 .search-panel-one-offs-container {
   display: flex;
   flex-direction: row;
-  flex-grow: 1;
+  flex: 1;
 }
 
 .search-panel-one-offs {
@@ -70,7 +70,7 @@
 
 .searchbar-engine-one-off-item {
   appearance: none;
-  display: inline-block;
+  display: inline-flex;
   background-color: transparent;
   border: none;
   min-width: 32px;
@@ -124,7 +124,7 @@
 }
 
 .search-panel-tree > .autocomplete-richlistitem > .ac-type-icon {
-  display: -moz-box;
+  display: flex;
   width: 14px;
   height: 14px;
   margin-inline-end: 7px;
@@ -167,21 +167,9 @@
   fill-opacity: var(--urlbar-icon-fill-opacity);
 }
 
-@media (-moz-platform: windows-win10) {
+@media (-moz-platform: windows) {
   #PopupSearchAutoComplete {
-    appearance: none;
-    border: none;
-    background-color: transparent;
-
-    margin: -4px;
-    --panel-border-color: var(--menu-border-color);
     --panel-border-radius: var(--arrowpanel-border-radius);
-  }
-  /* TODO(emilio): We should consider adding shadows to all panels on Windows,
-     probably */
-  #PopupSearchAutoComplete::part(content) {
-    margin: 4px;
-    box-shadow: var(--windows-panel-box-shadow);
   }
 }
 

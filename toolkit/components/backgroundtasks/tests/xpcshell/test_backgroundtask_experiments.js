@@ -14,6 +14,26 @@
 // 3.  We verify that relevant opt-out prefs disable the Nimbus and Firefox
 //     Messaging System experience.
 
+const { ASRouterTargeting } = ChromeUtils.import(
+  "resource://activity-stream/lib/ASRouterTargeting.jsm"
+);
+
+// These randomization IDs were extracted by hand from Firefox instances.
+// Randomization is sufficiently stable to hard-code these IDs rather than
+// generating new ones at test time.
+const BRANCH_MAP = {
+  "treatment-a": {
+    randomizationId: "d0e95fc3-fb15-4bc4-8151-a89582a56e29",
+    title: "Treatment A",
+    text: "Body A",
+  },
+  "treatment-b": {
+    randomizationId: "90a60347-66cc-4716-9fef-cf49dd992d51",
+    title: "Treatment B",
+    text: "Body B",
+  },
+};
+
 setupProfileService();
 
 let taskProfile;
@@ -119,6 +139,7 @@ add_task(async function test_backgroundtask_caps() {
   let alert = infoMap.showAlert.args[0];
   Assert.equal(alert.title, "Treatment A");
   Assert.equal(alert.text, "Body A");
+  Assert.equal(alert.name, "optin-test-experiment:treatment-a");
 
   // Now, do it again.  No need to opt-in to the experiment this time.
   ({ infoMap } = await doMessage({}));
@@ -132,6 +153,7 @@ add_task(async function test_backgroundtask_caps() {
   alert = infoMap.showAlert.args[0];
   Assert.equal(alert.title, "Treatment A");
   Assert.equal(alert.text, "Body A");
+  Assert.equal(alert.name, "optin-test-experiment:treatment-a");
 
   // A third time.  We'll hit the lifetime frequency cap (which is 2).
   ({ infoMap } = await doMessage({}));
@@ -151,22 +173,6 @@ add_task(async function test_backgroundtask_caps() {
 // branches are as expected.
 add_task(async function test_backgroundtask_randomization() {
   let experimentFile = do_get_file("experiment.json");
-
-  // These randomization IDs were extracted by hand from Firefox instances.
-  // Randomization is sufficiently stable to hard-code these IDs rather than
-  // generating new ones at test time.
-  let BRANCH_MAP = {
-    "treatment-a": {
-      randomizationId: "d0e95fc3-fb15-4bc4-8151-a89582a56e29",
-      title: "Treatment A",
-      text: "Body A",
-    },
-    "treatment-b": {
-      randomizationId: "90a60347-66cc-4716-9fef-cf49dd992d51",
-      title: "Treatment B",
-      text: "Body B",
-    },
-  };
 
   for (let [branchSlug, branchDetails] of Object.entries(BRANCH_MAP)) {
     // Start fresh each time.
@@ -196,6 +202,11 @@ add_task(async function test_backgroundtask_randomization() {
       let alert = infoMap.showAlert.args[0];
       Assert.equal(alert.title, branchDetails.title, "Title is correct");
       Assert.equal(alert.text, branchDetails.text, "Text is correct");
+      Assert.equal(
+        alert.name,
+        `test-experiment:${branchSlug}`,
+        "Name (tag) is correct"
+      );
     }
   }
 });
@@ -244,3 +255,162 @@ add_task(async function test_backgroundtask_optout_preferences() {
     Assert.ok(!("showAlert" in infoMap), `No alert shown with ${option}`);
   }
 });
+
+const TARGETING_LIST = [
+  // Target based on background task details.
+  ["isBackgroundTaskMode", 1],
+  ["backgroundTaskName == 'message'", 1],
+  ["backgroundTaskName == 'unrecognized'", 0],
+  // Filter based on `defaultProfile` targeting snapshot.
+  ["(currentDate|date - defaultProfile.currentDate|date) > 0", 1],
+  ["(currentDate|date - defaultProfile.currentDate|date) > 999999", 0],
+];
+
+// Test that background tasks targeting works for Nimbus experiments.
+add_task(async function test_backgroundtask_Nimbus_targeting() {
+  let experimentFile = do_get_file("experiment.json");
+  let experimentData = await IOUtils.readJSON(experimentFile.path);
+
+  // We can't take a full environment snapshot under `xpcshell`.  Select a few
+  // items that do work.
+  let target = {
+    currentDate: ASRouterTargeting.Environment.currentDate,
+    firefoxVersion: ASRouterTargeting.Environment.firefoxVersion,
+  };
+  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot(target);
+
+  for (let [targeting, expectedLength] of TARGETING_LIST) {
+    // Start fresh each time.
+    resetProfile(taskProfile);
+
+    let snapshotFile = taskProfile.rootDir.clone();
+    snapshotFile.append("targeting.snapshot.json");
+    await IOUtils.writeJSON(snapshotFile.path, targetSnapshot);
+
+    // Write updated experiment data.
+    experimentData.data.targeting = targeting;
+    let targetingExperimentFile = taskProfile.rootDir.clone();
+    targetingExperimentFile.append("targeting.experiment.json");
+    await IOUtils.writeJSON(targetingExperimentFile.path, experimentData);
+
+    let { infoMap } = await doMessage({
+      extraArgs: [
+        "--experiments",
+        targetingExperimentFile.path,
+        "--targeting-snapshot",
+        snapshotFile.path,
+      ],
+    });
+
+    // Verify that the given targeting generated the expected number of impressions.
+    let impressions = infoMap.ASRouterState.messageImpressions;
+    Assert.equal(
+      Object.keys(impressions).length,
+      expectedLength,
+      `${expectedLength} impressions generated with targeting '${targeting}'`
+    );
+  }
+});
+
+// Test that background tasks targeting works for Firefox Messaging System branches.
+add_task(async function test_backgroundtask_Messaging_targeting() {
+  // Don't target the Nimbus experiment at all.  Use a consistent
+  // randomization ID to always enroll in the first branch.  Target
+  // the first branch of the Firefox Messaging Experiment to the given
+  // targeting.  Therefore, we either get the first branch if the
+  // targeting matches, or nothing at all.
+
+  let treatmentARandomizationId = BRANCH_MAP["treatment-a"].randomizationId;
+
+  let experimentFile = do_get_file("experiment.json");
+  let experimentData = await IOUtils.readJSON(experimentFile.path);
+
+  // We can't take a full environment snapshot under `xpcshell`.  Select a few
+  // items that do work.
+  let target = {
+    currentDate: ASRouterTargeting.Environment.currentDate,
+    firefoxVersion: ASRouterTargeting.Environment.firefoxVersion,
+  };
+  let targetSnapshot = await ASRouterTargeting.getEnvironmentSnapshot(target);
+
+  for (let [targeting, expectedLength] of TARGETING_LIST) {
+    // Start fresh each time.
+    resetProfile(taskProfile);
+
+    let snapshotFile = taskProfile.rootDir.clone();
+    snapshotFile.append("targeting.snapshot.json");
+    await IOUtils.writeJSON(snapshotFile.path, targetSnapshot);
+
+    // Write updated experiment data.
+    experimentData.data.targeting = "true";
+    experimentData.data.branches[0].features[0].value.targeting = targeting;
+
+    let targetingExperimentFile = taskProfile.rootDir.clone();
+    targetingExperimentFile.append("targeting.experiment.json");
+    await IOUtils.writeJSON(targetingExperimentFile.path, experimentData);
+
+    let { infoMap } = await doMessage({
+      extraArgs: [
+        "--experiments",
+        targetingExperimentFile.path,
+        "--targeting-snapshot",
+        snapshotFile.path,
+        "--randomizationId",
+        treatmentARandomizationId,
+      ],
+    });
+
+    // Verify that the given targeting generated the expected number of impressions.
+    let impressions = infoMap.ASRouterState.messageImpressions;
+    Assert.equal(
+      Object.keys(impressions).length,
+      expectedLength,
+      `${expectedLength} impressions generated with targeting '${targeting}'`
+    );
+
+    if (expectedLength > 0) {
+      // Verify that the correct toast notification was shown.
+      let alert = infoMap.showAlert.args[0];
+      Assert.equal(
+        alert.title,
+        BRANCH_MAP["treatment-a"].title,
+        "Title is correct"
+      );
+      Assert.equal(
+        alert.text,
+        BRANCH_MAP["treatment-a"].text,
+        "Text is correct"
+      );
+      Assert.equal(
+        alert.name,
+        `test-experiment:treatment-a`,
+        "Name (tag) is correct"
+      );
+    }
+  }
+});
+
+// Verify that `RemoteSettingsClient.sync` is invoked before any
+// `RemoteSettingsClient.get` invocations.  This ensures the Remote Settings
+// recipe collection is not allowed to go stale.
+add_task(
+  async function test_backgroundtask_RemoteSettingsClient_invokes_sync() {
+    let { infoArray, infoMap } = await doMessage({});
+
+    Assert.ok(
+      "RemoteSettingsClient.get" in infoMap,
+      "RemoteSettingsClient.get was invoked"
+    );
+
+    for (let info of infoArray) {
+      if ("RemoteSettingsClient.get" in info) {
+        const { options: calledOptions } = info["RemoteSettingsClient.get"];
+        Assert.ok(
+          calledOptions.forceSync,
+          "RemoteSettingsClient.get was first called with `forceSync`"
+        );
+        return;
+      }
+    }
+  }
+);

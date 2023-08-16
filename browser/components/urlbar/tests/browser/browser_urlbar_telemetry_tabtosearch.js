@@ -16,7 +16,6 @@ const ENGINE_DOMAIN = "example.com";
 ChromeUtils.defineESModuleGetters(this, {
   UrlbarProviderTabToSearch:
     "resource:///modules/UrlbarProviderTabToSearch.sys.mjs",
-  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
 });
 
 function snapshotHistograms() {
@@ -79,7 +78,7 @@ async function checkForTabToSearchResult(engineName, isOnboarding) {
   }
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
   });
@@ -89,7 +88,6 @@ add_setup(async function() {
     search_url: `https://${ENGINE_DOMAIN}/`,
   });
 
-  UrlbarTestUtils.init(this);
   // Reset the enginesShown sets in case a previous test showed a tab-to-search
   // result but did not end its engagement.
   UrlbarProviderTabToSearch.enginesShown.regular.clear();
@@ -101,7 +99,6 @@ add_setup(async function() {
 
   registerCleanupFunction(async () => {
     Services.telemetry.canRecordExtended = oldCanRecord;
-    UrlbarTestUtils.uninit();
   });
 });
 
@@ -192,7 +189,7 @@ async function impressions_test(isOnboarding) {
         name: `${ENGINE_NAME}2`,
         search_url: `https://${firstEngineHost}-2.com/`,
       },
-      true
+      { skipUnload: true }
     );
 
     for (let i = 0; i < 3; i++) {

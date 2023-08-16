@@ -144,6 +144,48 @@ impl Encode for i64 {
     }
 }
 
+impl Encode for f32 {
+    fn encode(&self, sink: &mut Vec<u8>) {
+        let bits = self.to_bits();
+        sink.extend(bits.to_le_bytes())
+    }
+}
+
+impl Encode for f64 {
+    fn encode(&self, sink: &mut Vec<u8>) {
+        let bits = self.to_bits();
+        sink.extend(bits.to_le_bytes())
+    }
+}
+
+fn encode_vec<T, V>(elements: V, sink: &mut Vec<u8>)
+where
+    T: Encode,
+    V: IntoIterator<Item = T>,
+    V::IntoIter: ExactSizeIterator,
+{
+    let elements = elements.into_iter();
+    u32::try_from(elements.len()).unwrap().encode(sink);
+    for x in elements {
+        x.encode(sink);
+    }
+}
+
+impl<T> Encode for Option<T>
+where
+    T: Encode,
+{
+    fn encode(&self, sink: &mut Vec<u8>) {
+        match self {
+            Some(v) => {
+                sink.push(0x01);
+                v.encode(sink);
+            }
+            None => sink.push(0x00),
+        }
+    }
+}
+
 fn encoding_size(n: u32) -> usize {
     let mut buf = [0u8; 5];
     leb128::write::unsigned(&mut &mut buf[..], n.into()).unwrap()
@@ -168,6 +210,6 @@ mod test {
     #[test]
     fn it_encodes_an_empty_component() {
         let bytes = Component::new().finish();
-        assert_eq!(bytes, [0x00, b'a', b's', b'm', 0x0a, 0x00, 0x01, 0x00]);
+        assert_eq!(bytes, [0x00, b'a', b's', b'm', 0x0d, 0x00, 0x01, 0x00]);
     }
 }

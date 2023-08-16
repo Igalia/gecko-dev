@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,29 +13,24 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "hwy/contrib/sort/disabled_targets.h"
 #include "hwy/contrib/sort/vqsort.h"
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "hwy/contrib/sort/vqsort_u16a.cc"
-#include "hwy/foreach_target.h"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
 
 // After foreach_target
 #include "hwy/contrib/sort/traits-inl.h"
 #include "hwy/contrib/sort/vqsort-inl.h"
 
-// Workaround for build timeout
-#if !HWY_COMPILER_MSVC || HWY_IS_DEBUG_BUILD
-
 HWY_BEFORE_NAMESPACE();
 namespace hwy {
 namespace HWY_NAMESPACE {
 
-void SortU16Asc(uint16_t* HWY_RESTRICT keys, size_t num,
-                uint16_t* HWY_RESTRICT buf) {
+void SortU16Asc(uint16_t* HWY_RESTRICT keys, size_t num) {
   SortTag<uint16_t> d;
-  detail::SharedTraits<detail::LaneTraits<detail::OrderAscending>> st;
-  Sort(d, st, keys, num, buf);
+  detail::SharedTraits<detail::TraitsLane<detail::OrderAscending<uint16_t>>> st;
+  Sort(d, st, keys, num);
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
@@ -48,12 +44,9 @@ namespace {
 HWY_EXPORT(SortU16Asc);
 }  // namespace
 
-void Sorter::operator()(uint16_t* HWY_RESTRICT keys, size_t n,
-                        SortAscending) const {
-  HWY_DYNAMIC_DISPATCH(SortU16Asc)(keys, n, Get<uint16_t>());
+void VQSort(uint16_t* HWY_RESTRICT keys, size_t n, SortAscending) {
+  HWY_DYNAMIC_DISPATCH(SortU16Asc)(keys, n);
 }
 
 }  // namespace hwy
 #endif  // HWY_ONCE
-
-#endif  // !HWY_COMPILER_MSVC || HWY_IS_DEBUG_BUILD

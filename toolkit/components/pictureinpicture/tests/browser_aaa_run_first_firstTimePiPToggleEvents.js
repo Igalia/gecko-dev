@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 const FIRST_TIME_PIP_TOGGLE_STYLES = {
@@ -12,7 +12,7 @@ const FIRST_TIME_PIP_TOGGLE_STYLES = {
   stages: {
     hoverVideo: {
       opacities: {
-        ".pip-wrapper": 0.8,
+        ".pip-wrapper": DEFAULT_TOGGLE_OPACITY,
       },
       hidden: [],
     },
@@ -30,9 +30,9 @@ const FIRST_CONTEXT_MENU_EXPECTED_EVENTS = [
   [
     "pictureinpicture",
     "opened_method",
-    "method",
+    "contextMenu",
     null,
-    { method: "contextMenu", firstTimeToggle: "true" },
+    { firstTimeToggle: "true" },
   ],
 ];
 
@@ -40,9 +40,9 @@ const SECOND_CONTEXT_MENU_EXPECTED_EVENTS = [
   [
     "pictureinpicture",
     "opened_method",
-    "method",
+    "contextMenu",
     null,
-    { method: "contextMenu", firstTimeToggle: "false" },
+    { firstTimeToggle: "false" },
   ],
 ];
 
@@ -51,9 +51,9 @@ const FIRST_TOGGLE_EXPECTED_EVENTS = [
   [
     "pictureinpicture",
     "opened_method",
-    "method",
+    "toggle",
     null,
-    { method: "toggle", firstTimeToggle: "true" },
+    { firstTimeToggle: "true" },
   ],
 ];
 
@@ -62,9 +62,9 @@ const SECOND_TOGGLE_EXPECTED_EVENTS = [
   [
     "pictureinpicture",
     "opened_method",
-    "method",
+    "toggle",
     null,
-    { method: "toggle", firstTimeToggle: "false" },
+    { firstTimeToggle: "false" },
   ],
 ];
 
@@ -150,7 +150,7 @@ async function openAndClosePipWithToggle(browser, videoID) {
   });
 
   await BrowserTestUtils.closeWindow(win);
-  await assertSawMouseEvents(browser, false);
+  await assertSawClickEventOnly(browser);
 
   await BrowserTestUtils.synthesizeMouseAtPoint(1, 1, {}, browser);
   await assertSawMouseEvents(browser, true);
@@ -175,24 +175,19 @@ async function openAndClosePipWithContextMenu(browser, videoID) {
     },
     browser
   );
-  await BrowserTestUtils.synthesizeMouseAtCenter(
-    `#${videoID}`,
-    {
-      type: "contextmenu",
-    },
-    browser
-  );
 
   await popupshown;
   let isContextMenuOpen = menu.state === "showing" || menu.state === "open";
-  Assert.equal(isContextMenuOpen, true, "Context menu is open");
+  ok(isContextMenuOpen, "Context menu is open");
 
   let domWindowOpened = BrowserTestUtils.domWindowOpenedAndLoaded(null);
 
   // clear content events
   await clearAllContentEvents();
 
-  menu.querySelector("#context-video-pictureinpicture").click();
+  let hidden = BrowserTestUtils.waitForPopupEvent(menu, "hidden");
+  menu.activateItem(menu.querySelector("#context-video-pictureinpicture"));
+  await hidden;
 
   let win = await domWindowOpened;
   ok(win, "A Picture-in-Picture window opened.");
@@ -240,34 +235,20 @@ add_task(async function test_eventTelemetry() {
       // open with context menu for first time
       await openAndClosePipWithContextMenu(browser, videoID);
 
-      let events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).content;
-
-      info(`Length of events is ${events?.length}`);
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).content;
-          info(`Length of events is ${events?.length}`);
-          return events && events.length >= 1;
-        },
-        "Waiting for one opened_method pictureinpicture telemetry event.",
-        200,
-        100
+      let filter = {
+        category: "pictureinpicture",
+        method: "opened_method",
+        object: "contextMenu",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        FIRST_CONTEXT_MENU_EXPECTED_EVENTS.length,
+        "content"
       );
-      info(JSON.stringify(events));
 
       TelemetryTestUtils.assertEvents(
         FIRST_CONTEXT_MENU_EXPECTED_EVENTS,
-        {
-          category: "pictureinpicture",
-          method: "opened_method",
-          object: "method",
-        },
+        filter,
         { clear: true, process: "content" }
       );
 
@@ -278,84 +259,54 @@ add_task(async function test_eventTelemetry() {
 
       await openAndClosePipWithToggle(browser, videoID);
 
-      events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).content;
-
-      info(`Length of events is ${events?.length}`);
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).content;
-          info(`Length of events is ${events?.length}`);
-          return events && events.length >= 2;
-        },
-        "Waiting for both pictureinpicture telemetry events.",
-        200,
-        100
+      filter = {
+        category: "pictureinpicture",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        FIRST_TOGGLE_EXPECTED_EVENTS.length,
+        "content"
       );
-      info(JSON.stringify(events));
 
-      TelemetryTestUtils.assertEvents(
-        FIRST_TOGGLE_EXPECTED_EVENTS,
-        { category: "pictureinpicture" },
-        { clear: true, process: "content" }
-      );
+      TelemetryTestUtils.assertEvents(FIRST_TOGGLE_EXPECTED_EVENTS, filter, {
+        clear: true,
+        process: "content",
+      });
 
       // open with toggle for not first time
       await openAndClosePipWithToggle(browser, videoID);
 
-      info(`Length of events is ${events?.length}`);
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).content;
-          info(`Length of events is ${events?.length}`);
-          return events && events.length >= 2;
-        },
-        "Waiting for both pictureinpicture telemetry events.",
-        200,
-        100
+      filter = {
+        category: "pictureinpicture",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        SECOND_TOGGLE_EXPECTED_EVENTS.length,
+        "content"
       );
-      info(JSON.stringify(events));
 
-      TelemetryTestUtils.assertEvents(
-        SECOND_TOGGLE_EXPECTED_EVENTS,
-        { category: "pictureinpicture" },
-        { clear: true, process: "content" }
-      );
+      TelemetryTestUtils.assertEvents(SECOND_TOGGLE_EXPECTED_EVENTS, filter, {
+        clear: true,
+        process: "content",
+      });
 
       // open with context menu for not first time
       await openAndClosePipWithContextMenu(browser, videoID);
 
-      info(`Length of events is ${events?.length}`);
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).content;
-          info(`Length of events is ${events?.length}`);
-          return events && events.length >= 1;
-        },
-        "Waiting for one opened_method pictureinpicture telemetry event.",
-        200,
-        100
+      filter = {
+        category: "pictureinpicture",
+        method: "opened_method",
+        object: "contextMenu",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        SECOND_CONTEXT_MENU_EXPECTED_EVENTS.length,
+        "content"
       );
-      info(JSON.stringify(events));
 
       TelemetryTestUtils.assertEvents(
         SECOND_CONTEXT_MENU_EXPECTED_EVENTS,
-        {
-          category: "pictureinpicture",
-          method: "opened_method",
-          object: "method",
-        },
+        filter,
         { true: false, process: "content" }
       );
     }

@@ -4,17 +4,20 @@
 
 "use strict";
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
+const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/device.properties"
 );
 
-const ChromeUtils = require("ChromeUtils");
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
 
-loader.lazyRequireGetter(this, "asyncStorage", "devtools/shared/async-storage");
+loader.lazyRequireGetter(
+  this,
+  "asyncStorage",
+  "resource://devtools/shared/async-storage.js"
+);
 
 const LOCAL_DEVICES = "devtools.devices.local";
 

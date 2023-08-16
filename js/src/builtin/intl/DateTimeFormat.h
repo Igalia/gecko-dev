@@ -7,10 +7,8 @@
 #ifndef builtin_intl_DateTimeFormat_h
 #define builtin_intl_DateTimeFormat_h
 
-#include "builtin/intl/CommonFunctions.h"
 #include "builtin/SelfHostingDefines.h"
 #include "js/Class.h"
-#include "js/RootingAPI.h"
 #include "vm/NativeObject.h"
 
 namespace mozilla::intl {
@@ -35,10 +33,10 @@ class DateTimeFormatObject : public NativeObject {
                 "object slot");
 
   // Estimated memory use for UDateFormat (see IcuMemoryUsage).
-  static constexpr size_t UDateFormatEstimatedMemoryUse = 105402;
+  static constexpr size_t UDateFormatEstimatedMemoryUse = 72440;
 
   // Estimated memory use for UDateIntervalFormat (see IcuMemoryUsage).
-  static constexpr size_t UDateIntervalFormatEstimatedMemoryUse = 133064;
+  static constexpr size_t UDateIntervalFormatEstimatedMemoryUse = 175646;
 
   mozilla::intl::DateTimeFormat* getDateFormat() const {
     const auto& slot = getFixedSlot(DATE_FORMAT_SLOT);

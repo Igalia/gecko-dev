@@ -19,18 +19,20 @@ async function clearConsole() {
  *
  * @param {string} script
  *     The script to execute.
- * @return {Promise}
+ * @returns {Promise}
  *     A promise that resolves when the script node was added and removed from
  *     the content page.
  */
 function createScriptNode(script) {
-  return SpecialPowers.spawn(gBrowser.selectedBrowser, [script], function(
-    _script
-  ) {
-    var script = content.document.createElement("script");
-    script.append(content.document.createTextNode(_script));
-    content.document.body.append(script);
-  });
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [script],
+    function (_script) {
+      var script = content.document.createElement("script");
+      script.append(content.document.createTextNode(_script));
+      content.document.body.append(script);
+    }
+  );
 }
 
 registerCleanupFunction(async () => {
@@ -58,11 +60,30 @@ async function doGC() {
  *
  * @param {Browser} browser
  *     The browser element where the URL should be loaded.
- * @param {String} url
+ * @param {string} url
  *     The URL to load.
  */
 async function loadURL(browser, url) {
   const loaded = BrowserTestUtils.browserLoaded(browser);
-  BrowserTestUtils.loadURI(browser, url);
+  BrowserTestUtils.loadURIString(browser, url);
   return loaded;
+}
+
+/**
+ * Create a fetch request to `url` from the content page loaded in the provided
+ * `browser`.
+ *
+ *
+ * @param {Browser} browser
+ *     The browser element where the fetch should be performed.
+ * @param {string} url
+ *     The URL to fetch.
+ */
+function fetch(browser, url) {
+  return SpecialPowers.spawn(browser, [url], async _url => {
+    const response = await content.fetch(_url);
+    // Wait for response.text() to resolve as well to make sure the response
+    // has completed before returning.
+    await response.text();
+  });
 }

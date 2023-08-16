@@ -13,9 +13,15 @@
 #include "nsITargetShutdownTask.h"
 #include "nsIThread.h"
 #include "nsXPCOM.h"
+#include "mozilla/gtest/MozAssertions.h"
 #include "mozilla/Monitor.h"
 #include "mozilla/SyncRunnable.h"
 #include "gtest/gtest.h"
+
+#ifdef XP_WIN
+#  include <windef.h>
+#  include <winuser.h>
+#endif
 
 using namespace mozilla;
 
@@ -26,7 +32,7 @@ class nsRunner final : public Runnable {
   NS_IMETHOD Run() override {
     nsCOMPtr<nsIThread> thread;
     nsresult rv = NS_GetCurrentThread(getter_AddRefs(thread));
-    EXPECT_TRUE(NS_SUCCEEDED(rv));
+    EXPECT_NS_SUCCEEDED(rv);
     printf("running %d on thread %p\n", mNum, (void*)thread.get());
 
     // if we don't do something slow, we'll never see the other
@@ -51,14 +57,14 @@ TEST(Threads, Main)
 
   nsCOMPtr<nsIThread> runner;
   rv = NS_NewNamedThread("TestThreadsMain", getter_AddRefs(runner), event);
-  EXPECT_TRUE(NS_SUCCEEDED(rv));
+  EXPECT_NS_SUCCEEDED(rv);
 
   nsCOMPtr<nsIThread> thread;
   rv = NS_GetCurrentThread(getter_AddRefs(thread));
-  EXPECT_TRUE(NS_SUCCEEDED(rv));
+  EXPECT_NS_SUCCEEDED(rv);
 
   rv = runner->Shutdown();  // wait for the runner to die before quitting
-  EXPECT_TRUE(NS_SUCCEEDED(rv));
+  EXPECT_NS_SUCCEEDED(rv);
 
   PR_Sleep(
       PR_MillisecondsToInterval(100));  // hopefully the runner will quit here
@@ -116,7 +122,7 @@ TEST(Threads, Stress)
       nsCOMPtr<nsIThread> t;
       nsresult rv = NS_NewNamedThread("StressRunner", getter_AddRefs(t),
                                       new nsStressRunner(k));
-      EXPECT_TRUE(NS_SUCCEEDED(rv));
+      EXPECT_NS_SUCCEEDED(rv);
       NS_ADDREF(array[k] = t);
     }
 
@@ -167,13 +173,13 @@ class AsyncShutdownWaiter : public Runnable {
 
       rv = NS_NewNamedThread("AsyncShutdownPr", getter_AddRefs(t),
                              new AsyncShutdownPreparer());
-      EXPECT_TRUE(NS_SUCCEEDED(rv));
+      EXPECT_NS_SUCCEEDED(rv);
 
       lock.Wait();
     }
 
     rv = t->AsyncShutdown();
-    EXPECT_TRUE(NS_SUCCEEDED(rv));
+    EXPECT_NS_SUCCEEDED(rv);
 
     return NS_OK;
   }
@@ -215,14 +221,14 @@ TEST(Threads, AsyncShutdown)
 
     rv = NS_NewNamedThread("AsyncShutdownWt", getter_AddRefs(t),
                            new AsyncShutdownWaiter());
-    EXPECT_TRUE(NS_SUCCEEDED(rv));
+    EXPECT_NS_SUCCEEDED(rv);
 
     lock.Wait();
   }
 
   NS_DispatchToCurrentThread(new SameThreadSentinel());
   rv = t->Shutdown();
-  EXPECT_TRUE(NS_SUCCEEDED(rv));
+  EXPECT_NS_SUCCEEDED(rv);
 
   delete gAsyncShutdownReadyMonitor;
   delete gBeginAsyncShutdownMonitor;
@@ -376,3 +382,34 @@ TEST(Threads, UnregisteredShutdownTask)
 
   thread->Shutdown();
 }
+
+#if (defined(XP_WIN) || !defined(DEBUG)) && !defined(XP_MACOSX)
+TEST(Threads, OptionsIsUiThread)
+{
+  // On Windows, test that the isUiThread flag results in a GUI thread.
+  // In non-Windows non-debug builds, test that the isUiThread flag is ignored.
+
+  nsCOMPtr<nsIThread> thread;
+  nsIThreadManager::ThreadCreationOptions options;
+  options.isUiThread = true;
+  MOZ_ALWAYS_SUCCEEDS(NS_NewNamedThread(
+      "Testing Thread", getter_AddRefs(thread), nullptr, options));
+
+  bool isGuiThread = false;
+  auto syncRunnable =
+      MakeRefPtr<SyncRunnable>(NS_NewRunnableFunction(__func__, [&] {
+#  ifdef XP_WIN
+        isGuiThread = ::IsGUIThread(false);
+#  endif
+      }));
+  MOZ_ALWAYS_SUCCEEDS(syncRunnable->DispatchToThread(thread));
+
+  bool expectGuiThread = false;
+#  ifdef XP_WIN
+  expectGuiThread = true;
+#  endif
+  EXPECT_EQ(expectGuiThread, isGuiThread);
+
+  thread->Shutdown();
+}
+#endif

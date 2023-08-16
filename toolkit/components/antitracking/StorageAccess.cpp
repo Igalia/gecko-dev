@@ -6,19 +6,33 @@
 
 #include "StorageAccess.h"
 
+#include "mozilla/BasePrincipal.h"
+#include "mozilla/Components.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/net/CookieJarSettings.h"
+#include "mozilla/PermissionManager.h"
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StorageAccess.h"
+#include "nsAboutProtocolUtils.h"
 #include "nsContentUtils.h"
+#include "nsGlobalWindowInner.h"
 #include "nsICookiePermission.h"
 #include "nsICookieService.h"
 #include "nsICookieJarSettings.h"
+#include "nsIHttpChannel.h"
 #include "nsIPermission.h"
 #include "nsIWebProgressListener.h"
+#include "nsIClassifiedChannel.h"
+#include "nsNetUtil.h"
+#include "nsScriptSecurityManager.h"
 #include "nsSandboxFlags.h"
+#include "AntiTrackingUtils.h"
+#include "AntiTrackingLog.h"
+#include "ContentBlockingAllowList.h"
+#include "mozIThirdPartyUtil.h"
+#include "RejectForeignAllowList.h"
 
 using namespace mozilla;
 using namespace mozilla::dom;
@@ -26,7 +40,7 @@ using mozilla::net::CookieJarSettings;
 
 // This internal method returns ACCESS_DENY if the access is denied,
 // ACCESS_DEFAULT if unknown, some other access code if granted.
-uint32_t CheckCookiePermissionForPrincipal(
+uint32_t mozilla::detail::CheckCookiePermissionForPrincipal(
     nsICookieJarSettings* aCookieJarSettings, nsIPrincipal* aPrincipal) {
   MOZ_ASSERT(aCookieJarSettings);
   MOZ_ASSERT(aPrincipal);
@@ -120,8 +134,10 @@ static StorageAccess InternalStorageAllowedCheck(
   // We need to check the aURI or the document URI here instead of only checking
   // the URI from the principal. Because the principal might not have a URI if
   // it is a system principal.
-  if ((aURI && aURI->SchemeIs("about")) ||
-      (documentURI && documentURI->SchemeIs("about")) ||
+  if ((aURI && aURI->SchemeIs("about") &&
+       !NS_IsContentAccessibleAboutURI(aURI)) ||
+      (documentURI && documentURI->SchemeIs("about") &&
+       !NS_IsContentAccessibleAboutURI(documentURI)) ||
       aPrincipal->SchemeIs("about")) {
     return access;
   }
@@ -470,7 +486,7 @@ bool ShouldAllowAccessFor(nsPIDOMWindowInner* aWindow, nsIURI* aURI,
     return false;
   }
 
-  uint32_t cookiePermission = CheckCookiePermissionForPrincipal(
+  uint32_t cookiePermission = detail::CheckCookiePermissionForPrincipal(
       document->CookieJarSettings(), document->NodePrincipal());
   if (cookiePermission != nsICookiePermission::ACCESS_DEFAULT) {
     LOG(
@@ -650,8 +666,8 @@ bool ShouldAllowAccessFor(nsIChannel* aChannel, nsIURI* aURI,
     return false;
   }
 
-  uint32_t cookiePermission =
-      CheckCookiePermissionForPrincipal(cookieJarSettings, channelPrincipal);
+  uint32_t cookiePermission = detail::CheckCookiePermissionForPrincipal(
+      cookieJarSettings, channelPrincipal);
   if (cookiePermission != nsICookiePermission::ACCESS_DEFAULT) {
     LOG(
         ("CheckCookiePermissionForPrincipal() returned a non-default access "
@@ -869,7 +885,7 @@ bool ApproximateAllowAccessForWithoutChannel(
     return true;
   }
 
-  uint32_t cookiePermission = CheckCookiePermissionForPrincipal(
+  uint32_t cookiePermission = detail::CheckCookiePermissionForPrincipal(
       parentDocument->CookieJarSettings(), parentDocument->NodePrincipal());
   if (cookiePermission != nsICookiePermission::ACCESS_DEFAULT) {
     LOG(
@@ -881,17 +897,13 @@ bool ApproximateAllowAccessForWithoutChannel(
     return cookiePermission != nsICookiePermission::ACCESS_DENY;
   }
 
-  nsAutoCString origin;
-  nsresult rv = nsContentUtils::GetASCIIOrigin(aURI, origin);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    LOG_SPEC(("Failed to compute the origin from %s", _spec), aURI);
-    return false;
-  }
-
   nsIPrincipal* parentPrincipal = parentDocument->NodePrincipal();
 
+  nsCOMPtr<nsIPrincipal> principal = BasePrincipal::CreateContentPrincipal(
+      aURI, parentPrincipal->OriginAttributesRef());
+
   nsAutoCString type;
-  AntiTrackingUtils::CreateStoragePermissionKey(origin, type);
+  AntiTrackingUtils::CreateStoragePermissionKey(principal, type);
 
   return AntiTrackingUtils::CheckStoragePermission(
       parentPrincipal, type,

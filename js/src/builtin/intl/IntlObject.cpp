@@ -12,6 +12,7 @@
 #include "mozilla/intl/Calendar.h"
 #include "mozilla/intl/Collator.h"
 #include "mozilla/intl/Currency.h"
+#include "mozilla/intl/Locale.h"
 #include "mozilla/intl/MeasureUnitGenerated.h"
 #include "mozilla/intl/TimeZone.h"
 
@@ -22,19 +23,12 @@
 #include <string_view>
 
 #include "builtin/Array.h"
-#include "builtin/intl/Collator.h"
 #include "builtin/intl/CommonFunctions.h"
-#include "builtin/intl/DateTimeFormat.h"
 #include "builtin/intl/FormatBuffer.h"
-#include "builtin/intl/LanguageTag.h"
-#include "builtin/intl/NumberFormat.h"
 #include "builtin/intl/NumberingSystemsGenerated.h"
-#include "builtin/intl/PluralRules.h"
-#include "builtin/intl/RelativeTimeFormat.h"
 #include "builtin/intl/SharedIntlData.h"
 #include "builtin/intl/StringAsciiChars.h"
 #include "ds/Sort.h"
-#include "js/CharacterEncoding.h"
 #include "js/Class.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/GCAPI.h"
@@ -43,9 +37,8 @@
 #include "js/Result.h"
 #include "js/StableStringChars.h"
 #include "vm/GlobalObject.h"
-#include "vm/JSAtom.h"
+#include "vm/JSAtomUtils.h"  // ClassName
 #include "vm/JSContext.h"
-#include "vm/JSObject.h"
 #include "vm/PlainObject.h"  // js::PlainObject
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
@@ -874,11 +867,7 @@ static const JSPropertySpec intl_static_properties[] = {
     JS_STRING_SYM_PS(toStringTag, "Intl", JSPROP_READONLY), JS_PS_END};
 
 static JSObject* CreateIntlObject(JSContext* cx, JSProtoKey key) {
-  Handle<GlobalObject*> global = cx->global();
-  RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &cx->global()->getObjectPrototype());
 
   // The |Intl| object is just a plain object with some "static" function
   // properties and some constructor properties.

@@ -10,6 +10,7 @@
 #include "HTMLSplitOnSpacesTokenizer.h"
 #include "nsHtml5StringParser.h"
 #include "nsTextNode.h"
+#include "nsIParserUtils.h"
 
 using namespace mozilla::dom;
 using namespace mozilla;
@@ -40,7 +41,6 @@ static bool IsAttrNameLocalizable(
   if (nameSpace == kNameSpaceID_XHTML) {
     // Is it a globally safe attribute?
     if (aAttrName == nsGkAtoms::title || aAttrName == nsGkAtoms::aria_label ||
-        aAttrName == nsGkAtoms::aria_valuetext ||
         aAttrName == nsGkAtoms::aria_description) {
       return true;
     }
@@ -95,10 +95,8 @@ static bool IsAttrNameLocalizable(
   } else if (nameSpace == kNameSpaceID_XUL) {
     // Is it a globally safe attribute?
     if (aAttrName == nsGkAtoms::accesskey ||
-        aAttrName == nsGkAtoms::aria_label ||
-        aAttrName == nsGkAtoms::aria_valuetext ||
-        aAttrName == nsGkAtoms::label || aAttrName == nsGkAtoms::title ||
-        aAttrName == nsGkAtoms::tooltiptext) {
+        aAttrName == nsGkAtoms::aria_label || aAttrName == nsGkAtoms::label ||
+        aAttrName == nsGkAtoms::title || aAttrName == nsGkAtoms::tooltiptext) {
       return true;
     }
 
@@ -144,8 +142,7 @@ void L10nOverlays::OverlayAttributes(
 
   {
     nsAutoString l10nAttrs;
-    if (aToElement->GetAttr(kNameSpaceID_None, nsGkAtoms::datal10nattrs,
-                            l10nAttrs)) {
+    if (aToElement->GetAttr(nsGkAtoms::datal10nattrs, l10nAttrs)) {
       HTMLSplitOnSpacesTokenizer tokenizer(l10nAttrs, ',');
       while (tokenizer.hasMoreTokens()) {
         const nsAString& token = tokenizer.nextToken();
@@ -244,8 +241,7 @@ already_AddRefed<nsINode> L10nOverlays::GetNodeForNamedElement(
     Element* aSourceElement, Element* aTranslatedChild,
     nsTArray<L10nOverlaysError>& aErrors, ErrorResult& aRv) {
   nsAutoString childName;
-  aTranslatedChild->GetAttr(kNameSpaceID_None, nsGkAtoms::datal10nname,
-                            childName);
+  aTranslatedChild->GetAttr(nsGkAtoms::datal10nname, childName);
   RefPtr<Element> sourceChild = nullptr;
 
   nsINodeList* childNodes = aSourceElement->ChildNodes();
@@ -364,7 +360,7 @@ void L10nOverlays::OverlayChildNodes(DocumentFragment* aFromFragment,
 
     RefPtr<Element> childElement = childNode->AsElement();
 
-    if (childElement->HasAttr(kNameSpaceID_None, nsGkAtoms::datal10nname)) {
+    if (childElement->HasAttr(nsGkAtoms::datal10nname)) {
       RefPtr<nsINode> sanitized =
           GetNodeForNamedElement(aToElement, childElement, aErrors, aRv);
       if (NS_WARN_IF(aRv.Failed())) {
@@ -411,8 +407,7 @@ void L10nOverlays::OverlayChildNodes(DocumentFragment* aFromFragment,
     nsIContent* child = aToElement->GetLastChild();
 #ifdef DEBUG
     if (child->IsElement()) {
-      if (child->AsElement()->HasAttr(kNameSpaceID_None,
-                                      nsGkAtoms::datal10nid)) {
+      if (child->AsElement()->HasAttr(nsGkAtoms::datal10nid)) {
         L10nOverlaysError error;
         error.mCode.Construct(
             L10nOverlays_Binding::ERROR_TRANSLATED_ELEMENT_DISCONNECTED);
@@ -528,9 +523,16 @@ void L10nOverlays::TranslateElement(Element& aElement,
       RefPtr<DocumentFragment> fragment =
           new (aElement.OwnerDoc()->NodeInfoManager())
               DocumentFragment(aElement.OwnerDoc()->NodeInfoManager());
+      // Note: these flags should be no less restrictive than the ones in
+      // nsContentUtils::ParseFragmentHTML .
+      // We supply the flags here because otherwise the parsing of HTML can
+      // trip DEBUG-only crashes, see bug 1809902 for details.
+      auto sanitizationFlags = nsIParserUtils::SanitizerDropForms |
+                               nsIParserUtils::SanitizerLogRemovals;
       nsContentUtils::ParseFragmentHTML(
           NS_ConvertUTF8toUTF16(aTranslation.mValue), fragment,
-          nsGkAtoms::_template, kNameSpaceID_XHTML, false, true);
+          nsGkAtoms::_template, kNameSpaceID_XHTML, false, true,
+          sanitizationFlags);
       if (NS_WARN_IF(aRv.Failed())) {
         return;
       }

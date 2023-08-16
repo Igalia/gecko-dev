@@ -55,6 +55,7 @@ job_description_schema = Schema(
         Optional("run-on-projects"): task_description_schema["run-on-projects"],
         Optional("run-on-tasks-for"): task_description_schema["run-on-tasks-for"],
         Optional("run-on-git-branches"): task_description_schema["run-on-git-branches"],
+        Optional("shipping-phase"): task_description_schema["shipping-phase"],
         Optional("always-target"): task_description_schema["always-target"],
         Exclusive("optimization", "optimization"): task_description_schema[
             "optimization"
@@ -79,6 +80,7 @@ job_description_schema = Schema(
                     Required("artifact"): str,
                     Optional("dest"): str,
                     Optional("extract"): bool,
+                    Optional("verify-hash"): bool,
                 },
             ],
         },
@@ -211,7 +213,7 @@ def use_fetches(config, jobs):
             if value:
                 aliases[f"{config.kind}-{value}"] = label
 
-    for task in config.kind_dependencies_tasks:
+    for task in config.kind_dependencies_tasks.values():
         if task.kind in ("fetch", "toolchain"):
             get_attribute(
                 artifact_names,
@@ -275,8 +277,8 @@ def use_fetches(config, jobs):
                 else:
                     dep_tasks = [
                         task
-                        for task in config.kind_dependencies_tasks
-                        if task.label == dep_label
+                        for label, task in config.kind_dependencies_tasks.items()
+                        if label == dep_label
                     ]
                     if len(dep_tasks) != 1:
                         raise Exception(
@@ -298,10 +300,12 @@ def use_fetches(config, jobs):
                         path = artifact
                         dest = None
                         extract = True
+                        verify_hash = False
                     else:
                         path = artifact["artifact"]
                         dest = artifact.get("dest")
                         extract = artifact.get("extract", True)
+                        verify_hash = artifact.get("verify-hash", False)
 
                     fetch = {
                         "artifact": f"{prefix}/{path}",
@@ -310,6 +314,8 @@ def use_fetches(config, jobs):
                     }
                     if dest is not None:
                         fetch["dest"] = dest
+                    if verify_hash:
+                        fetch["verify-hash"] = verify_hash
                     job_fetches.append(fetch)
 
         job_artifact_prefixes = {
@@ -383,7 +389,9 @@ def run_job_using(worker_implementation, run_using, schema=None, defaults={}):
         if worker_implementation in for_run_using:
             raise Exception(
                 "run_job_using({!r}, {!r}) already exists: {!r}".format(
-                    run_using, worker_implementation, for_run_using[run_using]
+                    run_using,
+                    worker_implementation,
+                    for_run_using[worker_implementation],
                 )
             )
         for_run_using[worker_implementation] = (func, schema, defaults)

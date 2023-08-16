@@ -791,7 +791,7 @@ process_common_toolchain() {
         tgt_isa=x86_64
         tgt_os=`echo $gcctarget | sed 's/.*\(darwin1[0-9]\).*/\1/'`
         ;;
-      *darwin2[0-1]*)
+      *darwin2[0-2]*)
         tgt_isa=`uname -m`
         tgt_os=`echo $gcctarget | sed 's/.*\(darwin2[0-9]\).*/\1/'`
         ;;
@@ -842,6 +842,10 @@ process_common_toolchain() {
 
   # Enable the architecture family
   case ${tgt_isa} in
+    arm64 | armv8)
+      enable_feature arm
+      enable_feature aarch64
+      ;;
     arm*)
       enable_feature arm
       ;;
@@ -940,7 +944,7 @@ process_common_toolchain() {
       add_cflags  "-mmacosx-version-min=10.15"
       add_ldflags "-mmacosx-version-min=10.15"
       ;;
-    *-darwin2[0-1]-*)
+    *-darwin2[0-2]-*)
       add_cflags  "-arch ${toolchain%%-*}"
       add_ldflags "-arch ${toolchain%%-*}"
       ;;
@@ -1066,8 +1070,11 @@ EOF
                     enable_feature win_arm64_neon_h_workaround
               else
                 # If a probe is not possible, assume this is the pure Windows
-                # SDK and so the workaround is necessary.
-                enable_feature win_arm64_neon_h_workaround
+                # SDK and so the workaround is necessary when using Visual
+                # Studio < 2019.
+                if [ ${tgt_cc##vs} -lt 16 ]; then
+                  enable_feature win_arm64_neon_h_workaround
+                fi
               fi
             fi
           fi
@@ -1511,7 +1518,7 @@ EOF
 
     # Try to find which inline keywords are supported
     check_cc <<EOF && INLINE="inline"
-static inline function() {}
+static inline int function(void) {}
 EOF
 
   # Almost every platform uses pthreads.

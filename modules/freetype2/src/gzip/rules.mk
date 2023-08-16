@@ -3,7 +3,7 @@
 #
 
 
-# Copyright (C) 2002-2022 by
+# Copyright (C) 2002-2023 by
 # David Turner, Robert Wilhelm, and Werner Lemberg.
 #
 # This file is part of the FreeType project, and may only be used, modified,
@@ -43,7 +43,6 @@ GZIP_DRV_SRCS := $(GZIP_DIR)/adler32.c  \
                  $(GZIP_DIR)/crc32.c    \
                  $(GZIP_DIR)/crc32.h    \
                  $(GZIP_DIR)/ftzconf.h  \
-                 $(GZIP_DIR)/infback.c  \
                  $(GZIP_DIR)/inffast.c  \
                  $(GZIP_DIR)/inffast.h  \
                  $(GZIP_DIR)/inffixed.h \

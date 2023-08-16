@@ -9,6 +9,8 @@
 #include "nsPIDOMWindow.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/IterableIterator.h"
+#include "mozilla/dom/Promise-inl.h"
+#include "nsThreadUtils.h"
 
 namespace mozilla::dom {
 
@@ -23,13 +25,14 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(TestInterfaceAsyncIterableSingle)
 NS_INTERFACE_MAP_END
 
 TestInterfaceAsyncIterableSingle::TestInterfaceAsyncIterableSingle(
-    nsPIDOMWindowInner* aParent)
-    : mParent(aParent) {}
+    nsPIDOMWindowInner* aParent, bool aFailToInit)
+    : mParent(aParent), mFailToInit(aFailToInit) {}
 
 // static
 already_AddRefed<TestInterfaceAsyncIterableSingle>
-TestInterfaceAsyncIterableSingle::Constructor(const GlobalObject& aGlobal,
-                                              ErrorResult& aRv) {
+TestInterfaceAsyncIterableSingle::Constructor(
+    const GlobalObject& aGlobal,
+    const TestInterfaceAsyncIterableSingleOptions& aOptions, ErrorResult& aRv) {
   nsCOMPtr<nsPIDOMWindowInner> window =
       do_QueryInterface(aGlobal.GetAsSupports());
   if (!window) {
@@ -38,7 +41,7 @@ TestInterfaceAsyncIterableSingle::Constructor(const GlobalObject& aGlobal,
   }
 
   RefPtr<TestInterfaceAsyncIterableSingle> r =
-      new TestInterfaceAsyncIterableSingle(window);
+      new TestInterfaceAsyncIterableSingle(window, aOptions.mFailToInit);
   return r.forget();
 }
 
@@ -51,51 +54,77 @@ nsPIDOMWindowInner* TestInterfaceAsyncIterableSingle::GetParentObject() const {
   return mParent;
 }
 
-void TestInterfaceAsyncIterableSingle::InitAsyncIterator(Iterator* aIterator) {
-  UniquePtr<IteratorData> data(new IteratorData(0));
-  aIterator->SetData((void*)data.release());
+void TestInterfaceAsyncIterableSingle::InitAsyncIteratorData(
+    IteratorData& aData, Iterator::IteratorType aType, ErrorResult& aError) {
+  if (mFailToInit) {
+    aError.ThrowTypeError("Caller asked us to fail");
+    return;
+  }
+
+  // Nothing else to do.
+  MOZ_ASSERT(aData.mIndex == 0);
+  MOZ_ASSERT(aData.mMultiplier == 1);
 }
 
-void TestInterfaceAsyncIterableSingle::DestroyAsyncIterator(
-    Iterator* aIterator) {
-  auto* data = reinterpret_cast<IteratorData*>(aIterator->GetData());
-  delete data;
+already_AddRefed<Promise>
+TestInterfaceAsyncIterableSingle::GetNextIterationResult(Iterator* aIterator,
+                                                         ErrorResult& aRv) {
+  return GetNextIterationResult(aIterator, aIterator->Data(), aRv);
 }
 
-already_AddRefed<Promise> TestInterfaceAsyncIterableSingle::GetNextPromise(
-    JSContext* aCx, Iterator* aIterator, ErrorResult& aRv) {
+already_AddRefed<Promise>
+TestInterfaceAsyncIterableSingle::GetNextIterationResult(
+    IterableIteratorBase* aIterator, IteratorData& aData, ErrorResult& aRv) {
   RefPtr<Promise> promise = Promise::Create(mParent->AsGlobal(), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
-  auto* data = reinterpret_cast<IteratorData*>(aIterator->GetData());
-  data->mPromise = promise;
 
-  NS_DispatchToMainThread(NS_NewRunnableFunction(
-      "TestInterfaceAsyncIterableSingle::GetNextPromise",
-      [data, self = RefPtr{this}] { self->ResolvePromise(data); }));
+  nsCOMPtr<nsIRunnable> callResolvePromise =
+      NewRunnableMethod<RefPtr<IterableIteratorBase>, IteratorData&,
+                        RefPtr<Promise>>(
+          "TestInterfaceAsyncIterableSingle::GetNextIterationResult", this,
+          &TestInterfaceAsyncIterableSingle::ResolvePromise, aIterator, aData,
+          promise);
+  if (aData.mBlockingPromisesIndex < aData.mBlockingPromises.Length()) {
+    aData.mBlockingPromises[aData.mBlockingPromisesIndex]
+        ->AddCallbacksWithCycleCollectedArgs(
+            [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+               nsIRunnable* aCallResolvePromise) {
+              NS_DispatchToMainThread(aCallResolvePromise);
+            },
+            [](JSContext* aCx, JS::Handle<JS::Value> aValue, ErrorResult& aRv,
+               nsIRunnable* aCallResolvePromise) {},
+            std::move(callResolvePromise));
+    ++aData.mBlockingPromisesIndex;
+  } else {
+    NS_DispatchToMainThread(callResolvePromise);
+  }
 
   return promise.forget();
 }
 
-void TestInterfaceAsyncIterableSingle::ResolvePromise(IteratorData* aData) {
-  AutoJSAPI jsapi;
-  if (NS_WARN_IF(!jsapi.Init(mParent))) {
-    return;
-  }
-  JSContext* cx = jsapi.cx();
-  ErrorResult rv;
-  if (aData->mIndex >= 10) {
-    iterator_utils::ResolvePromiseForFinished(cx, aData->mPromise, rv);
+void TestInterfaceAsyncIterableSingle::ResolvePromise(
+    IterableIteratorBase* aIterator, IteratorData& aData, Promise* aPromise) {
+  if (aData.mIndex >= 10) {
+    iterator_utils::ResolvePromiseForFinished(aPromise);
   } else {
-    JS::Rooted<JS::Value> value(cx);
-    Unused << ToJSValue(cx, (int32_t)(aData->mIndex * 9 % 7), &value);
-    iterator_utils::ResolvePromiseWithKeyOrValue(cx, aData->mPromise, value,
-                                                 rv);
+    aPromise->MaybeResolve(int32_t(aData.mIndex * 9 % 7 * aData.mMultiplier));
 
-    aData->mIndex++;
+    aData.mIndex++;
   }
-  aData->mPromise = nullptr;
+}
+
+void TestInterfaceAsyncIterableSingle::IteratorData::Traverse(
+    nsCycleCollectionTraversalCallback& cb) {
+  TestInterfaceAsyncIterableSingle::IteratorData* tmp = this;
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBlockingPromises);
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mThrowFromReturn);
+}
+void TestInterfaceAsyncIterableSingle::IteratorData::Unlink() {
+  TestInterfaceAsyncIterableSingle::IteratorData* tmp = this;
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mBlockingPromises);
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mThrowFromReturn);
 }
 
 }  // namespace mozilla::dom

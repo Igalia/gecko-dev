@@ -66,6 +66,12 @@ TEST(cubeb, overload_callback)
   std::unique_ptr<cubeb, decltype(&cubeb_destroy)>
     cleanup_cubeb_at_exit(ctx, cubeb_destroy);
 
+  // This test is specifically designed to test a behaviour of the WASAPI
+  // backend in a specific scenario.
+  if (strcmp(cubeb_get_backend_id(ctx), "wasapi") != 0) {
+    return;
+  }
+
   output_params.format = STREAM_FORMAT;
   output_params.rate = 48000;
   output_params.channels = 2;
@@ -90,3 +96,6 @@ TEST(cubeb, overload_callback)
   delay(500);
   cubeb_stream_stop(stream);
 }
+
+#undef SAMPLE_FREQUENCY
+#undef STREAM_FORMAT

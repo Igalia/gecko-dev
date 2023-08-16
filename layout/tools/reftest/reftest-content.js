@@ -8,7 +8,6 @@ const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 const DEBUG_CONTRACTID = "@mozilla.org/xpcom/debug;1";
 const PRINTSETTINGS_CONTRACTID = "@mozilla.org/gfx/printsettings-service;1";
-const ENVIRONMENT_CONTRACTID = "@mozilla.org/process/environment;1";
 const NS_OBSERVER_SERVICE_CONTRACTID = "@mozilla.org/observer-service;1";
 const NS_GFXINFO_CONTRACTID = "@mozilla.org/gfx/info;1";
 const IO_SERVICE_CONTRACTID = "@mozilla.org/network/io-service;1"
@@ -16,15 +15,15 @@ const IO_SERVICE_CONTRACTID = "@mozilla.org/network/io-service;1"
 // "<!--CLEAR-->"
 const BLANK_URL_FOR_CLEARING = "data:text/html;charset=UTF-8,%3C%21%2D%2DCLEAR%2D%2D%3E";
 
-const { setTimeout, clearTimeout } = ChromeUtils.import(
-    "resource://gre/modules/Timer.jsm"
+const { setTimeout, clearTimeout } = ChromeUtils.importESModule(
+    "resource://gre/modules/Timer.sys.mjs"
 );
-const { onSpellCheck } = ChromeUtils.import(
-    "resource://reftest/AsyncSpellCheckTestHelper.jsm"
+const { onSpellCheck } = ChromeUtils.importESModule(
+    "resource://reftest/AsyncSpellCheckTestHelper.sys.mjs"
 );
 
 // This will load chrome Custom Elements inside chrome documents:
-ChromeUtils.import("resource://gre/modules/CustomElementsListener.jsm");
+ChromeUtils.importESModule("resource://gre/modules/CustomElementsListener.sys.mjs");
 
 var gBrowserIsRemote;
 var gHaveCanvasSnapshot = false;
@@ -108,8 +107,7 @@ function OnInitialLoad()
     if (gDebug.isDebugBuild) {
         gAssertionCount = gDebug.assertionCount;
     }
-    var env = Cc[ENVIRONMENT_CONTRACTID].getService(Ci.nsIEnvironment);
-    gVerbose = !!env.get("MOZ_REFTEST_VERBOSE");
+    gVerbose = !!Services.env.get("MOZ_REFTEST_VERBOSE");
 
     RegisterMessageListeners();
 
@@ -197,7 +195,7 @@ function doPrintMode(contentRootElement) {
     }
 }
 
-function setupPrintMode() {
+function setupPrintMode(contentRootElement) {
     var PSSVC =
         Cc[PRINTSETTINGS_CONTRACTID].getService(Ci.nsIPrintSettingsService);
     var ps = PSSVC.createNewPrintSettings();
@@ -217,8 +215,12 @@ function setupPrintMode() {
     ps.footerStrCenter = "";
     ps.footerStrRight = "";
 
-    ps.printBGColors = true;
-    ps.printBGImages = true;
+    const printBackgrounds = (() => {
+        const attr = contentRootElement.getAttribute("reftest-paged-backgrounds");
+        return !attr || attr != "false";
+    })();
+    ps.printBGColors = printBackgrounds;
+    ps.printBGImages = printBackgrounds;
 
     docShell.contentViewer.setPageModeForTesting(/* aPageMode */ true, ps);
 }
@@ -635,6 +637,7 @@ function WaitForTestEnd(contentRootElement, inPrintMode, spellCheckedElements, f
         // call, so we don't need to do anything.
     }
 
+    let attrModifiedObserver;
     function AttrModifiedListener() {
         LogInfo("AttrModifiedListener fired");
         // Wait for the next return-to-event-loop before continuing --- for
@@ -649,8 +652,11 @@ function WaitForTestEnd(contentRootElement, inPrintMode, spellCheckedElements, f
         removeEventListener("MozAfterPaint", AfterPaintListener, false);
         removeEventListener("Reftest:MozAfterPaintFromChild", FromChildAfterPaintListener, false);
         CheckForLivenessOfContentRootElement();
-        if (contentRootElement) {
-            contentRootElement.removeEventListener("DOMAttrModified", AttrModifiedListener);
+        if (attrModifiedObserver) {
+            if (!Cu.isDeadWrapper(attrModifiedObserver)) {
+                attrModifiedObserver.disconnect();
+            }
+            attrModifiedObserver = null;
         }
         gTimeoutHook = null;
         // Make sure we're in the COMPLETED state just in case
@@ -739,7 +745,7 @@ function WaitForTestEnd(contentRootElement, inPrintMode, spellCheckedElements, f
 
             if (!inPrintMode && doPrintMode(contentRootElement)) {
                 LogInfo("MakeProgress: setting up print mode");
-                setupPrintMode();
+                setupPrintMode(contentRootElement);
             }
 
             if (hasReftestWait && !shouldWaitForReftestWaitRemoval(contentRootElement)) {
@@ -897,8 +903,10 @@ function WaitForTestEnd(contentRootElement, inPrintMode, spellCheckedElements, f
     // If contentRootElement is null then shouldWaitForReftestWaitRemoval will
     // always return false so we don't need a listener anyway
     CheckForLivenessOfContentRootElement();
-    if (contentRootElement) {
-      contentRootElement.addEventListener("DOMAttrModified", AttrModifiedListener);
+    if (contentRootElement?.hasAttribute("class")) {
+      attrModifiedObserver =
+        new contentRootElement.ownerDocument.defaultView.MutationObserver(AttrModifiedListener);
+      attrModifiedObserver.observe(contentRootElement, {attributes: true});
     }
     gTimeoutHook = RemoveListeners;
 
@@ -1016,7 +1024,7 @@ async function OnDocumentLoad(uri)
     } else {
         if (doPrintMode(contentRootElement)) {
             LogInfo("OnDocumentLoad setting up print mode");
-            setupPrintMode();
+            setupPrintMode(contentRootElement);
             inPrintMode = true;
         }
 
@@ -1155,7 +1163,7 @@ function LoadURI(uri)
     let loadURIOptions = {
       triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
     };
-    webNavigation().loadURI(uri, loadURIOptions);
+    webNavigation().loadURI(Services.io.newURI(uri), loadURIOptions);
 }
 
 function LogError(str)

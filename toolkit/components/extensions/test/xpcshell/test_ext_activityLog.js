@@ -18,7 +18,7 @@ add_setup(async () => {
 add_task(async function test_api_restricted() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: { id: "activityLog-permission@tests.mozilla.org" },
       },
       permissions: ["activityLog"],
@@ -47,7 +47,7 @@ add_task(
       temporarilyInstalled: true,
       isPrivileged: false,
       manifest: {
-        applications: {
+        browser_specific_settings: {
           gecko: { id: "activityLog-permission@tests.mozilla.org" },
         },
         permissions: ["activityLog"],
@@ -67,7 +67,8 @@ add_task(
       {
         expected: [
           {
-            message: /Using the privileged permission 'activityLog' requires a privileged add-on/,
+            message:
+              /Using the privileged permission 'activityLog' requires a privileged add-on/,
           },
         ],
       },

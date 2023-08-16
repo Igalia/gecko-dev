@@ -156,7 +156,7 @@ FileSystemTaskParentBase::FileSystemTaskParentBase(
       mErrorValue(NS_OK),
       mFileSystem(aFileSystem),
       mRequestParent(aParent),
-      mBackgroundEventTarget(GetCurrentEventTarget()) {
+      mBackgroundEventTarget(GetCurrentSerialEventTarget()) {
   MOZ_ASSERT(XRE_IsParentProcess(), "Only call from parent process!");
   MOZ_ASSERT(aFileSystem, "aFileSystem should not be null.");
   MOZ_ASSERT(aParent);
@@ -190,7 +190,7 @@ void FileSystemTaskParentBase::HandleResult() {
   }
 
   MOZ_ASSERT(mRequestParent);
-  Unused << mRequestParent->Send__delete__(mRequestParent, GetRequestResult());
+  (void)mRequestParent->Send__delete__(mRequestParent, GetRequestResult());
 }
 
 FileSystemResponseValue FileSystemTaskParentBase::GetRequestResult() const {

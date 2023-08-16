@@ -2,8 +2,8 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
 );
 
 AddonTestUtils.init(this);
@@ -22,13 +22,13 @@ let idleService = {
     removeCalls: [],
     observerFires: [],
   },
-  _reset: function() {
+  _reset: function () {
     this._observers.clear();
     this._activity.addCalls = [];
     this._activity.removeCalls = [];
     this._activity.observerFires = [];
   },
-  _fireObservers: function(state) {
+  _fireObservers: function (state) {
     for (let observer of this._observers.values()) {
       observer.observe(observer, state, null);
       this._activity.observerFires.push(state);
@@ -36,11 +36,11 @@ let idleService = {
   },
   QueryInterface: ChromeUtils.generateQI(["nsIUserIdleService"]),
   idleTime: 19999,
-  addIdleObserver: function(observer, time) {
+  addIdleObserver: function (observer, time) {
     this._observers.add(observer);
     this._activity.addCalls.push(time);
   },
-  removeIdleObserver: function(observer, time) {
+  removeIdleObserver: function (observer, time) {
     this._observers.delete(observer);
     this._activity.removeCalls.push(time);
   },

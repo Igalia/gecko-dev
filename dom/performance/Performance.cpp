@@ -6,6 +6,8 @@
 
 #include "Performance.h"
 
+#include <sstream>
+
 #include "GeckoProfiler.h"
 #include "nsRFPService.h"
 #include "PerformanceEntry.h"
@@ -26,6 +28,7 @@
 #include "mozilla/dom/PerformanceNavigationTiming.h"
 #include "mozilla/IntegerPrintfMacros.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/dom/WorkerScope.h"
@@ -57,18 +60,18 @@ already_AddRefed<Performance> Performance::CreateForMainThread(
   MOZ_ASSERT(NS_IsMainThread());
 
   MOZ_ASSERT(aWindow->AsGlobal());
-  RefPtr<Performance> performance = new PerformanceMainThread(
-      aWindow, aDOMTiming, aChannel, aPrincipal->IsSystemPrincipal());
+  RefPtr<Performance> performance =
+      new PerformanceMainThread(aWindow, aDOMTiming, aChannel);
   return performance.forget();
 }
 
 /* static */
 already_AddRefed<Performance> Performance::CreateForWorker(
-    WorkerPrivate* aWorkerPrivate) {
-  MOZ_ASSERT(aWorkerPrivate);
-  aWorkerPrivate->AssertIsOnWorkerThread();
+    WorkerGlobalScope* aGlobalScope) {
+  MOZ_ASSERT(aGlobalScope);
+  //  aWorkerPrivate->AssertIsOnWorkerThread();
 
-  RefPtr<Performance> performance = new PerformanceWorker(aWorkerPrivate);
+  RefPtr<Performance> performance = new PerformanceWorker(aGlobalScope);
   return performance.forget();
 }
 
@@ -93,51 +96,42 @@ already_AddRefed<Performance> Performance::Get(JSContext* aCx,
   return performance.forget();
 }
 
-Performance::Performance(nsIGlobalObject* aGlobal, bool aSystemPrincipal)
+Performance::Performance(nsIGlobalObject* aGlobal)
     : DOMEventTargetHelper(aGlobal),
       mResourceTimingBufferSize(kDefaultResourceTimingBufferSize),
       mPendingNotificationObserversTask(false),
       mPendingResourceTimingBufferFullEvent(false),
-      mSystemPrincipal(aSystemPrincipal) {
-  MOZ_ASSERT(!NS_IsMainThread());
-}
-
-Performance::Performance(nsPIDOMWindowInner* aWindow, bool aSystemPrincipal)
-    : DOMEventTargetHelper(aWindow),
-      mResourceTimingBufferSize(kDefaultResourceTimingBufferSize),
-      mPendingNotificationObserversTask(false),
-      mPendingResourceTimingBufferFullEvent(false),
-      mSystemPrincipal(aSystemPrincipal) {
-  MOZ_ASSERT(NS_IsMainThread());
-}
+      mRTPCallerType(aGlobal->GetRTPCallerType()),
+      mCrossOriginIsolated(aGlobal->CrossOriginIsolated()),
+      mShouldResistFingerprinting(aGlobal->ShouldResistFingerprinting(
+          RFPTarget::ReduceTimerPrecision)) {}
 
 Performance::~Performance() = default;
 
 DOMHighResTimeStamp Performance::TimeStampToDOMHighResForRendering(
     TimeStamp aTimeStamp) const {
   DOMHighResTimeStamp stamp = GetDOMTiming()->TimeStampToDOMHighRes(aTimeStamp);
-  if (!IsSystemPrincipal()) {
-    // 0 is an inappropriate mixin for this this area; however CSS Animations
-    // needs to have it's Time Reduction Logic refactored, so it's currently
-    // only clamping for RFP mode. RFP mode gives a much lower time precision,
-    // so we accept the security leak here for now.
-    return nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(stamp, 0);
-  }
-  return stamp;
+  // 0 is an inappropriate mixin for this this area; however CSS Animations
+  // needs to have it's Time Reduction Logic refactored, so it's currently
+  // only clamping for RFP mode. RFP mode gives a much lower time precision,
+  // so we accept the security leak here for now.
+  return nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(stamp, 0,
+                                                         mRTPCallerType);
 }
 
 DOMHighResTimeStamp Performance::Now() {
   DOMHighResTimeStamp rawTime = NowUnclamped();
 
-  // XXX: Remove this would cause functions in pkcs11f.h to fail.
-  // Bug 1628021 will find out the root cause.
-  if (mSystemPrincipal) {
+  // XXX: Removing this caused functions in pkcs11f.h to fail.
+  // Bug 1628021 investigates the root cause - it involves initializing
+  // the RNG service (part of GetRandomTimelineSeed()) off-main-thread
+  // but the underlying cause hasn't been identified yet.
+  if (mRTPCallerType == RTPCallerType::SystemPrincipal) {
     return rawTime;
   }
 
   return nsRFPService::ReduceTimePrecisionAsMSecs(
-      rawTime, GetRandomTimelineSeed(), mSystemPrincipal,
-      CrossOriginIsolated());
+      rawTime, GetRandomTimelineSeed(), mRTPCallerType);
 }
 
 DOMHighResTimeStamp Performance::NowUnclamped() const {
@@ -154,8 +148,8 @@ DOMHighResTimeStamp Performance::TimeOrigin() {
   DOMHighResTimeStamp rawTimeOrigin =
       mPerformanceService->TimeOrigin(CreationTimeStamp());
   // Time Origin is an absolute timestamp, so we supply a 0 context mix-in
-  return nsRFPService::ReduceTimePrecisionAsMSecs(
-      rawTimeOrigin, 0, mSystemPrincipal, CrossOriginIsolated());
+  return nsRFPService::ReduceTimePrecisionAsMSecs(rawTimeOrigin, 0,
+                                                  mRTPCallerType);
 }
 
 JSObject* Performance::WrapObject(JSContext* aCx,
@@ -164,12 +158,6 @@ JSObject* Performance::WrapObject(JSContext* aCx,
 }
 
 void Performance::GetEntries(nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
-  // We return an empty list when 'privacy.resistFingerprinting' is on.
-  if (nsContentUtils::ShouldResistFingerprinting()) {
-    aRetval.Clear();
-    return;
-  }
-
   aRetval = mResourceEntries.Clone();
   aRetval.AppendElements(mUserEntries);
   aRetval.Sort(PerformanceEntryComparator());
@@ -177,12 +165,6 @@ void Performance::GetEntries(nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
 
 void Performance::GetEntriesByType(
     const nsAString& aEntryType, nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
-  // We return an empty list when 'privacy.resistFingerprinting' is on.
-  if (nsContentUtils::ShouldResistFingerprinting()) {
-    aRetval.Clear();
-    return;
-  }
-
   if (aEntryType.EqualsLiteral("resource")) {
     aRetval = mResourceEntries.Clone();
     return;
@@ -204,11 +186,6 @@ void Performance::GetEntriesByName(
     const nsAString& aName, const Optional<nsAString>& aEntryType,
     nsTArray<RefPtr<PerformanceEntry>>& aRetval) {
   aRetval.Clear();
-
-  // We return an empty list when 'privacy.resistFingerprinting' is on.
-  if (nsContentUtils::ShouldResistFingerprinting()) {
-    return;
-  }
 
   RefPtr<nsAtom> name = NS_Atomize(aName);
   RefPtr<nsAtom> entryType =
@@ -334,7 +311,8 @@ struct UserTimingMarker {
     schema.SetAllLabels("{marker.data.name}");
     schema.AddStaticLabelValue("Marker", "UserTiming");
     schema.AddKeyLabelFormat("entryType", "Entry Type", MS::Format::String);
-    schema.AddKeyLabelFormat("name", "Name", MS::Format::String);
+    schema.AddKeyLabelFormatSearchable("name", "Name", MS::Format::String,
+                                       MS::Searchable::Searchable);
     schema.AddKeyLabelFormat("startMark", "Start Mark", MS::Format::String);
     schema.AddKeyLabelFormat("endMark", "End Mark", MS::Format::String);
     schema.AddStaticLabelValue("Description",
@@ -365,26 +343,21 @@ already_AddRefed<PerformanceMark> Performance::Mark(
     return nullptr;
   }
 
-  // To avoid fingerprinting in User Timing L2, we didn't add marks to the
-  // buffer so the user could not get timing data (which can be used to
-  // fingerprint) from the API. This may no longer be necessary (since
-  // performance.now() has reduced precision to protect against fingerprinting
-  // and performance.mark's primary fingerprinting issue is probably this timing
-  // data) but we need to do a more thorough reanalysis before we remove the
-  // fingerprinting protection. For now, we preserve the User Timing L2 behavior
-  // while supporting User Timing L3.
-  if (!nsContentUtils::ShouldResistFingerprinting()) {
-    InsertUserEntry(performanceMark);
-  }
+  InsertUserEntry(performanceMark);
 
   if (profiler_thread_is_being_profiled_for_markers()) {
     Maybe<uint64_t> innerWindowId;
     if (GetOwner()) {
       innerWindowId = Some(GetOwner()->WindowID());
     }
+    TimeStamp startTimeStamp =
+        CreationTimeStamp() +
+        TimeDuration::FromMilliseconds(performanceMark->UnclampedStartTime());
     profiler_add_marker("UserTiming", geckoprofiler::category::DOM,
-                        MarkerInnerWindowId(innerWindowId), UserTimingMarker{},
-                        aName, /* aIsMeasure */ false, Nothing{}, Nothing{});
+                        MarkerOptions(MarkerTiming::InstantAt(startTimeStamp),
+                                      MarkerInnerWindowId(innerWindowId)),
+                        UserTimingMarker{}, aName, /* aIsMeasure */ false,
+                        Nothing{}, Nothing{});
   }
 
   return performanceMark.forget();
@@ -394,8 +367,47 @@ void Performance::ClearMarks(const Optional<nsAString>& aName) {
   ClearUserEntries(aName, u"mark"_ns);
 }
 
+// To be removed once bug 1124165 lands
+bool Performance::IsPerformanceTimingAttribute(const nsAString& aName) const {
+  // Note that toJSON is added to this list due to bug 1047848
+  static const char* attributes[] = {"navigationStart",
+                                     "unloadEventStart",
+                                     "unloadEventEnd",
+                                     "redirectStart",
+                                     "redirectEnd",
+                                     "fetchStart",
+                                     "domainLookupStart",
+                                     "domainLookupEnd",
+                                     "connectStart",
+                                     "secureConnectionStart",
+                                     "connectEnd",
+                                     "requestStart",
+                                     "responseStart",
+                                     "responseEnd",
+                                     "domLoading",
+                                     "domInteractive",
+                                     "domContentLoadedEventStart",
+                                     "domContentLoadedEventEnd",
+                                     "domComplete",
+                                     "loadEventStart",
+                                     "loadEventEnd",
+                                     nullptr};
+
+  for (uint32_t i = 0; attributes[i]; ++i) {
+    if (aName.EqualsASCII(attributes[i])) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
 DOMHighResTimeStamp Performance::ConvertMarkToTimestampWithString(
-    const nsAString& aName, ErrorResult& aRv) {
+    const nsAString& aName, ErrorResult& aRv, bool aReturnUnclamped) {
+  if (IsPerformanceTimingAttribute(aName)) {
+    return ConvertNameToTimestamp(aName, aRv);
+  }
+
   AutoTArray<RefPtr<PerformanceEntry>, 1> arr;
   Optional<nsAString> typeParam;
   nsAutoString str;
@@ -403,23 +415,16 @@ DOMHighResTimeStamp Performance::ConvertMarkToTimestampWithString(
   typeParam = &str;
   GetEntriesByName(aName, typeParam, arr);
   if (!arr.IsEmpty()) {
+    if (aReturnUnclamped) {
+      return arr.LastElement()->UnclampedStartTime();
+    }
     return arr.LastElement()->StartTime();
   }
 
-  if (!IsPerformanceTimingAttribute(aName)) {
-    nsPrintfCString errorMsg("Given mark name, %s, is unknown",
-                             NS_ConvertUTF16toUTF8(aName).get());
-    aRv.ThrowSyntaxError(errorMsg);
-    return 0;
-  }
-
-  DOMHighResTimeStamp ts = GetPerformanceTimingFromString(aName);
-  if (!ts) {
-    aRv.Throw(NS_ERROR_DOM_INVALID_ACCESS_ERR);
-    return 0;
-  }
-
-  return ts - CreationTime();
+  nsPrintfCString errorMsg("Given mark name, %s, is unknown",
+                           NS_ConvertUTF16toUTF8(aName).get());
+  aRv.ThrowSyntaxError(errorMsg);
+  return 0;
 }
 
 DOMHighResTimeStamp Performance::ConvertMarkToTimestampWithDOMHighResTimeStamp(
@@ -448,29 +453,67 @@ DOMHighResTimeStamp Performance::ConvertMarkToTimestampWithDOMHighResTimeStamp(
 
 DOMHighResTimeStamp Performance::ConvertMarkToTimestamp(
     const ResolveTimestampAttribute aAttribute,
-    const OwningStringOrDouble& aMarkNameOrTimestamp, ErrorResult& aRv) {
+    const OwningStringOrDouble& aMarkNameOrTimestamp, ErrorResult& aRv,
+    bool aReturnUnclamped) {
   if (aMarkNameOrTimestamp.IsString()) {
     return ConvertMarkToTimestampWithString(aMarkNameOrTimestamp.GetAsString(),
-                                            aRv);
+                                            aRv, aReturnUnclamped);
   }
 
   return ConvertMarkToTimestampWithDOMHighResTimeStamp(
       aAttribute, aMarkNameOrTimestamp.GetAsDouble(), aRv);
 }
 
+DOMHighResTimeStamp Performance::ConvertNameToTimestamp(const nsAString& aName,
+                                                        ErrorResult& aRv) {
+  if (!IsGlobalObjectWindow()) {
+    nsPrintfCString errorMsg(
+        "Cannot get PerformanceTiming attribute values for non-Window global "
+        "object. Given: %s",
+        NS_ConvertUTF16toUTF8(aName).get());
+    aRv.ThrowTypeError(errorMsg);
+    return 0;
+  }
+
+  if (aName.EqualsASCII("navigationStart")) {
+    return 0;
+  }
+
+  // We use GetPerformanceTimingFromString, rather than calling the
+  // navigationStart method timing function directly, because the former handles
+  // reducing precision against timing attacks.
+  const DOMHighResTimeStamp startTime =
+      GetPerformanceTimingFromString(u"navigationStart"_ns);
+  const DOMHighResTimeStamp endTime = GetPerformanceTimingFromString(aName);
+  MOZ_ASSERT(endTime >= 0);
+  if (endTime == 0) {
+    nsPrintfCString errorMsg(
+        "Given PerformanceTiming attribute, %s, isn't available yet",
+        NS_ConvertUTF16toUTF8(aName).get());
+    aRv.ThrowInvalidAccessError(errorMsg);
+    return 0;
+  }
+
+  return endTime - startTime;
+}
+
 DOMHighResTimeStamp Performance::ResolveEndTimeForMeasure(
     const Optional<nsAString>& aEndMark,
-    const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv) {
+    const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv,
+    bool aReturnUnclamped) {
   DOMHighResTimeStamp endTime;
   if (aEndMark.WasPassed()) {
-    endTime = ConvertMarkToTimestampWithString(aEndMark.Value(), aRv);
+    endTime = ConvertMarkToTimestampWithString(aEndMark.Value(), aRv,
+                                               aReturnUnclamped);
   } else if (aOptions && aOptions->mEnd.WasPassed()) {
-    endTime = ConvertMarkToTimestamp(ResolveTimestampAttribute::End,
-                                     aOptions->mEnd.Value(), aRv);
+    endTime =
+        ConvertMarkToTimestamp(ResolveTimestampAttribute::End,
+                               aOptions->mEnd.Value(), aRv, aReturnUnclamped);
   } else if (aOptions && aOptions->mStart.WasPassed() &&
              aOptions->mDuration.WasPassed()) {
-    const DOMHighResTimeStamp start = ConvertMarkToTimestamp(
-        ResolveTimestampAttribute::Start, aOptions->mStart.Value(), aRv);
+    const DOMHighResTimeStamp start =
+        ConvertMarkToTimestamp(ResolveTimestampAttribute::Start,
+                               aOptions->mStart.Value(), aRv, aReturnUnclamped);
     if (aRv.Failed()) {
       return 0;
     }
@@ -493,11 +536,13 @@ DOMHighResTimeStamp Performance::ResolveEndTimeForMeasure(
 
 DOMHighResTimeStamp Performance::ResolveStartTimeForMeasure(
     const Maybe<const nsAString&>& aStartMark,
-    const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv) {
+    const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv,
+    bool aReturnUnclamped) {
   DOMHighResTimeStamp startTime;
   if (aOptions && aOptions->mStart.WasPassed()) {
-    startTime = ConvertMarkToTimestamp(ResolveTimestampAttribute::Start,
-                                       aOptions->mStart.Value(), aRv);
+    startTime =
+        ConvertMarkToTimestamp(ResolveTimestampAttribute::Start,
+                               aOptions->mStart.Value(), aRv, aReturnUnclamped);
   } else if (aOptions && aOptions->mDuration.WasPassed() &&
              aOptions->mEnd.WasPassed()) {
     const DOMHighResTimeStamp duration =
@@ -508,20 +553,87 @@ DOMHighResTimeStamp Performance::ResolveStartTimeForMeasure(
       return 0;
     }
 
-    const DOMHighResTimeStamp end = ConvertMarkToTimestamp(
-        ResolveTimestampAttribute::End, aOptions->mEnd.Value(), aRv);
+    const DOMHighResTimeStamp end =
+        ConvertMarkToTimestamp(ResolveTimestampAttribute::End,
+                               aOptions->mEnd.Value(), aRv, aReturnUnclamped);
     if (aRv.Failed()) {
       return 0;
     }
 
     startTime = end - duration;
   } else if (aStartMark) {
-    startTime = ConvertMarkToTimestampWithString(*aStartMark, aRv);
+    startTime =
+        ConvertMarkToTimestampWithString(*aStartMark, aRv, aReturnUnclamped);
   } else {
     startTime = 0;
   }
 
   return startTime;
+}
+
+static std::string GetMarkerFilename() {
+  std::stringstream s;
+#ifdef XP_WIN
+  s << "marker-" << GetCurrentProcessId() << ".txt";
+#else
+  s << "marker-" << getpid() << ".txt";
+#endif
+  return s.str();
+}
+
+// This emits markers to an external marker-[pid].txt file for use by an
+// external profiler like samply or etw-gecko
+void Performance::MaybeEmitExternalProfilerMarker(
+    const nsAString& aName, Maybe<const PerformanceMeasureOptions&> aOptions,
+    Maybe<const nsAString&> aStartMark, const Optional<nsAString>& aEndMark) {
+  ErrorResult rv;
+  static FILE* markerFile = getenv("MOZ_USE_PERFORMANCE_MARKER_FILE")
+                                ? fopen(GetMarkerFilename().c_str(), "w+")
+                                : nullptr;
+  if (!markerFile) {
+    return;
+  }
+
+  const DOMHighResTimeStamp unclampedStartTime = ResolveStartTimeForMeasure(
+      aStartMark, aOptions, rv, /* aReturnUnclamped */ true);
+  if (NS_WARN_IF(rv.Failed())) {
+    return;
+  }
+  const DOMHighResTimeStamp unclampedEndTime =
+      ResolveEndTimeForMeasure(aEndMark, aOptions, rv, /* aReturnUnclamped */
+                               true);
+  if (NS_WARN_IF(rv.Failed())) {
+    return;
+  }
+
+  TimeStamp startTimeStamp =
+      CreationTimeStamp() + TimeDuration::FromMilliseconds(unclampedStartTime);
+  TimeStamp endTimeStamp =
+      CreationTimeStamp() + TimeDuration::FromMilliseconds(unclampedEndTime);
+
+#ifdef XP_LINUX
+  uint64_t rawStart = startTimeStamp.RawClockMonotonicNanosecondsSinceBoot();
+  uint64_t rawEnd = endTimeStamp.RawClockMonotonicNanosecondsSinceBoot();
+#elif XP_WIN
+  uint64_t rawStart = startTimeStamp.RawQueryPerformanceCounterValue().value();
+  uint64_t rawEnd = endTimeStamp.RawQueryPerformanceCounterValue().value();
+#elif XP_MACOSX
+  uint64_t rawStart = startTimeStamp.RawMachAbsoluteTimeValue();
+  uint64_t rawEnd = endTimeStamp.RawMachAbsoluteTimeValue();
+#else
+  uint64_t rawStart = 0;
+  uint64_t rawEnd = 0;
+  MOZ_CRASH("no timestamp");
+#endif
+  // Write a line for this measure to the marker file. The marker file uses a
+  // text-based format where every line is one marker, and each line has the
+  // format:
+  // `<raw_start_timestamp> <raw_end_timestamp> <measure_name>`
+  //
+  // The timestamp value is OS specific.
+  fprintf(markerFile, "%" PRIu64 " %" PRIu64 " %s\n", rawStart, rawEnd,
+          NS_ConvertUTF16toUTF8(aName).get());
+  fflush(markerFile);
 }
 
 already_AddRefed<PerformanceMeasure> Performance::Measure(
@@ -531,19 +643,6 @@ already_AddRefed<PerformanceMeasure> Performance::Measure(
   if (!GetParentObject()) {
     aRv.ThrowInvalidStateError("Global object is unavailable");
     return nullptr;
-  }
-
-  // When resisting fingerprinting, we don't add marks to the buffer. Since
-  // measure relies on relationships between marks in the buffer, this method
-  // will throw if we look for user-entered marks so we return a dummy measure
-  // instead of continuing. We could instead return real values for performance
-  // timing attributes and dummy values for user-entered marks but this adds
-  // complexity that doesn't seem worth the effort because these fingerprinting
-  // protections may not longer be necessary (since performance.now() already
-  // has reduced precision).
-  if (nsContentUtils::ShouldResistFingerprinting()) {
-    return do_AddRef(new PerformanceMeasure(GetParentObject(), aName, 0, 0,
-                                            JS::NullHandleValue));
   }
 
   // Maybe is more readable than using the union type directly.
@@ -579,8 +678,8 @@ already_AddRefed<PerformanceMeasure> Performance::Measure(
     }
   }
 
-  const DOMHighResTimeStamp endTime =
-      ResolveEndTimeForMeasure(aEndMark, options, aRv);
+  const DOMHighResTimeStamp endTime = ResolveEndTimeForMeasure(
+      aEndMark, options, aRv, /* aReturnUnclamped */ false);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -590,8 +689,8 @@ already_AddRefed<PerformanceMeasure> Performance::Measure(
   if (aStartOrMeasureOptions.IsString()) {
     startMark.emplace(aStartOrMeasureOptions.GetAsString());
   }
-  const DOMHighResTimeStamp startTime =
-      ResolveStartTimeForMeasure(startMark, options, aRv);
+  const DOMHighResTimeStamp startTime = ResolveStartTimeForMeasure(
+      startMark, options, aRv, /* aReturnUnclamped */ false);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -613,11 +712,19 @@ already_AddRefed<PerformanceMeasure> Performance::Measure(
       GetParentObject(), aName, startTime, endTime, detail);
   InsertUserEntry(performanceMeasure);
 
+  MaybeEmitExternalProfilerMarker(aName, options, startMark, aEndMark);
+
   if (profiler_thread_is_being_profiled_for_markers()) {
+    const DOMHighResTimeStamp unclampedStartTime = ResolveStartTimeForMeasure(
+        startMark, options, aRv, /* aReturnUnclamped */ true);
+    const DOMHighResTimeStamp unclampedEndTime =
+        ResolveEndTimeForMeasure(aEndMark, options, aRv, /* aReturnUnclamped */
+                                 true);
     TimeStamp startTimeStamp =
-        CreationTimeStamp() + TimeDuration::FromMilliseconds(startTime);
+        CreationTimeStamp() +
+        TimeDuration::FromMilliseconds(unclampedStartTime);
     TimeStamp endTimeStamp =
-        CreationTimeStamp() + TimeDuration::FromMilliseconds(endTime);
+        CreationTimeStamp() + TimeDuration::FromMilliseconds(unclampedEndTime);
 
     Maybe<nsString> endMark;
     if (aEndMark.WasPassed()) {
@@ -788,9 +895,7 @@ MOZ_ALWAYS_INLINE bool Performance::CanAddResourceTimingEntry() {
 void Performance::InsertResourceEntry(PerformanceEntry* aEntry) {
   MOZ_ASSERT(aEntry);
 
-  if (nsContentUtils::ShouldResistFingerprinting()) {
-    return;
-  }
+  QueueEntry(aEntry);
 
   /*
    * Let new entry be the input PerformanceEntry to be added.
@@ -804,7 +909,6 @@ void Performance::InsertResourceEntry(PerformanceEntry* aEntry) {
      * Increase resource timing buffer current size by 1.
      */
     mResourceEntries.InsertElementSorted(aEntry, PerformanceEntryComparator());
-    QueueEntry(aEntry);
     return;
   }
 
@@ -921,7 +1025,10 @@ void Performance::QueueEntry(PerformanceEntry* aEntry) {
   }
 }
 
-void Performance::MemoryPressure() { mUserEntries.Clear(); }
+// We could clear User entries here, but doing so could break sites that call
+// performance.measure() if the marks disappeared without warning.   Chrome
+// allows "infinite" entries.
+void Performance::MemoryPressure() {}
 
 size_t Performance::SizeOfUserEntries(
     mozilla::MallocSizeOf aMallocSizeOf) const {

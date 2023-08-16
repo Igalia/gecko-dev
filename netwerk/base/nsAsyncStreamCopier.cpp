@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsAsyncStreamCopier.h"
+#include "nsComponentManagerUtils.h"
 #include "nsIOService.h"
 #include "nsIEventTarget.h"
 #include "nsStreamUtils.h"
@@ -35,7 +36,7 @@ class AsyncApplyBufferingPolicyEvent final : public Runnable {
   explicit AsyncApplyBufferingPolicyEvent(nsAsyncStreamCopier* aCopier)
       : mozilla::Runnable("AsyncApplyBufferingPolicyEvent"),
         mCopier(aCopier),
-        mTarget(GetCurrentEventTarget()) {}
+        mTarget(GetCurrentSerialEventTarget()) {}
 
   NS_IMETHOD Run() override {
     nsresult rv = mCopier->ApplyBufferingPolicy();
@@ -153,6 +154,20 @@ NS_IMETHODIMP
 nsAsyncStreamCopier::GetStatus(nsresult* status) {
   IsComplete(status);
   return NS_OK;
+}
+
+NS_IMETHODIMP nsAsyncStreamCopier::SetCanceledReason(
+    const nsACString& aReason) {
+  return nsIAsyncStreamCopier::SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsAsyncStreamCopier::GetCanceledReason(nsACString& aReason) {
+  return nsIAsyncStreamCopier::GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsAsyncStreamCopier::CancelWithReason(nsresult aStatus,
+                                                    const nsACString& aReason) {
+  return nsIAsyncStreamCopier::CancelWithReasonImpl(aStatus, aReason);
 }
 
 NS_IMETHODIMP

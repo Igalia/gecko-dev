@@ -37,7 +37,9 @@ using mozilla::gfx::Feature from "gfxFeature.h";
 using mozilla::gfx::Fallback from "gfxFallback.h";
 using mozilla::layers::LayersId from "mozilla/layers/LayersTypes.h";
 using mozilla::layers::OverlayInfo from "mozilla/layers/OverlayInfo.h";
+using mozilla::layers::SwapChainInfo from "mozilla/layers/OverlayInfo.h";
 using mozilla::media::MediaCodecsSupported from "MediaCodecsSupport.h";
+using mozilla::layers::VideoBridgeSource from "mozilla/layers/VideoBridgeUtils.h";
 
 namespace mozilla {
 namespace gfx {
@@ -50,7 +52,7 @@ struct LayerTreeIdMapping {
 // This protocol allows the UI process to talk to the GPU process. There is one
 // instance of this protocol, with the GPUParent living on the main thread of
 // the GPU process and the GPUChild living on the main thread of the UI process.
-[ManualDealloc, NeedsOtherPid]
+[NeedsOtherPid]
 sync protocol PGPU
 {
 parent:
@@ -64,7 +66,7 @@ parent:
   async InitCompositorManager(Endpoint<PCompositorManagerParent> endpoint);
   async InitVsyncBridge(Endpoint<PVsyncBridgeParent> endpoint);
   async InitImageBridge(Endpoint<PImageBridgeParent> endpoint);
-  async InitVideoBridge(Endpoint<PVideoBridgeParent> endpoint);
+  async InitVideoBridge(Endpoint<PVideoBridgeParent> endpoint, VideoBridgeSource aSource);
   async InitVRManager(Endpoint<PVRManagerParent> endpoint);
   async InitUiCompositorController(LayersId rootLayerTreeId, Endpoint<PUiCompositorControllerParent> endpoint);
   async InitAPZInputBridge(LayersId layersId,
@@ -159,6 +161,7 @@ child:
   async DeclareStable();
   async NotifyDeviceReset(GPUDeviceData status);
   async NotifyOverlayInfo(OverlayInfo info);
+  async NotifySwapChainInfo(SwapChainInfo info);
   async FlushMemory(nsString reason);
 
   async AddMemoryReport(MemoryReport aReport);

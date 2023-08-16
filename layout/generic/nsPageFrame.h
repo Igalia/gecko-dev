@@ -50,10 +50,6 @@ class nsPageFrame final : public nsContainerFrame {
   void SetSharedPageData(nsSharedPageData* aPD);
   nsSharedPageData* GetSharedPageData() const { return mPD; }
 
-  // We must allow Print Preview UI to have a background, no matter what the
-  // user's settings
-  bool HonorPrintBackgroundSettings() const override { return false; }
-
   void PaintHeaderFooter(gfxContext& aRenderingContext, nsPoint aPt,
                          bool aSubpixelAA);
 
@@ -72,14 +68,21 @@ class nsPageFrame final : public nsContainerFrame {
 
   nsSize ComputePageSize() const;
 
-  // Computes the scaling factor caused by a CSS page-size that is to large to
-  // fit on the paper we are printing to.
-  // Callers that have already computed the page size with ComputePageSize
-  // should use the first version of the function, which avoids recomputing it.
-  float ComputePageSizeScale(const nsSize aContentPageSize) const;
-  inline float ComputePageSizeScale() const {
-    return ComputePageSizeScale(ComputePageSize());
-  }
+  // Computes the scaling factor to fit the page to the sheet in the single
+  // page-per-sheet case. (The multiple pages-per-sheet case is currently
+  // different - see the comment for
+  // PrintedSheetFrame::ComputePagesPerSheetGridMetrics and code in
+  // ComputePagesPerSheetAndPageSizeTransform.) The page and sheet dimensions
+  // may be different due to a CSS page-size that gives the page a size that is
+  // too large to fit on the sheet that we are printing to.
+  float ComputeSinglePPSPageSizeScale(const nsSize aContentPageSize) const;
+
+  // The default implementation of FirstContinuation in nsSplittableFrame is
+  // implemented in linear time, walking back through the linked list of
+  // continuations via mPrevContinuation.
+  // For nsPageFrames, we can find the first continuation through the frame
+  // tree structure in constant time.
+  nsIFrame* FirstContinuation() const final;
 
  protected:
   explicit nsPageFrame(ComputedStyle* aStyle, nsPresContext* aPresContext);

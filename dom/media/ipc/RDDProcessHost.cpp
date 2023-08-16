@@ -140,19 +140,6 @@ void RDDProcessHost::OnChannelConnected(base::ProcessId peer_pid) {
       }));
 }
 
-void RDDProcessHost::OnChannelError() {
-  MOZ_ASSERT(!NS_IsMainThread());
-
-  GeckoChildProcessHost::OnChannelError();
-
-  NS_DispatchToMainThread(NS_NewRunnableFunction(
-      "RDDProcessHost::OnChannelError", [this, liveToken = mLiveToken]() {
-        if (*liveToken && mLaunchPhase == LaunchPhase::Waiting) {
-          InitAfterConnect(false);
-        }
-      }));
-}
-
 static uint64_t sRDDProcessTokenCounter = 0;
 
 void RDDProcessHost::InitAfterConnect(bool aSucceeded) {
@@ -168,9 +155,8 @@ void RDDProcessHost::InitAfterConnect(bool aSucceeded) {
     return;
   }
   mProcessToken = ++sRDDProcessTokenCounter;
-  mRDDChild = MakeUnique<RDDChild>(this);
-  DebugOnly<bool> rv = mRDDChild->Open(
-      TakeInitialPort(), base::GetProcId(GetChildProcessHandle()));
+  mRDDChild = MakeRefPtr<RDDChild>(this);
+  DebugOnly<bool> rv = TakeInitialEndpoint().Bind(mRDDChild.get());
   MOZ_ASSERT(rv);
 
   // Only clear mPrefSerializer in the success case to avoid a

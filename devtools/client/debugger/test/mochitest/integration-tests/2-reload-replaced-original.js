@@ -48,7 +48,7 @@ addIntegrationTask(async function testReloadingRemovedOriginalSources(
   );
 
   let breakpoint = dbg.selectors.getBreakpointsList()[0];
-  is(breakpoint.location.sourceUrl, replacedSource.url);
+  is(breakpoint.location.source.url, replacedSource.url);
   is(breakpoint.location.line, 4);
   if (isCompressed) {
     is(breakpoint.generatedLocation.line, 1);
@@ -64,7 +64,7 @@ addIntegrationTask(async function testReloadingRemovedOriginalSources(
   );
   const syncBp = waitForDispatch(dbg.store, "SET_BREAKPOINT");
   testServer.switchToNextVersion();
-  await reload(dbg, "new-original.js");
+  const onReloaded = reload(dbg, "new-original.js");
   await syncBp;
 
   // Assert the new breakpoint being created after reload
@@ -85,7 +85,7 @@ addIntegrationTask(async function testReloadingRemovedOriginalSources(
   );
 
   breakpoint = dbg.selectors.getBreakpointsList()[0];
-  is(breakpoint.location.sourceUrl, newSource.url);
+  is(breakpoint.location.source.url, newSource.url);
   is(breakpoint.location.line, 4);
   if (isCompressed) {
     is(breakpoint.generatedLocation.line, 1);
@@ -95,6 +95,8 @@ addIntegrationTask(async function testReloadingRemovedOriginalSources(
   }
 
   await resume(dbg);
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 
   info(
     "Reload a last time to remove both original and generated sources entirely"

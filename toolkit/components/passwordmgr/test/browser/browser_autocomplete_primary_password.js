@@ -14,7 +14,7 @@ async function waitForDialog() {
   let [subject] = await TestUtils.topicObserved("common-dialog-loaded");
   let dialog = subject.Dialog;
   let expected = "Password Required - " + BRAND_FULL_NAME;
-  is(dialog.args.title, expected, "Check common dialog title");
+  Assert.equal(dialog.args.title, expected, "Check common dialog title");
   return {
     async close(win = window) {
       dialog.ui.button1.click();
@@ -23,17 +23,17 @@ async function waitForDialog() {
   };
 }
 
-add_setup(async function() {
+add_setup(async function () {
   let login = LoginTestUtils.testData.formLogin({
     origin: "https://example.com",
     formActionOrigin: "https://example.com",
     username: "username",
     password: "password",
   });
-  Services.logins.addLogin(login);
+  await Services.logins.addLoginAsync(login);
   LoginTestUtils.primaryPassword.enable();
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     LoginTestUtils.primaryPassword.disable();
   });
 
@@ -48,10 +48,10 @@ add_task(async function test_mpAutocompleteTimeout() {
   // Wait for initial primary password dialog after opening the tab.
   let dialogShown = waitForDialog();
 
-  await BrowserTestUtils.withNewTab(URL, async function(browser) {
+  await BrowserTestUtils.withNewTab(URL, async function (browser) {
     (await dialogShown).close();
 
-    await SpecialPowers.spawn(browser, [], async function() {
+    await SpecialPowers.spawn(browser, [], async function () {
       // Focus the password field to trigger autocompletion.
       content.document.getElementById("form-basic-password").focus();
     });
@@ -61,7 +61,7 @@ add_task(async function test_mpAutocompleteTimeout() {
     await new Promise(c => setTimeout(c, 4000));
 
     dialogShown = waitForDialog();
-    await SpecialPowers.spawn(browser, [], async function() {
+    await SpecialPowers.spawn(browser, [], async function () {
       // Re-focus the password field to trigger autocompletion.
       content.document.getElementById("form-basic-username").focus();
       content.document.getElementById("form-basic-password").focus();
@@ -82,10 +82,10 @@ add_task(async function test_mpAutocompleteUIBusy() {
 
   let win = await BrowserTestUtils.openNewBrowserWindow();
 
-  Services.tm.dispatchToMainThread(() => {
+  Services.tm.dispatchToMainThread(async () => {
     try {
       // Trigger a MP prompt in the new window by saving a login
-      Services.logins.addLogin(LoginTestUtils.testData.formLogin());
+      await Services.logins.addLoginAsync(LoginTestUtils.testData.formLogin());
     } catch (e) {
       // Handle throwing from MP cancellation
     }
@@ -106,13 +106,13 @@ add_task(async function test_mpAutocompleteUIBusy() {
   };
 
   function dialogObserver(subject, topic, data) {
-    ok(false, "A second dialog shouldn't have been shown");
+    Assert.ok(false, "A second dialog shouldn't have been shown");
     Services.obs.removeObserver(dialogObserver, topic);
   }
   Services.obs.addObserver(dialogObserver, "common-dialog-loaded");
 
   let results = await loginManagerParent.doAutocompleteSearch(origin, data);
-  is(results.logins.length, 0, "No results since uiBusy is true");
+  Assert.equal(results.logins.length, 0, "No results since uiBusy is true");
   await close(win);
 
   await BrowserTestUtils.closeWindow(win);

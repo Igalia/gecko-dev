@@ -23,6 +23,9 @@ class FontFaceSetWorkerImpl final : public FontFaceSetImpl {
   void Destroy() override;
 
   bool IsOnOwningThread() override;
+#ifdef DEBUG
+  void AssertIsOnOwningThread() override;
+#endif
   void DispatchToOwningThread(const char* aName,
                               std::function<void()>&& aFunc) override;
 
@@ -31,6 +34,9 @@ class FontFaceSetWorkerImpl final : public FontFaceSetImpl {
   void FlushUserFontSet() override;
 
   // gfxUserFontSet
+
+  already_AddRefed<gfxUserFontFamily> LookupFamily(
+      const nsACString& aName) const override;
 
   nsresult StartLoad(gfxUserFontEntry* aUserFontEntry,
                      uint32_t aSrcIndex) override;

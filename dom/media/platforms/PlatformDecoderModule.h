@@ -22,7 +22,9 @@
 #  include "mozilla/TaskQueue.h"
 #  include "mozilla/layers/KnowsCompositor.h"
 #  include "mozilla/layers/LayersTypes.h"
+#  include "mozilla/ipc/UtilityAudioDecoder.h"
 #  include "nsTArray.h"
+#  include "PerformanceRecorder.h"
 
 namespace mozilla {
 class TrackInfo;
@@ -109,6 +111,7 @@ struct CreateDecoderParamsForAsync {
   const OptionSet mOptions = OptionSet(Option::Default);
   const media::VideoFrameRate mRate;
   const Maybe<uint64_t> mMediaEngineId;
+  const Maybe<TrackingId> mTrackingId;
 };
 
 struct MOZ_STACK_CLASS CreateDecoderParams final {
@@ -132,7 +135,8 @@ struct MOZ_STACK_CLASS CreateDecoderParams final {
         mOnWaitingForKeyEvent(aParams.mOnWaitingForKeyEvent),
         mOptions(aParams.mOptions),
         mRate(aParams.mRate),
-        mMediaEngineId(aParams.mMediaEngineId) {}
+        mMediaEngineId(aParams.mMediaEngineId),
+        mTrackingId(aParams.mTrackingId) {}
 
   template <typename T1, typename... Ts>
   CreateDecoderParams(const TrackInfo& aConfig, T1&& a1, Ts&&... args)
@@ -180,6 +184,7 @@ struct MOZ_STACK_CLASS CreateDecoderParams final {
   media::VideoFrameRate mRate;
   // Used on Windows when the MF media engine playback is enabled.
   Maybe<uint64_t> mMediaEngineId;
+  Maybe<TrackingId> mTrackingId;
 
  private:
   void Set(layers::ImageContainer* aImageContainer) {
@@ -211,6 +216,7 @@ struct MOZ_STACK_CLASS CreateDecoderParams final {
   void Set(const Maybe<uint64_t>& aMediaEngineId) {
     mMediaEngineId = aMediaEngineId;
   }
+  void Set(const Maybe<TrackingId>& aTrackingId) { mTrackingId = aTrackingId; }
   void Set(const CreateDecoderParams& aParams) {
     // Set all but mTrackInfo;
     mImageContainer = aParams.mImageContainer;
@@ -224,6 +230,7 @@ struct MOZ_STACK_CLASS CreateDecoderParams final {
     mOptions = aParams.mOptions;
     mRate = aParams.mRate;
     mMediaEngineId = aParams.mMediaEngineId;
+    mTrackingId = aParams.mTrackingId;
   }
   template <typename T1, typename T2, typename... Ts>
   void Set(T1&& a1, T2&& a2, Ts&&... args) {
@@ -440,7 +447,7 @@ class MediaDataDecoder : public DecoderDoctorLifeLogger<MediaDataDecoder> {
       DecodePromise;
   typedef MozPromise<bool, MediaResult, /* IsExclusive = */ true> FlushPromise;
 
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaDataDecoder)
+  NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
 
   // Initialize the decoder. The decoder should be ready to decode once
   // the promise resolves. The decoder should do any initialization here, rather
@@ -516,6 +523,15 @@ class MediaDataDecoder : public DecoderDoctorLifeLogger<MediaDataDecoder> {
   // Return the name of the MediaDataDecoder, only used for decoding.
   // May be accessed in a non thread-safe fashion.
   virtual nsCString GetDescriptionName() const = 0;
+
+  virtual nsCString GetProcessName() const {
+    nsCString rv = nsCString(XRE_GetProcessTypeString());
+    if (XRE_IsUtilityProcess()) {
+      rv += "+"_ns + mozilla::ipc::GetChildAudioActorName();
+    }
+    return rv;
+  };
+  virtual nsCString GetCodecName() const = 0;
 
   // Set a hint of seek target time to decoder. Decoder will drop any decoded
   // data which pts is smaller than this value. This threshold needs to be clear

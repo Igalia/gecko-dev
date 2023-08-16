@@ -36,12 +36,20 @@ job-defaults:
                 by-test-platform:
                     .*/debug: built-projects
                     default: []
-            default: built-projects
+            default:
+                by-test-platform:
+                    .*(tsan|wayland).*: []
+                    default: built-projects
     virtualization: virtual
 
 marionette:
     description: "Marionette unittest run"
     treeherder-symbol: Mn
-    max-run-time: 5400
+    max-run-time:
+        by-test-platform:
+            .*asan.*: 5400
+            .*ccov.*: 3600
+            .*debug.*: 3600
+            default: 2700
     instance-size: default
     chunks: 1

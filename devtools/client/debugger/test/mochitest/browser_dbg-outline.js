@@ -7,7 +7,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-scripts.html", "simple1.js");
 
   await selectSource(dbg, "simple1.js", 1);
@@ -33,6 +33,7 @@ add_task(async function() {
   info("Click an item in outline panel");
   const item = getNthItem(dbg, 3);
   item.click();
+  await waitForLoadedSource(dbg, "simple1.js");
   assertHighlightLocation(dbg, "simple1.js", 15);
   ok(
     item.parentNode.classList.contains("focused"),

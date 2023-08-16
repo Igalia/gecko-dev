@@ -7,7 +7,6 @@
 #ifndef NSSUBDOCUMENTFRAME_H_
 #define NSSUBDOCUMENTFRAME_H_
 
-#include "LayerState.h"
 #include "mozilla/Attributes.h"
 #include "nsDisplayList.h"
 #include "nsAtomicContainerFrame.h"
@@ -135,6 +134,8 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
   void ClearRetainedPaintData();
 
   void MaybeUpdateEmbedderColorScheme();
+
+  void MaybeUpdateRemoteStyle(ComputedStyle* aOldComputedStyle = nullptr);
   void PropagateIsUnderHiddenEmbedderElementToSubView(
       bool aIsUnderHiddenEmbedderElement);
 
@@ -193,6 +194,7 @@ class nsSubDocumentFrame final : public nsAtomicContainerFrame,
   bool mPostedReflowCallback : 1;
   bool mDidCreateDoc : 1;
   bool mCallingShow : 1;
+  bool mIsInObjectOrEmbed : 1;
 };
 
 namespace mozilla {
@@ -205,10 +207,8 @@ class nsDisplayRemote final : public nsPaintedDisplayItem {
   typedef mozilla::dom::TabId TabId;
   typedef mozilla::gfx::Matrix4x4 Matrix4x4;
   typedef mozilla::layers::EventRegionsOverride EventRegionsOverride;
-  typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::LayersId LayersId;
   typedef mozilla::layers::StackingContextHelper StackingContextHelper;
-  typedef mozilla::LayerState LayerState;
   typedef mozilla::LayoutDeviceRect LayoutDeviceRect;
   typedef mozilla::LayoutDevicePoint LayoutDevicePoint;
 

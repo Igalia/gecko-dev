@@ -6,7 +6,6 @@
 
 #include "nsXULPrototypeCache.h"
 
-#include "plstr.h"
 #include "nsXULPrototypeDocument.h"
 #include "nsIURI.h"
 #include "nsNetUtil.h"
@@ -30,6 +29,7 @@
 #include "mozilla/scache/StartupCacheUtils.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/RefPtr.h"
+#include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/intl/LocaleService.h"
 
 using namespace mozilla;
@@ -285,7 +285,7 @@ nsresult nsXULPrototypeCache::FinishOutputStream(CacheType cacheType,
   nsCOMPtr<nsIOutputStream> outputStream = do_QueryInterface(storageStream);
   outputStream->Close();
 
-  UniquePtr<char[]> buf;
+  UniqueFreePtr<char[]> buf;
   uint32_t len;
   rv = NewBufferFromStorageStream(storageStream, &buf, &len);
   NS_ENSURE_SUCCESS(rv, rv);
@@ -425,7 +425,8 @@ nsresult nsXULPrototypeCache::BeginCaching(nsIURI* aURI) {
     }
 
     if (NS_SUCCEEDED(rv)) {
-      auto putBuf = MakeUnique<char[]>(len);
+      auto putBuf = UniqueFreePtr<char[]>(
+          reinterpret_cast<char*>(malloc(sizeof(char) * len)));
       rv = inputStream->Read(putBuf.get(), len, &amtRead);
       if (NS_SUCCEEDED(rv) && len == amtRead)
         rv = startupCache->PutBuffer(kXULCacheInfoKey, std::move(putBuf), len);

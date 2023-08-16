@@ -22,6 +22,7 @@ callback SchedulerPostTaskCallback = any ();
 
 [Exposed=(Window, Worker), Pref="dom.enable_web_task_scheduling"]
 interface Scheduler {
+  [UseCounter]
   Promise<any> postTask(
     SchedulerPostTaskCallback callback,
     optional SchedulerPostTaskOptions options = {}
@@ -38,5 +39,5 @@ interface TaskController : AbortController {
   constructor(optional TaskControllerInit init = {});
 
   [Throws]
-  void setPriority(TaskPriority priority);
+  undefined setPriority(TaskPriority priority);
 };

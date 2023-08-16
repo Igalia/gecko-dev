@@ -19,7 +19,6 @@
 #include "IDecodingTask.h"
 #include "ImageLogging.h"
 #include "ImageRegion.h"
-#include "Layers.h"
 #include "LookupResult.h"
 #include "OrientedImage.h"
 #include "SourceBuffer.h"
@@ -36,7 +35,7 @@
 #include "mozilla/StaticPrefs_image.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Tuple.h"
+
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Scale.h"
 #include "nsComponentManagerUtils.h"
@@ -130,6 +129,11 @@ nsresult RasterImage::Init(const char* aMimeType, uint32_t aFlags) {
     mLockCount++;
     SurfaceCache::LockImage(ImageKey(this));
   }
+
+  // Set the default flags according to the decoder type to allow preferences to
+  // be stored if necessary.
+  mDefaultDecoderFlags =
+      DecoderFactory::GetDefaultDecoderFlagsForType(mDecoderType);
 
   // Mark us as initialized
   mInitialized = true;
@@ -744,8 +748,8 @@ bool RasterImage::SetMetadata(const ImageMetadata& aMetadata,
     MOZ_ASSERT(mOrientation.IsIdentity(), "Would need to orient hotspot point");
 
     auto hotspot = aMetadata.GetHotspot();
-    mHotspot.x = std::max(std::min(hotspot.x, mSize.width - 1), 0);
-    mHotspot.y = std::max(std::min(hotspot.y, mSize.height - 1), 0);
+    mHotspot.x = std::max(std::min(hotspot.x.value, mSize.width - 1), 0);
+    mHotspot.y = std::max(std::min(hotspot.y.value, mSize.height - 1), 0);
   }
 
   return true;
@@ -1174,7 +1178,7 @@ void RasterImage::Decode(const OrientedIntSize& aSize, uint32_t aFlags,
   SurfaceCache::UnlockEntries(ImageKey(this));
 
   // Determine which flags we need to decode this image with.
-  DecoderFlags decoderFlags = DefaultDecoderFlags();
+  DecoderFlags decoderFlags = mDefaultDecoderFlags;
   if (aFlags & FLAG_ASYNC_NOTIFY) {
     decoderFlags |= DecoderFlags::ASYNC_NOTIFY;
   }
@@ -1258,7 +1262,7 @@ RasterImage::DecodeMetadata(uint32_t aFlags) {
 
   // Create a decoder.
   RefPtr<IDecodingTask> task = DecoderFactory::CreateMetadataDecoder(
-      mDecoderType, WrapNotNull(this), mSourceBuffer);
+      mDecoderType, WrapNotNull(this), mDefaultDecoderFlags, mSourceBuffer);
 
   // Make sure DecoderFactory was able to create a decoder successfully.
   if (!task) {

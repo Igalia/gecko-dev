@@ -73,14 +73,10 @@ NullHttpChannel::SetTopLevelContentWindowId(uint64_t aWindowId) {
 }
 
 NS_IMETHODIMP
-NullHttpChannel::GetTopBrowsingContextId(uint64_t*) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
+NullHttpChannel::GetBrowserId(uint64_t*) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
-NullHttpChannel::SetTopBrowsingContextId(uint64_t) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
+NullHttpChannel::SetBrowserId(uint64_t) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
 NullHttpChannel::GetTransferSize(uint64_t* aTransferSize) {
@@ -318,7 +314,7 @@ NullHttpChannel::SetNotificationCallbacks(
 }
 
 NS_IMETHODIMP
-NullHttpChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
+NullHttpChannel::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -421,6 +417,19 @@ NullHttpChannel::IsPending(bool* _retval) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 NS_IMETHODIMP
 NullHttpChannel::GetStatus(nsresult* aStatus) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::SetCanceledReason(const nsACString& aReason) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::GetCanceledReason(nsACString& aReason) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::CancelWithReason(nsresult aStatus,
+                                                const nsACString& aReason) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -741,6 +750,12 @@ NullHttpChannel::GetCacheReadEnd(mozilla::TimeStamp* aCacheReadEnd) {
 }
 
 NS_IMETHODIMP
+NullHttpChannel::GetTransactionPending(mozilla::TimeStamp* aRetVal) {
+  *aRetVal = mAsyncOpenTime;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 NullHttpChannel::GetIsMainDocumentChannel(bool* aValue) {
   *aValue = false;
   return NS_OK;
@@ -753,7 +768,8 @@ NullHttpChannel::SetIsMainDocumentChannel(bool aValue) {
 
 NS_IMETHODIMP
 NullHttpChannel::LogBlockedCORSRequest(const nsAString& aMessage,
-                                       const nsACString& aCategory) {
+                                       const nsACString& aCategor,
+                                       bool aIsWarning) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -782,6 +798,26 @@ NullHttpChannel::GetServerTiming(nsIArray** aServerTiming) {
 NS_IMETHODIMP
 NullHttpChannel::GetNativeServerTiming(
     nsTArray<nsCOMPtr<nsIServerTiming>>& aServerTiming) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::SetClassicScriptHintCharset(
+    const nsAString& aClassicScriptHintCharset) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::GetClassicScriptHintCharset(
+    nsAString& aClassicScriptHintCharset) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::SetDocumentCharacterSet(
+    const nsAString& aDocumentCharacterSet) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP NullHttpChannel::GetDocumentCharacterSet(
+    nsAString& aDocumentCharacterSet) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -821,6 +857,7 @@ IMPL_TIMING_ATTR(CacheReadStart)
 IMPL_TIMING_ATTR(CacheReadEnd)
 IMPL_TIMING_ATTR(RedirectStart)
 IMPL_TIMING_ATTR(RedirectEnd)
+IMPL_TIMING_ATTR(TransactionPending)
 
 #undef IMPL_TIMING_ATTR
 

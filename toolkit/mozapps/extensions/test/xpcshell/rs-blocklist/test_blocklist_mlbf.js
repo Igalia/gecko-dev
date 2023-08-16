@@ -77,8 +77,7 @@ add_task(async function signed_xpi_initially_unblocked() {
     await Blocklist.getAddonBlocklistEntry(addon),
     {
       state: Ci.nsIBlocklistService.STATE_BLOCKED,
-      url:
-        "https://addons.mozilla.org/en-US/xpcshell/blocked-addon/webext_implicit_id@tests.mozilla.org/1.0/",
+      url: "https://addons.mozilla.org/en-US/xpcshell/blocked-addon/webext_implicit_id@tests.mozilla.org/1.0/",
     },
     "Blocked addon should have blocked entry"
   );
@@ -136,7 +135,7 @@ add_task(async function unsigned_not_blocked() {
   let unsignedAddonFile = createTempWebExtensionFile({
     manifest: {
       version: UNSIGNED_ADDON_VERSION,
-      applications: { gecko: { id: UNSIGNED_ADDON_ID } },
+      browser_specific_settings: { gecko: { id: UNSIGNED_ADDON_ID } },
     },
   });
 

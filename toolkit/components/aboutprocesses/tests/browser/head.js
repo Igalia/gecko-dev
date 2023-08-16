@@ -3,10 +3,6 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
-
 // A bunch of assumptions we make about the behavior of the parent process,
 // and which we use as sanity checks. If Firefox evolves, we will need to
 // update these values.
@@ -185,8 +181,9 @@ async function testCpu(element, total, slope, assumptions) {
       let computedPercentage = Number.parseFloat(extractedPercentage);
       Assert.ok(
         isCloseEnough(computedPercentage, slope * 100),
-        `The displayed approximation of the slope is reasonable: ${computedPercentage} vs ${slope *
-          100}`
+        `The displayed approximation of the slope is reasonable: ${computedPercentage} vs ${
+          slope * 100
+        }`
       );
       // Also, sanity checks.
       Assert.ok(
@@ -251,7 +248,7 @@ async function testMemory(element, total, delta, assumptions) {
   );
   if (extractedUnit != "GB") {
     Assert.ok(
-      extractedTotalNumber < 1024,
+      extractedTotalNumber <= 1024,
       `Unitless total memory use is less than 1024: ${extractedTotal}`
     );
   }
@@ -280,12 +277,8 @@ async function testMemory(element, total, delta, assumptions) {
     null,
     `Can we parse ${element.title} with ${MEMORY_TOOLTIP_REGEXP}?`
   );
-  let [
-    ,
-    extractedDeltaSign,
-    extractedDeltaTotal,
-    extractedDeltaUnit,
-  ] = extracted;
+  let [, extractedDeltaSign, extractedDeltaTotal, extractedDeltaUnit] =
+    extracted;
   if (extractedDeltaSign == null) {
     Assert.equal(delta || 0, 0);
     return;
@@ -294,8 +287,10 @@ async function testMemory(element, total, delta, assumptions) {
     // Remove the thousands separator that breaks parseFloat.
     extractedDeltaTotal.replace(/,/g, "")
   );
+  // Note: displaying 1024KB can happen if the value is slightly less than
+  // 1024*1024B but rounded to 1024KB.
   Assert.ok(
-    deltaTotalNumber > 0 && deltaTotalNumber < 1024,
+    deltaTotalNumber > 0 && deltaTotalNumber <= 1024,
     `Unitless delta memory use is in (0, 1024): ${extractedDeltaTotal}`
   );
   Assert.ok(
@@ -421,7 +416,9 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
   // extension process.
   const extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: "test-aboutprocesses@mochi.test" } },
+      browser_specific_settings: {
+        gecko: { id: "test-aboutprocesses@mochi.test" },
+      },
     },
     background() {
       // Creates an about:blank iframe in the extension process to make sure that
@@ -447,7 +444,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
   info("Setting up example.com");
   // Another tab that we'll pretend is hung.
-  let promiseTabHung = (async function() {
+  let promiseTabHung = (async function () {
     let tab = BrowserTestUtils.addTab(gBrowser, "http://example.com", {
       skipAnimation: true,
     });
@@ -467,7 +464,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
   let promiseAudioPlayback = setupAudioTab();
 
-  let promiseUserContextTab = (async function() {
+  let promiseUserContextTab = (async function () {
     let tab = BrowserTestUtils.addTab(gBrowser, "http://example.com", {
       userContextId: 1,
       skipAnimation: true,
@@ -546,7 +543,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
 
   // Keep informing about:processes that `tabHung` is hung.
   // Note: this is a background task, do not `await` it.
-  let fakeProcessHangMonitor = async function() {
+  let fakeProcessHangMonitor = async function () {
     for (let i = 0; i < 100; ++i) {
       if (!tabHung.linkedBrowser) {
         // Let's stop spamming as soon as we can.
@@ -600,7 +597,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
         row.classList.contains("process") &&
         ["web", "webIsolated"].includes(row.process.type),
     },
-    // A utility process with audio decoder.
+    // A utility process with at least one actor.
     {
       name: "utility",
       predicate: row =>
@@ -608,8 +605,7 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
         row.process.type == "utility" &&
         row.classList.contains("process") &&
         row.nextSibling &&
-        row.nextSibling.classList.contains("actor") &&
-        row.nextSibling.actor.actorName === "audioDecoder",
+        row.nextSibling.classList.contains("actor"),
     },
   ];
   for (let finder of processesToBeFound) {
@@ -656,9 +652,11 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
     } else {
       Assert.ok(threads, "We have a thread summary row");
 
-      let { number, active = 0, list } = doc.l10n.getAttributes(
-        threads.children[0].children[1]
-      ).args;
+      let {
+        number,
+        active = 0,
+        list,
+      } = doc.l10n.getAttributes(threads.children[0].children[1]).args;
 
       info("Sanity checks: number of threads");
       Assert.greaterOrEqual(
@@ -848,9 +846,8 @@ async function testAboutProcessesWithConfig({ showAllFrames, showThreads }) {
   info("Double-clicking on the extensions process");
   let tabPromise = BrowserTestUtils.waitForNewTab(gBrowser, "about:addons");
   await SpecialPowers.spawn(tabAboutProcesses.linkedBrowser, [], async () => {
-    let extensionsRow = content.document.getElementsByClassName(
-      "extensions"
-    )[0];
+    let extensionsRow =
+      content.document.getElementsByClassName("extensions")[0];
     Assert.ok(!!extensionsRow, "We should have found the extensions process");
     let evt = new content.window.MouseEvent("dblclick", {
       bubbles: true,

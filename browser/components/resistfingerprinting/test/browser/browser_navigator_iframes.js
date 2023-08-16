@@ -4,50 +4,32 @@
  *   and exemption behavior.
  *
  * This test only tests values in the iframe, it does not test them on the framer
+ * We use the cross-origin domain as the base URI of a resource we fetch (on both the framer and framee)
+ * so we can check that the HTTP header is as expected.
  *
  * Covers the following cases:
  *  - RFP is disabled entirely
  *  - RFP is enabled entirely
-
- *  - (A) RFP is exempted on the framer and framee and each contacts an exempted cross-origin resource
- *  - (B) RFP is exempted on the framer and framee and each contacts a non-exempted cross-origin resource
-
- *  - (C) RFP is exempted on the framer but not the framee and each contacts an exempted cross-origin resource
- *  - (D) RFP is exempted on the framer but not the framee and each contacts a non-exempted cross-origin resource
-
- *  - (E) RFP is not exempted on the framer nor the framee and each contacts an exempted cross-origin resource
- *  - (F) RFP is not exempted on the framer nor the framee and each contacts a non-exempted cross-origin resource
- * 
- *  - (G) RFP is not exempted on the framer but is on the framee and each contacts an exempted cross-origin resource
- *  - (H) RFP is not exempted on the framer but is on the framee and each contacts a non-exempted cross-origin resource
+ *
+ *  - (A) RFP is exempted on the framer and framee and (if needed) on another cross-origin domain
+ *  - (B) RFP is exempted on the framer and framee but is not on another (if needed) cross-origin domain
+ *  - (C) RFP is exempted on the framer and (if needed) on another cross-origin domain, but not the framee
+ *  - (D) RFP is exempted on the framer but not the framee nor another (if needed) cross-origin domain
+ *  - (E) RFP is not exempted on the framer nor the framee but (if needed) is exempted on another cross-origin domain
+ *  - (F) RFP is not exempted on the framer nor the framee nor another (if needed) cross-origin domain
+ *  - (G) RFP is not exempted on the framer but is on the framee and (if needed) on another cross-origin domain
+ *  - (H) RFP is not exempted on the framer nor another (if needed) cross-origin domain but is on the framee
  */
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+  WindowsVersionInfo:
+    "resource://gre/modules/components-utils/WindowsVersionInfo.sys.mjs",
+});
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "WindowsVersionInfo",
-  "resource://gre/modules/components-utils/WindowsVersionInfo.jsm"
-);
-
-let osVersion = Services.sysinfo.get("version");
-if (AppConstants.platform == "macosx") {
-  // Convert Darwin version to macOS version: 19.x.x -> 10.15 etc.
-  // https://en.wikipedia.org/wiki/Darwin_%28operating_system%29
-  let DarwinVersionParts = osVersion.split(".");
-  let DarwinMajorVersion = +DarwinVersionParts[0];
-  let macOsMinorVersion = DarwinMajorVersion - 4;
-  if (macOsMinorVersion > 15) {
-    macOsMinorVersion = 15;
-  }
-  osVersion = `10.${macOsMinorVersion}`;
-}
+const osVersion = Services.sysinfo.get("version");
 
 const DEFAULT_APPVERSION = {
   linux: "5.0 (X11)",
@@ -90,19 +72,22 @@ const SPOOFED_PLATFORM = {
 // If comparison with the WindowsOscpu value fails in the future, it's time to
 // evaluate if exposing a new Windows version to the Web is appropriate. See
 // https://bugzilla.mozilla.org/show_bug.cgi?id=1693295
-let WindowsOscpu = null;
-if (AppConstants.platform == "win") {
-  let isWin11 = WindowsVersionInfo.get().buildNumber >= 22000;
-  WindowsOscpu =
-    cpuArch == "x86_64" || (cpuArch == "aarch64" && isWin11)
-      ? `Windows NT ${osVersion}; Win64; x64`
-      : `Windows NT ${osVersion}`;
-}
+const WindowsOscpuPromise = (async () => {
+  let WindowsOscpu = null;
+  if (AppConstants.platform == "win") {
+    let isWin11 = WindowsVersionInfo.get().buildNumber >= 22000;
+    let isWow64 = (await Services.sysinfo.processInfo).isWow64;
+    WindowsOscpu =
+      cpuArch == "x86_64" || isWow64 || (cpuArch == "aarch64" && isWin11)
+        ? `Windows NT ${osVersion}; Win64; x64`
+        : `Windows NT ${osVersion}`;
+  }
+  return WindowsOscpu;
+})();
 
 const DEFAULT_OSCPU = {
   linux: `Linux ${cpuArch}`,
-  win: WindowsOscpu,
-  macosx: `Intel Mac OS X ${osVersion}`,
+  macosx: "Intel Mac OS X 10.15",
   android: `Linux ${cpuArch}`,
   other: `Linux ${cpuArch}`,
 };
@@ -117,8 +102,7 @@ const SPOOFED_OSCPU = {
 
 const DEFAULT_UA_OS = {
   linux: `X11; Linux ${cpuArch}`,
-  win: WindowsOscpu,
-  macosx: `Macintosh; Intel Mac OS X ${osVersion}`,
+  macosx: "Macintosh; Intel Mac OS X 10.15",
   android: `Android ${osVersion}; Mobile`,
   other: `X11; Linux ${cpuArch}`,
 };
@@ -147,7 +131,12 @@ const CONST_VENDOR = "";
 const CONST_VENDORSUB = "";
 
 const appVersion = parseInt(Services.appinfo.version);
-const spoofedVersion = AppConstants.platform == "android" ? "102" : appVersion;
+const rvVersion =
+  parseInt(
+    Services.prefs.getIntPref("network.http.useragent.forceRVOnly", 0),
+    0
+  ) || appVersion;
+const spoofedVersion = AppConstants.platform == "android" ? "115" : appVersion;
 
 const LEGACY_UA_GECKO_TRAIL = "20100101";
 
@@ -172,8 +161,8 @@ const DEFAULT_HARDWARE_CONCURRENCY = navigator.hardwareConcurrency;
 // =============================================================================================
 // =============================================================================================
 
-async function testNavigator(result, expectedResults) {
-  let testDesc = expectedResults.testDesc;
+async function testNavigator(result, expectedResults, extraData) {
+  let testDesc = extraData.testDesc;
 
   is(
     result.appVersion,
@@ -295,424 +284,131 @@ async function testNavigator(result, expectedResults) {
   );
 }
 
-const defaultUserAgent = `Mozilla/5.0 (${
-  DEFAULT_UA_OS[AppConstants.platform]
-}; rv:${appVersion}.0) Gecko/${
-  DEFAULT_UA_GECKO_TRAIL[AppConstants.platform]
-} Firefox/${appVersion}.0`;
+let defaultUserAgent;
+let spoofedUserAgentNavigator;
+let spoofedUserAgentHeader;
+let allNotSpoofed;
+let allSpoofed;
 
-const spoofedUserAgentNavigator = `Mozilla/5.0 (${
-  SPOOFED_UA_NAVIGATOR_OS[AppConstants.platform]
-}; rv:${appVersion}.0) Gecko/${
-  SPOOFED_UA_GECKO_TRAIL[AppConstants.platform]
-} Firefox/${appVersion}.0`;
+add_setup(async () => {
+  DEFAULT_OSCPU.win = DEFAULT_UA_OS.win = await WindowsOscpuPromise;
+  defaultUserAgent = `Mozilla/5.0 (${
+    DEFAULT_UA_OS[AppConstants.platform]
+  }; rv:${rvVersion}.0) Gecko/${
+    DEFAULT_UA_GECKO_TRAIL[AppConstants.platform]
+  } Firefox/${appVersion}.0`;
 
-const spoofedUserAgentHeader = `Mozilla/5.0 (${
-  SPOOFED_UA_HTTPHEADER_OS[AppConstants.platform]
-}; rv:${appVersion}.0) Gecko/${
-  SPOOFED_UA_GECKO_TRAIL[AppConstants.platform]
-} Firefox/${appVersion}.0`;
+  spoofedUserAgentNavigator = `Mozilla/5.0 (${
+    SPOOFED_UA_NAVIGATOR_OS[AppConstants.platform]
+  }; rv:${rvVersion}.0) Gecko/${
+    SPOOFED_UA_GECKO_TRAIL[AppConstants.platform]
+  } Firefox/${appVersion}.0`;
 
-// The following are convenience objects that allow you to quickly see what is
-//   and is not modified from a logical set of values.
-// Be sure to always use `let expectedResults = JSON.parse(JSON.stringify(allNotSpoofed))` to do a
-//   deep copy and avoiding corrupting the original 'const' object
-const allNotSpoofed = {
-  appVersion: DEFAULT_APPVERSION[AppConstants.platform],
-  hardwareConcurrency: navigator.hardwareConcurrency,
-  mimeTypesLength: 2,
-  oscpu: DEFAULT_OSCPU[AppConstants.platform],
-  platform: DEFAULT_PLATFORM[AppConstants.platform],
-  pluginsLength: 5,
-  userAgentNavigator: defaultUserAgent,
-  userAgentHTTPHeader: defaultUserAgent,
-  framer_crossOrigin_userAgentHTTPHeader: defaultUserAgent,
-  framee_crossOrigin_userAgentHTTPHeader: defaultUserAgent,
-};
-const allSpoofed = {
-  appVersion: SPOOFED_APPVERSION[AppConstants.platform],
-  hardwareConcurrency: SPOOFED_HW_CONCURRENCY,
-  mimeTypesLength: 2,
-  oscpu: SPOOFED_OSCPU[AppConstants.platform],
-  platform: SPOOFED_PLATFORM[AppConstants.platform],
-  pluginsLength: 5,
-  userAgentNavigator: spoofedUserAgentNavigator,
-  userAgentHTTPHeader: spoofedUserAgentHeader,
-  framer_crossOrigin_userAgentHTTPHeader: spoofedUserAgentHeader,
-  framee_crossOrigin_userAgentHTTPHeader: spoofedUserAgentHeader,
-};
+  spoofedUserAgentHeader = `Mozilla/5.0 (${
+    SPOOFED_UA_HTTPHEADER_OS[AppConstants.platform]
+  }; rv:${rvVersion}.0) Gecko/${
+    SPOOFED_UA_GECKO_TRAIL[AppConstants.platform]
+  } Firefox/${appVersion}.0`;
 
-const framer_domain = "example.com";
-const iframe_domain = "example.org";
-const cross_origin_domain = "example.net";
-const uri = `https://${framer_domain}/browser/browser/components/resistfingerprinting/test/browser/file_navigator_iframer.html`;
-
-add_task(async function defaultsTest() {
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allNotSpoofed));
-      expectedResults.testDesc = "default";
-
-      testNavigator(result, expectedResults);
-    }
-  );
+  // The following are convenience objects that allow you to quickly see what is
+  //   and is not modified from a logical set of values.
+  // Be sure to always use `let expectedResults = structuredClone(allNotSpoofed)` to do a
+  //   deep copy and avoiding corrupting the original 'const' object
+  allNotSpoofed = {
+    appVersion: DEFAULT_APPVERSION[AppConstants.platform],
+    hardwareConcurrency: navigator.hardwareConcurrency,
+    mimeTypesLength: 2,
+    oscpu: DEFAULT_OSCPU[AppConstants.platform],
+    platform: DEFAULT_PLATFORM[AppConstants.platform],
+    pluginsLength: 5,
+    userAgentNavigator: defaultUserAgent,
+    userAgentHTTPHeader: defaultUserAgent,
+    framer_crossOrigin_userAgentHTTPHeader: defaultUserAgent,
+    framee_crossOrigin_userAgentHTTPHeader: defaultUserAgent,
+  };
+  allSpoofed = {
+    appVersion: SPOOFED_APPVERSION[AppConstants.platform],
+    hardwareConcurrency: SPOOFED_HW_CONCURRENCY,
+    mimeTypesLength: 2,
+    oscpu: SPOOFED_OSCPU[AppConstants.platform],
+    platform: SPOOFED_PLATFORM[AppConstants.platform],
+    pluginsLength: 5,
+    userAgentNavigator: spoofedUserAgentNavigator,
+    userAgentHTTPHeader: spoofedUserAgentHeader,
+    framer_crossOrigin_userAgentHTTPHeader: spoofedUserAgentHeader,
+    framee_crossOrigin_userAgentHTTPHeader: spoofedUserAgentHeader,
+  };
 });
 
-add_task(async function simpleRFPTest() {
-  await SpecialPowers.pushPrefEnv({
-    set: [["privacy.resistFingerprinting", true]],
-  });
+const uri = `https://${FRAMER_DOMAIN}/browser/browser/components/resistfingerprinting/test/browser/file_navigator_iframer.html`;
 
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
+requestLongerTimeout(2);
 
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "simple RFP enabled";
+let expectedResults = {};
 
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+add_task(async () => {
+  expectedResults = structuredClone(allNotSpoofed);
+  await defaultsTest(uri, testNavigator, expectedResults);
 });
 
-// (A) RFP is exempted on the framer and framee and each contacts an exempted cross-origin resource
-add_task(async function testA() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      [
-        "privacy.resistFingerprinting.exemptedDomains",
-        "example.com, example.org, example.net",
-      ],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allNotSpoofed));
-      expectedResults.testDesc = "test (A)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  await simpleRFPTest(uri, testNavigator, expectedResults);
 });
 
-// (B) RFP is exempted on the framer and framee and each contacts a non-exempted cross-origin resource
-add_task(async function testB() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      [
-        "privacy.resistFingerprinting.exemptedDomains",
-        "example.com, example.org",
-      ],
-    ],
-  });
+// In the below tests, we use the cross-origin domain as the base URI of a resource we fetch (on both the framer and framee)
+// so we can check that the HTTP header is as expected.
 
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allNotSpoofed));
-      expectedResults.testDesc = "test (B)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (A) RFP is exempted on the framer and framee and (if needed) on another cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allNotSpoofed);
+  await testA(uri, testNavigator, expectedResults);
 });
 
-// (C) RFP is exempted on the framer but not the framee and each contacts an exempted cross-origin resource
-add_task(async function testC() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      [
-        "privacy.resistFingerprinting.exemptedDomains",
-        "example.com, example.net",
-      ],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (C)";
-      expectedResults.framer_crossOrigin_userAgentHTTPHeader = defaultUserAgent;
-      expectedResults.framee_crossOrigin_userAgentHTTPHeader = spoofedUserAgentHeader;
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (B) RFP is exempted on the framer and framee but is not on another (if needed) cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allNotSpoofed);
+  await testB(uri, testNavigator, expectedResults);
 });
 
-// (D) RFP is exempted on the framer but not the framee and each contacts a non-exempted cross-origin resource
-add_task(async function testD() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      ["privacy.resistFingerprinting.exemptedDomains", "example.com"],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (D)";
-      expectedResults.framer_crossOrigin_userAgentHTTPHeader = defaultUserAgent;
-      expectedResults.framee_crossOrigin_userAgentHTTPHeader = spoofedUserAgentHeader;
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (C) RFP is exempted on the framer and (if needed) on another cross-origin domain, but not the framee
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  expectedResults.framer_crossOrigin_userAgentHTTPHeader = defaultUserAgent;
+  expectedResults.framee_crossOrigin_userAgentHTTPHeader =
+    spoofedUserAgentHeader;
+  await testC(uri, testNavigator, expectedResults);
 });
 
-// (E) RFP is not exempted on the framer nor the framee and each contacts an exempted cross-origin resource
-add_task(async function testE() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      ["privacy.resistFingerprinting.exemptedDomains", "example.net"],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (E)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (D) RFP is exempted on the framer but not the framee nor another (if needed) cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  expectedResults.framer_crossOrigin_userAgentHTTPHeader = defaultUserAgent;
+  expectedResults.framee_crossOrigin_userAgentHTTPHeader =
+    spoofedUserAgentHeader;
+  await testD(uri, testNavigator, expectedResults);
 });
 
-// (F) RFP is not exempted on the framer nor the framee and each contacts a non-exempted cross-origin resource
-add_task(async function testF() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      ["privacy.resistFingerprinting.exemptedDomains", ""],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (F)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (E) RFP is not exempted on the framer nor the framee but (if needed) is exempted on another cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  await testE(uri, testNavigator, expectedResults);
 });
 
-// (G) RFP is not exempted on the framer but is on the framee and each contacts an exempted cross-origin resource
-add_task(async function testG() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      [
-        "privacy.resistFingerprinting.exemptedDomains",
-        "example.org, example.net",
-      ],
-    ],
-  });
-
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (G)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (F) RFP is not exempted on the framer nor the framee nor another (if needed) cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  await testF(uri, testNavigator, expectedResults);
 });
 
-// (H) RFP is not exempted on the framer but is on the framee and each contacts a non-exempted cross-origin resource
-add_task(async function testH() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["privacy.resistFingerprinting", true],
-      ["privacy.resistFingerprinting.testGranularityMask", 4],
-      ["privacy.resistFingerprinting.exemptedDomains", "example.org"],
-    ],
-  });
+// (G) RFP is not exempted on the framer but is on the framee and (if needed) on another cross-origin domain
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  await testG(uri, testNavigator, expectedResults);
+});
 
-  await BrowserTestUtils.withNewTab(
-    {
-      gBrowser,
-      url: uri,
-    },
-    async function(browser) {
-      let result = await SpecialPowers.spawn(
-        browser,
-        [iframe_domain, cross_origin_domain],
-        async function(iframe_domain_, cross_origin_domain_) {
-          return content.wrappedJSObject.runTheTest(
-            iframe_domain_,
-            cross_origin_domain_
-          );
-        }
-      );
-
-      let expectedResults = JSON.parse(JSON.stringify(allSpoofed));
-      expectedResults.testDesc = "test (H)";
-
-      testNavigator(result, expectedResults);
-    }
-  );
-
-  await SpecialPowers.popPrefEnv();
+// (H) RFP is not exempted on the framer nor another (if needed) cross-origin domain but is on the framee
+add_task(async () => {
+  expectedResults = structuredClone(allSpoofed);
+  await testH(uri, testNavigator, expectedResults);
 });

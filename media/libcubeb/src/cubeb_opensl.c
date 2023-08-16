@@ -23,7 +23,6 @@
 #endif
 #include "android/cubeb-output-latency.h"
 #include "cubeb-internal.h"
-#include "cubeb-sles.h"
 #include "cubeb/cubeb.h"
 #include "cubeb_android.h"
 #include "cubeb_array_queue.h"
@@ -33,7 +32,7 @@
 #ifdef LOG
 #undef LOG
 #endif
-//#define LOGGING_ENABLED
+// #define LOGGING_ENABLED
 #ifdef LOGGING_ENABLED
 #define LOG(args...)                                                           \
   __android_log_print(ANDROID_LOG_INFO, "Cubeb_OpenSL", ##args)
@@ -41,7 +40,7 @@
 #define LOG(...)
 #endif
 
-//#define TIMESTAMP_ENABLED
+// #define TIMESTAMP_ENABLED
 #ifdef TIMESTAMP_ENABLED
 #define FILENAME                                                               \
   (strrchr(__FILE__, '/') ? strrchr(__FILE__, '/') + 1 : __FILE__)
@@ -728,14 +727,14 @@ opensl_init(cubeb ** context, char const * context_name)
   const SLEngineOption opt[] = {{SL_ENGINEOPTION_THREADSAFE, SL_BOOLEAN_TRUE}};
 
   SLresult res;
-  res = cubeb_get_sles_engine(&ctx->engObj, 1, opt, 0, NULL, NULL);
+  res = f_slCreateEngine(&ctx->engObj, 1, opt, 0, NULL, NULL);
 
   if (res != SL_RESULT_SUCCESS) {
     opensl_destroy(ctx);
     return CUBEB_ERROR;
   }
 
-  res = cubeb_realize_sles_engine(ctx->engObj);
+  res = (*ctx->engObj)->Realize(ctx->engObj, SL_BOOLEAN_FALSE);
   if (res != SL_RESULT_SUCCESS) {
     opensl_destroy(ctx);
     return CUBEB_ERROR;
@@ -796,10 +795,12 @@ opensl_get_max_channel_count(cubeb * ctx, uint32_t * max_channels)
 static void
 opensl_destroy(cubeb * ctx)
 {
-  if (ctx->outmixObj)
+  if (ctx->outmixObj) {
     (*ctx->outmixObj)->Destroy(ctx->outmixObj);
-  if (ctx->engObj)
-    cubeb_destroy_sles_engine(&ctx->engObj);
+  }
+  if (ctx->engObj) {
+    (*ctx->engObj)->Destroy(ctx->engObj);
+  }
   dlclose(ctx->lib);
   if (ctx->p_output_latency_function)
     cubeb_output_latency_unload_method(ctx->p_output_latency_function);
@@ -1181,12 +1182,7 @@ opensl_configure_playback(cubeb_stream * stm, cubeb_stream_params * params)
 
   // Calculate the capacity of input array
   stm->queuebuf_capacity = NBUFS;
-  if (stm->output_enabled) {
-    // Full duplex, update capacity to hold 1 sec of data
-    stm->queuebuf_capacity =
-        1 * stm->output_configured_rate / stm->queuebuf_len;
-  }
-  // Allocate input array
+  // Allocate input arrays
   stm->queuebuf = (void **)calloc(1, sizeof(void *) * stm->queuebuf_capacity);
   for (uint32_t i = 0; i < stm->queuebuf_capacity; ++i) {
     stm->queuebuf[i] = calloc(1, stm->queuebuf_len);
@@ -1653,6 +1649,16 @@ static void
 opensl_stream_destroy(cubeb_stream * stm)
 {
   assert(stm->draining || stm->shutdown);
+
+  // If we're still draining at stream destroy time, pause the streams now so we
+  // can destroy them safely.
+  if (stm->draining) {
+    opensl_stream_stop(stm);
+  }
+  // Sleep for 10ms to give active streams time to pause so that no further
+  // buffer callbacks occur.  Inspired by the same workaround (sleepBeforeClose)
+  // in liboboe.
+  usleep(10 * 1000);
 
   if (stm->playerObj) {
     (*stm->playerObj)->Destroy(stm->playerObj);

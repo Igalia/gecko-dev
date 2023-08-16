@@ -94,15 +94,8 @@ nsresult HeadlessLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = 1;
       break;
     case IntID::WindowsAccentColorInTitlebar:
-    case IntID::WindowsDefaultTheme:
-    case IntID::DWMCompositor:
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
-      break;
-    case IntID::WindowsClassic:
-    case IntID::WindowsGlass:
-      aResult = 0;
-      res = NS_ERROR_FAILURE;
       break;
     case IntID::AlertNotificationOrigin:
       aResult = NS_ALERT_TOP;
@@ -114,10 +107,10 @@ nsresult HeadlessLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::IMESelectedRawTextUnderlineStyle:
     case IntID::IMEConvertedTextUnderlineStyle:
     case IntID::IMESelectedConvertedTextUnderline:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
+      aResult = static_cast<int32_t>(StyleTextDecorationStyle::Solid);
       break;
     case IntID::SpellCheckerUnderlineStyle:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_DOTTED;
+      aResult = static_cast<int32_t>(StyleTextDecorationStyle::Dotted);
       break;
     case IntID::MenuBarDrag:
       aResult = 0;
@@ -165,6 +158,10 @@ nsresult HeadlessLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       aResult = 0;
       break;
     case IntID::PrefersReducedMotion:
+    case IntID::PrefersReducedTransparency:
+      aResult = 0;
+      break;
+    case IntID::InvertedColors:
       aResult = 0;
       break;
     case IntID::PrimaryPointerCapabilities:

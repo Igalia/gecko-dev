@@ -3,16 +3,16 @@
 
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 // The test tasks in this test file tends to trigger an intermittent
 // exception raised from JSActor::AfterDestroy, because of a race between
 // when the WebExtensions API event is being emitted from the parent process
 // and the navigation triggered on the test extension pages.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(
   /Actor 'Conduits' destroyed before query 'RunListener' was resolved/
@@ -47,7 +47,7 @@ function createTestExtPage({ script }) {
 }
 
 function createTestExtPageScript(name) {
-  return `(${function(pageName) {
+  return `(${function (pageName) {
     browser.webRequest.onBeforeRequest.addListener(
       details => {
         browser.test.log(
@@ -121,7 +121,7 @@ add_task(async function test_extension_page_sameprocess_navigation() {
   ok(true, "extpage1 got a webRequest event as expected");
 
   info("Load a second extension page in the same tab");
-  BrowserTestUtils.loadURI(browser, extPageURL2);
+  BrowserTestUtils.loadURIString(browser, extPageURL2);
 
   info("Wait extpage1 to receive a pagehide event");
   await extension.awaitMessage("pagehide:extpage1");
@@ -193,7 +193,7 @@ add_task(async function test_extension_page_context_navigated_to_web_page() {
     false,
     webPageURL
   );
-  BrowserTestUtils.loadURI(browserForTab1, webPageURL);
+  BrowserTestUtils.loadURIString(browserForTab1, webPageURL);
   info("Wait the tab to have loaded the new webpage url");
   await promiseLoaded;
   info("Wait the extension page to receive a pagehide event");

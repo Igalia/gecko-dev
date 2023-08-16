@@ -2,14 +2,12 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 
-const {
-  AnimationFramePromise,
-  Deferred,
-  EventPromise,
-  PollPromise,
-} = ChromeUtils.import("chrome://remote/content/shared/Sync.jsm");
+const { AnimationFramePromise, Deferred, EventPromise, PollPromise } =
+  ChromeUtils.importESModule("chrome://remote/content/shared/Sync.sys.mjs");
 
 /**
  * Mimic a DOM node for listening for events.
@@ -272,7 +270,9 @@ add_task(async function test_EventPromise_wantUntrustedEvent() {
 add_task(function test_executeSoon_callback() {
   // executeSoon() is already defined for xpcshell in head.js. As such import
   // our implementation into a custom namespace.
-  let sync = ChromeUtils.import("chrome://remote/content/shared/Sync.jsm");
+  let sync = ChromeUtils.importESModule(
+    "chrome://remote/content/shared/Sync.sys.mjs"
+  );
 
   for (let func of ["foo", null, true, [], {}]) {
     Assert.throws(() => sync.executeSoon(func), /TypeError/);
@@ -290,7 +290,7 @@ add_task(function test_PollPromise_funcTypes() {
     Assert.throws(() => new PollPromise(type), /TypeError/);
   }
   new PollPromise(() => {});
-  new PollPromise(function() {});
+  new PollPromise(function () {});
 });
 
 add_task(function test_PollPromise_timeoutTypes() {

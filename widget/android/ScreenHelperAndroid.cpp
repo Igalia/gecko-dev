@@ -10,6 +10,7 @@
 
 #include <mozilla/jni/Refs.h>
 
+#include "AndroidVsync.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/java/GeckoAppShellWrappers.h"
 #include "mozilla/java/ScreenManagerHelperNatives.h"
@@ -40,7 +41,8 @@ static already_AddRefed<Screen> MakePrimaryScreen() {
   auto orientation =
       hal::ScreenOrientation(java::GeckoAppShell::GetScreenOrientation());
   uint16_t angle = java::GeckoAppShell::GetScreenAngle();
-  return MakeAndAddRef<Screen>(bounds, bounds, depth, depth, 0,
+  float refreshRate = java::GeckoAppShell::GetScreenRefreshRate();
+  return MakeAndAddRef<Screen>(bounds, bounds, depth, depth, refreshRate,
                                DesktopToLayoutDeviceScale(density),
                                CSSToLayoutDeviceScale(1.0f), dpi,
                                Screen::IsPseudoDisplay::No, orientation, angle);
@@ -61,4 +63,8 @@ void ScreenHelperAndroid::Refresh() {
   AutoTArray<RefPtr<Screen>, 1> screens;
   screens.AppendElement(MakePrimaryScreen());
   ScreenManager::Refresh(std::move(screens));
+
+  if (RefPtr<AndroidVsync> vsync = AndroidVsync::GetInstance()) {
+    vsync->OnMaybeUpdateRefreshRate();
+  }
 }

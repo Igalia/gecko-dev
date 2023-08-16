@@ -34,17 +34,25 @@ Many builds must be signed. The build-signing task takes the unsigned `build`
 kind artifacts and passes them through signingscriptworker to a signing server
 and returns signed results.
 
-For mac notarization, we download the signed bits that have been notarized by Apple, and we staple the notarization to the app and pkg.
+build-mac-signing
+-----------------
 
-build-notarization-part-1
--------------------------
+Mac signing without notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the first task, which signs the files and submits them for notarization.
+Uses a self-signed certificate on level 1 environments.
 
-build-notarization-poller
--------------------------
+Shippable downstream tasks should use artifacts from build-mac-notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the second task, which polls Apple for notarization status. Because this is run in a separate, special notarization poller pool, we free up the mac notarization pool for actual signing work.
+build-mac-notarization
+----------------------
+
+Mac notarization on signingscript (linux) using rcodesign.
+
+Only available in production environments, as Apple doesn't offer a test
+endpoint for notarizing apps.
+
+Downstream tasks switch to build-mac-signing in non-shippable builds or level 1
+environments.
 
 artifact-build
 --------------
@@ -52,6 +60,11 @@ artifact-build
 This kind performs an artifact build: one based on precompiled binaries
 discovered via the TaskCluster index.  This task verifies that such builds
 continue to work correctly.
+
+bootstrap
+---------
+
+This kind performs a standalone bootstrap of a Firefox build from various system environments.
 
 hazard
 ------
@@ -81,17 +94,25 @@ passes them to signing servers to have their contents signed appropriately, base
 on an appropriate signing format. One signing job is created for each shippable-l10n
 job (usually chunked).
 
-For mac notarization, we download the signed bits that have been notarized by Apple, and we staple the notarization to the app and pkg.
+shippable-l10n-mac-signing
+--------------------------
 
-shippable-l10n-notarization-part-1
-----------------------------------
+Mac signing without notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the first task, which signs the files and submits them for notarization.
+Uses a self-signed certificate on level 1 environments.
 
-shippable-l10n-notarization-poller
-----------------------------------
+Shippable downstream tasks should use artifacts from build-mac-notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the second task, which polls Apple for notarization status. Because this is run in a separate, special notarization poller pool, we free up the mac notarization pool for actual signing work.
+shippable-l10n-mac-notarization
+-------------------------------
+
+Mac notarization on signingscript (linux) using rcodesign.
+
+Only available in production environments, as Apple doesn't offer a test
+endpoint for notarizing apps.
+
+Downstream tasks switch to build-mac-signing in non-shippable builds or level 1
+environments.
 
 source-test
 -----------
@@ -230,6 +251,10 @@ Beetmover-source publishes release source. This is part of release promotion.
 beetmover-geckoview
 -------------------
 Beetmover-geckoview publishes the Android library called "geckoview".
+
+beetmover-apt
+-------------------
+Beetmover-apt publishes Linux .deb packages from the Mozilla archive to our APT repositories.
 
 condprof
 --------
@@ -437,17 +462,25 @@ release-partner-repack-signing
 ------------------------------
 Internal signing of partner repacks.
 
-For mac notarization, we download the signed bits that have been notarized by Apple, and we staple the notarization to the app and pkg.
+release-partner-repack-mac-signing
+----------------------------------
 
-release-partner-repack-notarization-part-1
-------------------------------------------
+Mac signing without notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the first task, which signs the files and submits them for notarization.
+Uses a self-signed certificate on level 1 environments.
 
-release-partner-repack-notarization-poller
-------------------------------------------
+Shippable downstream tasks should use artifacts from build-mac-notarization.
 
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the second task, which polls Apple for notarization status. Because this is run in a separate, special notarization poller pool, we free up the mac notarization pool for actual signing work.
+release-partner-repack-mac-notarization
+---------------------------------------
+
+Mac notarization on signingscript (linux) using rcodesign.
+
+Only available in production environments, as Apple doesn't offer a test
+endpoint for notarizing apps.
+
+Downstream tasks switch to build-mac-signing in non-shippable builds or level 1
+environments.
 
 release-partner-repack-repackage
 --------------------------------
@@ -481,18 +514,6 @@ release-eme-free-repack-signing
 -------------------------------
 Internal signing of eme-free repacks
 
-For mac notarization, we download the signed bits that have been notarized by Apple, and we staple the notarization to the app and pkg.
-
-release-eme-free-repack-notarization-part-1
--------------------------------------------
-
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the first task, which signs the files and submits them for notarization.
-
-release-eme-free-repack-notarization-poller
--------------------------------------------
-
-We switched to a 3-part mac notarization workflow in bug 1562412. This is the second task, which polls Apple for notarization status. Because this is run in a separate, special notarization poller pool, we free up the mac notarization pool for actual signing work.
-
 release-eme-free-repack-repackage
 ---------------------------------
 Repackaging of eme-free repacks.
@@ -509,6 +530,26 @@ release-eme-free-repack-beetmover-checksums
 -------------------------------------------
 Moves the beetmover checksum for eme-free repacks to S3 buckets.
 
+release-eme-free-repack-mac-signing
+-----------------------------------
+
+Mac signing without notarization.
+
+Uses a self-signed certificate on level 1 environments.
+
+Shippable downstream tasks should use artifacts from build-mac-notarization.
+
+release-eme-free-repack-mac-notarization
+----------------------------------------
+
+Mac notarization on signingscript (linux) using rcodesign.
+
+Only available in production environments, as Apple doesn't offer a test
+endpoint for notarizing apps.
+
+Downstream tasks switch to build-mac-signing in non-shippable builds or level 1
+environments.
+
 repackage
 ---------
 Repackage tasks take a signed output and package them up into something suitable
@@ -519,6 +560,13 @@ repackage-l10n
 --------------
 Repackage-L10n is a ```Repackage``` task split up to be suitable for use after l10n repacks.
 
+repackage-deb
+----------------
+These repackage tasks take signed Firefox Linux binaries and puts them in Debian packages.
+
+repackage-deb-l10n
+------------------
+These repackage tasks take the signed langpacks (.xpi) binaries and puts them in Debian packages.
 
 repackage-signing
 -----------------
@@ -668,6 +716,10 @@ geckodriver-signing
 -------------------
 Signing for geckodriver binary.
 
+geckodriver-mac-notarization
+----------------------------
+Apple notarization for mac geckodriver binary.
+
 maybe-release
 -------------
 A shipitscript task that does the following:
@@ -734,3 +786,15 @@ monitors this task to watch for regressions in Firefox startup performance.
 are-we-esmified-yet
 ---------------------
 Collects data about the transition to ECMAScript Modules from JSMs.
+
+attribution
+-----------
+Injects attribution information into en-US installers.
+
+attribution-l10n
+----------------
+Injects attribution information into localized installers.
+
+snap-upstream-build
+-------------------
+Perform a Firefox Snap build using upstream tooling

@@ -7,7 +7,7 @@
 
 const TEST_URI = URL_ROOT + "doc_media_queries.html?constructed";
 
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URI);
   const { inspector, view } = await openRuleView();
   await selectNode("div", inspector);
@@ -29,7 +29,7 @@ add_task(async function() {
 
   is(
     getRuleViewAncestorRulesDataTextByIndex(view, 2),
-    "@media screen and (min-width: 1px)",
+    "@media screen and (min-width: 1px) {",
     "Media queries information are displayed"
   );
 });

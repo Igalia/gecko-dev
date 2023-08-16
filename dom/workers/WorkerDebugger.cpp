@@ -12,7 +12,6 @@
 #include "mozilla/dom/WindowContext.h"
 #include "mozilla/AbstractThread.h"
 #include "mozilla/Encoding.h"
-#include "mozilla/PerformanceUtils.h"
 #include "nsProxyRelease.h"
 #include "nsQueryObject.h"
 #include "nsThreadUtils.h"
@@ -496,92 +495,6 @@ void WorkerDebugger::ReportErrorToDebuggerOnMainThread(
   report.mMessage = aMessage;
   report.mFilename = aFilename;
   WorkerErrorReport::LogErrorToConsole(jsapi.cx(), report, 0);
-}
-
-RefPtr<PerformanceInfoPromise> WorkerDebugger::ReportPerformanceInfo() {
-  AssertIsOnMainThread();
-  RefPtr<BrowsingContext> top;
-  RefPtr<WorkerDebugger> self = this;
-
-#if defined(XP_WIN)
-  uint32_t pid = GetCurrentProcessId();
-#else
-  uint32_t pid = getpid();
-#endif
-  bool isTopLevel = false;
-  uint64_t windowID = mWorkerPrivate->WindowID();
-  PerformanceMemoryInfo memoryInfo;
-
-  // Walk up to our containing page and its window
-  WorkerPrivate* wp = mWorkerPrivate;
-  while (wp->GetParent()) {
-    wp = wp->GetParent();
-  }
-  nsPIDOMWindowInner* win = wp->GetWindow();
-  if (win) {
-    BrowsingContext* context = win->GetBrowsingContext();
-    if (context) {
-      top = context->Top();
-      if (top && top->GetCurrentWindowContext()) {
-        windowID = top->GetCurrentWindowContext()->OuterWindowId();
-        isTopLevel = context->IsTop();
-      }
-    }
-  }
-
-  // getting the worker URL
-  RefPtr<nsIURI> scriptURI = mWorkerPrivate->GetResolvedScriptURI();
-  if (NS_WARN_IF(!scriptURI)) {
-    // This can happen at shutdown, let's stop here.
-    return PerformanceInfoPromise::CreateAndReject(NS_ERROR_FAILURE, __func__);
-  }
-  nsCString url = scriptURI->GetSpecOrDefault();
-
-  const auto& perf = mWorkerPrivate->PerformanceCounterRef();
-  uint64_t perfId = perf.GetID();
-  uint16_t count = perf.GetTotalDispatchCount();
-  uint64_t duration = perf.GetExecutionDuration();
-
-  // Workers only produce metrics for a single category -
-  // DispatchCategory::Worker. We still return an array of CategoryDispatch so
-  // the PerformanceInfo struct is common to all performance counters throughout
-  // Firefox.
-  FallibleTArray<CategoryDispatch> items;
-
-  CategoryDispatch item =
-      CategoryDispatch(DispatchCategory::Worker.GetValue(), count);
-  if (!items.AppendElement(item, fallible)) {
-    NS_ERROR("Could not complete the operation");
-  }
-
-  if (!isTopLevel) {
-    return PerformanceInfoPromise::CreateAndResolve(
-        PerformanceInfo(url, pid, windowID, duration, perfId, true, isTopLevel,
-                        memoryInfo, items),
-        __func__);
-  }
-
-  // We need to keep a ref on workerPrivate, passed to the promise,
-  // to make sure it's still aloive when collecting the info
-  // (and CheckedUnsafePtr does not convert directly to RefPtr).
-  WorkerPrivate* workerPtr = mWorkerPrivate;
-  RefPtr<WorkerPrivate> workerRef = workerPtr;
-  RefPtr<AbstractThread> mainThread = AbstractThread::MainThread();
-
-  return CollectMemoryInfo(top, mainThread)
-      ->Then(
-          mainThread, __func__,
-          [workerRef, url, pid, perfId, windowID, duration, isTopLevel,
-           items = std::move(items)](const PerformanceMemoryInfo& aMemoryInfo) {
-            return PerformanceInfoPromise::CreateAndResolve(
-                PerformanceInfo(url, pid, windowID, duration, perfId, true,
-                                isTopLevel, aMemoryInfo, items),
-                __func__);
-          },
-          [workerRef]() {
-            return PerformanceInfoPromise::CreateAndReject(NS_ERROR_FAILURE,
-                                                           __func__);
-          });
 }
 
 }  // namespace mozilla::dom

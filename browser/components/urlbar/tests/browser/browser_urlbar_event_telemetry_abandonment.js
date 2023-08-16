@@ -14,7 +14,7 @@ const TEST_ENGINE_DOMAIN = "example.com";
 // Each test is a function that executes an urlbar action and returns the
 // expected event object.
 const tests = [
-  async function(win) {
+  async function (win) {
     info("Type something, blur.");
     win.gURLBar.select();
     EventUtils.synthesizeKey("x", {}, win);
@@ -32,7 +32,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Open the panel with DOWN, don't type, blur it.");
     await addTopSite("http://example.org/");
     win.gURLBar.value = "";
@@ -54,7 +54,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("With pageproxystate=valid, autoopen the panel, don't type, blur it.");
     win.gURLBar.value = "";
     await UrlbarTestUtils.promisePopupOpen(win, () => {
@@ -74,7 +74,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Enter search mode from Top Sites.");
     await updateTopSites(sites => true, /* enableSearchShorcuts */ true);
 
@@ -122,20 +122,38 @@ const tests = [
       win.gURLBar.blur();
     });
 
-    return {
-      category: "urlbar",
-      method: "abandonment",
-      object: "blur",
-      value: "topsites",
-      extra: {
-        elapsed: val => parseInt(val) > 0,
-        numChars: "0",
-        numWords: "0",
+    return [
+      // engagement on the top sites search engine to enter search mode
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "topsites",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "0",
+          numWords: "0",
+          selIndex: "0",
+          selType: "searchengine",
+          provider: "UrlbarProviderTopSites",
+        },
       },
-    };
+      // abandonment
+      {
+        category: "urlbar",
+        method: "abandonment",
+        object: "blur",
+        value: "topsites",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "0",
+          numWords: "0",
+        },
+      },
+    ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Open search mode from a tab-to-search result.");
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
@@ -179,20 +197,38 @@ const tests = [
     await PlacesUtils.history.clear();
     await SpecialPowers.popPrefEnv();
 
-    return {
-      category: "urlbar",
-      method: "abandonment",
-      object: "blur",
-      value: "typed",
-      extra: {
-        elapsed: val => parseInt(val) > 0,
-        numChars: "0",
-        numWords: "0",
+    return [
+      // engagement on the tab-to-search to enter search mode
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "4",
+          numWords: "1",
+          selIndex: "1",
+          selType: "tabtosearch",
+          provider: "TabToSearch",
+        },
       },
-    };
+      // abandonment
+      {
+        category: "urlbar",
+        method: "abandonment",
+        object: "blur",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "0",
+          numWords: "0",
+        },
+      },
+    ];
   },
 
-  async function(win) {
+  async function (win) {
     info(
       "With pageproxystate=invalid, open retained results, don't type, blur it."
     );
@@ -216,15 +252,14 @@ const tests = [
   },
 ];
 
-add_task(async function init() {
+add_setup(async function () {
   await PlacesUtils.history.clear();
 
   // Create a new search engine and mark it as default
-  let engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "searchSuggestionEngine.xml"
-  );
-  let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  let engine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "searchSuggestionEngine.xml",
+    setAsDefault: true,
+  });
   await Services.search.moveEngine(engine, 0);
 
   await SearchTestUtils.installSearchExtension({
@@ -236,7 +271,7 @@ add_task(async function init() {
   // This test used to rely on the initial timer of
   // TestUtils.waitForCondition. See bug 1667216.
   let originalWaitForCondition = TestUtils.waitForCondition;
-  TestUtils.waitForCondition = async function(
+  TestUtils.waitForCondition = async function (
     condition,
     msg,
     interval = 100,
@@ -248,8 +283,7 @@ add_task(async function init() {
     return originalWaitForCondition(condition, msg, interval, maxTries);
   };
 
-  registerCleanupFunction(async function() {
-    await Services.search.setDefault(oldDefaultEngine);
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
     TestUtils.waitForCondition = originalWaitForCondition;
   });
@@ -309,6 +343,7 @@ add_task(async function disabled() {
 
 /**
  * Replaces the contents of Top Sites with the specified site.
+ *
  * @param {string} site
  *   A site to add to Top Sites.
  */

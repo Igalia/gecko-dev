@@ -13,6 +13,8 @@ from mozbuild.base import MozbuildObject
 
 here = os.path.abspath(os.path.dirname(__file__))
 
+GVE = "org.mozilla.geckoview_example"
+
 
 def get(url):
     import requests
@@ -40,9 +42,26 @@ def create_parser_interventions():
     from mozlog import commandline
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--binary", help="Path to browser binary")
     parser.add_argument("--webdriver-binary", help="Path to webdriver binary")
+    parser.add_argument(
+        "--webdriver-port",
+        action="store",
+        default="4444",
+        help="Port on which to run WebDriver",
+    )
+    parser.add_argument(
+        "--webdriver-ws-port",
+        action="store",
+        default="9222",
+        help="Port on which to run WebDriver BiDi websocket",
+    )
     parser.add_argument("--bug", help="Bug to run tests for")
+    parser.add_argument(
+        "--do2fa",
+        action="store_true",
+        default=False,
+        help="Do two-factor auth live in supporting tests",
+    )
     parser.add_argument(
         "--config", help="Path to JSON file containing logins and other settings"
     )
@@ -59,16 +78,58 @@ def create_parser_interventions():
         "--interventions",
         action="store",
         default="both",
-        choices=["enabled", "disabled", "both"],
+        choices=["enabled", "disabled", "both", "none"],
         help="Enable webcompat interventions",
     )
+    parser.add_argument(
+        "--shims",
+        action="store",
+        default="none",
+        choices=["enabled", "disabled", "both", "none"],
+        help="Enable SmartBlock shims",
+    )
+    parser.add_argument(
+        "--platform",
+        action="store",
+        choices=["android", "desktop"],
+        help="Platform to target",
+    )
+
+    desktop_group = parser.add_argument_group("Desktop-specific arguments")
+    desktop_group.add_argument("--binary", help="Path to browser binary")
+
+    android_group = parser.add_argument_group("Android-specific arguments")
+    android_group.add_argument(
+        "--device-serial",
+        action="store",
+        help="Running Android instances to connect to, if not emulator-5554",
+    )
+    android_group.add_argument(
+        "--package-name",
+        action="store",
+        default=GVE,
+        help="Android package name to use",
+    )
+
     commandline.add_logging_group(parser)
     return parser
 
 
 class InterventionTest(MozbuildObject):
-    def set_default_kwargs(self, logger, kwargs):
-        if kwargs["binary"] is None:
+    def set_default_kwargs(self, logger, command_context, kwargs):
+        platform = kwargs["platform"]
+        binary = kwargs["binary"]
+        device_serial = kwargs["device_serial"]
+        is_gve_build = command_context.substs.get("MOZ_APP_NAME") == "fennec"
+
+        if platform == "android" or (
+            platform is None and binary is None and (device_serial or is_gve_build)
+        ):
+            kwargs["platform"] = "android"
+        else:
+            kwargs["platform"] = "desktop"
+
+        if kwargs["platform"] == "desktop" and kwargs["binary"] is None:
             kwargs["binary"] = self.get_binary_path()
 
         if kwargs["webdriver_binary"] is None:
@@ -85,9 +146,6 @@ class InterventionTest(MozbuildObject):
                 logger.error("Can't find geckodriver")
                 sys.exit(1)
             kwargs["webdriver_binary"] = webdriver_binary
-
-    def get_capabilities(self, kwargs):
-        return {"moz:firefoxOptions": {"binary": kwargs["binary"]}}
 
     def platform_string_geckodriver(self):
         uname = platform.uname()
@@ -136,9 +194,38 @@ class InterventionTest(MozbuildObject):
 
         return path
 
-    def run(self, **kwargs):
-        import runner
+    def setup_device(self, command_context, kwargs):
+        if kwargs["platform"] != "android":
+            return
+
+        app = kwargs["package_name"]
+        device_serial = kwargs["device_serial"]
+
+        if not device_serial:
+            from mozrunner.devices.android_device import (
+                InstallIntent,
+                verify_android_device,
+            )
+
+            verify_android_device(
+                command_context, app=app, network=True, install=InstallIntent.YES
+            )
+
+            kwargs["device_serial"] = os.environ.get("DEVICE_SERIAL")
+
+        # GVE does not have the webcompat addon by default. Add it.
+        if app == GVE:
+            kwargs["addon"] = "/data/local/tmp/webcompat.xpi"
+            push_to_device(
+                command_context.substs["ADB"],
+                device_serial,
+                webcompat_addon(command_context),
+                kwargs["addon"],
+            )
+
+    def run(self, command_context, **kwargs):
         import mozlog
+        import runner
 
         mozlog.commandline.setup_logging(
             "test-interventions", kwargs, {"mach": sys.stdout}
@@ -147,26 +234,61 @@ class InterventionTest(MozbuildObject):
         status_handler = mozlog.handlers.StatusHandler()
         logger.add_handler(status_handler)
 
-        self.set_default_kwargs(logger, kwargs)
+        self.set_default_kwargs(logger, command_context, kwargs)
 
-        interventions = (
-            ["enabled", "disabled"]
-            if kwargs["interventions"] == "both"
-            else [kwargs["interventions"]]
-        )
+        self.setup_device(command_context, kwargs)
 
-        for interventions_setting in interventions:
-            runner.run(
-                logger,
-                os.path.join(here, "interventions"),
-                kwargs["binary"],
-                kwargs["webdriver_binary"],
-                bug=kwargs["bug"],
-                debug=kwargs["debug"],
-                interventions=interventions_setting,
-                config=kwargs["config"],
-                headless=kwargs["headless"],
+        if kwargs["interventions"] != "none":
+            interventions = (
+                ["enabled", "disabled"]
+                if kwargs["interventions"] == "both"
+                else [kwargs["interventions"]]
             )
+
+            for interventions_setting in interventions:
+                runner.run(
+                    logger,
+                    os.path.join(here, "interventions"),
+                    kwargs["webdriver_binary"],
+                    kwargs["webdriver_port"],
+                    kwargs["webdriver_ws_port"],
+                    browser_binary=kwargs.get("binary"),
+                    device_serial=kwargs.get("device_serial"),
+                    package_name=kwargs.get("package_name"),
+                    addon=kwargs.get("addon"),
+                    bug=kwargs["bug"],
+                    debug=kwargs["debug"],
+                    interventions=interventions_setting,
+                    config=kwargs["config"],
+                    headless=kwargs["headless"],
+                    do2fa=kwargs["do2fa"],
+                )
+
+        if kwargs["shims"] != "none":
+            shims = (
+                ["enabled", "disabled"]
+                if kwargs["shims"] == "both"
+                else [kwargs["shims"]]
+            )
+
+            for shims_setting in shims:
+                runner.run(
+                    logger,
+                    os.path.join(here, "shims"),
+                    kwargs["webdriver_binary"],
+                    kwargs["webdriver_port"],
+                    kwargs["webdriver_ws_port"],
+                    browser_binary=kwargs.get("binary"),
+                    device_serial=kwargs.get("device_serial"),
+                    package_name=kwargs.get("package_name"),
+                    addon=kwargs.get("addon"),
+                    bug=kwargs["bug"],
+                    debug=kwargs["debug"],
+                    shims=shims_setting,
+                    config=kwargs["config"],
+                    headless=kwargs["headless"],
+                    do2fa=kwargs["do2fa"],
+                )
 
         summary = status_handler.summarize()
         passed = (
@@ -177,6 +299,26 @@ class InterventionTest(MozbuildObject):
         return passed
 
 
+def webcompat_addon(command_context):
+    import shutil
+
+    src = os.path.join(command_context.topsrcdir, "browser", "extensions", "webcompat")
+    dst = os.path.join(
+        command_context.virtualenv_manager.virtualenv_root, "webcompat.xpi"
+    )
+    shutil.make_archive(dst, "zip", src)
+    shutil.move(f"{dst}.zip", dst)
+    return dst
+
+
+def push_to_device(adb_path, device_serial, local_path, remote_path):
+    from mozdevice import ADBDeviceFactory
+
+    device = ADBDeviceFactory(adb=adb_path, device=device_serial)
+    device.push(local_path, remote_path)
+    device.chmod(remote_path)
+
+
 @Command(
     "test-interventions",
     category="testing",
@@ -185,5 +327,12 @@ class InterventionTest(MozbuildObject):
     virtualenv_name="webcompat",
 )
 def test_interventions(command_context, **params):
+    here = os.path.abspath(os.path.dirname(__file__))
+    command_context.virtualenv_manager.activate()
+    command_context.virtualenv_manager.install_pip_requirements(
+        os.path.join(here, "requirements.txt"),
+        require_hashes=False,
+    )
+
     intervention_test = command_context._spawn(InterventionTest)
-    return 0 if intervention_test.run(**params) else 1
+    return 0 if intervention_test.run(command_context, **params) else 1

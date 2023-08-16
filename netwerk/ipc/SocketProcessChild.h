@@ -12,6 +12,10 @@
 #include "nsRefPtrHashtable.h"
 #include "nsTHashMap.h"
 
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+#  include "mozilla/PSandboxTestingChild.h"
+#endif
+
 namespace mozilla {
 class ChildProfilerController;
 }
@@ -27,14 +31,14 @@ class BackgroundDataBridgeParent;
 // This is allocated and kept alive by SocketProcessImpl.
 class SocketProcessChild final : public PSocketProcessChild {
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(SocketProcessChild)
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(SocketProcessChild, final)
 
   SocketProcessChild();
 
   static SocketProcessChild* GetSingleton();
 
-  bool Init(base::ProcessId aParentPid, const char* aParentBuildID,
-            mozilla::ipc::ScopedPort aPort);
+  bool Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
+            const char* aParentBuildID);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
@@ -91,12 +95,13 @@ class SocketProcessChild final : public PSocketProcessChild {
   already_AddRefed<PDNSRequestChild> AllocPDNSRequestChild(
       const nsACString& aHost, const nsACString& aTrrServer,
       const int32_t& aPort, const uint16_t& aType,
-      const OriginAttributes& aOriginAttributes, const uint32_t& aFlags);
+      const OriginAttributes& aOriginAttributes,
+      const nsIDNSService::DNSFlags& aFlags);
   mozilla::ipc::IPCResult RecvPDNSRequestConstructor(
       PDNSRequestChild* aActor, const nsACString& aHost,
       const nsACString& aTrrServer, const int32_t& aPort, const uint16_t& aType,
       const OriginAttributes& aOriginAttributes,
-      const uint32_t& aFlags) override;
+      const nsIDNSService::DNSFlags& aFlags) override;
 
   void AddDataBridgeToMap(uint64_t aChannelId,
                           BackgroundDataBridgeParent* aActor);
@@ -104,7 +109,8 @@ class SocketProcessChild final : public PSocketProcessChild {
   Maybe<RefPtr<BackgroundDataBridgeParent>> GetAndRemoveDataBridge(
       uint64_t aChannelId);
 
-  mozilla::ipc::IPCResult RecvClearSessionCache();
+  mozilla::ipc::IPCResult RecvClearSessionCache(
+      ClearSessionCacheResolver&& aResolve);
 
   already_AddRefed<PTRRServiceChild> AllocPTRRServiceChild(
       const bool& aCaptiveIsPassed, const bool& aParentalControlEnabled,

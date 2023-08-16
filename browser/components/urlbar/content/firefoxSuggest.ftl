@@ -15,13 +15,115 @@
 urlbar-group-best-match =
   .label = Top pick
 
+# Label shown above an extension suggestion in the urlbar results (an
+# alternative phrasing is "Extension for Firefox"). It's singular since only one
+# suggested extension is displayed.
+urlbar-group-addon =
+  .label = { -brand-product-name } extension
+
+# Label shown above a Pocket suggestion in the urlbar results.
+urlbar-group-pocket =
+  .label = Recommended reads
+
 # Tooltip text for the block button shown in top pick rows.
 firefox-suggest-urlbar-block =
   .title = Dismiss this suggestion
 
+# Block menu item shown in the result menu of top pick and quick suggest
+# results.
+urlbar-result-menu-dismiss-firefox-suggest =
+    .label = Dismiss this suggestion
+    .accesskey = D
+
 # Tooltip text for the help button shown in Firefox Suggest urlbar results.
 firefox-suggest-urlbar-learn-more =
   .title = Learn more about { -firefox-suggest-brand-name }
+
+# Learn More menu item shown in the result menu of Firefox Suggest results.
+urlbar-result-menu-learn-more-about-firefox-suggest =
+    .label = Learn more about { -firefox-suggest-brand-name }
+    .accesskey = L
+
+# A message shown in a result when the user gives feedback on it.
+firefox-suggest-feedback-acknowledgment = Thanks for your feedback
+
+# A message that replaces a result when the user dismisses a single suggestion.
+firefox-suggest-dismissal-acknowledgment-one = Thanks for your feedback. You won’t see this suggestion again.
+
+# A message that replaces a result when the user dismisses all suggestions of a
+# particular type.
+firefox-suggest-dismissal-acknowledgment-all = Thanks for your feedback. You won’t see these suggestions anymore.
+
+## These strings are used for weather suggestions in the urlbar.
+
+# This string is displayed above the current temperature
+firefox-suggest-weather-currently = Currently
+
+# This string displays the current temperature value and unit
+# Variables:
+#   $value (number) - The temperature value
+#   $unit (String) - The unit for the temperature
+firefox-suggest-weather-temperature = { $value }°{ $unit }
+
+# This string is the title of the weather summary
+# Variables:
+#   $city (String) - The name of the city the weather data is for
+firefox-suggest-weather-title = Weather for { $city }
+
+# This string displays the weather summary
+# Variables:
+#   $currentConditions (String) - The current weather conditions summary
+#   $forecast (String) - The forecast weather conditions summary
+firefox-suggest-weather-summary-text = { $currentConditions }; { $forecast }
+
+# This string displays the high and low temperatures
+# Variables:
+#   $high (number) - The number for the high temperature
+#   $unit (String) - The unit for the temperature
+#   $low (number) - The number for the low temperature
+firefox-suggest-weather-high-low = High: { $high }°{ $unit } · Low: { $low }°{ $unit }
+
+# This string displays the name of the weather provider
+# Variables:
+#   $provider (String) - The name of the weather provider
+firefox-suggest-weather-sponsored = { $provider } · Sponsored
+
+## These strings are used as labels of menu items in the result menu.
+
+firefox-suggest-command-show-less-frequently =
+  .label = Show less frequently
+firefox-suggest-command-dont-show-this =
+  .label = Don’t show this
+firefox-suggest-command-not-relevant =
+  .label = Not relevant
+firefox-suggest-command-not-interested =
+  .label = Not interested
+firefox-suggest-weather-command-inaccurate-location =
+  .label = Report inaccurate location
+
+## These strings are used for add-on suggestions in the urlbar.
+
+# This string displays the number of reviews in the add-ons suggestion
+# Variables:
+#   $quantity (number) - The number of reviews for the add-on.
+firefox-suggest-addons-reviews =
+  { $quantity ->
+      [one] { $quantity } review
+     *[other] { $quantity } reviews
+  }
+
+# This string explaining that the add-on suggestion is a recommendation.
+firefox-suggest-addons-recommended = Recommended
+
+## These strings are used for Pocket suggestions in the urlbar.
+
+# This string is shown in Pocket suggestions and indicates the suggestion is
+# from Pocket and is related to a particular keyword that matches the user's
+# search string.
+# Variables:
+#   $keywordSubstringTyped (string) - The part of the suggestion keyword that the user typed
+#   $keywordSubstringNotTyped (string) - The part of the suggestion keyword that the user did not yet type
+firefox-suggest-pocket-bottom-text = { -pocket-brand-name } · Related to <strong>{ $keywordSubstringTyped }</strong>{ $keywordSubstringNotTyped }
 
 ## These strings are used in the preferences UI (about:preferences). Their names
 ## follow the naming conventions of other strings used in the preferences UI.
@@ -44,18 +146,27 @@ addressbar-best-match-learn-more = Learn more
 
 # First Firefox Suggest toggle button main label and description. This toggle
 # controls non-sponsored suggestions related to the user's search string.
-addressbar-firefox-suggest-nonsponsored = Suggestions from the web
-addressbar-firefox-suggest-nonsponsored-description = Get suggestions from { -brand-product-name } related to your search.
+# .description is transferred into a separate paragraph by the moz-toggle
+# custom element code.
+addressbar-firefox-suggest-nonsponsored =
+  .label = Suggestions from the web
+  .description = Get suggestions from { -brand-product-name } related to your search.
 
 # Second Firefox Suggest toggle button main label and description. This toggle
 # controls sponsored suggestions related to the user's search string.
-addressbar-firefox-suggest-sponsored = Suggestions from sponsors
-addressbar-firefox-suggest-sponsored-description = Support the development of { -brand-short-name } with occasional sponsored suggestions.
+# .description is transferred into a separate paragraph by the moz-toggle
+# custom element code.
+addressbar-firefox-suggest-sponsored =
+  .label = Suggestions from sponsors
+  .description = Support the development of { -brand-short-name } with occasional sponsored suggestions.
 
 # Third Firefox Suggest toggle button main label and description. This toggle
 # controls data collection related to the user's search string.
-addressbar-firefox-suggest-data-collection = Improve the { -firefox-suggest-brand-name } experience
-addressbar-firefox-suggest-data-collection-description = Help create a richer search experience by allowing { -vendor-short-name } to process your search queries.
+# .description is transferred into a separate paragraph by the moz-toggle
+# custom element code.
+addressbar-firefox-suggest-data-collection =
+  .label = Improve the { -firefox-suggest-brand-name } experience
+  .description = Help create a richer search experience by allowing { -vendor-short-name } to process your search queries.
 
 # The "Learn more" link shown in the Firefox Suggest preferences UI.
 addressbar-locbar-firefox-suggest-learn-more = Learn more
@@ -98,6 +209,12 @@ addressbar-firefox-suggest-info-sponsored = Based on your selection, you’ll re
 # Sponsored suggestions: off
 # Data collection: on
 addressbar-firefox-suggest-info-data = Based on your selection, you won’t receive suggestions from the web or sponsored sites. We will process your search query data to develop the { -firefox-suggest-brand-name } feature.
+
+addressbar-dismissed-suggestions-label = Dismissed suggestions
+addressbar-restore-dismissed-suggestions-description = Restore dismissed suggestions from sponsors and the web.
+addressbar-restore-dismissed-suggestions-button =
+  .label = Restore
+addressbar-restore-dismissed-suggestions-learn-more = Learn more
 
 ## Used as title on the introduction pane. The text can be formatted to span
 ## multiple lines as needed (line breaks are significant).

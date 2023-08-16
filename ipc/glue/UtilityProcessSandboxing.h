@@ -18,11 +18,25 @@ enum SandboxingKind : uint64_t {
 
   GENERIC_UTILITY,
 
-  UTILITY_AUDIO_DECODING,
+#ifdef MOZ_APPLEMEDIA
+  UTILITY_AUDIO_DECODING_APPLE_MEDIA,
+#endif
+#ifdef XP_WIN
+  UTILITY_AUDIO_DECODING_WMF,
+#endif
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  MF_MEDIA_ENGINE_CDM,
+#endif
+#ifdef XP_WIN
+  WINDOWS_UTILS,
+#endif
 
   COUNT,
 
 };
+
+bool IsUtilitySandboxEnabled(const char* envVar, SandboxingKind aKind);
+bool IsUtilitySandboxEnabled(SandboxingKind aKind);
 
 }  // namespace ipc
 

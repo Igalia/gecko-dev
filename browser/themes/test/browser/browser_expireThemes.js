@@ -1,19 +1,17 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
-
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
 );
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  BuiltInThemes: "resource:///modules/BuiltInThemes.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  BuiltInThemes: "resource:///modules/BuiltInThemes.sys.mjs",
 });
 
 const kLushSoftID = "lush-soft-colorway@mozilla.org";
@@ -52,7 +50,7 @@ add_task(async function retainExpiredActiveTheme() {
   );
 
   AddonTestUtils.initMochitest(this);
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     Services.prefs.clearUserPref(kRetainedThemesPref);
     BuiltInThemes.builtInThemeMap = oldBuiltInThemeMap;
     await BuiltInThemes.ensureBuiltInThemes();

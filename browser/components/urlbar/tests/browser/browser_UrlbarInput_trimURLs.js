@@ -1,9 +1,9 @@
-add_task(async function() {
+add_task(async function () {
   const PREF_TRIMURLS = "browser.urlbar.trimURLs";
 
   let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     BrowserTestUtils.removeTab(tab);
     Services.prefs.clearUserPref(PREF_TRIMURLS);
     gURLBar.setURI();
@@ -88,7 +88,7 @@ add_task(async function() {
     false,
     "http://example.com/"
   );
-  BrowserTestUtils.loadURI(gBrowser, "http://example.com/");
+  BrowserTestUtils.loadURIString(gBrowser, "http://example.com/");
   await promiseLoaded;
 
   await testCopy("example.com", "http://example.com/");

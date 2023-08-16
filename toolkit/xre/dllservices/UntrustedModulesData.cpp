@@ -17,6 +17,7 @@
 #include "mozilla/Unused.h"
 #include "mozilla/WinDllServices.h"
 #include "ModuleEvaluator.h"
+#include "ModuleVersionInfo.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
 #include "nsXULAppAPI.h"
@@ -118,12 +119,14 @@ void ModuleRecord::GetVersionAndVendorInfo(const nsAString& aPath) {
 
   // WinVerifyTrust is too slow and of limited utility for our purposes, so
   // we pass SkipTrustVerification here to avoid it.
-  UniquePtr<wchar_t[]> signedBy(
-      dllSvc->GetBinaryOrgName(PromiseFlatString(aPath).get(),
-                               AuthenticodeFlags::SkipTrustVerification));
+  bool hasNestedMicrosoftSignature = false;
+  UniquePtr<wchar_t[]> signedBy(dllSvc->GetBinaryOrgName(
+      PromiseFlatString(aPath).get(), &hasNestedMicrosoftSignature,
+      AuthenticodeFlags::SkipTrustVerification));
   if (signedBy) {
     mVendorInfo = Some(VendorInfo(VendorInfo::Source::Signature,
-                                  nsDependentString(signedBy.get())));
+                                  nsDependentString(signedBy.get()),
+                                  hasNestedMicrosoftSignature));
   }
 
   ModuleVersionInfo verInfo;
@@ -136,8 +139,8 @@ void ModuleRecord::GetVersionAndVendorInfo(const nsAString& aPath) {
   }
 
   if (!mVendorInfo && !verInfo.mCompanyName.IsEmpty()) {
-    mVendorInfo =
-        Some(VendorInfo(VendorInfo::Source::VersionInfo, verInfo.mCompanyName));
+    mVendorInfo = Some(VendorInfo(VendorInfo::Source::VersionInfo,
+                                  verInfo.mCompanyName, false));
   }
 }
 
@@ -339,6 +342,7 @@ void UntrustedModulesData::AddNewLoads(
   for (auto&& stack : aStacks) {
     mStacks.AddStack(stack);
   }
+  Truncate(false);
 }
 
 void UntrustedModulesData::MergeModules(UntrustedModulesData& aNewData) {
@@ -377,10 +381,13 @@ void UntrustedModulesData::Merge(UntrustedModulesData&& aNewData) {
   mNumEvents += newData.mNumEvents;
   mEvents.extendBack(std::move(newData.mEvents));
   mStacks.AddStacks(newData.mStacks);
+  Truncate(false);
 }
 
-void UntrustedModulesData::Truncate() {
-  mStacks.Clear();
+void UntrustedModulesData::Truncate(bool aDropCallstackData) {
+  if (aDropCallstackData) {
+    mStacks.Clear();
+  }
 
   if (mNumEvents <= kMaxEvents) {
     return;
@@ -390,6 +397,8 @@ void UntrustedModulesData::Truncate() {
   events.splice(0, mEvents, mNumEvents - kMaxEvents, kMaxEvents);
   std::swap(events, mEvents);
   mNumEvents = kMaxEvents;
+  // mStacks only keeps the latest kMaxEvents stacks, so mEvents will
+  // still be lined up with mStacks.
 }
 
 void UntrustedModulesData::MergeWithoutStacks(UntrustedModulesData&& aNewData) {
@@ -409,7 +418,7 @@ void UntrustedModulesData::MergeWithoutStacks(UntrustedModulesData&& aNewData) {
   mNumEvents += newData.mNumEvents;
   mEvents.extendBack(std::move(newData.mEvents));
 
-  Truncate();
+  Truncate(true);
 }
 
 void UntrustedModulesData::Swap(UntrustedModulesData& aOther) {

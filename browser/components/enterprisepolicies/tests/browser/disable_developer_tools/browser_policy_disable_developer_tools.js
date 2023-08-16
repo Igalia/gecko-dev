@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { EnterprisePolicyTesting } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
+const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+  "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
 );
 var updateService = Cc["@mozilla.org/updates/update-service;1"].getService(
   Ci.nsIApplicationUpdateService
@@ -71,9 +71,9 @@ async function testPageBlockedByPolicy(page, policyJSON) {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
     async browser => {
-      BrowserTestUtils.loadURI(browser, page);
+      BrowserTestUtils.loadURIString(browser, page);
       await BrowserTestUtils.browserLoaded(browser, false, page, true);
-      await SpecialPowers.spawn(browser, [page], async function(innerPage) {
+      await SpecialPowers.spawn(browser, [page], async function (innerPage) {
         ok(
           content.document.documentURI.startsWith(
             "about:neterror?e=blockedByPolicy"

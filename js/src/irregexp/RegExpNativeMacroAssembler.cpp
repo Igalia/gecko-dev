@@ -252,12 +252,12 @@ bool SMRegExpMacroAssembler::IsCharacterInRangeArray(uint32_t c,
   MOZ_ASSERT(length > 0);
 
   // Fast paths.
-  if (c < ranges->get_uint16(0)) {
+  if (c < ranges->getTyped<uint16_t>(0)) {
     // |c| is lower than the start of the first range.
     // It is not in the range array.
     return false;
   }
-  if (c >= ranges->get_uint16(length - 1)) {
+  if (c >= ranges->getTyped<uint16_t>(length - 1)) {
     // |c| is higher than the last entry. If the table contains an odd
     // number of entries, the last range is open-ended, so |c| is in
     // the range array iff |length| is odd.
@@ -283,7 +283,7 @@ bool SMRegExpMacroAssembler::IsCharacterInRangeArray(uint32_t c,
   uint32_t mid = 0;
   do {
     mid = lower + (upper - lower) / 2;
-    const base::uc16 elem = ranges->get_uint16(mid);
+    const base::uc16 elem = ranges->getTyped<uint16_t>(mid);
     if (c < elem) {
       upper = mid;
     } else if (c > elem) {
@@ -292,7 +292,7 @@ bool SMRegExpMacroAssembler::IsCharacterInRangeArray(uint32_t c,
       break;
     }
   } while (lower < upper);
-  uint32_t rangeIndex = c < ranges->get_uint16(mid) ? mid - 1 : mid;
+  uint32_t rangeIndex = c < ranges->getTyped<uint16_t>(mid) ? mid - 1 : mid;
 
   // Included ranges start at even indices and end at odd indices.
   return rangeIndex % 2 == 0;
@@ -996,9 +996,8 @@ Handle<HeapObject> SMRegExpMacroAssembler::GetCode(Handle<String> source) {
                                        ImmPtr(nullptr));
   }
 
-#ifdef JS_ION_PERF
-  writePerfSpewerJitCodeProfile(code, "RegExp");
-#endif
+  CollectPerfSpewerJitCodeProfile(code, "RegExp");
+
 #ifdef MOZ_VTUNE
   js::vtune::MarkStub(code, "RegExp");
 #endif
@@ -1018,6 +1017,7 @@ Handle<HeapObject> SMRegExpMacroAssembler::GetCode(Handle<String> source) {
  *         - Scratch registers
  *       --- frame alignment ---
  *       - Saved register area
+ *  fp-> - Frame pointer
  *       - Return address
  */
 void SMRegExpMacroAssembler::createStackFrame() {
@@ -1035,23 +1035,22 @@ void SMRegExpMacroAssembler::createStackFrame() {
   masm_.initPseudoStackPtr();
 #endif
 
+  masm_.Push(js::jit::FramePointer);
+  masm_.moveStackPtrTo(js::jit::FramePointer);
+
   // Push non-volatile registers which might be modified by jitcode.
-  size_t pushedNonVolatileRegisters = 0;
   for (GeneralRegisterForwardIterator iter(savedRegisters_); iter.more();
        ++iter) {
     masm_.Push(*iter);
-    pushedNonVolatileRegisters++;
   }
 
   // The pointer to InputOutputData is passed as the first argument.
   // On x86 we have to load it off the stack into temp0_.
   // On other platforms it is already in a register.
 #ifdef JS_CODEGEN_X86
-  Address ioDataAddr(masm_.getStackPointer(),
-                     (pushedNonVolatileRegisters + 1) * sizeof(void*));
+  Address ioDataAddr(js::jit::FramePointer, 2 * sizeof(void*));
   masm_.loadPtr(ioDataAddr, temp0_);
 #else
-  (void)pushedNonVolatileRegisters;
   if (js::jit::IntArgReg0 != temp0_) {
     masm_.movePtr(js::jit::IntArgReg0, temp0_);
   }
@@ -1226,6 +1225,8 @@ void SMRegExpMacroAssembler::exitHandler() {
     masm_.Pop(*iter);
   }
 
+  masm_.Pop(js::jit::FramePointer);
+
 #ifdef JS_CODEGEN_ARM64
   // Now restore the value that was in the PSP register on entry, and return.
 
@@ -1289,7 +1290,7 @@ void SMRegExpMacroAssembler::stackOverflowHandler() {
   volatileRegs.takeUnchecked(temp1_);
   masm_.PushRegsInMask(volatileRegs);
 
-  using Fn = bool (*)(RegExpStack * regexp_stack);
+  using Fn = bool (*)(RegExpStack* regexp_stack);
   masm_.setupUnalignedABICall(temp0_);
   masm_.passABIArg(temp1_);
   masm_.callWithABI<Fn, ::js::irregexp::GrowBacktrackStack>();

@@ -2,19 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 /* eslint no-unused-vars: [2, {"vars": "local", "args": "none"}] */
-/* import-globals-from telemetry-test-helpers.js */
 
 "use strict";
 
 // shared-head.js handles imports, constants, and utility functions
-/* import-globals-from shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this
 );
 
-const { DOMHelpers } = require("devtools/shared/dom-helpers");
-const { Hosts } = require("devtools/client/framework/toolbox-hosts");
+const { DOMHelpers } = require("resource://devtools/shared/dom-helpers.js");
+const {
+  Hosts,
+} = require("resource://devtools/client/framework/toolbox-hosts.js");
 
 const TEST_URI_ROOT = "http://example.com/browser/devtools/client/shared/test/";
 const TEST_URI_ROOT_SSL =
@@ -24,7 +24,7 @@ const EXAMPLE_URL =
   "chrome://mochitests/content/browser/devtools/client/shared/test/";
 
 function catchFail(func) {
-  return function() {
+  return function () {
     try {
       return func.apply(null, arguments);
     } catch (ex) {
@@ -99,7 +99,7 @@ function waitForValue(options) {
 
 function oneTimeObserve(name, callback) {
   return new Promise(resolve => {
-    const func = function() {
+    const func = function () {
       Services.obs.removeObserver(func, name);
       if (callback) {
         callback();
@@ -110,7 +110,7 @@ function oneTimeObserve(name, callback) {
   });
 }
 
-const createHost = async function(
+const createHost = async function (
   type = "bottom",
   src = CHROME_URL_ROOT + "dummy.html"
 ) {
@@ -164,7 +164,7 @@ function waitUntil(predicate, interval = 10) {
     return Promise.resolve(true);
   }
   return new Promise(resolve => {
-    setTimeout(function() {
+    setTimeout(function () {
       waitUntil(predicate).then(() => resolve(true));
     }, interval);
   });
@@ -188,7 +188,7 @@ function showFilterPopupPresets(widget) {
  * @param  {string} value
  * @return {Promise}
  */
-const showFilterPopupPresetsAndCreatePreset = async function(
+const showFilterPopupPresetsAndCreatePreset = async function (
   widget,
   name,
   value

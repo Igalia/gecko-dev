@@ -7,18 +7,15 @@
 #ifndef vm_Compartment_h
 #define vm_Compartment_h
 
-#include "mozilla/LinkedList.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 
 #include <stddef.h>
 #include <utility>
 
-#include "gc/Barrier.h"
 #include "gc/NurseryAwareHashMap.h"
 #include "gc/ZoneAllocator.h"
-#include "js/UniquePtr.h"
-#include "js/Value.h"
+#include "vm/Iteration.h"
 #include "vm/JSObject.h"
 #include "vm/JSScript.h"
 
@@ -435,6 +432,17 @@ class JS::Compartment {
   void fixupAfterMovingGC(JSTracer* trc);
 
   [[nodiscard]] bool findSweepGroupEdges();
+
+ private:
+  // Head node of list of active iterators that may need deleted property
+  // suppression.
+  js::NativeIteratorListHead enumerators_;
+
+ public:
+  js::NativeIteratorListHead* enumeratorsAddr() { return &enumerators_; }
+  MOZ_ALWAYS_INLINE bool objectMaybeInIteration(JSObject* obj);
+
+  void traceWeakNativeIterators(JSTracer* trc);
 };
 
 namespace js {

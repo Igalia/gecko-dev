@@ -7,11 +7,15 @@
 #ifndef vm_Interpreter_inl_h
 #define vm_Interpreter_inl_h
 
+#include "vm/Interpreter.h"
+
 #include "jsnum.h"
 
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "vm/ArgumentsObject.h"
+#include "vm/BigIntType.h"
 #include "vm/BytecodeUtil.h"  // JSDVG_SEARCH_STACK
+#include "vm/JSAtomUtils.h"   // AtomizeString
 #include "vm/Realm.h"
 #include "vm/SharedStencil.h"  // GCThingIndex
 #include "vm/StaticStrings.h"
@@ -21,7 +25,8 @@
 #endif
 
 #include "vm/GlobalObject-inl.h"
-#include "vm/JSAtom-inl.h"
+#include "vm/JSAtomUtils-inl.h"  // PrimitiveValueToId, TypeName
+#include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/ObjectOperations-inl.h"
 #include "vm/StringType-inl.h"
@@ -571,6 +576,18 @@ static MOZ_ALWAYS_INLINE bool CheckPrivateFieldOperation(JSContext* cx,
     }
   }
 
+  // Invoke the HostEnsureCanAddPrivateElement ( O ) host hook here
+  // if the code is attempting to attach a new private element (which
+  // corresponds to the ThrowHas Throw Condition).
+  if (condition == ThrowCondition::ThrowHas) {
+    if (JS::EnsureCanAddPrivateElementOp op =
+            cx->runtime()->canAddPrivateElement) {
+      if (!op(cx, val)) {
+        return false;
+      }
+    }
+  }
+
   if (!HasOwnProperty(cx, val, idval, result)) {
     return false;
   }
@@ -606,32 +623,6 @@ inline bool InitElemIncOperation(JSContext* cx, Handle<ArrayObject*> arr,
   }
 
   return DefineDataElement(cx, arr, index, val, JSPROP_ENUMERATE);
-}
-
-static inline ArrayObject* ProcessCallSiteObjOperation(JSContext* cx,
-                                                       HandleScript script,
-                                                       const jsbytecode* pc) {
-  MOZ_ASSERT(JSOp(*pc) == JSOp::CallSiteObj);
-
-  Rooted<ArrayObject*> cso(cx, &script->getObject(pc)->as<ArrayObject>());
-
-  if (cso->isExtensible()) {
-    RootedObject raw(cx, script->getObject(GET_GCTHING_INDEX(pc).next()));
-    MOZ_ASSERT(raw->is<ArrayObject>());
-
-    RootedValue rawValue(cx, ObjectValue(*raw));
-    if (!DefineDataProperty(cx, cso, cx->names().raw, rawValue, 0)) {
-      return nullptr;
-    }
-    if (!FreezeObject(cx, raw)) {
-      return nullptr;
-    }
-    if (!FreezeObject(cx, cso)) {
-      return nullptr;
-    }
-  }
-
-  return cso;
 }
 
 inline JSFunction* ReportIfNotFunction(

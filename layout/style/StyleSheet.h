@@ -24,7 +24,7 @@
 class nsIGlobalObject;
 class nsINode;
 class nsIPrincipal;
-struct ServoCssRules;
+struct StyleLockedCssRules;
 class nsIReferrerInfo;
 
 namespace mozilla {
@@ -32,10 +32,9 @@ namespace mozilla {
 class ServoCSSRuleList;
 class ServoStyleSet;
 
-typedef MozPromise</* Dummy */ bool,
-                   /* Dummy */ bool,
-                   /* IsExclusive = */ true>
-    StyleSheetParsePromise;
+using StyleSheetParsePromise = MozPromise</* Dummy */ bool,
+                                          /* Dummy */ bool,
+                                          /* IsExclusive = */ true>;
 
 enum class StyleRuleChangeKind : uint32_t;
 
@@ -102,7 +101,7 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
                                                   ErrorResult&);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(StyleSheet)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(StyleSheet)
 
   already_AddRefed<StyleSheet> CreateEmptyChildSheet(
       already_AddRefed<dom::MediaList> aMediaList) const;
@@ -119,7 +118,7 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
 
   // Common code that needs to be called after servo finishes parsing. This is
   // shared between the parallel and sequential paths.
-  void FinishAsyncParse(already_AddRefed<RawServoStyleSheetContents>,
+  void FinishAsyncParse(already_AddRefed<StyleStylesheetContents>,
                         UniquePtr<StyleUseCounters>);
 
   // Similar to `ParseSheet`, but guarantees that
@@ -135,7 +134,7 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
 
   void ReparseSheet(const nsACString& aInput, ErrorResult& aRv);
 
-  const RawServoStyleSheetContents* RawContents() const {
+  const StyleStylesheetContents* RawContents() const {
     return Inner().mContents;
   }
 
@@ -414,6 +413,10 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
     mAdopters.RemoveElement(&aAdopter);
   }
 
+  const nsTArray<dom::DocumentOrShadowRoot*>& SelfOrAncestorAdopters() const {
+    return OutermostSheet().mAdopters;
+  }
+
   // WebIDL miscellaneous bits
   inline dom::ParentObject GetParentObject() const;
   JSObject* WrapObject(JSContext* aCx, JS::Handle<JSObject*> aGivenProto) final;
@@ -441,13 +444,13 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
   // by aBuilder.  Returns the pointer into the buffer that the sheet contents
   // were stored at.  (The returned pointer is to an Arc<Locked<Rules>> value,
   // or null, with a filled in aErrorMessage, on failure.)
-  const ServoCssRules* ToShared(RawServoSharedMemoryBuilder* aBuilder,
-                                nsCString& aErrorMessage);
+  const StyleLockedCssRules* ToShared(StyleSharedMemoryBuilder* aBuilder,
+                                      nsCString& aErrorMessage);
 
   // Sets the contents of this style sheet to the specified aSharedRules
   // pointer, which must be a pointer somewhere in the aSharedMemory buffer
   // as previously returned by a ToShared() call.
-  void SetSharedContents(const ServoCssRules* aSharedRules);
+  void SetSharedContents(const StyleLockedCssRules* aSharedRules);
 
   // Whether this style sheet should not allow any modifications.
   //
@@ -472,7 +475,7 @@ class StyleSheet final : public nsICSSLoaderObserver, public nsWrapperCache {
   }
 
   const StyleSheet& OutermostSheet() const {
-    auto* current = this;
+    const auto* current = this;
     while (current->mParentSheet) {
       MOZ_ASSERT(!current->mDocumentOrShadowRoot,
                  "Shouldn't be set on child sheets");

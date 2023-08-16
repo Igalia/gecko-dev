@@ -22,6 +22,15 @@ var subtests = [
   // disabled, and so needs to be tested separately for both.
   {"file": "helper_drag_root_scrollbar.html", "prefs": [["apz.allow_zooming", false]]},
   {"file": "helper_drag_root_scrollbar.html", "prefs": [["apz.allow_zooming", true]]},
+  {"file": "helper_drag_scrollbar_hittest.html", "prefs": [
+    // The test applies a scaling zoom to the page.
+    ["apz.allow_zooming", true],
+    // The test uses hitTest(), these two prefs are required for it.
+    ["test.events.async.enabled", true],
+    ["apz.test.logging_enabled", true],
+    // The test performs scrollbar dragging, avoid auto-hiding scrollbars.
+    ["ui.useOverlayScrollbars", 0]
+  ]},
   // Test for dragging on a fake-scrollbar element that scrolls the page
   {"file": "helper_drag_scroll.html"},
   // Test for dragging the scrollbar with a fixed-pos element overlaying it
@@ -47,6 +56,14 @@ var subtests = [
   {"file": "helper_bug1662800.html"},
   // Scrollbar-dragging on subframe with enclosing translation transform
   {"file": "helper_drag_bug1719913.html"},
+  // Scrolling with mouse down on the scrollbar
+  {"file": "helper_scrollbartrack_click_overshoot.html",
+   "prefs": [["test.events.async.enabled", true], ["apz.test.logging_enabled", true],
+             ["ui.useOverlayScrollbars", 0],
+             ["layout.scrollbars.click_and_hold_track.continue_to_end", false]]},
+  {"file": "helper_bug1756814.html", "prefs": [
+    ["ui.useOverlayScrollbars", 0]
+  ]},
 ];
 
 // Android, mac, and linux (at least in our automation) do not have scrollbar buttons.

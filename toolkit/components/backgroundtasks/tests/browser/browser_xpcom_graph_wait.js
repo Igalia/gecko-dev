@@ -29,15 +29,15 @@ const backgroundtaskPhases = {
   AfterRunBackgroundTaskNamed: {
     allowlist: {
       modules: [
-        "resource://gre/modules/AppConstants.jsm",
-        "resource://gre/modules/AsyncShutdown.jsm",
-        "resource://gre/modules/BackgroundTasksManager.jsm",
-        "resource://gre/modules/Console.jsm",
-        "resource://gre/modules/EnterprisePolicies.jsm",
-        "resource://gre/modules/EnterprisePoliciesParent.jsm",
-        "resource://gre/modules/PromiseUtils.jsm",
+        "resource://gre/modules/AppConstants.sys.mjs",
+        "resource://gre/modules/AsyncShutdown.sys.mjs",
+        "resource://gre/modules/BackgroundTasksManager.sys.mjs",
+        "resource://gre/modules/Console.sys.mjs",
+        "resource://gre/modules/EnterprisePolicies.sys.mjs",
+        "resource://gre/modules/EnterprisePoliciesParent.sys.mjs",
+        "resource://gre/modules/PromiseUtils.sys.mjs",
         "resource://gre/modules/XPCOMUtils.sys.mjs",
-        "resource://gre/modules/nsAsyncShutdown.jsm",
+        "resource://gre/modules/nsAsyncShutdown.sys.mjs",
       ],
       // Human-readable contract IDs are many-to-one mapped to CIDs, so this
       // list is a little misleading.  For example, all of
@@ -66,7 +66,6 @@ const backgroundtaskPhases = {
         "@mozilla.org/network/idn-service;1",
         "@mozilla.org/network/io-service;1",
         "@mozilla.org/network/network-link-service;1",
-        "@mozilla.org/network/protocol;1?name=chrome",
         "@mozilla.org/network/protocol;1?name=file",
         "@mozilla.org/network/protocol;1?name=jar",
         "@mozilla.org/network/protocol;1?name=resource",
@@ -97,22 +96,6 @@ const backgroundtaskPhases = {
         "@mozilla.org/xpcom/debug;1",
         "@mozilla.org/xre/app-info;1",
         "@mozilla.org/mime;1",
-        {
-          name: "@mozilla.org/gfx/info;1",
-          condition: WIN,
-        },
-        {
-          name: "@mozilla.org/image/tools;1",
-          condition: WIN,
-        },
-        {
-          name: "@mozilla.org/gfx/screenmanager;1",
-          condition: WIN,
-        },
-        {
-          name: "@mozilla.org/gfx/parent/screenmanager;1",
-          condition: WIN,
-        },
       ],
     },
   },
@@ -120,17 +103,15 @@ const backgroundtaskPhases = {
     allowlist: {
       modules: [
         // We have a profile marker for this, even though it failed to load!
-        "resource:///modules/backgroundtasks/BackgroundTask_wait.jsm",
         "resource:///modules/backgroundtasks/BackgroundTask_wait.sys.mjs",
 
-        "resource://gre/modules/ConsoleAPIStorage.jsm",
-        "resource://gre/modules/Timer.jsm",
+        "resource://gre/modules/ConsoleAPIStorage.sys.mjs",
+        "resource://gre/modules/Timer.sys.mjs",
 
         // We have a profile marker for this, even though it failed to load!
-        "resource://gre/modules/backgroundtasks/BackgroundTask_wait.jsm",
         "resource://gre/modules/backgroundtasks/BackgroundTask_wait.sys.mjs",
 
-        "resource://testing-common/backgroundtasks/BackgroundTask_wait.jsm",
+        "resource://testing-common/backgroundtasks/BackgroundTask_wait.sys.mjs",
       ],
       services: ["@mozilla.org/consoleAPI-storage;1"],
     },
@@ -168,8 +149,9 @@ function getStackFromProfile(profile, stack, libs) {
               indexString = "0" + indexString;
             }
             let offset = addr - lib.start;
-            frame = `#${indexString}: ???[${lib.debugPath} ${"+0x" +
-              offset.toString(16)}]`;
+            frame = `#${indexString}: ???[${lib.debugPath} ${
+              "+0x" + offset.toString(16)
+            }]`;
             break;
           }
         }
@@ -187,28 +169,15 @@ function getStackFromProfile(profile, stack, libs) {
 }
 
 add_task(async function test_xpcom_graph_wait() {
-  {
-    let omniJa = Services.dirsvc.get("XCurProcD", Ci.nsIFile);
-    omniJa.append("omni.ja");
-    if (!omniJa.exists()) {
-      ok(
-        false,
-        "This test requires a packaged build, " +
-          "run 'mach package' and then use --appname=dist"
-      );
-      return;
-    }
-  }
+  TestUtils.assertPackagedBuild();
 
-  let profilePath = Cc["@mozilla.org/process/environment;1"]
-    .getService(Ci.nsIEnvironment)
-    .get("MOZ_UPLOAD_DIR");
+  let profilePath = Services.env.get("MOZ_UPLOAD_DIR");
   profilePath =
     profilePath ||
-    (await IOUtils.createUniqueFile(
+    (await IOUtils.createUniqueDirectory(
       PathUtils.profileDir,
       "testBackgroundTask",
-      0o600
+      0o700
     ));
 
   profilePath = PathUtils.join(profilePath, "profile_backgroundtask_wait.json");
@@ -246,9 +215,8 @@ add_task(async function test_xpcom_graph_wait() {
   for (let m of profile.markers.data) {
     let markerName = profile.stringTable[m[nameCol]];
     if (markerName.startsWith("BackgroundTasksManager:")) {
-      phases[
-        markerName.split("BackgroundTasksManager:")[1]
-      ] = markersForCurrentPhase;
+      phases[markerName.split("BackgroundTasksManager:")[1]] =
+        markersForCurrentPhase;
       markersForCurrentPhase = newMarkers();
       continue;
     }
@@ -257,6 +225,7 @@ add_task(async function test_xpcom_graph_wait() {
       ![
         "ChromeUtils.import", // JSMs.
         "ChromeUtils.importESModule", // System ESMs.
+        "ChromeUtils.importESModule static import",
         "GetService", // XPCOM services.
       ].includes(markerName)
     ) {
@@ -266,7 +235,8 @@ add_task(async function test_xpcom_graph_wait() {
     let markerData = m[dataCol];
     if (
       markerName == "ChromeUtils.import" ||
-      markerName == "ChromeUtils.importESModule"
+      markerName == "ChromeUtils.importESModule" ||
+      markerName == "ChromeUtils.importESModule static import"
     ) {
       let module = markerData.name;
       if (!markersForAllPhases.modules.includes(module)) {
@@ -314,11 +284,10 @@ add_task(async function test_xpcom_graph_wait() {
   for (let phaseName in backgroundtaskPhases) {
     for (let listName in backgroundtaskPhases[phaseName]) {
       for (let scriptType in backgroundtaskPhases[phaseName][listName]) {
-        backgroundtaskPhases[phaseName][listName][
-          scriptType
-        ] = filterConditions(
-          backgroundtaskPhases[phaseName][listName][scriptType]
-        );
+        backgroundtaskPhases[phaseName][listName][scriptType] =
+          filterConditions(
+            backgroundtaskPhases[phaseName][listName][scriptType]
+          );
       }
 
       // Turn human-readable contract IDs into CIDs.  It's worth noting that one
@@ -348,7 +317,8 @@ add_task(async function test_xpcom_graph_wait() {
   // Turn `{CID}` into `{CID} (@contractID)` or `{CID} (one of
   // @contractID1, ..., @contractIDn)` as appropriate.
   function renderResource(resource) {
-    const UUID_PATTERN = /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
+    const UUID_PATTERN =
+      /^\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}$/i;
     if (UUID_PATTERN.test(resource)) {
       let foundContractIDs = [];
       for (let contractID of Cm.getContractIDs()) {

@@ -6,7 +6,7 @@
 
 const {
   SUPPORTED_HTTP_CODES,
-} = require("devtools/client/netmonitor/src/constants");
+} = require("resource://devtools/client/netmonitor/src/constants.js");
 
 /**
  * A mapping of header names to external documentation. Any header included
@@ -65,7 +65,6 @@ const SUPPORTED_HEADERS = [
   "Origin",
   "Pragma",
   "Proxy-Authenticate",
-  "Proxy-Authorization",
   "Public-Key-Pins",
   "Public-Key-Pins-Report-Only",
   "Range",

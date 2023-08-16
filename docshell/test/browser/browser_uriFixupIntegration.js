@@ -17,7 +17,7 @@ const kSearchEngineURL = "https://example.com/?search={searchTerms}";
 const kPrivateSearchEngineID = "browser_urifixup_search_engine_private";
 const kPrivateSearchEngineURL = "https://example.com/?private={searchTerms}";
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.separatePrivateDefault.ui.enabled", true],
@@ -25,33 +25,24 @@ add_setup(async function() {
     ],
   });
 
-  let oldCurrentEngine = await Services.search.getDefault();
-  let oldPrivateEngine = await Services.search.getDefaultPrivate();
-
   // Add new fake search engines.
-  await SearchTestUtils.installSearchExtension({
-    name: kSearchEngineID,
-    search_url: "https://example.com/",
-    search_url_get_params: "search={searchTerms}",
-  });
-  await Services.search.setDefault(
-    Services.search.getEngineByName(kSearchEngineID)
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: kSearchEngineID,
+      search_url: "https://example.com/",
+      search_url_get_params: "search={searchTerms}",
+    },
+    { setAsDefault: true }
   );
 
-  await SearchTestUtils.installSearchExtension({
-    name: kPrivateSearchEngineID,
-    search_url: "https://example.com/",
-    search_url_get_params: "private={searchTerms}",
-  });
-  await Services.search.setDefaultPrivate(
-    Services.search.getEngineByName(kPrivateSearchEngineID)
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: kPrivateSearchEngineID,
+      search_url: "https://example.com/",
+      search_url_get_params: "private={searchTerms}",
+    },
+    { setAsDefaultPrivate: true }
   );
-
-  // Remove the fake engines when done.
-  registerCleanupFunction(async () => {
-    await Services.search.setDefault(oldCurrentEngine);
-    await Services.search.setDefault(oldPrivateEngine);
-  });
 });
 
 add_task(async function test() {

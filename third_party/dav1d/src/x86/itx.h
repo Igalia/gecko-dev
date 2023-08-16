@@ -1,6 +1,6 @@
 /*
- * Copyright © 2018-2021, VideoLAN and dav1d authors
- * Copyright © 2018, Two Orioles, LLC
+ * Copyright © 2018-2023, VideoLAN and dav1d authors
+ * Copyright © 2018-2023, Two Orioles, LLC
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -126,6 +126,7 @@ decl_itx_fn(BF_BPC(dav1d_inv_txfm_add_dct_dct_64x32, bpc, ext)); \
 decl_itx_fn(BF_BPC(dav1d_inv_txfm_add_dct_dct_64x64, bpc, ext))
 
 decl_itx_fns(avx512icl);
+decl_itx_bpc_fns(10, avx512icl);
 decl_itx_fns(avx2);
 decl_itx_bpc_fns(10, avx2);
 decl_itx_bpc_fns(12, avx2);
@@ -316,6 +317,9 @@ static ALWAYS_INLINE void itx_dsp_init_x86(Dav1dInvTxfmDSPContext *const c, cons
         assign_itx16_bpc_fn(R, 16,  8, 12, avx2);
         assign_itx12_bpc_fn( , 16, 16, 12, avx2);
         assign_itx2_bpc_fn (R, 32,  8, 12, avx2);
+        assign_itx_bpc_fn(R, 16, 32, identity_identity, IDTX, 12, avx2);
+        assign_itx_bpc_fn(R, 32, 16, identity_identity, IDTX, 12, avx2);
+        assign_itx_bpc_fn( , 32, 32, identity_identity, IDTX, 12, avx2);
     }
 #endif
 
@@ -341,6 +345,23 @@ static ALWAYS_INLINE void itx_dsp_init_x86(Dav1dInvTxfmDSPContext *const c, cons
     assign_itx1_fn (R, 64, 16, avx512icl);
     assign_itx1_fn (R, 64, 32, avx512icl);
     assign_itx1_fn ( , 64, 64, avx512icl);
+#else
+    if (bpc == 10) {
+        assign_itx16_bpc_fn( ,  8,  8, 10, avx512icl);
+        assign_itx16_bpc_fn(R,  8, 16, 10, avx512icl);
+        assign_itx2_bpc_fn (R,  8, 32, 10, avx512icl);
+        assign_itx16_bpc_fn(R, 16,  8, 10, avx512icl);
+        assign_itx12_bpc_fn( , 16, 16, 10, avx512icl);
+        assign_itx2_bpc_fn (R, 16, 32, 10, avx512icl);
+        assign_itx2_bpc_fn (R, 32,  8, 10, avx512icl);
+        assign_itx2_bpc_fn (R, 32, 16, 10, avx512icl);
+        assign_itx2_bpc_fn ( , 32, 32, 10, avx512icl);
+        assign_itx1_bpc_fn (R, 16, 64, 10, avx512icl);
+        assign_itx1_bpc_fn (R, 32, 64, 10, avx512icl);
+        assign_itx1_bpc_fn (R, 64, 16, 10, avx512icl);
+        assign_itx1_bpc_fn (R, 64, 32, 10, avx512icl);
+        assign_itx1_bpc_fn ( , 64, 64, 10, avx512icl);
+    }
 #endif
 #endif
 }

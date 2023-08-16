@@ -4,11 +4,11 @@
 
 "use strict";
 
-const { updateAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { updateAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
-const { EnterprisePolicyTesting } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
+const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+  "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
 );
 
 updateAppInfo({

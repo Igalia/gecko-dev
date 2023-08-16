@@ -13,12 +13,14 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/intl/LineBreaker.h"  // for LineBreaker::ComputeBreakPositions
 #include "mozilla/intl/Locale.h"
+#include "mozilla/intl/UnicodeProperties.h"
 
 using mozilla::AutoRestore;
 using mozilla::intl::LineBreaker;
 using mozilla::intl::LineBreakRule;
 using mozilla::intl::Locale;
 using mozilla::intl::LocaleParser;
+using mozilla::intl::UnicodeProperties;
 using mozilla::intl::WordBreakRule;
 
 nsLineBreaker::nsLineBreaker()
@@ -39,26 +41,63 @@ nsLineBreaker::~nsLineBreaker() {
 
 static void SetupCapitalization(const char16_t* aWord, uint32_t aLength,
                                 bool* aCapitalization) {
-  // Capitalize the first alphanumeric character after a space or start
-  // of the word.
-  // The only space character a word can contain is NBSP.
+  // Capitalize the first alphanumeric character after a space or punctuation.
+  using mozilla::intl::GeneralCategory;
   bool capitalizeNextChar = true;
   for (uint32_t i = 0; i < aLength; ++i) {
     uint32_t ch = aWord[i];
-    if (capitalizeNextChar) {
-      if (i + 1 < aLength && NS_IS_SURROGATE_PAIR(ch, aWord[i + 1])) {
-        ch = SURROGATE_TO_UCS4(ch, aWord[i + 1]);
-      }
-      if (nsContentUtils::IsAlphanumeric(ch)) {
-        aCapitalization[i] = true;
-        capitalizeNextChar = false;
-      }
-      if (!IS_IN_BMP(ch)) {
-        ++i;
-      }
+    if (i + 1 < aLength && NS_IS_SURROGATE_PAIR(ch, aWord[i + 1])) {
+      ch = SURROGATE_TO_UCS4(ch, aWord[i + 1]);
     }
-    if (ch == 0xA0 /*NBSP*/) {
-      capitalizeNextChar = true;
+    auto category = UnicodeProperties::CharType(ch);
+    switch (category) {
+      case GeneralCategory::Uppercase_Letter:
+      case GeneralCategory::Lowercase_Letter:
+      case GeneralCategory::Titlecase_Letter:
+      case GeneralCategory::Modifier_Letter:
+      case GeneralCategory::Other_Letter:
+      case GeneralCategory::Decimal_Number:
+      case GeneralCategory::Letter_Number:
+      case GeneralCategory::Other_Number:
+        if (capitalizeNextChar) {
+          aCapitalization[i] = true;
+          capitalizeNextChar = false;
+        }
+        break;
+      case GeneralCategory::Space_Separator:
+      case GeneralCategory::Line_Separator:
+      case GeneralCategory::Paragraph_Separator:
+      case GeneralCategory::Dash_Punctuation:
+      case GeneralCategory::Initial_Punctuation:
+        /* These punctuation categories are excluded, for examples like
+         *   "what colo[u]r" -> "What Colo[u]r?" (rather than "What Colo[U]R?")
+         * and
+         *   "snake_case" -> "Snake_case" (to match word selection behavior)
+        case GeneralCategory::Open_Punctuation:
+        case GeneralCategory::Close_Punctuation:
+        case GeneralCategory::Connector_Punctuation:
+         */
+        capitalizeNextChar = true;
+        break;
+      case GeneralCategory::Final_Punctuation:
+        /* Special-case: exclude Unicode single-close-quote/apostrophe,
+           for examples like "Lowe’s" etc. */
+        if (ch != 0x2019) {
+          capitalizeNextChar = true;
+        }
+        break;
+      case GeneralCategory::Other_Punctuation:
+        /* Special-case: exclude ASCII apostrophe, for "Lowe's" etc.,
+           and MIDDLE DOT, for Catalan "l·l". */
+        if (ch != '\'' && ch != 0x00B7) {
+          capitalizeNextChar = true;
+        }
+        break;
+      default:
+        break;
+    }
+    if (!IS_IN_BMP(ch)) {
+      ++i;
     }
   }
 }
@@ -134,7 +173,7 @@ nsresult nsLineBreaker::FlushCurrentWord() {
         if (capitalizationState.Length() == 0) {
           if (!capitalizationState.AppendElements(length, mozilla::fallible)) {
             return NS_ERROR_OUT_OF_MEMORY;
-          };
+          }
           memset(capitalizationState.Elements(), false, length * sizeof(bool));
           SetupCapitalization(mCurrentWord.Elements(), length,
                               capitalizationState.Elements());
@@ -188,11 +227,15 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
       mTextItems.AppendElement(TextItem(aSink, 0, offset, aFlags));
     }
 
-    if (offset == aLength) return NS_OK;
+    if (offset == aLength) {
+      return NS_OK;
+    }
 
     // We encountered whitespace, so we're done with this word
     nsresult rv = FlushCurrentWord();
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
   }
 
   AutoTArray<uint8_t, 4000> breakState;
@@ -224,7 +267,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     offset = aLength;
     while (offset > start) {
       --offset;
-      if (IsSpace(aText[offset])) break;
+      if (IsSpace(aText[offset])) {
+        break;
+      }
     }
   }
   uint32_t wordStart = offset;
@@ -281,7 +326,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
       wordHasComplexChar = false;
       mWordContinuation = false;
       ++offset;
-      if (offset >= aLength) break;
+      if (offset >= aLength) {
+        break;
+      }
       wordStart = offset;
     } else {
       if (!wordHasComplexChar && IsComplexChar(ch)) {
@@ -293,7 +340,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
         mCurrentWordContainsComplexChar = wordHasComplexChar;
         uint32_t len = offset - wordStart;
         char16_t* elems = mCurrentWord.AppendElements(len);
-        if (!elems) return NS_ERROR_OUT_OF_MEMORY;
+        if (!elems) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
         memcpy(elems, aText + wordStart, sizeof(char16_t) * len);
         mTextItems.AppendElement(TextItem(aSink, wordStart, len, aFlags));
         // Ensure that the break-before for this word is written out
@@ -372,7 +421,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
 
     // We encountered whitespace, so we're done with this word
     nsresult rv = FlushCurrentWord();
-    if (NS_FAILED(rv)) return rv;
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
   }
 
   AutoTArray<uint8_t, 4000> breakState;
@@ -394,7 +445,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
     offset = aLength;
     while (offset > start) {
       --offset;
-      if (IsSpace(aText[offset])) break;
+      if (IsSpace(aText[offset])) {
+        break;
+      }
     }
   }
   uint32_t wordStart = offset;
@@ -435,8 +488,11 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
       }
 
       wordHasComplexChar = false;
+      mWordContinuation = false;
       ++offset;
-      if (offset >= aLength) break;
+      if (offset >= aLength) {
+        break;
+      }
       wordStart = offset;
     } else {
       if (!wordHasComplexChar && IsComplexASCIIChar(ch)) {
@@ -448,7 +504,9 @@ nsresult nsLineBreaker::AppendText(nsAtom* aHyphenationLanguage,
         mCurrentWordContainsComplexChar = wordHasComplexChar;
         uint32_t len = offset - wordStart;
         char16_t* elems = mCurrentWord.AppendElements(len);
-        if (!elems) return NS_ERROR_OUT_OF_MEMORY;
+        if (!elems) {
+          return NS_ERROR_OUT_OF_MEMORY;
+        }
         uint32_t i;
         for (i = wordStart; i < offset; ++i) {
           elems[i - wordStart] = aText[i];
@@ -493,7 +551,9 @@ void nsLineBreaker::UpdateCurrentWordLanguage(nsAtom* aHyphenationLanguage) {
 
 nsresult nsLineBreaker::AppendInvisibleWhitespace(uint32_t aFlags) {
   nsresult rv = FlushCurrentWord();
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   bool isBreakableSpace = !(aFlags & BREAK_SUPPRESS_INSIDE);
   if (mAfterBreakableSpace && !isBreakableSpace) {
@@ -506,7 +566,9 @@ nsresult nsLineBreaker::AppendInvisibleWhitespace(uint32_t aFlags) {
 
 nsresult nsLineBreaker::Reset(bool* aTrailingBreak) {
   nsresult rv = FlushCurrentWord();
-  if (NS_FAILED(rv)) return rv;
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
 
   *aTrailingBreak = mBreakHere || mAfterBreakableSpace;
   mBreakHere = false;

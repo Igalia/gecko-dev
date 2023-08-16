@@ -72,13 +72,13 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "android":
     ]
 
 if CONFIG["MOZ_ENABLE_D3D10_LAYER"]:
-    REQUIRES_UNIFIED_BUILD = True
     DEFINES["MOZ_ENABLE_D3D10_LAYER"] = True
     EXPORTS.mozilla.webrender += [
         "DCLayerTree.h",
         "RenderCompositorANGLE.h",
         "RenderCompositorD3D11SWGL.h",
         "RenderD3D11TextureHost.h",
+        "RenderDcompSurfaceTextureHost.h",
     ]
     UNIFIED_SOURCES += [
         "RenderCompositorD3D11SWGL.cpp",
@@ -87,16 +87,23 @@ if CONFIG["MOZ_ENABLE_D3D10_LAYER"]:
     SOURCES += [
         "DCLayerTree.cpp",
         "RenderCompositorANGLE.cpp",
+        "RenderDcompSurfaceTextureHost.cpp",
+    ]
+
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
+    EXPORTS.mozilla.webrender += [
+        "RenderDMABUFTextureHost.h",
+    ]
+    SOURCES += [
+        "RenderDMABUFTextureHost.cpp",
     ]
 
 if CONFIG["MOZ_WAYLAND"]:
     EXPORTS.mozilla.webrender += [
         "RenderCompositorNative.h",
-        "RenderDMABUFTextureHost.h",
     ]
     SOURCES += [
         "RenderCompositorNative.cpp",
-        "RenderDMABUFTextureHost.cpp",
     ]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] in ("android", "gtk"):

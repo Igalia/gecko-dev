@@ -18,38 +18,11 @@ Requirements
 -  **Operating System:** Windows 10. It is advisable to have Windows Update be fully
    up-to-date. See :ref:`build_hosts` for more information.
 
-1. System preparation
----------------------
-
-1.1 Install Visual Studio Build Tools
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-`Download and install the Build Tools for Visual Studio 2022
-<https://visualstudio.microsoft.com/downloads/#build-tools-for-visual-studio-2022>`_.
-If you have a full install of Visual Studio (Community/Professional/Enterprise),
-that is also supported.
-Ensure you've checked the following items for installation:
-
--  In the Workloads tab:
-    -  Desktop development with C++.
--  In the Individual components tab:
-    -  MSVC v143 - VS 2022 C++ x64/x86 build tools.
-    -  Windows 10 SDK (at least **10.0.19041.0**).
-    -  C++ ATL for v143 build tools (x86 and x64).
-
-.. note::
-
-    The recommended Visual Studio version and components has recently changed. If you run
-    into unexpected build errors, you should `report a bug
-    <https://bugzilla.mozilla.org/enter_bug.cgi?product=Firefox%20Build%20System&component=General>`_
-    or ask about it in the ``#build`` Matrix channel - the solution may be to downgrade back to
-    `Visual Studio 2019 <https://docs.microsoft.com/en-ca/visualstudio/releases/2019/release-notes>`_.
-
-1.2 Install MozillaBuild
-~~~~~~~~~~~~~~~~~~~~~~~~
+1. Install MozillaBuild
+-----------------------
 
 Install `MozillaBuild
-<https://ftp.mozilla.org/pub/mozilla.org/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`_.
+<https://ftp.mozilla.org/pub/mozilla/libraries/win32/MozillaBuildSetup-Latest.exe>`_.
 
 Accept the default installation directory.
 Windows may prompt you to "reinstall with the correct settings", which you
@@ -74,6 +47,7 @@ the interactive setup process.
 
 .. code-block:: shell
 
+    # Using the C:\mozilla-build\start-shell.bat shell from step 1:
     cd c:/
     mkdir mozilla-source
     cd mozilla-source
@@ -104,7 +78,7 @@ Choosing a build type
 
 If you aren't modifying the Firefox backend, then select one of the
 :ref:`Artifact Mode <Understanding Artifact Builds>` options. If you are
-building Firefox for Android, you should also see the :ref:`GeckoView Contributor Guide`.
+building Firefox for Android, you should also see the :ref:`GeckoView Contributor Guide <geckoview-contributor-guide>`.
 
 .. _Ensure antivirus exclusions:
 
@@ -134,15 +108,6 @@ Microsoft Defender Antivirus manually
     If you're already missing files (you'll see them listed in ``hg status``, you can have them
     brought back by reverting your source tree: ``hg update -C``).
 
-Cleanup
-~~~~~~~
-
-After finishing the bootstrap process, ``bootstrap.py`` can be removed.
-
-.. code-block:: shell
-
-    rm c:/mozilla-source/bootstrap.py
-
 3. Build
 --------
 
@@ -151,6 +116,7 @@ Now that your system is bootstrapped, you should be able to build!
 .. code-block:: shell
 
     cd c:/mozilla-source/mozilla-unified
+    hg up -C central
     ./mach build
     ./mach run
 
@@ -185,18 +151,11 @@ they may be resolved by `upgrading your MozillaBuild <https://wiki.mozilla.org/M
 Spaces in folder names
 ~~~~~~~~~~~~~~~~~~~~~~
 
-**Firefox will not build** if the path to the installation
-tool folders contains **spaces** or other breaking characters such as
-pluses, quotation marks, or metacharacters.  The Visual Studio tools and
-SDKs are an exception - they may be installed in a directory which
-contains spaces. It is strongly recommended that you accept the default
-settings for all installation locations.
-
-Installing Visual Studio in a different language than Windows
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If Visual Studio is using a different language than the system, then your build
-may fail with a link error after reporting a bunch of include errors.
+**Firefox will not build** if the path to MozillaBuild or the Firefox source
+contain **spaces** or other breaking characters such as pluses, quotation marks,
+or metacharacters.  The Visual Studio tools and SDKs are an exception - they may
+be installed in a directory which contains spaces. It is strongly recommended
+that you accept the default settings for all installation locations.
 
 Quotation marks in ``PATH``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -219,11 +178,3 @@ If you happen to have Cygwin installed, its tools may erroneously be
 used when building Firefox. Ensure that MozillaBuild directories (in
 ``C:\mozilla-build\``) are before Cygwin directories in the ``PATH``
 environment variable.
-
-Building from within Users
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-If you encounter a build failure with:
-``LINK: fatal error LNK1181: cannot open input file ..\..\..\..\..\security\nss3.lib``
-and the Firefox code is underneath the ``C:\Users`` folder, then you should try
-moving the code to be underneath ``C:\\mozilla-source`` instead.

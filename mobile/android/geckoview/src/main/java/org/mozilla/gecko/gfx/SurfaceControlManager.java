@@ -76,23 +76,15 @@ public class SurfaceControlManager {
     return new Surface(child);
   }
 
-  // Ensures the managed child Surface of the parent SurfaceControl is hidden.
+  // Removes an existing parent SurfaceControl and its corresponding child from the manager. This
+  // can be used when we require the next call to getChildSurface() for the specified parent to
+  // create a new child rather than return the existing one.
   @RequiresApi(api = Build.VERSION_CODES.Q)
   @WrapForJNI(exceptionMode = "abort")
-  public synchronized void hideChildSurface(final SurfaceControl parent) {
-    final SurfaceControl child = mChildSurfaceControls.get(parent);
+  public synchronized void removeSurface(final SurfaceControl parent) {
+    final SurfaceControl child = mChildSurfaceControls.remove(parent);
     if (child != null) {
-      new SurfaceControl.Transaction().setVisibility(child, false).apply();
-    }
-  }
-
-  // Ensures the managed child Surface of the parent SurfaceControl is visible.
-  @RequiresApi(api = Build.VERSION_CODES.Q)
-  @WrapForJNI(exceptionMode = "abort")
-  public synchronized void showChildSurface(final SurfaceControl parent) {
-    final SurfaceControl child = mChildSurfaceControls.get(parent);
-    if (child != null) {
-      new SurfaceControl.Transaction().setVisibility(child, true).apply();
+      child.release();
     }
   }
 

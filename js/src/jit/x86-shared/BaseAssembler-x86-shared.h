@@ -1830,6 +1830,28 @@ class BaseAssembler : public GenericAssembler {
     }
   }
 
+  void cmpb_rr(RegisterID rhs, RegisterID lhs) {
+    spew("cmpb       %s, %s", GPReg8Name(rhs), GPReg8Name(lhs));
+    m_formatter.oneByteOp(OP_CMP_GbEb, rhs, lhs);
+  }
+
+  void cmpb_rm(RegisterID rhs, int32_t offset, RegisterID base) {
+    spew("cmpb       %s, " MEM_ob, GPReg8Name(rhs), ADDR_ob(offset, base));
+    m_formatter.oneByteOp(OP_CMP_EbGb, offset, base, rhs);
+  }
+
+  void cmpb_rm(RegisterID rhs, int32_t offset, RegisterID base,
+               RegisterID index, int scale) {
+    spew("cmpb       %s, " MEM_obs, GPReg8Name(rhs),
+         ADDR_obs(offset, base, index, scale));
+    m_formatter.oneByteOp(OP_CMP_EbGb, offset, base, index, scale, rhs);
+  }
+
+  void cmpb_rm(RegisterID rhs, const void* addr) {
+    spew("cmpb       %s, %p", GPReg8Name(rhs), addr);
+    m_formatter.oneByteOp(OP_CMP_EbGb, addr, rhs);
+  }
+
   void cmpb_ir(int32_t rhs, RegisterID lhs) {
     if (rhs == 0) {
       testb_rr(lhs, lhs);
@@ -1837,7 +1859,11 @@ class BaseAssembler : public GenericAssembler {
     }
 
     spew("cmpb       $0x%x, %s", uint32_t(rhs), GPReg8Name(lhs));
-    m_formatter.oneByteOp(OP_GROUP1_EbIb, lhs, GROUP1_OP_CMP);
+    if (lhs == rax) {
+      m_formatter.oneByteOp(OP_CMP_EAXIb);
+    } else {
+      m_formatter.oneByteOp(OP_GROUP1_EbIb, lhs, GROUP1_OP_CMP);
+    }
     m_formatter.immediate8(rhs);
   }
 
@@ -4408,6 +4434,44 @@ class BaseAssembler : public GenericAssembler {
                                rm, src0, reg);
   }
 
+  // FMA instructions:
+
+  void vfmadd231ps_rrr(XMMRegisterID src1, XMMRegisterID src0,
+                       XMMRegisterID dst) {
+    spew("vfmadd213ps %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
+         XMMRegName(dst));
+
+    m_formatter.threeByteOpVex(VEX_PD, OP3_VFMADD231PS_VxHxWx, ESCAPE_38,
+                               (RegisterID)src1, src0, (RegisterID)dst);
+  }
+
+  void vfnmadd231ps_rrr(XMMRegisterID src1, XMMRegisterID src0,
+                        XMMRegisterID dst) {
+    spew("vfnmadd213ps %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
+         XMMRegName(dst));
+
+    m_formatter.threeByteOpVex(VEX_PD, OP3_VFNMADD231PS_VxHxWx, ESCAPE_38,
+                               (RegisterID)src1, src0, (RegisterID)dst);
+  }
+
+  void vfmadd231pd_rrr(XMMRegisterID src1, XMMRegisterID src0,
+                       XMMRegisterID dst) {
+    spew("vfmadd213pd %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
+         XMMRegName(dst));
+
+    m_formatter.threeByteOpVex64(VEX_PD, OP3_VFMADD231PD_VxHxWx, ESCAPE_38,
+                                 (RegisterID)src1, src0, (RegisterID)dst);
+  }
+
+  void vfnmadd231pd_rrr(XMMRegisterID src1, XMMRegisterID src0,
+                        XMMRegisterID dst) {
+    spew("vfnmadd213pd %s, %s, %s", XMMRegName(src1), XMMRegName(src0),
+         XMMRegName(dst));
+
+    m_formatter.threeByteOpVex64(VEX_PD, OP3_VFNMADD231PD_VxHxWx, ESCAPE_38,
+                                 (RegisterID)src1, src0, (RegisterID)dst);
+  }
+
   // Misc instructions:
 
   void int3() {
@@ -5920,6 +5984,7 @@ class BaseAssembler : public GenericAssembler {
       m_buffer.putByteUnchecked(opcode);
       registerModRM(rm, reg);
     }
+#endif  // JS_CODEGEN_X64
 
     void threeByteOpVex64(VexOperandType ty, ThreeByteOpcodeID opcode,
                           ThreeByteEscape escape, RegisterID rm,
@@ -5939,7 +6004,6 @@ class BaseAssembler : public GenericAssembler {
       threeOpVex(ty, r, x, b, m, w, v, l, opcode);
       registerModRM(rm, reg);
     }
-#endif
 
     // Byte-operands:
     //

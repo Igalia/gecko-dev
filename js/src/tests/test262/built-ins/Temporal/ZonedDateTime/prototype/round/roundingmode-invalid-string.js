@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,7 +9,7 @@ features: [Temporal]
 ---*/
 
 const datetime = new Temporal.ZonedDateTime(1_000_000_000_123_987_500n, "UTC");
-for (const roundingMode of ["other string", "cile", "CEIL", "ce\u0131l", "auto", "expand", "halfCeil", "halfFloor", "halfTrunc", "halfEven", "halfexpand", "floor\0"]) {
+for (const roundingMode of ["other string", "cile", "CEIL", "ce\u0131l", "auto", "halfexpand", "floor\0"]) {
   assert.throws(RangeError, () => datetime.round({ smallestUnit: "microsecond", roundingMode }));
 }
 

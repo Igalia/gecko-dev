@@ -6,8 +6,6 @@
 
 #include "WebRenderLayerManager.h"
 
-#include "Layers.h"
-
 #include "GeckoProfiler.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_layers.h"
@@ -71,7 +69,7 @@ bool WebRenderLayerManager::Initialize(
   static bool hasInitialized = false;
 
   WindowKind windowKind;
-  if (mWidget->WindowType() != eWindowType_popup) {
+  if (mWidget->GetWindowType() != widget::WindowType::Popup) {
     windowKind = WindowKind::MAIN;
   } else {
     windowKind = WindowKind::SECONDARY;
@@ -223,7 +221,11 @@ void WebRenderLayerManager::TakeCompositionPayloads(
 bool WebRenderLayerManager::BeginTransactionWithTarget(gfxContext* aTarget,
                                                        const nsCString& aURL) {
   mTarget = aTarget;
-  return BeginTransaction(aURL);
+  bool retval = BeginTransaction(aURL);
+  if (!retval) {
+    mTarget = nullptr;
+  }
+  return retval;
 }
 
 bool WebRenderLayerManager::BeginTransaction(const nsCString& aURL) {
@@ -246,6 +248,8 @@ bool WebRenderLayerManager::BeginTransaction(const nsCString& aURL) {
 }
 
 bool WebRenderLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags) {
+  auto clearTarget = MakeScopeExit([&] { mTarget = nullptr; });
+
   // If we haven't sent a display list (since creation or since the last time we
   // sent ClearDisplayList to the parent) then we can't do an empty transaction
   // because the parent doesn't have a display list for us and we need to send a
@@ -259,8 +263,9 @@ bool WebRenderLayerManager::EndEmptyTransaction(EndTransactionFlags aFlags) {
   // Since we don't do repeat transactions right now, just set the time
   mAnimationReadyTime = TimeStamp::Now();
 
-  mLatestTransactionId =
-      mTransactionIdAllocator->GetTransactionId(/*aThrottle*/ true);
+  // Don't block on hidden windows on Linux as it may block all rendering.
+  const bool throttle = mWidget->IsMapped();
+  mLatestTransactionId = mTransactionIdAllocator->GetTransactionId(throttle);
 
   if (aFlags & EndTransactionFlags::END_NO_COMPOSITE &&
       !mWebRenderCommandBuilder.NeedsEmptyTransaction()) {
@@ -330,7 +335,9 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
     nsDisplayList* aDisplayList, nsDisplayListBuilder* aDisplayListBuilder,
     WrFiltersHolder&& aFilters, WebRenderBackgroundData* aBackground,
     const double aGeckoDLBuildTime) {
-  AUTO_PROFILER_TRACING_MARKER("Paint", "RenderLayers", GRAPHICS);
+  AUTO_PROFILER_TRACING_MARKER("Paint", "WrDisplayList", GRAPHICS);
+
+  auto clearTarget = MakeScopeExit([&] { mTarget = nullptr; });
 
   // Since we don't do repeat transactions right now, just set the time
   mAnimationReadyTime = TimeStamp::Now();
@@ -380,13 +387,6 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
     }
   }
 
-  mWidget->AddWindowOverlayWebRenderCommands(WrBridge(), *mDLBuilder,
-                                             resourceUpdates);
-  if (dumpEnabled) {
-    printf_stderr("(window overlay)\n");
-    Unused << mDLBuilder->Dump(/*indent*/ 1, Some(builderDumpIndex), Nothing());
-  }
-
   if (AsyncPanZoomEnabled()) {
     if (mIsFirstPaint) {
       mScrollData.SetIsFirstPaint();
@@ -408,8 +408,9 @@ void WebRenderLayerManager::EndTransactionWithoutLayer(
     nsLayoutUtils::NotifyPaintSkipTransaction(update);
   }
 
-  mLatestTransactionId =
-      mTransactionIdAllocator->GetTransactionId(/*aThrottle*/ true);
+  // Don't block on hidden windows on Linux as it may block all rendering.
+  const bool throttle = mWidget->IsMapped();
+  mLatestTransactionId = mTransactionIdAllocator->GetTransactionId(throttle);
 
   // Get the time of when the refresh driver start its tick (if available),
   // otherwise use the time of when LayerManager::BeginTransaction was called.
@@ -496,8 +497,14 @@ bool WebRenderLayerManager::AsyncPanZoomEnabled() const {
   return mWidget->AsyncPanZoomEnabled();
 }
 
+IntRect ToOutsideIntRect(const gfxRect& aRect) {
+  return IntRect::RoundOut(aRect.X(), aRect.Y(), aRect.Width(), aRect.Height());
+}
+
 void WebRenderLayerManager::MakeSnapshotIfRequired(LayoutDeviceIntSize aSize) {
-  if (!mTarget || aSize.IsEmpty()) {
+  auto clearTarget = MakeScopeExit([&] { mTarget = nullptr; });
+
+  if (!mTarget || !mTarget->GetDrawTarget() || aSize.IsEmpty()) {
     return;
   }
 
@@ -527,7 +534,8 @@ void WebRenderLayerManager::MakeSnapshotIfRequired(LayoutDeviceIntSize aSize) {
 
   IntRect bounds = ToOutsideIntRect(mTarget->GetClipExtents());
   bool needsYFlip = false;
-  if (!WrBridge()->SendGetSnapshot(texture->GetIPDLActor(), &needsYFlip)) {
+  if (!WrBridge()->SendGetSnapshot(WrapNotNull(texture->GetIPDLActor()),
+                                   &needsYFlip)) {
     return;
   }
 

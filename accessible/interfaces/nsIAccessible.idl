@@ -168,13 +168,6 @@ interface nsIAccessible : nsISupports
   void getState(out unsigned long aState, out unsigned long aExtraState);
 
   /**
-   * Help text associated with node
-   *
-   * @note As of now, this just returns empty string.
-   */
-  readonly attribute AString help;
-
-  /**
    * Focused accessible child of node
    */
   readonly attribute nsIAccessible focusedChild;
@@ -345,8 +338,14 @@ interface nsIAccessible : nsISupports
    */
   void announce(in AString announcement, in unsigned short priority);
 
+  /**
+   * Get the role of this Accessible as an ARIA role token. This might have been
+   * set explicitly (e.g. role="button") or it might be implicit in native
+   * markup (e.g. <button> returns "button").
+   */
+  readonly attribute AString computedARIARole;
+
   [notxpcom, nostdcall] InternalLocalAccessible toInternalAccessible();
   [notxpcom, nostdcall] InternalAccessible toInternalGeneric();
 
 };
-

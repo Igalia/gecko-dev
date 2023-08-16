@@ -17,6 +17,7 @@ class nsIFrame;
 
 namespace mozilla {
 class EventChainPreVisitor;
+class HTMLEditor;
 struct URLExtraData;
 namespace dom {
 struct BindContext;
@@ -134,12 +135,6 @@ class nsIContent : public nsINode {
      */
     eSkipDocumentLevelNativeAnonymousContent = 1 << 1,
   };
-
-  /**
-   * Return the flattened tree children of the node, depending on the filter, as
-   * well as native anonymous children.
-   */
-  virtual already_AddRefed<nsINodeList> GetChildren(uint32_t aFilter) = 0;
 
   /**
    * Makes this content anonymous
@@ -296,6 +291,10 @@ class nsIContent : public nsINode {
   bool IsFocusable(int32_t* aTabIndex = nullptr, bool aWithMouse = false);
   virtual bool IsFocusableInternal(int32_t* aTabIndex, bool aWithMouse);
 
+  // https://html.spec.whatwg.org/multipage/interaction.html#focus-delegate
+  mozilla::dom::Element* GetFocusDelegate(bool aWithMouse,
+                                          bool aAutofocusOnly = false) const;
+
   /*
    * Get desired IME state for the content.
    *
@@ -447,19 +446,6 @@ class nsIContent : public nsINode {
   virtual void DoneAddingChildren(bool aHaveNotified) {}
 
   /**
-   * For HTML textarea, select, and object elements, returns true if all
-   * children have been added OR if the element was not created by the parser.
-   * Returns true for all other elements.
-   *
-   * @returns false if the element was created by the parser and
-   *                   it is an HTML textarea, select, or object
-   *                   element and not all children have been added.
-   *
-   * @returns true otherwise.
-   */
-  virtual bool IsDoneAddingChildren() { return true; }
-
-  /**
    * Returns true if an element needs its DoneCreatingElement method to be
    * called after it has been created.
    * @see nsIContent::DoneCreatingElement
@@ -469,14 +455,20 @@ class nsIContent : public nsINode {
    */
   static inline bool RequiresDoneCreatingElement(int32_t aNamespace,
                                                  nsAtom* aName) {
-    if (aNamespace == kNameSpaceID_XHTML &&
-        (aName == nsGkAtoms::input || aName == nsGkAtoms::button ||
-         aName == nsGkAtoms::audio || aName == nsGkAtoms::video)) {
-      MOZ_ASSERT(
-          !RequiresDoneAddingChildren(aNamespace, aName),
-          "Both DoneCreatingElement and DoneAddingChildren on a same element "
-          "isn't supported.");
-      return true;
+    if (aNamespace == kNameSpaceID_XHTML) {
+      if (aName == nsGkAtoms::input || aName == nsGkAtoms::button ||
+          aName == nsGkAtoms::audio || aName == nsGkAtoms::video) {
+        MOZ_ASSERT(!RequiresDoneAddingChildren(aNamespace, aName),
+                   "Both DoneCreatingElement and DoneAddingChildren on a "
+                   "same element isn't supported.");
+        return true;
+      }
+      if (aName->IsDynamic()) {
+        // This could be a form-associated custom element, so check if its
+        // name includes a -.
+        nsDependentString name(aName->GetUTF16String());
+        return name.Contains('-');
+      }
     }
     return false;
   }
@@ -621,6 +613,12 @@ class nsIContent : public nsINode {
     return rc == 0;
   }
 
+  /**
+   * Use this method with designMode and contentEditable to check if the
+   * node may need spellchecking.
+   */
+  bool InclusiveDescendantMayNeedSpellchecking(mozilla::HTMLEditor* aEditor);
+
  protected:
   /**
    * Lazily allocated extended slots to avoid
@@ -636,7 +634,7 @@ class nsIContent : public nsINode {
     virtual ~nsExtendedContentSlots();
 
     virtual void TraverseExtendedSlots(nsCycleCollectionTraversalCallback&);
-    virtual void UnlinkExtendedSlots();
+    virtual void UnlinkExtendedSlots(nsIContent&);
 
     virtual size_t SizeOfExcludingThis(
         mozilla::MallocSizeOf aMallocSizeOf) const;
@@ -671,10 +669,10 @@ class nsIContent : public nsINode {
       }
     }
 
-    void Unlink() override {
-      nsINode::nsSlots::Unlink();
+    void Unlink(nsINode& aNode) override {
+      nsINode::nsSlots::Unlink(aNode);
       if (mExtendedSlots) {
-        GetExtendedContentSlots()->UnlinkExtendedSlots();
+        GetExtendedContentSlots()->UnlinkExtendedSlots(*aNode.AsContent());
       }
     }
 

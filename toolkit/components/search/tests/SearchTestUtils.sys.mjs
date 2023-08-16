@@ -1,23 +1,15 @@
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
-);
+import { MockRegistrar } from "resource://testing-common/MockRegistrar.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonTestUtils: "resource://testing-common/AddonTestUtils.sys.mjs",
+  ExtensionTestUtils:
+    "resource://testing-common/ExtensionXPCShellUtils.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  AddonTestUtils: "resource://testing-common/AddonTestUtils.jsm",
-  ExtensionTestUtils: "resource://testing-common/ExtensionXPCShellUtils.jsm",
-  RemoteSettings: "resource://services-settings/remote-settings.js",
-  sinon: "resource://testing-common/Sinon.jsm",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 var gTestScope;
@@ -25,10 +17,7 @@ var gTestScope;
 export var SearchTestUtils = {
   init(testScope) {
     gTestScope = testScope;
-    let env = Cc["@mozilla.org/process/environment;1"].getService(
-      Ci.nsIEnvironment
-    );
-    this._isMochitest = !env.exists("XPCSHELL_TEST_PROFILE_DIR");
+    this._isMochitest = !Services.env.exists("XPCSHELL_TEST_PROFILE_DIR");
     if (this._isMochitest) {
       this._isMochitest = true;
       lazy.AddonTestUtils.initMochitest(testScope);
@@ -44,17 +33,56 @@ export var SearchTestUtils = {
    * Adds an OpenSearch based engine to the search service. It will remove
    * the engine at the end of the test.
    *
-   * @param {string}   url                     The URL of the engine to add.
-   * @param {Function} registerCleanupFunction Pass the registerCleanupFunction
-   *                                           from the test's scope.
+   * @param {object} options
+   *   The options for the new search engine.
+   * @param {string} options.url
+   *   The URL of the engine to add.
+   * @param {boolean} [options.setAsDefault]
+   *   Whether or not to set the engine as default automatically. If this is
+   *   true, the engine will be set as default, and the previous default engine
+   *   will be restored when the test exits.
+   * @param {boolean} [options.setAsDefaultPrivate]
+   *   Whether or not to set the engine as default automatically for private mode.
+   *   If this is true, the engine will be set as default, and the previous default
+   *   engine will be restored when the test exits.
    * @returns {Promise} Returns a promise that is resolved with the new engine
    *                    or rejected if it fails.
    */
-  async promiseNewSearchEngine(url) {
+  async promiseNewSearchEngine({
+    url,
+    setAsDefault = false,
+    setAsDefaultPrivate = false,
+  }) {
     // OpenSearch engines can only be added via http protocols.
     url = url.replace("chrome://mochitests/content", "https://example.com");
     let engine = await Services.search.addOpenSearchEngine(url, "");
+    let previousEngine = Services.search.defaultEngine;
+    let previousPrivateEngine = Services.search.defaultPrivateEngine;
+    if (setAsDefault) {
+      await Services.search.setDefault(
+        engine,
+        Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+      );
+    }
+    if (setAsDefaultPrivate) {
+      await Services.search.setDefaultPrivate(
+        engine,
+        Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+      );
+    }
     gTestScope.registerCleanupFunction(async () => {
+      if (setAsDefault) {
+        await Services.search.setDefault(
+          previousEngine,
+          Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+        );
+      }
+      if (setAsDefaultPrivate) {
+        await Services.search.setDefaultPrivate(
+          previousPrivateEngine,
+          Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+        );
+      }
       try {
         await Services.search.removeEngine(engine);
       } catch (ex) {
@@ -98,7 +126,7 @@ export var SearchTestUtils = {
    *   The folder name to use.
    * @param {string} [subFolder]
    *   The subfolder to use, if any.
-   * @param {array} [config]
+   * @param {Array} [config]
    *   An array which contains the configuration to set.
    * @returns {object}
    *   An object that is a sinon stub for the configuration getter.
@@ -143,7 +171,8 @@ export var SearchTestUtils = {
    * Convert a list of engine configurations into engine objects.
    *
    * @param {Array} engineConfigurations
-   **/
+   *   An array of engine configurations.
+   */
   async searchConfigToEngines(engineConfigurations) {
     let engines = [];
     for (let config of engineConfigurations) {
@@ -190,43 +219,92 @@ export var SearchTestUtils = {
    * This function automatically registers an unload for the extension, this
    * may be skipped with the skipUnload argument.
    *
+   * @param {object} [manifest]
+   *   See {@link createEngineManifest}
    * @param {object} [options]
-   *   @see createEngineManifest
-   * @param {boolean} [skipUnload]
+   *   Options for how the engine is installed and uninstalled.
+   * @param {boolean} [options.setAsDefault]
+   *   Whether or not to set the engine as default automatically. If this is
+   *   true, the engine will be set as default, and the previous default engine
+   *   will be restored when the test exits.
+   * @param {boolean} [options.setAsDefaultPrivate]
+   *   Whether or not to set the engine as default automatically for private mode.
+   *   If this is true, the engine will be set as default, and the previous default
+   *   engine will be restored when the test exits.
+   * @param {boolean} [options.skipUnload]
    *   If true, this will skip the automatic unloading of the extension.
+   * @param {object} [files]
+   *   A key value object where the keys are the filenames and their contents are
+   *   the values. Used for simulating locales and other files in the WebExtension.
    * @returns {object}
-   *   The loaded extension. This will need unloading before ending the test.
+   *   The loaded extension.
    */
-  async installSearchExtension(options = {}, skipUnload = false) {
+  async installSearchExtension(
+    manifest = {},
+    {
+      setAsDefault = false,
+      setAsDefaultPrivate = false,
+      skipUnload = false,
+    } = {},
+    files = {}
+  ) {
     await Services.search.init();
 
     let extensionInfo = {
       useAddonManager: "permanent",
-      manifest: this.createEngineManifest(options),
+      files,
+      manifest: this.createEngineManifest(manifest),
     };
 
     let extension;
 
+    let previousEngine = Services.search.defaultEngine;
+    let previousPrivateEngine = Services.search.defaultPrivateEngine;
+
+    async function cleanup() {
+      if (setAsDefault) {
+        await Services.search.setDefault(
+          previousEngine,
+          Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+        );
+      }
+      if (setAsDefaultPrivate) {
+        await Services.search.setDefaultPrivate(
+          previousPrivateEngine,
+          Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+        );
+      }
+      await extension.unload();
+    }
+
     // Cleanup must be registered before loading the extension to avoid
     // failures for mochitests.
     if (!skipUnload && this._isMochitest) {
-      gTestScope.registerCleanupFunction(async () => {
-        await extension.unload();
-      });
+      gTestScope.registerCleanupFunction(cleanup);
     }
 
     extension = gTestScope.ExtensionTestUtils.loadExtension(extensionInfo);
     await extension.startup();
-    if (!options.skipWaitForSearchEngine) {
-      await lazy.AddonTestUtils.waitForSearchProviderStartup(extension);
+    await lazy.AddonTestUtils.waitForSearchProviderStartup(extension);
+    let engine = Services.search.getEngineByName(manifest.name);
+
+    if (setAsDefault) {
+      await Services.search.setDefault(
+        engine,
+        Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+      );
+    }
+    if (setAsDefaultPrivate) {
+      await Services.search.setDefaultPrivate(
+        engine,
+        Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+      );
     }
 
     // For xpcshell-tests we must register the unload after adding the extension.
     // See bug 1694409 for why this is.
     if (!skipUnload && !this._isMochitest) {
-      gTestScope.registerCleanupFunction(async () => {
-        await extension.unload();
-      });
+      gTestScope.registerCleanupFunction(cleanup);
     }
 
     return extension;
@@ -237,7 +315,7 @@ export var SearchTestUtils = {
    * Normandy updates. For xpcshell-tests only.
    *
    * @param {object} [options]
-   *   @see createEngineManifest
+   *   See {@link createEngineManifest}
    */
   async installSystemSearchExtension(options = {}) {
     options.id = (options.id ?? "example") + "@search.mozilla.org";
@@ -269,6 +347,7 @@ export var SearchTestUtils = {
    * Create a search engine extension manifest.
    *
    * @param {object} [options]
+   *   The options for the manifest.
    * @param {string} [options.id]
    *   The id to use for the WebExtension.
    * @param {string} [options.name]
@@ -293,8 +372,6 @@ export var SearchTestUtils = {
    *   The suggestion URL parameters to use for the search engine.
    * @param {string} [options.search_form]
    *   The search form to use for the search engine.
-   * @param {string} [options.favicon_url]
-   *   The favicon URL to use for the search engine.
    * @returns {object}
    *   The generated manifest.
    */
@@ -307,7 +384,7 @@ export var SearchTestUtils = {
     options.version = options.version ?? "1.0";
     let manifest = {
       version: options.version,
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: options.id,
         },
@@ -319,6 +396,10 @@ export var SearchTestUtils = {
         },
       },
     };
+
+    if (options.default_locale) {
+      manifest.default_locale = options.default_locale;
+    }
 
     if (options.search_url_post_params) {
       manifest.chrome_settings_overrides.search_provider.search_url_post_params =
@@ -390,8 +471,6 @@ export var SearchTestUtils = {
 
   /**
    * Register the mock idleSerice.
-   *
-   * @param {Fun} registerCleanupFunction
    */
   useMockIdleService() {
     let fakeIdleService = MockRegistrar.register(
@@ -414,9 +493,8 @@ export var SearchTestUtils = {
       let settings = lazy.RemoteSettings(lazy.SearchUtils.SETTINGS_KEY);
       config = await settings.get();
     }
-    const reloadObserved = SearchTestUtils.promiseSearchNotification(
-      "engines-reloaded"
-    );
+    const reloadObserved =
+      SearchTestUtils.promiseSearchNotification("engines-reloaded");
     await lazy.RemoteSettings(lazy.SearchUtils.SETTINGS_KEY).emit("sync", {
       data: { current: config },
     });

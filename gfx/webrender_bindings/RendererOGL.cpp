@@ -57,9 +57,9 @@ class RendererRecordedFrame final : public layers::RecordedFrame {
   wr::RecordedFrameHandle mHandle;
 };
 
-wr::WrExternalImage wr_renderer_lock_external_image(
-    void* aObj, wr::ExternalImageId aId, uint8_t aChannelIndex,
-    wr::ImageRendering aRendering) {
+wr::WrExternalImage wr_renderer_lock_external_image(void* aObj,
+                                                    wr::ExternalImageId aId,
+                                                    uint8_t aChannelIndex) {
   RendererOGL* renderer = reinterpret_cast<RendererOGL*>(aObj);
   RenderTextureHost* texture = renderer->GetRenderTexture(aId);
   MOZ_ASSERT(texture);
@@ -69,10 +69,9 @@ wr::WrExternalImage wr_renderer_lock_external_image(
     return InvalidToWrExternalImage();
   }
   if (auto* gl = renderer->gl()) {
-    return texture->Lock(aChannelIndex, gl, aRendering);
+    return texture->Lock(aChannelIndex, gl);
   } else if (auto* swgl = renderer->swgl()) {
-    return texture->LockSWGL(aChannelIndex, swgl, renderer->GetCompositor(),
-                             aRendering);
+    return texture->LockSWGL(aChannelIndex, swgl, renderer->GetCompositor());
   } else {
     gfxCriticalNoteOnce
         << "No GL or SWGL context available to lock ExternalImage for extId:"
@@ -129,6 +128,10 @@ wr::WrExternalImageHandler RendererOGL::GetExternalImageHandler() {
   return wr::WrExternalImageHandler{
       this,
   };
+}
+
+void RendererOGL::SetFramePublishId(FramePublishId aPublishId) {
+  wr_renderer_set_target_frame_publish_id(mRenderer, aPublishId);
 }
 
 void RendererOGL::Update() {
@@ -376,37 +379,22 @@ bool RendererOGL::DidPaintContent(const WebRenderPipelineInfo* aFrameEpochs) {
 
   return didPaintContent;
 }
-void RendererOGL::WriteCollectedFrames() {
-  if (!mCompositionRecorder) {
-    MOZ_DIAGNOSTIC_ASSERT(
-        false,
-        "Attempted to write frames from a window that was not recording.");
-    return;
-  }
 
-  mCompositionRecorder->WriteCollectedFrames();
-
-  wr_renderer_release_composition_recorder_structures(mRenderer);
-
-  mCompositor->MaybeRequestAllowFrameRecording(false);
-  mCompositionRecorder = nullptr;
-}
-
-Maybe<layers::CollectedFrames> RendererOGL::GetCollectedFrames() {
+Maybe<layers::FrameRecording> RendererOGL::EndRecording() {
   if (!mCompositionRecorder) {
     MOZ_DIAGNOSTIC_ASSERT(
         false, "Attempted to get frames from a window that was not recording.");
     return Nothing();
   }
 
-  layers::CollectedFrames frames = mCompositionRecorder->GetCollectedFrames();
+  auto maybeRecording = mCompositionRecorder->GetRecording();
 
   wr_renderer_release_composition_recorder_structures(mRenderer);
 
   mCompositor->MaybeRequestAllowFrameRecording(false);
   mCompositionRecorder = nullptr;
 
-  return Some(std::move(frames));
+  return maybeRecording;
 }
 
 void RendererOGL::FlushPipelineInfo() {

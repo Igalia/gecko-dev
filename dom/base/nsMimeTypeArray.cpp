@@ -8,6 +8,7 @@
 
 #include "mozilla/dom/MimeTypeArrayBinding.h"
 #include "mozilla/dom/MimeTypeBinding.h"
+#include "nsGlobalWindowInner.h"
 #include "nsPluginArray.h"
 #include "mozilla/StaticPrefs_pdfjs.h"
 #include "nsContentUtils.h"
@@ -79,13 +80,7 @@ void nsMimeTypeArray::GetSupportedNames(nsTArray<nsString>& retval) {
   }
 }
 
-bool nsMimeTypeArray::ForceNoPlugins() {
-  return StaticPrefs::pdfjs_disabled() &&
-         !nsContentUtils::ShouldResistFingerprinting(mWindow->GetExtantDoc());
-}
-
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(nsMimeType, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(nsMimeType, Release)
+bool nsMimeTypeArray::ForceNoPlugins() { return StaticPrefs::pdfjs_disabled(); }
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(nsMimeType, mPluginElement)
 

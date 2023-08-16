@@ -21,6 +21,7 @@
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ProfileBufferControlledChunkManager.h"
+#include "mozilla/ProfilerBufferSize.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Unused.h"
 #include "nsTArray.h"
@@ -50,8 +51,6 @@ Endpoint<PProfilerChild> ProfilerParent::CreateForProcess(
     MOZ_CRASH("Failed to bind parent actor for PProfiler!");
   }
 
-  // mSelfRef will be cleared in DeallocPProfilerParent.
-  actor->mSelfRef = actor;
   actor->Init();
 #endif
 
@@ -539,7 +538,8 @@ void ProfilerParentTracker::StartTracking(ProfilerParent* aProfilerParent) {
     // (And this helps delay the Controller startup, because the parent profiler
     // can start *very* early in the process, when some resources like threads
     // are not ready yet.)
-    tracker->mMaybeController.emplace(size_t(tracker->mEntries) * 8u);
+    tracker->mMaybeController.emplace(size_t(tracker->mEntries) *
+                                      scBytesPerEntry);
   }
 
   tracker->mProfilerParents.AppendElement(aProfilerParent);
@@ -562,13 +562,14 @@ void ProfilerParentTracker::ProfilerStarted(uint32_t aEntries) {
     return;
   }
 
-  tracker->mEntries = aEntries;
+  tracker->mEntries = ClampToAllowedEntries(aEntries);
 
   if (tracker->mMaybeController.isNothing() &&
       !tracker->mProfilerParents.IsEmpty()) {
     // We are already tracking child processes, so it's a good time to start
     // controlling the global memory usage of the profiler.
-    tracker->mMaybeController.emplace(size_t(tracker->mEntries) * 8u);
+    tracker->mMaybeController.emplace(size_t(tracker->mEntries) *
+                                      scBytesPerEntry);
   }
 }
 
@@ -726,14 +727,18 @@ void ProfilerParent::Init() {
 
   Unused << SendStop();
 }
+#endif  // MOZ_GECKO_PROFILER
 
 ProfilerParent::~ProfilerParent() {
   MOZ_COUNT_DTOR(ProfilerParent);
 
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
+#ifdef MOZ_GECKO_PROFILER
   ProfilerParentTracker::StopTracking(this);
+#endif
 }
 
+#ifdef MOZ_GECKO_PROFILER
 /* static */
 nsTArray<ProfilerParent::SingleProcessProfilePromiseAndChildPid>
 ProfilerParent::GatherProfiles() {
@@ -994,8 +999,6 @@ void ProfilerParent::ActorDestroy(ActorDestroyReason aActorDestroyReason) {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
   mDestroyed = true;
 }
-
-void ProfilerParent::ActorDealloc() { mSelfRef = nullptr; }
 
 #endif
 

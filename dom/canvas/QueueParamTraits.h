@@ -16,7 +16,6 @@
 #include "mozilla/ipc/SharedMemoryBasic.h"
 #include "mozilla/Logging.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/TypeTraits.h"
 #include "nsExceptionHandler.h"
 #include "nsString.h"
 #include "WebGLTypes.h"
@@ -92,6 +91,13 @@ struct BytesAlwaysValidT<T[N]> {
 };
 static_assert(BytesAlwaysValidT<int[4]>::value);
 static_assert(!BytesAlwaysValidT<bool[4]>::value);
+
+// -
+
+template <>
+struct BytesAlwaysValidT<webgl::UniformDataVal> {
+  static constexpr bool value = true;
+};
 
 // -
 

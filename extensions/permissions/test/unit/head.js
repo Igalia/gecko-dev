@@ -2,7 +2,9 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-var { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+var { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 // Helper to step a generator function and catch a StopIteration exception.
 function do_run_generator(generator) {
@@ -15,7 +17,7 @@ function do_run_generator(generator) {
 
 // Helper to finish a generator function test.
 function do_finish_generator_test(generator) {
-  executeSoon(function() {
+  executeSoon(function () {
     generator.return();
     do_test_finished();
   });

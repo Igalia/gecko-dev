@@ -18,6 +18,7 @@
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
+#include "mozilla/gfx/Logging.h"
 #include "mozilla/gfx/PathHelpers.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/MathAlgorithms.h"
@@ -29,10 +30,12 @@
 #include "skia/include/core/SkTextBlob.h"
 
 #include "BorderConsts.h"
+#include "nsCanvasFrame.h"
 #include "nsStyleConsts.h"
 #include "nsPresContext.h"
 #include "nsIFrame.h"
 #include "nsIFrameInlines.h"
+#include "nsPageSequenceFrame.h"
 #include "nsPoint.h"
 #include "nsRect.h"
 #include "nsFrameManager.h"
@@ -920,6 +923,13 @@ nsCSSRendering::CreateNullBorderRendererWithStyleBorder(
   if (appearance != StyleAppearance::None) {
     nsITheme* theme = aPresContext->Theme();
     if (theme->ThemeSupportsWidget(aPresContext, aForFrame, appearance)) {
+      // The border will be draw as part of the themed background item created
+      // for this same frame. If no themed background item was created then not
+      // drawing also matches that we do without webrender and what
+      // nsDisplayBorder does for themed borders.
+      if (aOutBorderIsEmpty) {
+        *aOutBorderIsEmpty = true;
+      }
       return Nothing();
     }
   }
@@ -1119,13 +1129,32 @@ void nsImageRenderer::ComputeObjectAnchorPoint(const Position& aPos,
                            aImageSize.height, &aTopLeft->y, &aAnchorPoint->y);
 }
 
+// In print / print preview we have multiple canvas frames (one for each page,
+// and one for the document as a whole). For the topmost one, we really want the
+// page sequence page background, not the root or body's background.
+static nsIFrame* GetPageSequenceForCanvas(const nsIFrame* aCanvasFrame) {
+  MOZ_ASSERT(aCanvasFrame->IsCanvasFrame(), "not a canvas frame");
+  nsPresContext* pc = aCanvasFrame->PresContext();
+  if (!pc->IsPrintingOrPrintPreview()) {
+    return nullptr;
+  }
+  auto* ps = pc->PresShell()->GetPageSequenceFrame();
+  if (!ps) {
+    return nullptr;
+  }
+  if (ps->GetParent() != aCanvasFrame) {
+    return nullptr;
+  }
+  return ps;
+}
+
 auto nsCSSRendering::FindEffectiveBackgroundColor(nsIFrame* aFrame,
                                                   bool aStopAtThemed,
                                                   bool aPreferBodyToCanvas)
     -> EffectiveBackgroundColor {
   MOZ_ASSERT(aFrame);
-
-  auto BgColorIfNotTransparent = [](nsIFrame* aFrame) -> Maybe<nscolor> {
+  nsPresContext* pc = aFrame->PresContext();
+  auto BgColorIfNotTransparent = [&](nsIFrame* aFrame) -> Maybe<nscolor> {
     nscolor c =
         aFrame->GetVisitedDependentColor(&nsStyleBackground::mBackgroundColor);
     if (NS_GET_A(c) == 255) {
@@ -1135,7 +1164,7 @@ auto nsCSSRendering::FindEffectiveBackgroundColor(nsIFrame* aFrame,
       // TODO(emilio): We should maybe just blend with ancestor bg colors and
       // such, but this is probably good enough for now, matches pre-existing
       // behavior.
-      const nscolor defaultBg = aFrame->PresContext()->DefaultBackgroundColor();
+      const nscolor defaultBg = pc->DefaultBackgroundColor();
       MOZ_ASSERT(NS_GET_A(defaultBg) == 255, "PreferenceSheet guarantees this");
       return Some(NS_ComposeColors(defaultBg, c));
     }
@@ -1152,9 +1181,9 @@ auto nsCSSRendering::FindEffectiveBackgroundColor(nsIFrame* aFrame,
       return {NS_TRANSPARENT, true};
     }
 
-    if (IsCanvasFrame(frame)) {
-      if (aPreferBodyToCanvas) {
-        if (auto* body = frame->PresContext()->Document()->GetBodyElement()) {
+    if (frame->IsCanvasFrame()) {
+      if (aPreferBodyToCanvas && !GetPageSequenceForCanvas(frame)) {
+        if (auto* body = pc->Document()->GetBodyElement()) {
           if (nsIFrame* f = body->GetPrimaryFrame()) {
             if (auto bg = BgColorIfNotTransparent(f)) {
               return {*bg};
@@ -1170,19 +1199,7 @@ auto nsCSSRendering::FindEffectiveBackgroundColor(nsIFrame* aFrame,
     }
   }
 
-  return {aFrame->PresContext()->DefaultBackgroundColor()};
-}
-
-// Returns true if aFrame is a canvas frame.
-// We need to treat the viewport as canvas because, even though
-// it does not actually paint a background, we need to get the right
-// background style so we correctly detect transparent documents.
-bool nsCSSRendering::IsCanvasFrame(const nsIFrame* aFrame) {
-  LayoutFrameType frameType = aFrame->Type();
-  return frameType == LayoutFrameType::Canvas ||
-         frameType == LayoutFrameType::XULRoot ||
-         frameType == LayoutFrameType::PageContent ||
-         frameType == LayoutFrameType::Viewport;
+  return {pc->DefaultBackgroundColor()};
 }
 
 nsIFrame* nsCSSRendering::FindBackgroundStyleFrame(nsIFrame* aForFrame) {
@@ -1242,8 +1259,7 @@ nsIFrame* nsCSSRendering::FindBackgroundStyleFrame(nsIFrame* aForFrame) {
  *   resulting value is 'transparent', the rendering is undefined.
  *
  * Thus, in our implementation, it is responsible for ensuring that:
- *  + we paint the correct background on the |nsCanvasFrame|,
- *    |nsRootBoxFrame|, or |nsPageFrame|,
+ *  + we paint the correct background on the |nsCanvasFrame| or |nsPageFrame|,
  *  + we don't paint the background on the root element, and
  *  + we don't paint the background on the BODY element in *some* cases,
  *    and for SGML-based HTML documents only.
@@ -1256,12 +1272,26 @@ ComputedStyle* nsCSSRendering::FindRootFrameBackground(nsIFrame* aForFrame) {
   return FindBackgroundStyleFrame(aForFrame)->Style();
 }
 
+static nsIFrame* FindCanvasBackgroundFrame(const nsIFrame* aForFrame,
+                                           nsIFrame* aRootElementFrame) {
+  MOZ_ASSERT(aForFrame->IsCanvasFrame(), "not a canvas frame");
+  if (auto* ps = GetPageSequenceForCanvas(aForFrame)) {
+    return ps;
+  }
+  if (aRootElementFrame) {
+    return nsCSSRendering::FindBackgroundStyleFrame(aRootElementFrame);
+  }
+  // This should always give transparent, so we'll fill it in with the default
+  // color if needed.  This seems to happen a bit while a page is being loaded.
+  return const_cast<nsIFrame*>(aForFrame);
+}
+
 // Helper for FindBackgroundFrame. Returns true if aForFrame has a meaningful
 // background that it should draw (i.e. that it hasn't propagated to another
 // frame).  See documentation for FindBackground.
 inline bool FrameHasMeaningfulBackground(const nsIFrame* aForFrame,
                                          nsIFrame* aRootElementFrame) {
-  MOZ_ASSERT(!nsCSSRendering::IsCanvasFrame(aForFrame),
+  MOZ_ASSERT(!aForFrame->IsCanvasFrame(),
              "FindBackgroundFrame handles canvas frames before calling us, "
              "so we don't need to consider them here");
 
@@ -1307,7 +1337,7 @@ inline bool FrameHasMeaningfulBackground(const nsIFrame* aForFrame,
 nsIFrame* nsCSSRendering::FindBackgroundFrame(const nsIFrame* aForFrame) {
   nsIFrame* rootElementFrame =
       aForFrame->PresShell()->FrameConstructor()->GetRootElementStyleFrame();
-  if (IsCanvasFrame(aForFrame)) {
+  if (aForFrame->IsCanvasFrame()) {
     return FindCanvasBackgroundFrame(aForFrame, rootElementFrame);
   }
 
@@ -2041,8 +2071,7 @@ void nsCSSRendering::GetImageLayerClip(
     /* out */ ImageLayerClipState* aClipState) {
   StyleGeometryBox layerClip = ComputeBoxValue(aForFrame, aLayer.mClip);
   if (IsSVGStyleGeometryBox(layerClip)) {
-    MOZ_ASSERT(aForFrame->IsFrameOfType(nsIFrame::eSVG) &&
-               !aForFrame->IsSVGOuterSVGFrame());
+    MOZ_ASSERT(aForFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT));
 
     // The coordinate space of clipArea is svg user space.
     nsRect clipArea = nsLayoutUtils::ComputeGeometryBox(aForFrame, layerClip);
@@ -2081,8 +2110,7 @@ void nsCSSRendering::GetImageLayerClip(
     return;
   }
 
-  MOZ_ASSERT(!aForFrame->IsFrameOfType(nsIFrame::eSVG) ||
-             aForFrame->IsSVGOuterSVGFrame());
+  MOZ_ASSERT(!aForFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT));
 
   // Compute the outermost boundary of the area that might be painted.
   // Same coordinate space as aBorderArea.
@@ -2446,7 +2474,7 @@ ImgDrawResult nsCSSRendering::PaintStyleImageLayerWithSC(
   // PresShell::AddCanvasBackgroundColorItem(), and painted by
   // nsDisplayCanvasBackground directly.) Either way we don't need to
   // paint the background color here.
-  bool isCanvasFrame = IsCanvasFrame(aParams.frame);
+  bool isCanvasFrame = aParams.frame->IsCanvasFrame();
   const bool paintMask = aParams.paintFlags & PAINTBG_MASK_IMAGE;
 
   // Determine whether we are drawing background images and/or
@@ -2683,8 +2711,7 @@ nsRect nsCSSRendering::ComputeImageLayerPositioningArea(
   StyleGeometryBox layerOrigin = ComputeBoxValue(aForFrame, aLayer.mOrigin);
 
   if (IsSVGStyleGeometryBox(layerOrigin)) {
-    MOZ_ASSERT(aForFrame->IsFrameOfType(nsIFrame::eSVG) &&
-               !aForFrame->IsSVGOuterSVGFrame());
+    MOZ_ASSERT(aForFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT));
     *aAttachedToFrame = aForFrame;
 
     positionArea = nsLayoutUtils::ComputeGeometryBox(aForFrame, layerOrigin);
@@ -2700,8 +2727,7 @@ nsRect nsCSSRendering::ComputeImageLayerPositioningArea(
     return nsRect(toStrokeBoxOffset, positionArea.Size());
   }
 
-  MOZ_ASSERT(!aForFrame->IsFrameOfType(nsIFrame::eSVG) ||
-             aForFrame->IsSVGOuterSVGFrame());
+  MOZ_ASSERT(!aForFrame->HasAnyStateBits(NS_FRAME_SVG_LAYOUT));
 
   LayoutFrameType frameType = aForFrame->Type();
   nsIFrame* geometryFrame = aForFrame;
@@ -2802,6 +2828,15 @@ nsRect nsCSSRendering::ComputeImageLayerPositioningArea(
           nsMargin scrollbars = scrollableFrame->GetActualScrollbarSizes();
           positionArea.Deflate(scrollbars);
         }
+      }
+
+      // If we have the dynamic toolbar, we need to expand the image area to
+      // include the region under the dynamic toolbar, otherwise we will see a
+      // blank space under the toolbar.
+      if (aPresContext->IsRootContentDocumentCrossProcess() &&
+          aPresContext->HasDynamicToolbar()) {
+        positionArea.SizeTo(nsLayoutUtils::ExpandHeightForDynamicToolbar(
+            aPresContext, positionArea.Size()));
       }
     }
   }
@@ -3632,12 +3667,13 @@ void nsCSSRendering::GetTableBorderSolidSegments(
 // End table border-collapsing section
 
 Rect nsCSSRendering::ExpandPaintingRectForDecorationLine(
-    nsIFrame* aFrame, const uint8_t aStyle, const Rect& aClippedRect,
-    const Float aICoordInFrame, const Float aCycleLength, bool aVertical) {
+    nsIFrame* aFrame, const StyleTextDecorationStyle aStyle,
+    const Rect& aClippedRect, const Float aICoordInFrame,
+    const Float aCycleLength, bool aVertical) {
   switch (aStyle) {
-    case NS_STYLE_TEXT_DECORATION_STYLE_DOTTED:
-    case NS_STYLE_TEXT_DECORATION_STYLE_DASHED:
-    case NS_STYLE_TEXT_DECORATION_STYLE_WAVY:
+    case StyleTextDecorationStyle::Dotted:
+    case StyleTextDecorationStyle::Dashed:
+    case StyleTextDecorationStyle::Wavy:
       break;
     default:
       NS_ERROR("Invalid style was specified");
@@ -3903,12 +3939,23 @@ static sk_sp<const SkTextBlob> CreateTextBlob(
 static void GetTextIntercepts(const sk_sp<const SkTextBlob>& aBlob,
                               const SkScalar aBounds[],
                               nsTArray<SkScalar>& aIntercepts) {
-  // https://skia.org/user/api/SkTextBlob_Reference#Text_Blob_Text_Intercepts
-  int count = aBlob->getIntercepts(aBounds, nullptr);
-  if (count < 2) {
-    return;
+  // It's possible that we'll encounter a Windows exception deep inside
+  // Skia's DirectWrite code while trying to get the intercepts. To avoid
+  // crashing in this case, catch any such exception here and discard the
+  // newly-added (and incompletely filled in) elements.
+  int count = 0;
+  MOZ_SEH_TRY {
+    // https://skia.org/user/api/SkTextBlob_Reference#Text_Blob_Text_Intercepts
+    count = aBlob->getIntercepts(aBounds, nullptr);
+    if (count < 2) {
+      return;
+    }
+    aBlob->getIntercepts(aBounds, aIntercepts.AppendElements(count));
   }
-  aBlob->getIntercepts(aBounds, aIntercepts.AppendElements(count));
+  MOZ_SEH_EXCEPT(EXCEPTION_EXECUTE_HANDLER) {
+    gfxCriticalNote << "Exception occurred getting text intercepts";
+    aIntercepts.TruncateLength(aIntercepts.Length() - count);
+  }
 }
 
 // This function, given a set of intercepts that represent each intersection
@@ -3982,7 +4029,7 @@ static void SkipInk(nsIFrame* aFrame, DrawTarget& aDrawTarget,
 void nsCSSRendering::PaintDecorationLine(
     nsIFrame* aFrame, DrawTarget& aDrawTarget,
     const PaintDecorationLineParams& aParams) {
-  NS_ASSERTION(aParams.style != NS_STYLE_TEXT_DECORATION_STYLE_NONE,
+  NS_ASSERTION(aParams.style != StyleTextDecorationStyle::None,
                "aStyle is none");
 
   Rect rect = ToRect(GetTextDecorationRectInternal(aParams.pt, aParams));
@@ -4058,15 +4105,15 @@ void nsCSSRendering::PaintDecorationLine(
   // (For runs we do process, CreateTextBlob will update the position.)
   auto currentGlyphRunAdvance = [&]() {
     return textRun->GetAdvanceWidth(
-               gfxTextRun::Range(iter.GetStringStart(), iter.GetStringEnd()),
+               gfxTextRun::Range(iter.StringStart(), iter.StringEnd()),
                aParams.provider) /
            appUnitsPerDevPixel;
   };
 
-  while (iter.NextRun()) {
-    if (iter.GetGlyphRun()->mOrientation ==
+  for (; !iter.AtEnd(); iter.NextRun()) {
+    if (iter.GlyphRun()->mOrientation ==
             mozilla::gfx::ShapedTextFlags::TEXT_ORIENT_VERTICAL_UPRIGHT ||
-        (iter.GetGlyphRun()->mIsCJK &&
+        (iter.GlyphRun()->mIsCJK &&
          skipInk == mozilla::StyleTextDecorationSkipInk::Auto)) {
       // We don't support upright text in vertical modes currently
       // (see https://bugzilla.mozilla.org/show_bug.cgi?id=1572294),
@@ -4080,7 +4127,7 @@ void nsCSSRendering::PaintDecorationLine(
       continue;
     }
 
-    gfxFont* font = iter.GetGlyphRun()->mFont;
+    gfxFont* font = iter.GlyphRun()->mFont;
     // Don't try to apply skip-ink to 'sbix' fonts like Apple Color Emoji,
     // because old macOS (10.9) may crash trying to retrieve glyph paths
     // that don't exist.
@@ -4100,7 +4147,7 @@ void nsCSSRendering::PaintDecorationLine(
     // textPos.fX with the advance of the glyphs.
     sk_sp<const SkTextBlob> textBlob =
         CreateTextBlob(textRun, characterGlyphs, skiafont, spacing.Elements(),
-                       iter.GetStringStart(), iter.GetStringEnd(),
+                       iter.StringStart(), iter.StringEnd(),
                        (float)appUnitsPerDevPixel, textPos, spacingOffset);
 
     if (!textBlob) {
@@ -4156,10 +4203,10 @@ void nsCSSRendering::PaintDecorationLineInternal(
   }
 
   switch (aParams.style) {
-    case NS_STYLE_TEXT_DECORATION_STYLE_SOLID:
-    case NS_STYLE_TEXT_DECORATION_STYLE_DOUBLE:
+    case StyleTextDecorationStyle::Solid:
+    case StyleTextDecorationStyle::Double:
       break;
-    case NS_STYLE_TEXT_DECORATION_STYLE_DASHED: {
+    case StyleTextDecorationStyle::Dashed: {
       autoPopClips.PushClipRect(aRect);
       Float dashWidth = lineThickness * DOT_LENGTH * DASH_LENGTH;
       dash[0] = dashWidth;
@@ -4174,7 +4221,7 @@ void nsCSSRendering::PaintDecorationLineInternal(
       aRect.width += dashWidth;
       break;
     }
-    case NS_STYLE_TEXT_DECORATION_STYLE_DOTTED: {
+    case StyleTextDecorationStyle::Dotted: {
       autoPopClips.PushClipRect(aRect);
       Float dashWidth = lineThickness * DOT_LENGTH;
       if (lineThickness > 2.0) {
@@ -4194,7 +4241,7 @@ void nsCSSRendering::PaintDecorationLineInternal(
       aRect.width += dashWidth;
       break;
     }
-    case NS_STYLE_TEXT_DECORATION_STYLE_WAVY:
+    case StyleTextDecorationStyle::Wavy:
       autoPopClips.PushClipRect(aRect);
       if (lineThickness > 2.0) {
         drawOptions.mAntialiasMode = AntialiasMode::SUBPIXEL;
@@ -4218,9 +4265,9 @@ void nsCSSRendering::PaintDecorationLineInternal(
   }
 
   switch (aParams.style) {
-    case NS_STYLE_TEXT_DECORATION_STYLE_SOLID:
-    case NS_STYLE_TEXT_DECORATION_STYLE_DOTTED:
-    case NS_STYLE_TEXT_DECORATION_STYLE_DASHED: {
+    case StyleTextDecorationStyle::Solid:
+    case StyleTextDecorationStyle::Dotted:
+    case StyleTextDecorationStyle::Dashed: {
       Point p1 = aRect.TopLeft();
       Point p2 = aParams.vertical ? aRect.BottomLeft() : aRect.TopRight();
       if (textDrawer) {
@@ -4231,7 +4278,7 @@ void nsCSSRendering::PaintDecorationLineInternal(
       }
       return;
     }
-    case NS_STYLE_TEXT_DECORATION_STYLE_DOUBLE: {
+    case StyleTextDecorationStyle::Double: {
       /**
        *  We are drawing double line as:
        *
@@ -4260,18 +4307,16 @@ void nsCSSRendering::PaintDecorationLineInternal(
 
       if (textDrawer) {
         textDrawer->AppendDecoration(p1a, p2a, lineThickness, aParams.vertical,
-                                     color,
-                                     NS_STYLE_TEXT_DECORATION_STYLE_SOLID);
+                                     color, StyleTextDecorationStyle::Solid);
         textDrawer->AppendDecoration(p1b, p2b, lineThickness, aParams.vertical,
-                                     color,
-                                     NS_STYLE_TEXT_DECORATION_STYLE_SOLID);
+                                     color, StyleTextDecorationStyle::Solid);
       } else {
         aDrawTarget.StrokeLine(p1a, p2a, colorPat, strokeOptions, drawOptions);
         aDrawTarget.StrokeLine(p1b, p2b, colorPat, strokeOptions, drawOptions);
       }
       return;
     }
-    case NS_STYLE_TEXT_DECORATION_STYLE_WAVY: {
+    case StyleTextDecorationStyle::Wavy: {
       /**
        *  We are drawing wavy line as:
        *
@@ -4342,8 +4387,8 @@ void nsCSSRendering::PaintDecorationLineInternal(
       rectICoord += lineThickness / 2.0;
 
       Point pt(aRect.TopLeft());
-      Float& ptICoord = aParams.vertical ? pt.y : pt.x;
-      Float& ptBCoord = aParams.vertical ? pt.x : pt.y;
+      Float& ptICoord = aParams.vertical ? pt.y.value : pt.x.value;
+      Float& ptBCoord = aParams.vertical ? pt.x.value : pt.y.value;
       if (aParams.vertical) {
         ptBCoord += adv;
       }
@@ -4401,7 +4446,7 @@ void nsCSSRendering::PaintDecorationLineInternal(
 
 Rect nsCSSRendering::DecorationLineToPath(
     const PaintDecorationLineParams& aParams) {
-  NS_ASSERTION(aParams.style != NS_STYLE_TEXT_DECORATION_STYLE_NONE,
+  NS_ASSERTION(aParams.style != StyleTextDecorationStyle::None,
                "aStyle is none");
 
   Rect path;  // To benefit from RVO, we return this from all return points
@@ -4418,7 +4463,7 @@ Rect nsCSSRendering::DecorationLineToPath(
     return path;
   }
 
-  if (aParams.style != NS_STYLE_TEXT_DECORATION_STYLE_SOLID) {
+  if (aParams.style != StyleTextDecorationStyle::Solid) {
     // For the moment, we support only solid text decorations.
     return path;
   }
@@ -4442,7 +4487,7 @@ Rect nsCSSRendering::DecorationLineToPath(
 nsRect nsCSSRendering::GetTextDecorationRect(
     nsPresContext* aPresContext, const DecorationRectParams& aParams) {
   NS_ASSERTION(aPresContext, "aPresContext is null");
-  NS_ASSERTION(aParams.style != NS_STYLE_TEXT_DECORATION_STYLE_NONE,
+  NS_ASSERTION(aParams.style != StyleTextDecorationStyle::None,
                "aStyle is none");
 
   gfxRect rect = GetTextDecorationRectInternal(Point(0, 0), aParams);
@@ -4457,11 +4502,12 @@ nsRect nsCSSRendering::GetTextDecorationRect(
 
 gfxRect nsCSSRendering::GetTextDecorationRectInternal(
     const Point& aPt, const DecorationRectParams& aParams) {
-  NS_ASSERTION(aParams.style <= NS_STYLE_TEXT_DECORATION_STYLE_WAVY,
+  NS_ASSERTION(aParams.style <= StyleTextDecorationStyle::Wavy,
                "Invalid aStyle value");
 
-  if (aParams.style == NS_STYLE_TEXT_DECORATION_STYLE_NONE)
+  if (aParams.style == StyleTextDecorationStyle::None) {
     return gfxRect(0, 0, 0, 0);
+  }
 
   bool canLiftUnderline = aParams.descentLimit >= 0.0;
 
@@ -4490,7 +4536,7 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
   gfxFloat suggestedMaxRectHeight =
       std::max(std::min(ascent, descentLimit), 1.0);
   r.height = lineThickness;
-  if (aParams.style == NS_STYLE_TEXT_DECORATION_STYLE_DOUBLE) {
+  if (aParams.style == StyleTextDecorationStyle::Double) {
     /**
      *  We will draw double line as:
      *
@@ -4516,7 +4562,7 @@ gfxRect nsCSSRendering::GetTextDecorationRectInternal(
         r.height = std::max(suggestedMaxRectHeight, lineThickness * 2.0 + 1.0);
       }
     }
-  } else if (aParams.style == NS_STYLE_TEXT_DECORATION_STYLE_WAVY) {
+  } else if (aParams.style == StyleTextDecorationStyle::Wavy) {
     /**
      *  We will draw wavy line as:
      *
@@ -4688,14 +4734,15 @@ gfxContext* nsContextBoxBlur::Init(const nsRect& aRect, nscoord aSpreadRadius,
   bool useHardwareAccel = !(aFlags & DISABLE_HARDWARE_ACCELERATION_BLUR);
   if (aSkipRect) {
     gfxRect skipRect = transform.TransformBounds(*aSkipRect);
-    mContext =
+    mOwnedContext =
         mAlphaBoxBlur.Init(aDestinationCtx, rect, spreadRadius, blurRadius,
                            &dirtyRect, &skipRect, useHardwareAccel);
   } else {
-    mContext =
+    mOwnedContext =
         mAlphaBoxBlur.Init(aDestinationCtx, rect, spreadRadius, blurRadius,
                            &dirtyRect, nullptr, useHardwareAccel);
   }
+  mContext = mOwnedContext.get();
 
   if (mContext) {
     // we don't need to blur if skipRect is equal to rect

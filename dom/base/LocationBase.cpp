@@ -16,6 +16,7 @@
 #include "nsGlobalWindow.h"
 #include "mozilla/NullPrincipal.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/WindowContext.h"
 
 namespace mozilla::dom {
@@ -141,7 +142,7 @@ void LocationBase::SetURI(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
 
   // Get the incumbent script's browsing context to set as source.
   nsCOMPtr<nsPIDOMWindowInner> sourceWindow =
-      nsContentUtils::CallerInnerWindow();
+      nsContentUtils::IncumbentInnerWindow();
   if (sourceWindow) {
     WindowContext* context = sourceWindow->GetWindowContext();
     loadState->SetSourceBrowsingContext(sourceWindow->GetBrowsingContext());
@@ -173,6 +174,12 @@ void LocationBase::SetURI(nsIURI* aURI, nsIPrincipal& aSubjectPrincipal,
       return;
     }
     aRv.Throw(rv);
+    return;
+  }
+
+  Document* doc = bc->GetDocument();
+  if (doc && nsContentUtils::IsExternalProtocol(aURI)) {
+    doc->EnsureNotEnteringAndExitFullscreen();
   }
 }
 

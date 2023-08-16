@@ -13,14 +13,9 @@ import os
 import taskgraph
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.attributes import keymatch
-from taskgraph.util.schema import Schema, resolve_keyed_by, optionally_keyed_by
+from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by
 from taskgraph.util.treeherder import join_symbol, split_symbol
-from voluptuous import (
-    Any,
-    Extra,
-    Optional,
-    Required,
-)
+from voluptuous import Any, Extra, Optional, Required
 
 from gecko_taskgraph.transforms.job import job_description_schema
 from gecko_taskgraph.util.hg import get_json_automationrelevance
@@ -272,4 +267,29 @@ def set_worker_exit_code(config, jobs):
         worker.setdefault("retry-exit-status", [])
         if 137 not in worker["retry-exit-status"]:
             worker["retry-exit-status"].append(137)
+        yield job
+
+
+@transforms.add
+def remove_optimization_on_central(config, jobs):
+    """
+    For pushes to mozilla-central run all source-test tasks that are enabled for
+    code-review in order to have the code-review bot populate the DB according
+    with the push hash.
+    """
+    if (
+        config.params["project"] != "mozilla-central"
+        or config.params["tasks_for"] != "hg-push"
+    ):
+        yield from jobs
+        return
+
+    for job in jobs:
+        if not job.get("attributes", {}).get("code-review", False):
+            yield job
+            continue
+        if "when" not in job:
+            yield job
+            continue
+        del job["when"]
         yield job

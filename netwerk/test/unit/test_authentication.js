@@ -3,16 +3,18 @@
 
 "use strict";
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 // Turn off the authentication dialog blocking for this test.
 Services.prefs.setIntPref("network.auth.subresource-http-auth-allow", 2);
 
-XPCOMUtils.defineLazyGetter(this, "URL", function() {
+XPCOMUtils.defineLazyGetter(this, "URL", function () {
   return "http://localhost:" + httpserv.identity.primaryPort;
 });
 
-XPCOMUtils.defineLazyGetter(this, "PORT", function() {
+XPCOMUtils.defineLazyGetter(this, "PORT", function () {
   return httpserv.identity.primaryPort;
 });
 
@@ -145,6 +147,7 @@ AuthPrompt2.prototype = {
     const kAllKnownFlags = 127; // Don't fail test for newly added flags
     Assert.equal(expectedFlags, authInfo.flags & kAllKnownFlags);
 
+    // eslint-disable-next-line no-nested-ternary
     var expectedScheme = isNTLM ? "ntlm" : isDigest ? "digest" : "basic";
     Assert.equal(expectedScheme, authInfo.authenticationScheme);
 
@@ -180,7 +183,15 @@ AuthPrompt2.prototype = {
   },
 
   asyncPromptAuth: function ap2_async(chan, cb, ctx, lvl, info) {
-    throw Components.Exception("", Cr.NS_ERROR_NOT_IMPLEMENTED);
+    let self = this;
+    executeSoon(function () {
+      let ret = self.promptAuth(chan, lvl, info);
+      if (ret) {
+        cb.onAuthAvailable(ctx, info);
+      } else {
+        cb.onAuthCancelled(ctx, true);
+      }
+    });
   },
 };
 
@@ -279,7 +290,12 @@ var listener = {
   },
 };
 
-function makeChan(url, loadingUrl) {
+function makeChan(
+  url,
+  loadingUrl,
+  securityFlags = Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
+  contentPolicyType = Ci.nsIContentPolicy.TYPE_OTHER
+) {
   var principal = Services.scriptSecurityManager.createContentPrincipal(
     Services.io.newURI(loadingUrl),
     {}
@@ -287,12 +303,10 @@ function makeChan(url, loadingUrl) {
   return NetUtil.newChannel({
     uri: url,
     loadingPrincipal: principal,
-    securityFlags: Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_SEC_CONTEXT_IS_NULL,
-    contentPolicyType: Ci.nsIContentPolicy.TYPE_OTHER,
+    securityFlags,
+    contentPolicyType,
   });
 }
-
-var current_test = 0;
 
 var httpserv = null;
 
@@ -316,6 +330,8 @@ function setup() {
   httpserv.registerPathHandler("/auth/short_digest", authShortDigest);
   httpserv.registerPathHandler("/largeRealm", largeRealm);
   httpserv.registerPathHandler("/largeDomain", largeDomain);
+
+  httpserv.registerPathHandler("/corp-coep", corpAndCoep);
 
   httpserv.start(-1);
 
@@ -511,12 +527,35 @@ add_task(async function test_short_digest() {
   await openAndListen(chan);
 });
 
+// Test that COOP/COEP are processed even though asyncPromptAuth is cancelled.
+add_task(async function test_corp_coep() {
+  var chan = makeChan(
+    URL + "/corp-coep",
+    URL,
+    Ci.nsILoadInfo.SEC_ALLOW_CROSS_ORIGIN_INHERITS_SEC_CONTEXT,
+    Ci.nsIContentPolicy.TYPE_DOCUMENT
+  );
+
+  chan.notificationCallbacks = new Requestor(FLAG_RETURN_FALSE, 2);
+  listener.expectedCode = 401; // OK
+  await openAndListen(chan);
+
+  Assert.equal(
+    chan.getResponseHeader("cross-origin-embedder-policy"),
+    "require-corp"
+  );
+  Assert.equal(
+    chan.getResponseHeader("cross-origin-opener-policy"),
+    "same-origin"
+  );
+});
+
 // XXX(valentin): this makes tests fail if it's not run last. Why?
 add_task(async function test_nonascii_xhr() {
   await new Promise(resolve => {
     let xhr = new XMLHttpRequest();
     xhr.open("GET", URL + "/auth/non_ascii", true, "é", "é");
-    xhr.onreadystatechange = function(event) {
+    xhr.onreadystatechange = function (event) {
       if (xhr.readyState == 4) {
         Assert.equal(xhr.status, 200);
         resolve();
@@ -604,6 +643,13 @@ function authNonascii(metadata, response) {
   }
 
   response.bodyOutputStream.write(body, body.length);
+}
+
+function corpAndCoep(metadata, response) {
+  response.setStatusLine(metadata.httpVersion, 401, "Unauthorized");
+  response.setHeader("cross-origin-embedder-policy", "require-corp");
+  response.setHeader("cross-origin-opener-policy", "same-origin");
+  response.setHeader("WWW-Authenticate", 'Basic realm="secret"', false);
 }
 
 //
@@ -850,12 +896,12 @@ function authShortDigest(metadata, response) {
   response.setHeader("WWW-Authenticate", "Digest", false);
 }
 
-let buildLargePayload = (function() {
+let buildLargePayload = (function () {
   let size = 33 * 1024;
   let ret = "";
-  return function() {
+  return function () {
     // Return cached value.
-    if (ret.length > 0) {
+    if (ret.length) {
       return ret;
     }
     for (let i = 0; i < size; i++) {

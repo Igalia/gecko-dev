@@ -33,6 +33,7 @@ class MOZ_RAII AutoWritableJitCodeFallible {
   JSRuntime* rt_;
   void* addr_;
   size_t size_;
+  AutoMarkJitCodeWritableForThread writableForThread_;
 
  public:
   AutoWritableJitCodeFallible(JSRuntime* rt, void* addr, size_t size)
@@ -72,7 +73,10 @@ class MOZ_RAII AutoWritableJitCode : private AutoWritableJitCodeFallible {
  public:
   AutoWritableJitCode(JSRuntime* rt, void* addr, size_t size)
       : AutoWritableJitCodeFallible(rt, addr, size) {
-    MOZ_RELEASE_ASSERT(makeWritable());
+    AutoEnterOOMUnsafeRegion oomUnsafe;
+    if (!makeWritable()) {
+      oomUnsafe.crash("Failed to mmap. Likely no mappings available.");
+    }
   }
 
   AutoWritableJitCode(void* addr, size_t size)

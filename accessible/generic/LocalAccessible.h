@@ -53,9 +53,7 @@ class RemoteAccessible;
 class Relation;
 class RootAccessible;
 class TableAccessible;
-class TableAccessibleBase;
 class TableCellAccessible;
-class TableCellAccessibleBase;
 class TextLeafAccessible;
 class XULLabelAccessible;
 class XULTreeAccessible;
@@ -81,6 +79,9 @@ typedef nsRefPtrHashtable<nsPtrHashKey<const void>, LocalAccessible>
     }                                                \
   }
 
+/**
+ * An accessibility tree node that originated in mDoc's content process.
+ */
 class LocalAccessible : public nsISupports, public Accessible {
  public:
   LocalAccessible(nsIContent* aContent, DocAccessible* aDoc);
@@ -132,13 +133,10 @@ class LocalAccessible : public nsISupports, public Accessible {
   void* UniqueID() { return static_cast<void*>(this); }
 
   virtual uint64_t ID() const override {
-    return reinterpret_cast<uintptr_t>(this);
+    return IsDoc() ? 0 : reinterpret_cast<uintptr_t>(this);
   }
 
-  /**
-   * Return language associated with the accessible.
-   */
-  void Language(nsAString& aLocale);
+  virtual void Language(nsAString& aLocale) override;
 
   /**
    * Get the description of this accessible.
@@ -151,15 +149,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual void Value(nsString& aValue) const override;
 
   /**
-   * Get help string for the accessible.
-   */
-  void Help(nsString& aHelp) const { aHelp.Truncate(); }
-
-  /**
    * Get the name of this accessible.
-   *
-   * Note: aName.IsVoid() when name was left empty by the author on purpose.
-   * aName.IsEmpty() when the author missed name, AT can try to repair a name.
    */
   virtual ENameValueFlag Name(nsString& aName) const override;
 
@@ -181,7 +171,7 @@ class LocalAccessible : public nsISupports, public Accessible {
    * Return accessible role specified by ARIA (see constants in
    * roles).
    */
-  mozilla::a11y::role ARIARole();
+  inline mozilla::a11y::role ARIARole();
 
   /**
    * Returns enumerated accessible role from native markup (see constants in
@@ -255,11 +245,6 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual Accessible* ChildAtPoint(int32_t aX, int32_t aY,
                                    EWhichChildAtPoint aWhichChild) override;
 
-  /**
-   * Return the focused child if any.
-   */
-  virtual LocalAccessible* FocusedChild();
-
   virtual Relation RelationByType(RelationType aType) const override;
 
   //////////////////////////////////////////////////////////////////////////////
@@ -273,7 +258,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Set the ARIA role map entry for a new accessible.
    */
-  void SetRoleMapEntry(const nsRoleMapEntry* aRoleMapEntry);
+  inline void SetRoleMapEntry(const nsRoleMapEntry* aRoleMapEntry);
 
   /**
    * Append/insert/remove a child. Return true if operation was successful.
@@ -288,7 +273,8 @@ class LocalAccessible : public nsISupports, public Accessible {
    * then the child is unbound from the document, and false is returned. Make
    * sure to null out any references on the child object as it may be destroyed.
    */
-  bool InsertAfter(LocalAccessible* aNewChild, LocalAccessible* aRefChild);
+  inline bool InsertAfter(LocalAccessible* aNewChild,
+                          LocalAccessible* aRefChild);
 
   virtual bool RemoveChild(LocalAccessible* aChild);
 
@@ -363,7 +349,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Return embedded accessible child at the given index.
    */
-  virtual LocalAccessible* EmbeddedChildAt(uint32_t aIndex) override;
+  virtual Accessible* EmbeddedChildAt(uint32_t aIndex) override;
 
   virtual int32_t IndexOfEmbeddedChild(Accessible* aChild) override;
 
@@ -437,10 +423,8 @@ class LocalAccessible : public nsISupports, public Accessible {
   MOZ_CAN_RUN_SCRIPT
   virtual void ScrollTo(uint32_t aHow) const override;
 
-  /**
-   * Scroll the accessible to the given point.
-   */
-  void ScrollToPoint(uint32_t aCoordinateType, int32_t aX, int32_t aY);
+  virtual void ScrollToPoint(uint32_t aCoordinateType, int32_t aX,
+                             int32_t aY) override;
 
   /**
    * Get a pointer to accessibility interface for this node, which is specific
@@ -454,7 +438,8 @@ class LocalAccessible : public nsISupports, public Accessible {
   // Downcasting and types
 
   inline bool IsAbbreviation() const {
-    return mContent->IsAnyOfHTMLElements(nsGkAtoms::abbr, nsGkAtoms::acronym);
+    return mContent &&
+           mContent->IsAnyOfHTMLElements(nsGkAtoms::abbr, nsGkAtoms::acronym);
   }
 
   ApplicationAccessible* AsApplication();
@@ -472,26 +457,12 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   HTMLImageMapAccessible* AsImageMap();
 
-  RemoteAccessible* Proxy() const {
-    MOZ_ASSERT(IsProxy());
-    return mBits.proxy;
-  }
-
   OuterDocAccessible* AsOuterDoc();
 
   a11y::RootAccessible* AsRoot();
 
-  bool IsSearchbox() const;
-
-  virtual TableAccessible* AsTable() { return nullptr; }
-
-  virtual TableCellAccessible* AsTableCell() { return nullptr; }
-  const TableCellAccessible* AsTableCell() const {
-    return const_cast<LocalAccessible*>(this)->AsTableCell();
-  }
-
-  virtual TableAccessibleBase* AsTableBase() override;
-  virtual TableCellAccessibleBase* AsTableCellBase() override;
+  virtual TableAccessible* AsTable() override;
+  virtual TableCellAccessible* AsTableCell() override;
 
   TextLeafAccessible* AsTextLeaf();
 
@@ -526,34 +497,6 @@ class LocalAccessible : public nsISupports, public Accessible {
    * Return true if the accessible is hyper link accessible.
    */
   virtual bool IsLink() const override;
-
-  /**
-   * Return true if the link is valid (e. g. points to a valid URL).
-   */
-  inline bool IsLinkValid() {
-    MOZ_ASSERT(IsLink(), "IsLinkValid is called on not hyper link!");
-
-    // XXX In order to implement this we would need to follow every link
-    // Perhaps we can get information about invalid links from the cache
-    // In the mean time authors can use role="link" aria-invalid="true"
-    // to force it for links they internally know to be invalid
-    return (0 == (State() & mozilla::a11y::states::INVALID));
-  }
-
-  /**
-   * Return the number of anchors within the link.
-   */
-  virtual uint32_t AnchorCount();
-
-  /**
-   * Returns an anchor accessible at the given index.
-   */
-  virtual LocalAccessible* AnchorAt(uint32_t aAnchorIndex);
-
-  /**
-   * Returns an anchor URI at the given index.
-   */
-  virtual already_AddRefed<nsIURI> AnchorURIAt(uint32_t aAnchorIndex) const;
 
   //////////////////////////////////////////////////////////////////////////////
   // SelectAccessible
@@ -605,7 +548,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   virtual double MinValue() const override;
   virtual double CurValue() const override;
   virtual double Step() const override;
-  virtual bool SetCurValue(double aValue);
+  virtual bool SetCurValue(double aValue) override;
 
   //////////////////////////////////////////////////////////////////////////////
   // Widgets
@@ -649,7 +592,7 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Return true if the accessible is defunct.
    */
-  bool IsDefunct() const;
+  inline bool IsDefunct() const;
 
   /**
    * Return false if the accessible is no longer in the document.
@@ -673,12 +616,12 @@ class LocalAccessible : public nsISupports, public Accessible {
   /**
    * Return true if native markup has a numeric value.
    */
-  bool NativeHasNumericValue() const;
+  inline bool NativeHasNumericValue() const;
 
   /**
    * Return true if ARIA specifies support for a numeric value.
    */
-  bool ARIAHasNumericValue() const;
+  inline bool ARIAHasNumericValue() const;
 
   /**
    * Return true if the accessible has a numeric value.
@@ -780,15 +723,19 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   virtual nsAtom* TagName() const override;
 
+  virtual already_AddRefed<nsAtom> InputType() const override;
+
   virtual already_AddRefed<nsAtom> DisplayStyle() const override;
 
-  virtual Maybe<float> Opacity() const override;
+  virtual float Opacity() const override;
 
   virtual void DOMNodeID(nsString& aID) const override;
 
   virtual void LiveRegionAttributes(nsAString* aLive, nsAString* aRelevant,
                                     Maybe<bool>* aAtomic,
                                     nsAString* aBusy) const override;
+
+  virtual Maybe<bool> ARIASelected() const override;
 
  protected:
   virtual ~LocalAccessible();
@@ -1042,10 +989,7 @@ class LocalAccessible : public nsISupports, public Accessible {
 
   friend class EmbeddedObjCollector;
 
-  union {
-    AccGroupInfo* groupInfo;
-    RemoteAccessible* proxy;
-  } mutable mBits;
+  mutable AccGroupInfo* mGroupInfo;
   friend class AccGroupInfo;
 
  private:

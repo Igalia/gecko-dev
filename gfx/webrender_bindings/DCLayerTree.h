@@ -12,6 +12,7 @@
 #include <vector>
 #include <windows.h>
 
+#include "Colorspaces.h"
 #include "GLTypes.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/layers/OverlayInfo.h"
@@ -27,7 +28,11 @@ struct ID3D11VideoContext;
 struct ID3D11VideoProcessor;
 struct ID3D11VideoProcessorEnumerator;
 struct ID3D11VideoProcessorOutputView;
+struct IDCompositionColorMatrixEffect;
+struct IDCompositionFilterEffect;
+struct IDCompositionTableTransferEffect;
 struct IDCompositionDevice2;
+struct IDCompositionDevice3;
 struct IDCompositionSurface;
 struct IDCompositionTarget;
 struct IDCompositionVisual2;
@@ -51,7 +56,9 @@ namespace wr {
 class DCTile;
 class DCSurface;
 class DCSurfaceVideo;
+class DCSurfaceHandle;
 class RenderTextureHost;
+class RenderDcompSurfaceTextureHost;
 
 struct GpuOverlayInfo {
   bool mSupportsOverlays = false;
@@ -63,6 +70,23 @@ struct GpuOverlayInfo {
   UINT mBgra8OverlaySupportFlags = 0;
   UINT mRgb10a2OverlaySupportFlags = 0;
 };
+
+// -
+
+struct ColorManagementChain {
+  RefPtr<IDCompositionColorMatrixEffect> srcRgbFromSrcYuv;
+  RefPtr<IDCompositionTableTransferEffect> srcLinearFromSrcTf;
+  RefPtr<IDCompositionColorMatrixEffect> dstLinearFromSrcLinear;
+  RefPtr<IDCompositionTableTransferEffect> dstTfFromDstLinear;
+  RefPtr<IDCompositionFilterEffect> last;
+
+  static ColorManagementChain From(IDCompositionDevice3& dcomp,
+                                   const color::ColorProfileConversionDesc&);
+
+  ~ColorManagementChain();
+};
+
+// -
 
 /**
  * DCLayerTree manages direct composition layers.
@@ -129,6 +153,8 @@ class DCLayerTree {
 
   bool SupportsHardwareOverlays();
   DXGI_FORMAT GetOverlayFormatForSDR();
+
+  bool SupportsSwapChainTearing();
 
  protected:
   bool Initialize(HWND aHwnd, nsACString& aError);
@@ -206,6 +232,19 @@ class DCLayerTree {
 
   bool mPendingCommit;
 
+  static color::ColorProfileDesc QueryOutputColorProfile();
+
+  mutable Maybe<color::ColorProfileDesc> mOutputColorProfile;
+
+ public:
+  const color::ColorProfileDesc& OutputColorProfile() const {
+    if (!mOutputColorProfile) {
+      mOutputColorProfile = Some(QueryOutputColorProfile());
+    }
+    return *mOutputColorProfile;
+  }
+
+ protected:
   static UniquePtr<GpuOverlayInfo> sGpuOverlayInfo;
 };
 
@@ -218,9 +257,11 @@ class DCLayerTree {
  */
 class DCSurface {
  public:
+  const bool mIsVirtualSurface;
+
   explicit DCSurface(wr::DeviceIntSize aTileSize,
-                     wr::DeviceIntPoint aVirtualOffset, bool aIsOpaque,
-                     DCLayerTree* aDCLayerTree);
+                     wr::DeviceIntPoint aVirtualOffset, bool aIsVirtualSurface,
+                     bool aIsOpaque, DCLayerTree* aDCLayerTree);
   virtual ~DCSurface();
 
   bool Initialize();
@@ -247,7 +288,16 @@ class DCSurface {
   void UpdateAllocatedRect();
   void DirtyAllocatedRect();
 
+  // Implement these if the inherited surface supports attaching external image.
+  virtual void AttachExternalImage(wr::ExternalImageId aExternalImage) {
+    MOZ_RELEASE_ASSERT(true, "Not support attaching external image");
+  }
+  virtual void PresentExternalSurface(gfx::Matrix& aTransform) {
+    MOZ_RELEASE_ASSERT(true, "Not support presenting external surface");
+  }
+
   virtual DCSurfaceVideo* AsDCSurfaceVideo() { return nullptr; }
+  virtual DCSurfaceHandle* AsDCSurfaceHandle() { return nullptr; }
 
  protected:
   DCLayerTree* mDCLayerTree;
@@ -262,6 +312,12 @@ class DCSurface {
   // that belong to this surface are added as children. In this way, we can
   // set the clip and scroll offset once, on this visual, to affect all
   // children.
+  //
+  // However when using a virtual surface, it is directly attached to this
+  // visual and the tiles do not own visuals.
+  //
+  // Whether mIsVirtualSurface is enabled is decided at DCSurface creation
+  // time based on the pref gfx.webrender.dcomp-use-virtual-surfaces
   RefPtr<IDCompositionVisual2> mVisual;
 
   wr::DeviceIntSize mTileSize;
@@ -272,17 +328,51 @@ class DCSurface {
   RefPtr<IDCompositionVirtualSurface> mVirtualSurface;
 };
 
+/**
+ * A wrapper surface which can contain either a DCVideo or a DCSurfaceHandle.
+ */
+class DCExternalSurfaceWrapper : public DCSurface {
+ public:
+  DCExternalSurfaceWrapper(bool aIsOpaque, DCLayerTree* aDCLayerTree)
+      : DCSurface(wr::DeviceIntSize{}, wr::DeviceIntPoint{},
+                  false /* virtual surface */, false /* opaque */,
+                  aDCLayerTree),
+        mIsOpaque(aIsOpaque) {}
+  ~DCExternalSurfaceWrapper() = default;
+
+  void AttachExternalImage(wr::ExternalImageId aExternalImage) override;
+
+  void PresentExternalSurface(gfx::Matrix& aTransform) override;
+
+  DCSurfaceVideo* AsDCSurfaceVideo() override {
+    return mSurface ? mSurface->AsDCSurfaceVideo() : nullptr;
+  }
+
+  DCSurfaceHandle* AsDCSurfaceHandle() override {
+    return mSurface ? mSurface->AsDCSurfaceHandle() : nullptr;
+  }
+
+ private:
+  DCSurface* EnsureSurfaceForExternalImage(wr::ExternalImageId aExternalImage);
+
+  UniquePtr<DCSurface> mSurface;
+  const bool mIsOpaque;
+  Maybe<ColorManagementChain> mCManageChain;
+};
+
 class DCSurfaceVideo : public DCSurface {
  public:
   DCSurfaceVideo(bool aIsOpaque, DCLayerTree* aDCLayerTree);
 
-  void AttachExternalImage(wr::ExternalImageId aExternalImage);
+  void AttachExternalImage(wr::ExternalImageId aExternalImage) override;
   bool CalculateSwapChainSize(gfx::Matrix& aTransform);
   void PresentVideo();
 
   DCSurfaceVideo* AsDCSurfaceVideo() override { return this; }
 
  protected:
+  virtual ~DCSurfaceVideo();
+
   DXGI_FORMAT GetSwapChainFormat();
   bool CreateVideoSwapChain();
   bool CallVideoProcessorBlt();
@@ -299,17 +389,65 @@ class DCSurfaceVideo : public DCSurface {
   bool mFailedYuvSwapChain = false;
   RefPtr<RenderTextureHost> mRenderTextureHost;
   RefPtr<RenderTextureHost> mPrevTexture;
+  int mSlowPresentCount = 0;
+};
+
+/**
+ * A DC surface contains a IDCompositionSurface that is directly constructed by
+ * a handle. This is used by the Media Foundataion media engine, which would
+ * store the decoded video content in the surface.
+ */
+class DCSurfaceHandle : public DCSurface {
+ public:
+  DCSurfaceHandle(bool aIsOpaque, DCLayerTree* aDCLayerTree);
+  ~DCSurfaceHandle() = default;
+
+  void AttachExternalImage(wr::ExternalImageId aExternalImage) override;
+  void PresentSurfaceHandle();
+
+  DCSurfaceHandle* AsDCSurfaceHandle() override { return this; }
+
+ protected:
+  HANDLE GetSurfaceHandle() const;
+  IDCompositionSurface* EnsureSurface();
+
+  RefPtr<RenderDcompSurfaceTextureHost> mDcompTextureHost;
 };
 
 class DCTile {
  public:
-  explicit DCTile(DCLayerTree* aDCLayerTree);
-  ~DCTile();
-  bool Initialize(int aX, int aY, wr::DeviceIntSize aSize, bool aIsOpaque);
-
   gfx::IntRect mValidRect;
 
   DCLayerTree* mDCLayerTree;
+  // Indicates that when the first BeginDraw occurs on the surface it must be
+  // full size - required by dcomp on non-virtual surfaces.
+  bool mNeedsFullDraw;
+
+  explicit DCTile(DCLayerTree* aDCLayerTree);
+  ~DCTile();
+  bool Initialize(int aX, int aY, wr::DeviceIntSize aSize,
+                  bool aIsVirtualSurface, bool aIsOpaque,
+                  RefPtr<IDCompositionVisual2> mSurfaceVisual);
+  RefPtr<IDCompositionSurface> Bind(wr::DeviceIntRect aValidRect);
+  IDCompositionVisual2* GetVisual() { return mVisual; }
+
+ protected:
+  // Size in pixels of this tile, some may be unused.  Set by Initialize.
+  wr::DeviceIntSize mSize;
+  // Whether the tile is composited as opaque (ignores alpha) or transparent.
+  // Set by Initialize.
+  bool mIsOpaque;
+  // Some code paths differ based on whether parent surface is virtual.
+  bool mIsVirtualSurface;
+  // Visual that displays the composition surface, or NULL if the tile belongs
+  // to a virtual surface.
+  RefPtr<IDCompositionVisual2> mVisual;
+  // Surface for the visual, or NULL if the tile has not had its first Bind or
+  // belongs to a virtual surface.
+  RefPtr<IDCompositionSurface> mCompositionSurface;
+
+  RefPtr<IDCompositionSurface> CreateCompositionSurface(wr::DeviceIntSize aSize,
+                                                        bool aIsOpaque);
 };
 
 static inline bool operator==(const DCSurface::TileKey& a0,

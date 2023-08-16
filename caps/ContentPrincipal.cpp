@@ -42,20 +42,22 @@
 
 using namespace mozilla;
 
-static inline ExtensionPolicyService& EPS() {
-  return ExtensionPolicyService::GetSingleton();
-}
-
-NS_IMPL_CLASSINFO(ContentPrincipal, nullptr, nsIClassInfo::MAIN_THREAD_ONLY,
-                  NS_PRINCIPAL_CID)
+NS_IMPL_CLASSINFO(ContentPrincipal, nullptr, 0, NS_PRINCIPAL_CID)
 NS_IMPL_QUERY_INTERFACE_CI(ContentPrincipal, nsIPrincipal)
 NS_IMPL_CI_INTERFACE_GETTER(ContentPrincipal, nsIPrincipal)
 
 ContentPrincipal::ContentPrincipal(nsIURI* aURI,
                                    const OriginAttributes& aOriginAttributes,
-                                   const nsACString& aOriginNoSuffix)
+                                   const nsACString& aOriginNoSuffix,
+                                   nsIURI* aInitialDomain)
     : BasePrincipal(eContentPrincipal, aOriginNoSuffix, aOriginAttributes),
-      mURI(aURI) {
+      mURI(aURI),
+      mDomain(aInitialDomain) {
+  if (mDomain) {
+    // We're just creating the principal, so no need to re-compute wrappers.
+    SetHasExplicitDomain();
+  }
+
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   // Assert that the URI we get here isn't any of the schemes that we know we
   // should not get here.  These schemes always either inherit their principal
@@ -254,8 +256,8 @@ bool ContentPrincipal::SubsumesInternal(
     }
   }
 
-  // Compare uris.
-  return aOther->IsSameOrigin(mURI);
+  // Do a fast check (including origin attributes) or a slow uri comparison.
+  return FastEquals(aOther) || aOther->IsSameOrigin(mURI);
 }
 
 NS_IMETHODIMP
@@ -325,21 +327,26 @@ uint32_t ContentPrincipal::GetHashValue() {
 
 NS_IMETHODIMP
 ContentPrincipal::GetDomain(nsIURI** aDomain) {
-  if (!mDomain) {
+  if (!GetHasExplicitDomain()) {
     *aDomain = nullptr;
     return NS_OK;
   }
 
+  mozilla::MutexAutoLock lock(mMutex);
   NS_ADDREF(*aDomain = mDomain);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 ContentPrincipal::SetDomain(nsIURI* aDomain) {
+  AssertIsOnMainThread();
   MOZ_ASSERT(aDomain);
 
-  mDomain = aDomain;
-  SetHasExplicitDomain();
+  {
+    mozilla::MutexAutoLock lock(mMutex);
+    mDomain = aDomain;
+    SetHasExplicitDomain();
+  }
 
   // Set the changed-document-domain flag on compartments containing realms
   // using this principal.
@@ -512,25 +519,27 @@ nsresult ContentPrincipal::GetSiteIdentifier(SiteIdentifier& aSite) {
   return NS_OK;
 }
 
-WebExtensionPolicy* ContentPrincipal::AddonPolicy() {
+RefPtr<extensions::WebExtensionPolicyCore> ContentPrincipal::AddonPolicyCore() {
+  mozilla::MutexAutoLock lock(mMutex);
   if (!mAddon.isSome()) {
     NS_ENSURE_TRUE(mURI, nullptr);
 
+    RefPtr<extensions::WebExtensionPolicyCore> core;
     if (mURI->SchemeIs("moz-extension")) {
-      mAddon.emplace(EPS().GetByURL(mURI.get()));
-    } else {
-      mAddon.emplace(nullptr);
+      nsCString host;
+      NS_ENSURE_SUCCESS(mURI->GetHost(host), nullptr);
+      core = ExtensionPolicyService::GetCoreByHost(host);
     }
-  }
 
-  return mAddon.value();
+    mAddon.emplace(core);
+  }
+  return *mAddon;
 }
 
 NS_IMETHODIMP
 ContentPrincipal::GetAddonId(nsAString& aAddonId) {
-  auto* policy = AddonPolicy();
-  if (policy) {
-    policy->GetId(aAddonId);
+  if (RefPtr<extensions::WebExtensionPolicyCore> policy = AddonPolicyCore()) {
+    policy->Id()->ToString(aAddonId);
   } else {
     aAddonId.Truncate();
   }
@@ -591,17 +600,8 @@ ContentPrincipal::Deserializer::Read(nsIObjectInputStream* aStream) {
   rv = GenerateOriginNoSuffixFromURI(principalURI, originNoSuffix);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  RefPtr<ContentPrincipal> principal =
-      new ContentPrincipal(principalURI, attrs, originNoSuffix);
-
-  // Note: we don't call SetDomain here because we don't need the wrapper
-  // recomputation code there (we just created this principal).
-  if (domain) {
-    principal->mDomain = domain;
-    principal->SetHasExplicitDomain();
-  }
-
-  mPrincipal = principal.forget();
+  mPrincipal =
+      new ContentPrincipal(principalURI, attrs, originNoSuffix, domain);
   return NS_OK;
 }
 
@@ -623,19 +623,22 @@ nsresult ContentPrincipal::PopulateJSONObject(Json::Value& aObject) {
   //        Key          ----------------------
   //                                |
   //                              Value
-  aObject[std::to_string(eURI)] = principalURI.get();
+  SetJSONValue<eURI>(aObject, principalURI);
 
-  if (mDomain) {
+  if (GetHasExplicitDomain()) {
     nsAutoCString domainStr;
-    rv = mDomain->GetSpec(domainStr);
-    NS_ENSURE_SUCCESS(rv, rv);
-    aObject[std::to_string(eDomain)] = domainStr.get();
+    {
+      MutexAutoLock lock(mMutex);
+      rv = mDomain->GetSpec(domainStr);
+      NS_ENSURE_SUCCESS(rv, rv);
+    }
+    SetJSONValue<eDomain>(aObject, domainStr);
   }
 
   nsAutoCString suffix;
   OriginAttributesRef().CreateSuffix(suffix);
   if (suffix.Length() > 0) {
-    aObject[std::to_string(eSuffix)] = suffix.get();
+    SetJSONValue<eSuffix>(aObject, suffix);
   }
 
   return NS_OK;
@@ -700,12 +703,7 @@ already_AddRefed<BasePrincipal> ContentPrincipal::FromProperties(
   }
 
   RefPtr<ContentPrincipal> principal =
-      new ContentPrincipal(principalURI, attrs, originNoSuffix);
-
-  principal->mDomain = domain;
-  if (principal->mDomain) {
-    principal->SetHasExplicitDomain();
-  }
+      new ContentPrincipal(principalURI, attrs, originNoSuffix, domain);
 
   return principal.forget();
 }

@@ -22,27 +22,29 @@ var EXPORTED_SYMBOLS = ["XPIProvider", "XPIInternal"];
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AddonManager, AddonManagerPrivate } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager, AddonManagerPrivate } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonSettings: "resource://gre/modules/addons/AddonSettings.jsm",
-  AsyncShutdown: "resource://gre/modules/AsyncShutdown.jsm",
-  Dictionary: "resource://gre/modules/Extension.jsm",
-  Extension: "resource://gre/modules/Extension.jsm",
-  ExtensionData: "resource://gre/modules/Extension.jsm",
-  Langpack: "resource://gre/modules/Extension.jsm",
-  SitePermission: "resource://gre/modules/Extension.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  JSONFile: "resource://gre/modules/JSONFile.jsm",
-  TelemetrySession: "resource://gre/modules/TelemetrySession.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AddonSettings: "resource://gre/modules/addons/AddonSettings.sys.mjs",
+  AsyncShutdown: "resource://gre/modules/AsyncShutdown.sys.mjs",
+  Dictionary: "resource://gre/modules/Extension.sys.mjs",
+  Extension: "resource://gre/modules/Extension.sys.mjs",
+  ExtensionData: "resource://gre/modules/Extension.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  JSONFile: "resource://gre/modules/JSONFile.sys.mjs",
+  Langpack: "resource://gre/modules/Extension.sys.mjs",
+  SitePermission: "resource://gre/modules/Extension.sys.mjs",
+  TelemetrySession: "resource://gre/modules/TelemetrySession.sys.mjs",
+});
 
+XPCOMUtils.defineLazyModuleGetters(lazy, {
   XPIDatabase: "resource://gre/modules/addons/XPIDatabase.jsm",
   XPIDatabaseReconcile: "resource://gre/modules/addons/XPIDatabase.jsm",
   XPIInstall: "resource://gre/modules/addons/XPIInstall.jsm",
@@ -178,16 +180,20 @@ const ALL_XPI_TYPES = new Set([
   "dictionary",
   "extension",
   "locale",
-  "sitepermission",
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  "sitepermission-deprecated",
   "theme",
 ]);
 
 /**
  * Valid IDs fit this pattern.
  */
-var gIDTest = /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
+var gIDTest =
+  /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
 
-const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
+const { Log } = ChromeUtils.importESModule(
+  "resource://gre/modules/Log.sys.mjs"
+);
 const LOGGER_ID = "addons.xpi";
 
 // Create a new logger for use by all objects in this Addons XPI Provider module
@@ -455,6 +461,7 @@ const JSON_FIELDS = Object.freeze([
   "loader",
   "lastModifiedTime",
   "path",
+  "recommendationState",
   "rootURI",
   "runInSafeMode",
   "signedState",
@@ -547,6 +554,7 @@ class XPIState {
       lastModifiedTime: this.lastModifiedTime,
       loader: this.loader,
       path: this.relativePath,
+      recommendationState: this.recommendationState,
       rootURI: this.rootURI,
       runInSafeMode: this.runInSafeMode,
       signedState: this.signedState,
@@ -650,6 +658,7 @@ class XPIState {
     this.signedDate = aDBAddon.signedDate;
     this.file = aDBAddon._sourceBundle;
     this.rootURI = aDBAddon.rootURI;
+    this.recommendationState = aDBAddon.recommendationState;
 
     if ((aUpdated || mustGetMod) && this.file) {
       this.getModTime(this.file);
@@ -1827,6 +1836,7 @@ class BootstrapScope {
         builtIn: addon.location.isBuiltin,
         isSystem: addon.location.isSystem,
         isPrivileged: addon.isPrivileged,
+        locationHidden: addon.location.hidden,
         recommendationState: addon.recommendationState,
       };
 
@@ -1901,7 +1911,8 @@ class BootstrapScope {
           this.scope = lazy.Extension.getBootstrapScope();
           break;
 
-        case "sitepermission":
+        // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+        case "sitepermission-deprecated":
           this.scope = lazy.SitePermission.getBootstrapScope();
           break;
 
@@ -1950,18 +1961,32 @@ class BootstrapScope {
    * @param {Object} [aExtraParams]
    *        Optional extra parameters to pass to the bootstrap method.
    * @returns {Promise}
-   *        Resolves when the startup method has run to completion.
+   *        Resolves when the startup method has run to completion, rejects
+   *        if called late during shutdown.
    */
   async startup(reason, aExtraParams) {
     if (this.shutdownPromise) {
       await this.shutdownPromise;
     }
 
-    this.startupPromise = this.callBootstrapMethod(
-      "startup",
-      reason,
-      aExtraParams
-    );
+    if (
+      Services.startup.isInOrBeyondShutdownPhase(
+        Ci.nsIAppStartup.SHUTDOWN_PHASE_APPSHUTDOWNCONFIRMED
+      )
+    ) {
+      let err = new Error(
+        `XPIProvider can't start bootstrap scope for ${this.addon.id} after shutdown was already granted`
+      );
+      logger.warn("BoostrapScope startup failure: ${error}", { error: err });
+      this.startupPromise = Promise.reject(err);
+    } else {
+      this.startupPromise = this.callBootstrapMethod(
+        "startup",
+        reason,
+        aExtraParams
+      );
+    }
+
     return this.startupPromise;
   }
 
@@ -2168,7 +2193,18 @@ var XPIProvider = {
   // Have we started shutting down bootstrap add-ons?
   _closing: false,
 
+  // Promises awaited by the XPIProvider before resolving providerReadyPromise,
+  // (pushed into the array by XPIProvider maybeInstallBuiltinAddon and startup
+  // methods).
   startupPromises: [],
+
+  // Array of the bootstrap startup promises for the enabled addons being
+  // initiated during the XPIProvider startup.
+  //
+  // NOTE: XPIProvider will wait for these promises (and the startupPromises one)
+  // to have settled before allowing the application to proceed with shutting down
+  // (see quitApplicationGranted blocker at the end of the XPIProvider.startup).
+  enabledAddonsStartupPromises: [],
 
   databaseReady: Promise.all([dbReadyPromise, providerReadyPromise]),
 
@@ -2561,7 +2597,9 @@ var XPIProvider = {
             ) {
               reason = BOOTSTRAP_REASONS.ADDON_ENABLE;
             }
-            BootstrapScope.get(addon).startup(reason);
+            this.enabledAddonsStartupPromises.push(
+              BootstrapScope.get(addon).startup(reason)
+            );
           } catch (e) {
             logger.error(
               "Failed to load bootstrap addon " +
@@ -2587,6 +2625,13 @@ var XPIProvider = {
       lazy.AsyncShutdown.quitApplicationGranted.addBlocker(
         "XPIProvider shutdown",
         async () => {
+          // Do not enter shutdown before we actually finished starting as this
+          // can lead to hangs as seen in bug 1814104.
+          await Promise.allSettled([
+            ...this.startupPromises,
+            ...this.enabledAddonsStartupPromises,
+          ]);
+
           XPIProvider._closing = true;
 
           await XPIProvider.cleanupTemporaryAddons();
@@ -3280,7 +3325,7 @@ for (let meth of [
   "updateSystemAddons",
   "stageLangpacksForAppUpdate",
 ]) {
-  XPIProvider[meth] = function() {
+  XPIProvider[meth] = function () {
     return lazy.XPIInstall[meth](...arguments);
   };
 }
@@ -3292,7 +3337,7 @@ for (let meth of [
   "updateAddonRepositoryData",
   "updateAddonAppDisabledStates",
 ]) {
-  XPIProvider[meth] = function() {
+  XPIProvider[meth] = function () {
     return lazy.XPIDatabase[meth](...arguments);
   };
 }

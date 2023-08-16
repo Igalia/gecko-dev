@@ -38,12 +38,15 @@ Review groups
    * - Name
      - Owns
      - Members
-   * - #anti-tracking or #anti-tracking-reviewers
-     - `Anti-Tracking <https://wiki.mozilla.org/Modules/All#Anti-Tracking>`__
+   * - #anti-tracking
+     - `Core: Anti-Tracking </mots/index.html#core-anti-tracking>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/157/>`__
    * - #build or #firefox-build-system-reviewers
      - The configure & build system
      - `Member list <https://phabricator.services.mozilla.com/project/members/20/>`__
+   * - #cookies
+     - `Core: Cookies </mots/index.html#core-cookies>`__
+     - `Member list <https://phabricator.services.mozilla.com/project/members/177/>`__
    * - #dom-workers-and-storage-reviewers
      - DOM Workers & Storage
      - `Member list <https://phabricator.services.mozilla.com/project/members/115/>`__
@@ -68,6 +71,9 @@ Review groups
    * - #gfx-reviewers
      - Changes to Graphics code
      - `Member list <https://phabricator.services.mozilla.com/project/members/122/>`__
+   * - #webgpu-reviewers
+     - Changes to WebGPU code
+     - `Member list <https://phabricator.services.mozilla.com/project/members/170/>`__
    * - #intermittent-reviewers
      - Test manifest changes
      - `Member list <https://phabricator.services.mozilla.com/project/members/110/>`__
@@ -86,6 +92,9 @@ Review groups
    * - #mozbase-rust
      - Changes to Mozbase in Rust
      - `Member list <https://phabricator.services.mozilla.com/project/members/114/>`__
+   * - #necko-reviewers
+     - Changes to network code (aka necko, aka netwerk)
+     - `Member list <https://phabricator.services.mozilla.com/project/members/127/>`__
    * - #nss-reviewers
      - Changes to Network Security Services (NSS)
      - `Member list <https://phabricator.services.mozilla.com/project/members/156/>`__
@@ -93,7 +102,7 @@ Review groups
      - Perf Tests
      - `Member list <https://phabricator.services.mozilla.com/project/members/102/>`__
    * - #permissions or #permissions-reviewers
-     - `Permissions <https://wiki.mozilla.org/Modules/All#Permissions>`__
+     - `Permissions </mots/index.html#core-permissions>`__
      - `Member list <https://phabricator.services.mozilla.com/project/members/158/>`__
    * - #platform-i18n-reviewers
      - Platform Internationalization
@@ -104,6 +113,12 @@ Review groups
    * - #remote-debugging-reviewers
      - Remote Debugging UI & tools
      - `Member list <https://phabricator.services.mozilla.com/project/members/108/>`__
+   * - #search-reviewers
+     - Search Reviewers (search parts of `Search and Address Bar </mots/index.html#search-and-address-bar>`__)
+     - `Member list <https://phabricator.services.mozilla.com/project/members/169/>`__
+   * - #spidermonkey-reviewers
+     - SpiderMonkey JS/Wasm Engine
+     - `Member list <https://phabricator.services.mozilla.com/project/members/173/>`__
    * - #static-analysis-reviewers
      - Changes related to Static Analysis
      - `Member list <https://phabricator.services.mozilla.com/project/members/120/>`__
@@ -125,6 +140,9 @@ Review groups
    * - #media-playback-reviewers
      - `Media playback <https://wiki.mozilla.org/Modules/All#Media_Playback>`__
      - `Member list <https://phabricator.services.mozilla.com/project/profile/159/>`__
+   * - #cubeb-reviewers
+     - Changes related to cubeb, Gecko's audio input/output library and associated projects (audioipc, cubeb-rs, rust cubeb backends)
+     - `Member list <https://phabricator.services.mozilla.com/project/profile/129/>`__
 
 To create a new group, fill a `new bug in Conduit::Administration <https://bugzilla.mozilla.org/enter_bug.cgi?product=Conduit&component=Administration>`__.
 See `bug 1613306 <https://bugzilla.mozilla.org/show_bug.cgi?id=1613306>`__ as example.

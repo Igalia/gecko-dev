@@ -61,32 +61,20 @@ struct ParamTraits<mozilla::ipc::ActorHandle> {
     }
     return false;
   }
+};
 
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"(%d)", aParam.mId));
-  }
+template <>
+struct ParamTraits<mozilla::ipc::UntypedEndpoint> {
+  using paramType = mozilla::ipc::UntypedEndpoint;
+
+  static void Write(MessageWriter* aWriter, paramType&& aParam);
+
+  static bool Read(MessageReader* aReader, paramType* aResult);
 };
 
 template <class PFooSide>
-struct ParamTraits<mozilla::ipc::Endpoint<PFooSide>> {
-  typedef mozilla::ipc::Endpoint<PFooSide> paramType;
-
-  static void Write(MessageWriter* aWriter, paramType&& aParam) {
-    IPC::WriteParam(aWriter, std::move(aParam.mPort));
-    IPC::WriteParam(aWriter, aParam.mMyPid);
-    IPC::WriteParam(aWriter, aParam.mOtherPid);
-  }
-
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    return IPC::ReadParam(aReader, &aResult->mPort) &&
-           IPC::ReadParam(aReader, &aResult->mMyPid) &&
-           IPC::ReadParam(aReader, &aResult->mOtherPid);
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"Endpoint"));
-  }
-};
+struct ParamTraits<mozilla::ipc::Endpoint<PFooSide>>
+    : ParamTraits<mozilla::ipc::UntypedEndpoint> {};
 
 }  // namespace IPC
 

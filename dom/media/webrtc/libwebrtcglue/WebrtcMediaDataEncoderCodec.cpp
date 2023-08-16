@@ -5,19 +5,20 @@
 #include "WebrtcMediaDataEncoderCodec.h"
 
 #include "AnnexB.h"
+#include "api/video_codecs/h264_profile_level_id.h"
 #include "ImageContainer.h"
+#include "media/base/media_constants.h"
 #include "MediaData.h"
-#include "PEMFactory.h"
-#include "VideoUtils.h"
+#include "modules/video_coding/utility/vp8_header_parser.h"
+#include "modules/video_coding/utility/vp9_uncompressed_header_parser.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Span.h"
 #include "mozilla/gfx/Point.h"
 #include "mozilla/media/MediaUtils.h"
-#include "media/base/media_constants.h"
-#include "media/base/h264_profile_level_id.h"
+#include "mozilla/StaticPrefs_media.h"
+#include "PEMFactory.h"
 #include "system_wrappers/include/clock.h"
-#include "modules/video_coding/utility/vp8_header_parser.h"
-#include "modules/video_coding/utility/vp9_uncompressed_header_parser.h"
+#include "VideoUtils.h"
 
 namespace mozilla {
 
@@ -77,12 +78,12 @@ static const char* PacketModeStr(const webrtc::CodecSpecificInfo& aInfo) {
 
 static MediaDataEncoder::H264Specific::ProfileLevel ConvertProfileLevel(
     const webrtc::SdpVideoFormat::Parameters& aParameters) {
-  const absl::optional<webrtc::H264::ProfileLevelId> profileLevel =
-      webrtc::H264::ParseSdpProfileLevelId(aParameters);
+  const absl::optional<webrtc::H264ProfileLevelId> profileLevel =
+      webrtc::ParseSdpForH264ProfileLevelId(aParameters);
   if (profileLevel &&
-      (profileLevel->profile == webrtc::H264::Profile::kProfileBaseline ||
+      (profileLevel->profile == webrtc::H264Profile::kProfileBaseline ||
        profileLevel->profile ==
-           webrtc::H264::Profile::kProfileConstrainedBaseline)) {
+           webrtc::H264Profile::kProfileConstrainedBaseline)) {
     return MediaDataEncoder::H264Specific::ProfileLevel::BaselineAutoLevel;
   }
   return MediaDataEncoder::H264Specific::ProfileLevel::MainAutoLevel;
@@ -125,15 +126,19 @@ WebrtcMediaDataEncoder::WebrtcMediaDataEncoder(
   PodZero(&mCodecSpecific.codecSpecific);
 }
 
-static void InitCodecSpecficInfo(webrtc::CodecSpecificInfo& aInfo,
-                                 const webrtc::VideoCodec* aCodecSettings) {
+WebrtcMediaDataEncoder::~WebrtcMediaDataEncoder() = default;
+
+static void InitCodecSpecficInfo(
+    webrtc::CodecSpecificInfo& aInfo, const webrtc::VideoCodec* aCodecSettings,
+    const webrtc::SdpVideoFormat::Parameters& aParameters) {
   MOZ_ASSERT(aCodecSettings);
 
   aInfo.codecType = aCodecSettings->codecType;
   switch (aCodecSettings->codecType) {
     case webrtc::VideoCodecType::kVideoCodecH264: {
       aInfo.codecSpecific.H264.packetization_mode =
-          aCodecSettings->H264().packetizationMode == 1
+          aParameters.count(cricket::kH264FmtpPacketizationMode) == 1 &&
+                  aParameters.at(cricket::kH264FmtpPacketizationMode) == "1"
               ? webrtc::H264PacketizationMode::NonInterleaved
               : webrtc::H264PacketizationMode::SingleNalUnit;
       break;
@@ -160,6 +165,15 @@ int32_t WebrtcMediaDataEncoder::InitEncode(
     return WEBRTC_VIDEO_CODEC_ERR_SIMULCAST_PARAMETERS_NOT_SUPPORTED;
   }
 
+  // TODO: enable max output size setting when supported.
+  if (aCodecSettings->codecType == webrtc::VideoCodecType::kVideoCodecH264 &&
+      !(mFormatParams.count(cricket::kH264FmtpPacketizationMode) == 1 &&
+        mFormatParams.at(cricket::kH264FmtpPacketizationMode) == "1")) {
+    LOG("Some platform encoders don't support setting max output size."
+        " Falling back to SW");
+    return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
+  }
+
   if (mEncoder) {
     // Clean existing encoder.
     Shutdown();
@@ -171,7 +185,7 @@ int32_t WebrtcMediaDataEncoder::InitEncode(
     return WEBRTC_VIDEO_CODEC_FALLBACK_SOFTWARE;
   }
 
-  InitCodecSpecficInfo(mCodecSpecific, aCodecSettings);
+  InitCodecSpecficInfo(mCodecSpecific, aCodecSettings, mFormatParams);
   LOG("Init encode, mimeType %s, mode %s", mInfo.mMimeType.get(),
       PacketModeStr(mCodecSpecific));
   if (!media::Await(do_AddRef(mTaskQueue), encoder->Init()).IsResolve()) {
@@ -206,9 +220,11 @@ already_AddRefed<MediaDataEncoder> WebrtcMediaDataEncoder::CreateEncoder(
   if (!SetupConfig(aCodecSettings)) {
     return nullptr;
   }
-  LOG("Request platform encoder for %s, bitRate=%u bps, frameRate=%u",
+  const bool swOnly = StaticPrefs::media_webrtc_platformencoder_sw_only();
+  LOG("Request platform encoder for %s, bitRate=%u bps, frameRate=%u"
+      ", sw-only=%d",
       mInfo.mMimeType.get(), mBitrateAdjuster.GetTargetBitrateBps(),
-      aCodecSettings->maxFramerate);
+      aCodecSettings->maxFramerate, swOnly);
 
   size_t keyframeInterval = 1;
   switch (aCodecSettings->codecType) {
@@ -242,23 +258,29 @@ already_AddRefed<MediaDataEncoder> WebrtcMediaDataEncoder::CreateEncoder(
     }
     case webrtc::VideoCodecType::kVideoCodecVP8: {
       const webrtc::VideoCodecVP8& vp8 = aCodecSettings->VP8();
+      const webrtc::VideoCodecComplexity complexity =
+          aCodecSettings->GetVideoEncoderComplexity();
+      const bool frameDropEnabled = aCodecSettings->GetFrameDropEnabled();
       params.SetCodecSpecific(MediaDataEncoder::VPXSpecific::VP8(
-          MapComplexity(vp8.complexity), false, vp8.numberOfTemporalLayers,
-          vp8.denoisingOn, vp8.automaticResizeOn, vp8.frameDroppingOn));
+          MapComplexity(complexity), false, vp8.numberOfTemporalLayers,
+          vp8.denoisingOn, vp8.automaticResizeOn, frameDropEnabled));
       break;
     }
     case webrtc::VideoCodecType::kVideoCodecVP9: {
       const webrtc::VideoCodecVP9& vp9 = aCodecSettings->VP9();
+      const webrtc::VideoCodecComplexity complexity =
+          aCodecSettings->GetVideoEncoderComplexity();
+      const bool frameDropEnabled = aCodecSettings->GetFrameDropEnabled();
       params.SetCodecSpecific(MediaDataEncoder::VPXSpecific::VP9(
-          MapComplexity(vp9.complexity), false, vp9.numberOfTemporalLayers,
-          vp9.denoisingOn, vp9.automaticResizeOn, vp9.frameDroppingOn,
+          MapComplexity(complexity), false, vp9.numberOfTemporalLayers,
+          vp9.denoisingOn, vp9.automaticResizeOn, frameDropEnabled,
           vp9.adaptiveQpMode, vp9.numberOfSpatialLayers, vp9.flexibleMode));
       break;
     }
     default:
       MOZ_MAKE_COMPILER_ASSUME_IS_UNREACHABLE("Unsupported codec type");
   }
-  return mFactory->CreateEncoder(params);
+  return mFactory->CreateEncoder(params, swOnly);
 }
 
 WebrtcVideoEncoder::EncoderInfo WebrtcMediaDataEncoder::GetEncoderInfo() const {
@@ -267,6 +289,14 @@ WebrtcVideoEncoder::EncoderInfo WebrtcMediaDataEncoder::GetEncoderInfo() const {
   info.implementation_name = "MediaDataEncoder";
   info.is_hardware_accelerated = false;
   info.supports_simulcast = false;
+
+#ifdef MOZ_WIDGET_ANDROID
+  // Assume MediaDataEncoder is used mainly for hardware encoding. 16-alignment
+  // seems required on Android. This could be improved by querying the
+  // underlying encoder.
+  info.requested_resolution_alignment = 16;
+  info.apply_alignment_to_all_simulcast_layers = true;
+#endif
   return info;
 }
 
@@ -320,7 +350,7 @@ static already_AddRefed<VideoData> CreateVideoDataFromWebrtcVideoFrame(
   // discontinuous time and confuses the video receiver when switching from
   // platform to libwebrtc encoder.
   TimeUnit timestamp =
-      FramesToTimeUnit(aFrame.timestamp(), cricket::kVideoCodecClockrate);
+      media::TimeUnit(aFrame.timestamp(), cricket::kVideoCodecClockrate);
   return VideoData::CreateFromImage(image->GetSize(), 0, timestamp, aDuration,
                                     image, aIsKeyFrame, timestamp);
 }
@@ -416,8 +446,9 @@ int32_t WebrtcMediaDataEncoder::Encode(
           if (!mCallback) {
             break;
           }
-          webrtc::EncodedImage image(const_cast<uint8_t*>(frame->Data()),
-                                     frame->Size(), frame->Size());
+          webrtc::EncodedImage image;
+          image.SetEncodedData(
+              webrtc::EncodedImageBuffer::Create(frame->Data(), frame->Size()));
           image._encodedWidth = displaySize.width;
           image._encodedHeight = displaySize.height;
           CheckedInt64 time =
@@ -431,7 +462,6 @@ int32_t WebrtcMediaDataEncoder::Encode(
           image._frameType = frame->mKeyframe
                                  ? webrtc::VideoFrameType::kVideoFrameKey
                                  : webrtc::VideoFrameType::kVideoFrameDelta;
-          image._completeFrame = true;
           GetVPXQp(mCodecSpecific.codecType, image);
           UpdateCodecSpecificInfo(mCodecSpecific, displaySize,
                                   frame->mKeyframe);
@@ -449,12 +479,17 @@ int32_t WebrtcMediaDataEncoder::Encode(
 
 int32_t WebrtcMediaDataEncoder::SetRates(
     const webrtc::VideoEncoder::RateControlParameters& aParameters) {
+  if (!aParameters.bitrate.HasBitrate(0, 0)) {
+    LOG("%s: no bitrate value to set.", __func__);
+    return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
+  }
   MOZ_ASSERT(aParameters.bitrate.IsSpatialLayerUsed(0));
   MOZ_ASSERT(!aParameters.bitrate.IsSpatialLayerUsed(1),
              "No simulcast support for platform encoder");
 
   const uint32_t newBitrateBps = aParameters.bitrate.GetBitrate(0, 0);
   if (newBitrateBps < mMinBitrateBps || newBitrateBps > mMaxBitrateBps) {
+    LOG("%s: bitrate value out of range.", __func__);
     return WEBRTC_VIDEO_CODEC_ERR_PARAMETER;
   }
 

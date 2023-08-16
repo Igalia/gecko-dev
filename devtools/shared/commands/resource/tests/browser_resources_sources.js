@@ -11,7 +11,7 @@
 // And especially cover sources being GC-ed before DevTools are opened
 // which are later recreated by `ThreadActor.resurrectSource`.
 
-const ResourceCommand = require("devtools/shared/commands/resource/resource-command");
+const ResourceCommand = require("resource://devtools/shared/commands/resource/resource-command.js");
 
 const TEST_URL = URL_ROOT_SSL + "sources.html";
 
@@ -54,7 +54,7 @@ async function getExpectedResources(ignoreUnresurrectedSources = false) {
       },
       sourceContent: {
         contentType: "text/javascript",
-        source: "return 42;",
+        source: "function anonymous(\n) {\nreturn 42;\n}",
       },
     },
     {
@@ -255,7 +255,7 @@ add_task(async function testSourcesOnload() {
     onAvailable: resources => availableResources.push(...resources),
   });
 
-  await BrowserTestUtils.loadURI(tab.linkedBrowser, TEST_URL);
+  await BrowserTestUtils.loadURIString(tab.linkedBrowser, TEST_URL);
 
   // Some sources may be created after the document is done loading (like eventHandler usecase)
   // so we may be received *after* watchResource resolved
@@ -344,7 +344,7 @@ add_task(async function testParentProcessPrivilegedSources() {
     onAvailable: resources => availableResources.push(...resources),
   });
   ok(
-    availableResources.length > 0,
+    !!availableResources.length,
     "We get many sources reported from a multiprocess command"
   );
 

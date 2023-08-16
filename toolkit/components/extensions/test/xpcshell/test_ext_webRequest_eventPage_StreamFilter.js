@@ -49,7 +49,7 @@ async function test_idletimeout_on_streamfilter({
   requestUrlPath,
 }) {
   const extension = ExtensionTestUtils.loadExtension({
-    background: `(${async function(urlPath) {
+    background: `(${async function (urlPath) {
       browser.webRequest.onBeforeRequest.addListener(
         request => {
           browser.test.log(`webRequest request intercepted: ${request.url}`);
@@ -83,7 +83,10 @@ async function test_idletimeout_on_streamfilter({
       manifest_version,
       background: manifest_version >= 3 ? {} : { persistent: false },
       granted_host_permissions: manifest_version >= 3,
-      permissions: ["webRequest", "webRequestBlocking"],
+      permissions:
+        manifest_version >= 3
+          ? ["webRequest", "webRequestBlocking", "webRequestFilterResponse"]
+          : ["webRequest", "webRequestBlocking"],
       // host_permissions are merged with permissions on a MV2 test extension.
       host_permissions: ["http://example.com/*"],
     },
@@ -127,6 +130,11 @@ async function test_idletimeout_on_streamfilter({
       extension,
       "background-script-reset-idle"
     );
+
+    clearHistograms();
+    assertHistogramEmpty(WEBEXT_EVENTPAGE_IDLE_RESULT_COUNT);
+    assertKeyedHistogramEmpty(WEBEXT_EVENTPAGE_IDLE_RESULT_COUNT_BY_ADDONID);
+
     await extension.terminateBackground();
     info("Wait for 'background-script-reset-idle' event to be emitted");
     await promiseResetIdle;
@@ -135,9 +143,24 @@ async function test_idletimeout_on_streamfilter({
       contextId,
       "Initial background context is still available as expected"
     );
+
+    assertHistogramCategoryNotEmpty(WEBEXT_EVENTPAGE_IDLE_RESULT_COUNT, {
+      category: "reset_streamfilter",
+      categories: HISTOGRAM_EVENTPAGE_IDLE_RESULT_CATEGORIES,
+    });
+
+    assertHistogramCategoryNotEmpty(
+      WEBEXT_EVENTPAGE_IDLE_RESULT_COUNT_BY_ADDONID,
+      {
+        keyed: true,
+        key: extension.id,
+        category: "reset_streamfilter",
+        categories: HISTOGRAM_EVENTPAGE_IDLE_RESULT_CATEGORIES,
+      }
+    );
   } else {
-    const { Management } = ChromeUtils.import(
-      "resource://gre/modules/Extension.jsm"
+    const { Management } = ChromeUtils.importESModule(
+      "resource://gre/modules/Extension.sys.mjs"
     );
     const promiseProxyContextUnloaded = new Promise(resolve => {
       function listener(evt, context) {
@@ -238,9 +261,8 @@ async function test_create_new_streamfilter_while_suspending({
       browser.runtime.onSuspendCanceled.addListener(async () => {
         // Once onSuspendCanceled is emitted, filterResponseData
         // is expected to don't throw.
-        const filter = browser.webRequest.filterResponseData(
-          interceptedRequestId
-        );
+        const filter =
+          browser.webRequest.filterResponseData(interceptedRequestId);
         resolvePendingWebRequest();
         filter.onstop = () => {
           filter.disconnect();
@@ -270,7 +292,10 @@ async function test_create_new_streamfilter_while_suspending({
       manifest_version,
       background: manifest_version >= 3 ? {} : { persistent: false },
       granted_host_permissions: manifest_version >= 3,
-      permissions: ["webRequest", "webRequestBlocking"],
+      permissions:
+        manifest_version >= 3
+          ? ["webRequest", "webRequestBlocking", "webRequestFilterResponse"]
+          : ["webRequest", "webRequestBlocking"],
       // host_permissions are merged with permissions on a MV2 test extension.
       host_permissions: ["http://example.com/*"],
     },
@@ -292,7 +317,7 @@ async function test_create_new_streamfilter_while_suspending({
 
   info("Terminate the background script (simulated idle timeout)");
 
-  extension.terminateBackground();
+  extension.terminateBackground({ disableResetIdleForTest: true });
   await extension.awaitMessage("suspend-listener");
 
   info("Simulated idle timeout canceled");

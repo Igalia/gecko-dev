@@ -3,7 +3,9 @@
 
 "use strict";
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
 // Turn off the authentication dialog blocking for this test.
 var prefs = Services.prefs;
@@ -16,7 +18,7 @@ function URL(domain, path = "") {
   return `http://${domain}:${httpserv.identity.primaryPort}/${path}`;
 }
 
-XPCOMUtils.defineLazyGetter(this, "PORT", function() {
+XPCOMUtils.defineLazyGetter(this, "PORT", function () {
   return httpserv.identity.primaryPort;
 });
 
@@ -258,7 +260,7 @@ function basic_auth(metadata, response) {
 // Digest functions
 //
 function bytesFromString(str) {
-  const encoder = new TextEncoder("utf-8");
+  const encoder = new TextEncoder();
   return encoder.encode(str);
 }
 

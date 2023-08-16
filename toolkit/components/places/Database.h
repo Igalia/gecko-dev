@@ -18,7 +18,7 @@
 
 // This is the schema version. Update it at any schema change and add a
 // corresponding migrateVxx method below.
-#define DATABASE_SCHEMA_VERSION 69
+#define DATABASE_SCHEMA_VERSION 74
 
 // Fired after Places inited.
 #define TOPIC_PLACES_INIT_COMPLETE "places-init-complete"
@@ -42,8 +42,7 @@ class mozIStorageService;
 class nsIAsyncShutdownClient;
 class nsIRunnable;
 
-namespace mozilla {
-namespace places {
+namespace mozilla::places {
 
 enum JournalMode {
   // Default SQLite journal mode.
@@ -64,9 +63,9 @@ class ClientsShutdownBlocker;
 class ConnectionShutdownBlocker;
 
 class Database final : public nsIObserver, public nsSupportsWeakReference {
-  typedef mozilla::storage::StatementCache<mozIStorageStatement> StatementCache;
-  typedef mozilla::storage::StatementCache<mozIStorageAsyncStatement>
-      AsyncStatementCache;
+  using StatementCache = mozilla::storage::StatementCache<mozIStorageStatement>;
+  using AsyncStatementCache =
+      mozilla::storage::StatementCache<mozIStorageAsyncStatement>;
 
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
@@ -203,30 +202,11 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
   already_AddRefed<mozIStorageAsyncStatement> GetAsyncStatement(
       const nsACString& aQuery);
 
-  int64_t GetRootFolderId() {
-    mozilla::Unused << EnsureConnection();
-    return mRootId;
-  }
-  int64_t GetMenuFolderId() {
-    mozilla::Unused << EnsureConnection();
-    return mMenuRootId;
-  }
   int64_t GetTagsFolderId() {
     mozilla::Unused << EnsureConnection();
     return mTagsRootId;
   }
-  int64_t GetUnfiledFolderId() {
-    mozilla::Unused << EnsureConnection();
-    return mUnfiledRootId;
-  }
-  int64_t GetToolbarFolderId() {
-    mozilla::Unused << EnsureConnection();
-    return mToolbarRootId;
-  }
-  int64_t GetMobileFolderId() {
-    mozilla::Unused << EnsureConnection();
-    return mMobileRootId;
-  }
+  nsresult RecalculateOriginFrecencyStatsInternal();
 
  protected:
   /**
@@ -330,18 +310,15 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
   nsresult MigrateV55Up();
   nsresult MigrateV56Up();
   nsresult MigrateV57Up();
-  nsresult MigrateV58Up();
-  nsresult MigrateV59Up();
   nsresult MigrateV60Up();
   nsresult MigrateV61Up();
-  nsresult MigrateV62Up();
-  nsresult MigrateV63Up();
-  nsresult MigrateV64Up();
-  nsresult MigrateV65Up();
-  nsresult MigrateV66Up();
   nsresult MigrateV67Up();
-  nsresult MigrateV68Up();
   nsresult MigrateV69Up();
+  nsresult MigrateV70Up();
+  nsresult MigrateV71Up();
+  nsresult MigrateV72Up();
+  nsresult MigrateV73Up();
+  nsresult MigrateV74Up();
 
   void MigrateV52OriginFrecencies();
 
@@ -407,7 +384,6 @@ class Database final : public nsIObserver, public nsSupportsWeakReference {
   int64_t mMobileRootId;
 };
 
-}  // namespace places
-}  // namespace mozilla
+}  // namespace mozilla::places
 
 #endif  // mozilla_places_Database_h_

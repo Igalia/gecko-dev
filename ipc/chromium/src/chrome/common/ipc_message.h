@@ -19,10 +19,6 @@
 #include "mozilla/ipc/ScopedPort.h"
 #include "nsTArray.h"
 
-#ifdef FUZZING
-#  include "mozilla/ipc/Faulty.h"
-#endif
-
 namespace mozilla {
 
 #ifdef FUZZING_SNAPSHOT
@@ -47,9 +43,6 @@ class Channel;
 class Message;
 class MessageReader;
 class MessageWriter;
-#ifdef FUZZING
-class Faulty;
-#endif
 struct LogData;
 
 class Message : public mojo::core::ports::UserMessage, public Pickle {
@@ -93,6 +86,11 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
     REPLY = 1,
   };
 
+  enum LazySend {
+    EAGER_SEND = 0,
+    LAZY_SEND = 1,
+  };
+
   // The hard limit of handles or file descriptors allowed in a single message.
   static constexpr size_t MAX_DESCRIPTORS_PER_MESSAGE = 32767;
 
@@ -109,7 +107,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
       SYNC_BIT = 0x0020,
       REPLY_BIT = 0x0040,
       REPLY_ERROR_BIT = 0x0080,
-      /* UNUSED = 0x0100, */
+      LAZY_SEND_BIT = 0x0100,
       COMPRESS_BIT = 0x0200,
       COMPRESSALL_BIT = 0x0400,
       CONSTRUCTOR_BIT = 0x0800,
@@ -122,12 +120,13 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
     explicit constexpr HeaderFlags(NestedLevel level) : mFlags(level) {}
 
     constexpr HeaderFlags(NestedLevel level, PriorityValue priority,
-                          MessageCompression compression,
+                          MessageCompression compression, LazySend lazy_send,
                           Constructor constructor, Sync sync, Reply reply)
         : mFlags(level | (priority << 2) |
                  (compression == COMPRESSION_ENABLED ? COMPRESS_BIT
                   : compression == COMPRESSION_ALL   ? COMPRESSALL_BIT
                                                      : 0) |
+                 (lazy_send == LAZY_SEND ? LAZY_SEND_BIT : 0) |
                  (constructor == CONSTRUCTOR ? CONSTRUCTOR_BIT : 0) |
                  (sync == SYNC ? SYNC_BIT : 0) |
                  (reply == REPLY ? REPLY_BIT : 0)) {}
@@ -145,6 +144,8 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
               : (mFlags & COMPRESSALL_BIT) ? COMPRESSION_ALL
                                            : COMPRESSION_NONE);
     }
+
+    bool IsLazySend() const { return (mFlags & LAZY_SEND_BIT) != 0; }
 
     bool IsConstructor() const { return (mFlags & CONSTRUCTOR_BIT) != 0; }
     bool IsSync() const { return (mFlags & SYNC_BIT) != 0; }
@@ -208,6 +209,8 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   MessageCompression compress_type() const {
     return header()->flags.Compression();
   }
+
+  bool is_lazy_send() const { return header()->flags.IsLazySend(); }
 
   bool is_reply() const { return header()->flags.IsReply(); }
 
@@ -282,9 +285,6 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
     header()->event_footer_size = size;
   }
 
-  // Used for async messages with no parameters.
-  static void Log(const Message* msg, std::wstring* l) {}
-
   static int HeaderSize() { return sizeof(Header); }
 
   // Figure out how big the message starting at range_start is. Returns 0 if
@@ -306,7 +306,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   // IPC::Message.
   void SetAttachedFileHandles(nsTArray<mozilla::UniqueFileHandle> handles);
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   void set_fd_cookie(uint32_t cookie) { header()->cookie = cookie; }
   uint32_t fd_cookie() const { return header()->cookie; }
 #endif
@@ -325,7 +325,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   // IPC. Must only be called when there are no ports on this IPC::Message.
   void SetAttachedPorts(nsTArray<mozilla::ipc::ScopedPort> ports);
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   bool WriteMachSendRight(mozilla::UniqueMachSendRight port);
 
   // WARNING: This method is marked as `const` so it can be called when
@@ -337,9 +337,9 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
 #endif
 
   uint32_t num_relayed_attachments() const {
-#if defined(OS_WIN)
+#if defined(XP_WIN)
     return num_handles();
-#elif defined(OS_MACOSX)
+#elif defined(XP_DARWIN)
     return num_send_rights();
 #else
     return 0;
@@ -354,12 +354,9 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   friend class Channel;
   friend class MessageReplyDeserializer;
   friend class SyncMessage;
-#ifdef FUZZING
-  friend class mozilla::ipc::Faulty;
-#endif
   friend class mozilla::ipc::MiniTransceiver;
 
-#if !defined(OS_MACOSX) && !defined(FUZZING_SNAPSHOT)
+#if !defined(XP_DARWIN) && !defined(FUZZING_SNAPSHOT)
  protected:
 #endif
 
@@ -368,7 +365,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
     msgid_t type;          // specifies the user-defined message type
     HeaderFlags flags;     // specifies control flags for the message
     uint32_t num_handles;  // the number of handles included with this message
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
     uint32_t cookie;  // cookie to ACK that the descriptors have been read.
     uint32_t num_send_rights;  // the number of mach send rights included with
                                // this message
@@ -396,7 +393,7 @@ class Message : public mojo::core::ports::UserMessage, public Pickle {
   // deserializing a message.
   mutable nsTArray<mozilla::ipc::ScopedPort> attached_ports_;
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   // The set of mach send rights which are attached to this message.
   //
   // Mutable, as this array can be mutated during `ConsumeMachSendRight` when

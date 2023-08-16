@@ -20,8 +20,6 @@
 #include "nsGenericHTMLElement.h"
 #include "nsPresContext.h"
 #include "nsContentCreatorFunctions.h"
-#include "nsBoxLayoutState.h"
-#include "nsBoxFrame.h"
 #include "nsIContentInlines.h"
 #include "nsImageFrame.h"
 #include "nsIImageLoadingContent.h"
@@ -56,7 +54,8 @@ static Matrix ComputeRotationMatrix(gfxFloat aRotatedWidth,
         Matrix::Translation(-aRotatedWidth / 2.0, -aRotatedHeight / 2.0);
   }
 
-  Matrix rotation = Matrix::Rotation(gfx::Float(aDegrees / 180.0 * M_PI));
+  auto angle = static_cast<double>(aDegrees) / 180.0 * M_PI;
+  Matrix rotation = Matrix::Rotation(static_cast<gfx::Float>(angle));
   Matrix shiftLeftTopToOrigin =
       Matrix::Translation(aRotatedWidth / 2.0, aRotatedHeight / 2.0);
   return shiftVideoCenterToOrigin * rotation * shiftLeftTopToOrigin;
@@ -99,18 +98,6 @@ nsresult nsVideoFrame::CreateAnonymousContent(
     NS_ENSURE_TRUE(nodeInfo, NS_ERROR_OUT_OF_MEMORY);
     mPosterImage = NS_NewHTMLImageElement(nodeInfo.forget());
     NS_ENSURE_TRUE(mPosterImage, NS_ERROR_OUT_OF_MEMORY);
-
-    // Set the nsImageLoadingContent::ImageState() to 0. This means that the
-    // image will always report its state as 0, so it will never be reframed
-    // to show frames for loading or the broken image icon. This is important,
-    // as the image is native anonymous, and so can't be reframed (currently).
-    HTMLImageElement* imgContent = HTMLImageElement::FromNode(mPosterImage);
-    NS_ENSURE_TRUE(imgContent, NS_ERROR_FAILURE);
-
-    imgContent->ForceImageState(true, 0);
-    // And now have it update its internal state
-    mPosterImage->UpdateState(false);
-
     UpdatePosterSource(false);
 
     // XXX(Bug 1631371) Check if this should use a fallible operation as it
@@ -232,7 +219,7 @@ void nsVideoFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
       ("enter nsVideoFrame::Reflow: availSize=%d,%d",
        aReflowInput.AvailableWidth(), aReflowInput.AvailableHeight()));
 
-  MOZ_ASSERT(mState & NS_FRAME_IN_REFLOW, "frame is not in reflow");
+  MOZ_ASSERT(HasAnyStateBits(NS_FRAME_IN_REFLOW), "frame is not in reflow");
 
   const WritingMode myWM = aReflowInput.GetWritingMode();
   nscoord contentBoxBSize = aReflowInput.ComputedBSize();
@@ -311,7 +298,7 @@ void nsVideoFrame::Reflow(nsPresContext* aPresContext, ReflowOutput& aMetrics,
         // Resolve our own BSize based on the controls' size in the
         // same axis. Unless we're size-contained, in which case we
         // have to behave as if we have an intrinsic size of 0.
-        if (aReflowInput.mStyleDisplay->GetContainSizeAxes().mBContained) {
+        if (GetContainSizeAxes().mBContained) {
           contentBoxBSize = 0;
         } else {
           contentBoxBSize = myWM.IsOrthogonalTo(wm) ? kidDesiredSize.ISize(wm)
@@ -397,7 +384,7 @@ nscoord nsVideoFrame::GetMinISize(gfxContext* aRenderingContext) {
   // therefore must match the function's return value.
   DISPLAY_MIN_INLINE_SIZE(this, result);
   // This call handles size-containment
-  nsSize size = GetVideoIntrinsicSize();
+  nsSize size = GetIntrinsicSize().ToSize().valueOr(nsSize());
   result = GetWritingMode().IsVertical() ? size.height : size.width;
   return result;
 }
@@ -420,11 +407,11 @@ AspectRatio nsVideoFrame::GetIntrinsicRatio() const {
   }
 
   // 'contain:[inline-]size' replaced elements have no intrinsic ratio.
-  if (StyleDisplay()->GetContainSizeAxes().IsAny()) {
+  if (GetContainSizeAxes().IsAny()) {
     return AspectRatio();
   }
 
-  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
+  auto* element = static_cast<HTMLVideoElement*>(GetContent());
   if (Maybe<CSSIntSize> size = element->GetVideoSize()) {
     return AspectRatio::FromSize(*size);
   }
@@ -435,14 +422,22 @@ AspectRatio nsVideoFrame::GetIntrinsicRatio() const {
     }
   }
 
+  if (StylePosition()->mAspectRatio.HasRatio()) {
+    return AspectRatio();
+  }
+
   return AspectRatio::FromSize(kFallbackIntrinsicSizeInPixels);
 }
 
 bool nsVideoFrame::ShouldDisplayPoster() const {
-  if (!HasVideoElement()) return false;
+  if (!HasVideoElement()) {
+    return false;
+  }
 
-  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
-  if (element->GetPlayedOrSeeked() && HasVideoData()) return false;
+  auto* element = static_cast<HTMLVideoElement*>(GetContent());
+  if (element->GetPlayedOrSeeked() && HasVideoData()) {
+    return false;
+  }
 
   nsCOMPtr<nsIImageLoadingContent> imgContent = do_QueryInterface(mPosterImage);
   NS_ENSURE_TRUE(imgContent, false);
@@ -461,43 +456,53 @@ bool nsVideoFrame::ShouldDisplayPoster() const {
   return true;
 }
 
-nsSize nsVideoFrame::GetVideoIntrinsicSize() const {
-  const auto containAxes = StyleDisplay()->GetContainSizeAxes();
+IntrinsicSize nsVideoFrame::GetIntrinsicSize() {
+  const auto containAxes = GetContainSizeAxes();
   const auto isVideo = HasVideoElement();
-  // Intrinsic size will be 0,0 if the element is:
-  // - Size-contained, or
-  // - An audio element with no "controls" attribute, distinguished by the last
-  // and only child being the control.
-  if (containAxes.IsBoth() || (!isVideo && !mFrames.LastChild())) {
-    return {};
+  // Intrinsic size will be given by contain-intrinsic-size if the element is
+  // size-contained. If both axes have containment, ContainIntrinsicSize() will
+  // ignore the fallback size argument, so we can just pass no intrinsic size,
+  // or whatever.
+  if (containAxes.IsBoth()) {
+    return containAxes.ContainIntrinsicSize({}, *this);
   }
 
   if (!isVideo) {
-    return containAxes.ContainSize(kFallbackIntrinsicSize, *this);
+    // An audio element with no "controls" attribute, distinguished by the last
+    // and only child being the control, falls back to no intrinsic size.
+    if (!mFrames.LastChild()) {
+      return containAxes.ContainIntrinsicSize({}, *this);
+    }
+
+    return containAxes.ContainIntrinsicSize(
+        IntrinsicSize(kFallbackIntrinsicSize), *this);
   }
 
-  HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
+  auto* element = static_cast<HTMLVideoElement*>(GetContent());
   if (Maybe<CSSIntSize> size = element->GetVideoSize()) {
-    return containAxes.ContainSize(CSSPixel::ToAppUnits(*size), *this);
+    return containAxes.ContainIntrinsicSize(
+        IntrinsicSize(CSSPixel::ToAppUnits(*size)), *this);
   }
 
   if (ShouldDisplayPoster()) {
     if (Maybe<nsSize> imgSize = PosterImageSize()) {
-      return containAxes.ContainSize(*imgSize, *this);
+      return containAxes.ContainIntrinsicSize(IntrinsicSize(*imgSize), *this);
     }
   }
-  return containAxes.ContainSize(kFallbackIntrinsicSize, *this);
-}
 
-IntrinsicSize nsVideoFrame::GetIntrinsicSize() {
-  return IntrinsicSize(GetVideoIntrinsicSize());
+  if (StylePosition()->mAspectRatio.HasRatio()) {
+    return {};
+  }
+
+  return containAxes.ContainIntrinsicSize(IntrinsicSize(kFallbackIntrinsicSize),
+                                          *this);
 }
 
 void nsVideoFrame::UpdatePosterSource(bool aNotify) {
   NS_ASSERTION(HasVideoElement(), "Only call this on <video> elements.");
   HTMLVideoElement* element = static_cast<HTMLVideoElement*>(GetContent());
 
-  if (element->HasAttr(kNameSpaceID_None, nsGkAtoms::poster) &&
+  if (element->HasAttr(nsGkAtoms::poster) &&
       !element->AttrValueIs(kNameSpaceID_None, nsGkAtoms::poster,
                             nsGkAtoms::_empty, eIgnoreCase)) {
     nsAutoString posterStr;
@@ -702,7 +707,7 @@ void nsVideoFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   DisplayBorderBackgroundOutline(aBuilder, aLists);
 
-  if (IsContentHidden()) {
+  if (HidesContent()) {
     return;
   }
 
@@ -730,8 +735,7 @@ void nsVideoFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
   // but only want to draw mPosterImage conditionally. Others we
   // always add to the display list.
   for (nsIFrame* child : mFrames) {
-    if (child->GetContent() != mPosterImage || shouldDisplayPoster ||
-        child->IsBoxFrame()) {
+    if (child->GetContent() != mPosterImage || shouldDisplayPoster) {
       nsDisplayListBuilder::AutoBuildingDisplayList buildingForChild(
           aBuilder, child,
           aBuilder->GetVisibleRect() - child->GetOffsetTo(this),

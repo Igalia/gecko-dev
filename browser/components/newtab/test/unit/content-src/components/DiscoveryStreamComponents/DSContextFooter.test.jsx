@@ -26,10 +26,7 @@ describe("<DSContextFooter>", () => {
     sandbox.restore();
   });
 
-  it("should render", () => {
-    assert.isTrue(wrapper.exists());
-    assert.isOk(wrapper.find(".story-footer"));
-  });
+  it("should render", () => assert.isTrue(wrapper.exists()));
   it("should not render an engagement status if display_engagement_labels is false", () => {
     wrapper = mount(
       <DSContextFooter
@@ -102,11 +99,7 @@ describe("<DSContextFooter>", () => {
     );
 
     assert.equal(
-      wrapper
-        .find(".story-sponsored-label")
-        .children()
-        .at(0)
-        .type(),
+      wrapper.find(".story-sponsored-label").children().at(0).type(),
       FluentOrText
     );
   });
@@ -119,9 +112,8 @@ describe("<DSContextFooter>", () => {
     );
     assert.isTrue(bookmarkStatusMessage.exists());
 
-    const { fluentID: removeBookmarkFluentID } = cardContextTypes[
-      removeBookmarkBadge
-    ];
+    const { fluentID: removeBookmarkFluentID } =
+      cardContextTypes[removeBookmarkBadge];
 
     wrapper.setProps({ context_type: removeBookmarkBadge });
     await wrapper.update();

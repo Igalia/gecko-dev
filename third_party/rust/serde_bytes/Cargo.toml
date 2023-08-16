@@ -13,22 +13,29 @@
 edition = "2018"
 rust-version = "1.31"
 name = "serde_bytes"
-version = "0.11.6"
+version = "0.11.9"
 authors = ["David Tolnay <dtolnay@gmail.com>"]
 description = "Optimized handling of `&[u8]` and `Vec<u8>` for Serde"
-documentation = "https://docs.serde.rs/serde_bytes/"
+documentation = "https://docs.rs/serde_bytes"
 readme = "README.md"
 keywords = [
     "serde",
     "serialization",
     "no_std",
+    "bytes",
 ]
-categories = ["encoding"]
+categories = [
+    "encoding",
+    "no-std",
+]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/serde-rs/bytes"
 
 [package.metadata.docs.rs]
 targets = ["x86_64-unknown-linux-gnu"]
+
+[lib]
+doc-scrape-examples = false
 
 [dependencies.serde]
 version = "1.0"

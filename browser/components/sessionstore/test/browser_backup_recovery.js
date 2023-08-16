@@ -22,7 +22,7 @@ async function reInitSessionFile() {
   await SessionFile.read();
 }
 
-add_task(async function init() {
+add_setup(async function () {
   // Make sure that we are not racing with SessionSaver's time based
   // saves.
   Services.prefs.setIntPref(PREF_SS_INTERVAL, 10000000);
@@ -93,7 +93,7 @@ add_task(async function test_creation() {
   // Open a second tab, save session, ensure that the correct files exist.
   info("Testing situation after a second write");
   let URL2 = URL_BASE + "?second_write";
-  BrowserTestUtils.loadURI(tab.linkedBrowser, URL2);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, URL2);
   await promiseBrowserLoaded(tab.linkedBrowser);
   await TabStateFlusher.flush(tab.linkedBrowser);
   await SessionSaver.run();
@@ -141,7 +141,7 @@ add_task(async function test_creation() {
   gBrowser.removeTab(tab);
 });
 
-var promiseSource = async function(name) {
+var promiseSource = async function (name) {
   let URL =
     "http://example.com/?atomic_backup_test_recovery=" +
     Math.random() +

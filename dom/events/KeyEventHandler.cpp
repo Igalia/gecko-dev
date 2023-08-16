@@ -33,6 +33,7 @@
 #include "nsCRT.h"
 #include "nsJSUtils.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/JSEventHandler.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TextEvents.h"
@@ -52,8 +53,6 @@ namespace mozilla {
 using namespace mozilla::layers;
 
 uint32_t KeyEventHandler::gRefCnt = 0;
-
-int32_t KeyEventHandler::kMenuAccessKey = -1;
 
 const int32_t KeyEventHandler::cShift = (1 << 0);
 const int32_t KeyEventHandler::cAlt = (1 << 1);
@@ -167,33 +166,20 @@ bool KeyEventHandler::TryConvertToKeyboardShortcut(
   return true;
 }
 
-already_AddRefed<dom::Element> KeyEventHandler::GetHandlerElement() {
+bool KeyEventHandler::KeyElementIsDisabled() const {
+  RefPtr<dom::Element> keyElement = GetHandlerElement();
+  return keyElement &&
+         keyElement->AttrValueIs(kNameSpaceID_None, nsGkAtoms::disabled,
+                                 nsGkAtoms::_true, eCaseMatters);
+}
+
+already_AddRefed<dom::Element> KeyEventHandler::GetHandlerElement() const {
   if (mIsXULKey) {
     nsCOMPtr<dom::Element> element = do_QueryReferent(mHandlerElement);
     return element.forget();
   }
 
   return nullptr;
-}
-
-/////////////////////////////////////////////////////////////////////////////
-// Get the menu access key from prefs.
-// XXX Eventually pick up using CSS3 key-equivalent property or somesuch
-void KeyEventHandler::InitAccessKeys() {
-  if (kMenuAccessKey >= 0) {
-    return;
-  }
-
-  // Compiled-in defaults, in case we can't get the pref --
-  // mac doesn't have menu shortcuts, other platforms use alt.
-#ifdef XP_MACOSX
-  kMenuAccessKey = 0;
-#else
-  kMenuAccessKey = dom::KeyboardEvent_Binding::DOM_VK_ALT;
-#endif
-
-  // Get the menu access key value from prefs, overriding the default:
-  kMenuAccessKey = Preferences::GetInt("ui.key.menuAccessKey", kMenuAccessKey);
 }
 
 nsresult KeyEventHandler::ExecuteHandler(dom::EventTarget* aTarget,
@@ -520,7 +506,7 @@ int32_t KeyEventHandler::GetMatchingKeyCode(const nsAString& aKeyName) {
   return 0;
 }
 
-int32_t KeyEventHandler::KeyToMask(int32_t key) {
+int32_t KeyEventHandler::KeyToMask(uint32_t key) {
   switch (key) {
     case dom::KeyboardEvent_Binding::DOM_VK_META:
       return cMeta | cMetaMask;
@@ -560,7 +546,7 @@ void KeyEventHandler::GetEventType(nsAString& aEvent) {
     aEvent.Truncate();
     return;
   }
-  handlerElement->GetAttr(kNameSpaceID_None, nsGkAtoms::event, aEvent);
+  handlerElement->GetAttr(nsGkAtoms::event, aEvent);
 
   if (aEvent.IsEmpty() && mIsXULKey) {
     // If no type is specified for a XUL <key> element, let's assume that we're
@@ -594,7 +580,7 @@ void KeyEventHandler::ConstructPrototype(dom::Element* aKeyElement,
     }
     mEventName = NS_Atomize(event);
 
-    aKeyElement->GetAttr(kNameSpaceID_None, nsGkAtoms::modifiers, modifiers);
+    aKeyElement->GetAttr(nsGkAtoms::modifiers, modifiers);
   } else {
     mCommand = ToNewUnicode(nsDependentString(aCommand));
     mEventName = NS_Atomize(aEvent);
@@ -606,9 +592,9 @@ void KeyEventHandler::ConstructPrototype(dom::Element* aKeyElement,
   nsAutoString key(aCharCode);
   if (key.IsEmpty()) {
     if (mIsXULKey) {
-      aKeyElement->GetAttr(kNameSpaceID_None, nsGkAtoms::key, key);
+      aKeyElement->GetAttr(nsGkAtoms::key, key);
       if (key.IsEmpty()) {
-        aKeyElement->GetAttr(kNameSpaceID_None, nsGkAtoms::charcode, key);
+        aKeyElement->GetAttr(nsGkAtoms::charcode, key);
       }
     }
   }
@@ -640,7 +626,7 @@ void KeyEventHandler::ConstructPrototype(dom::Element* aKeyElement,
   } else {
     key.Assign(aKeyCode);
     if (mIsXULKey) {
-      aKeyElement->GetAttr(kNameSpaceID_None, nsGkAtoms::keycode, key);
+      aKeyElement->GetAttr(nsGkAtoms::keycode, key);
     }
 
     if (!key.IsEmpty()) {
@@ -672,7 +658,7 @@ void KeyEventHandler::BuildModifiers(nsAString& aModifiers) {
       } else if (strcmp(token, "accel") == 0) {
         mKeyMask |= AccelKeyMask();
       } else if (strcmp(token, "access") == 0) {
-        mKeyMask |= KeyToMask(kMenuAccessKey);
+        mKeyMask |= KeyToMask(LookAndFeel::GetMenuAccessKey());
       } else if (strcmp(token, "any") == 0) {
         mKeyMask &= ~(mKeyMask << 5);
       }
@@ -691,7 +677,7 @@ void KeyEventHandler::ReportKeyConflict(const char16_t* aKey,
   nsCOMPtr<dom::Document> doc = aKeyElement->OwnerDoc();
 
   nsAutoString id;
-  aKeyElement->GetAttr(kNameSpaceID_None, nsGkAtoms::id, id);
+  aKeyElement->GetAttr(nsGkAtoms::id, id);
   AutoTArray<nsString, 3> params;
   params.AppendElement(aKey);
   params.AppendElement(aModifiers);

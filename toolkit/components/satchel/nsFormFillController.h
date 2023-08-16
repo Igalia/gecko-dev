@@ -15,6 +15,7 @@
 #include "nsIDOMEventListener.h"
 #include "nsIFormAutoComplete.h"
 #include "nsCOMPtr.h"
+#include "nsStubMutationObserver.h"
 #include "nsTHashMap.h"
 #include "nsInterfaceHashtable.h"
 #include "nsIDocShell.h"
@@ -40,7 +41,7 @@ class nsFormFillController final : public nsIFormFillController,
                                    public nsIFormAutoCompleteObserver,
                                    public nsIDOMEventListener,
                                    public nsIObserver,
-                                   public nsIMutationObserver {
+                                   public nsMultiMutationObserver {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_NSIFORMFILLCONTROLLER
@@ -83,8 +84,7 @@ class nsFormFillController final : public nsIFormFillController,
   MOZ_CAN_RUN_SCRIPT
   void MaybeStartControllingInput(mozilla::dom::HTMLInputElement* aElement);
 
-  nsresult PerformInputListAutoComplete(const nsAString& aSearch,
-                                        nsIAutoCompleteResult** aResult);
+  void MaybeObserveDataListMutations();
 
   MOZ_CAN_RUN_SCRIPT void RevalidateDataList();
   bool RowMatch(nsFormHistory* aHistory, uint32_t aIndex,
@@ -100,6 +100,9 @@ class nsFormFillController final : public nsIFormFillController,
   bool IsTextControl(nsINode* aNode);
 
   nsresult StartQueryLoginReputation(mozilla::dom::HTMLInputElement* aInput);
+
+  MOZ_CAN_RUN_SCRIPT NS_IMETHODIMP isLoginManagerField(
+      mozilla::dom::HTMLInputElement* aInput, bool* isLoginManagerField);
 
   // members //////////////////////////////////////////
 
@@ -118,8 +121,8 @@ class nsFormFillController final : public nsIFormFillController,
                        nsIAutoCompletePopup>
       mPopups;
 
-  // The observer passed to StartSearch. It will be notified when the search is
-  // complete or the data from a datalist changes.
+  // The observer passed to StartSearch. It will be notified when the search
+  // is complete or the data from a datalist changes.
   nsCOMPtr<nsIAutoCompleteObserver> mLastListener;
 
   // This is cleared by StopSearch().

@@ -319,6 +319,95 @@ fn it_formats_lower_exp_padding() {
     }
 }
 
+#[test]
+fn it_formats_scientific_precision() {
+    for (num, scale, expected_no_precision, expected_precision) in [
+        (
+            123456,
+            10,
+            "1.23456e-5",
+            [
+                "1e-5",
+                "1.2e-5",
+                "1.23e-5",
+                "1.234e-5",
+                "1.2345e-5",
+                "1.23456e-5",
+                "1.234560e-5",
+                "1.2345600e-5",
+            ],
+        ),
+        (
+            123456,
+            0,
+            "1.23456e5",
+            [
+                "1e5",
+                "1.2e5",
+                "1.23e5",
+                "1.234e5",
+                "1.2345e5",
+                "1.23456e5",
+                "1.234560e5",
+                "1.2345600e5",
+            ],
+        ),
+        (
+            1,
+            0,
+            "1e0",
+            [
+                "1e0",
+                "1.0e0",
+                "1.00e0",
+                "1.000e0",
+                "1.0000e0",
+                "1.00000e0",
+                "1.000000e0",
+                "1.0000000e0",
+            ],
+        ),
+        (
+            -123456,
+            10,
+            "-1.23456e-5",
+            [
+                "-1e-5",
+                "-1.2e-5",
+                "-1.23e-5",
+                "-1.234e-5",
+                "-1.2345e-5",
+                "-1.23456e-5",
+                "-1.234560e-5",
+                "-1.2345600e-5",
+            ],
+        ),
+        (
+            -100000,
+            10,
+            "-1e-5",
+            [
+                "-1e-5",
+                "-1.0e-5",
+                "-1.00e-5",
+                "-1.000e-5",
+                "-1.0000e-5",
+                "-1.00000e-5",
+                "-1.000000e-5",
+                "-1.0000000e-5",
+            ],
+        ),
+    ] {
+        assert_eq!(format!("{:e}", Decimal::new(num, scale)), expected_no_precision);
+        for i in 0..expected_precision.len() {
+            assert_eq!(
+                format!("{:.prec$e}", Decimal::new(num, scale), prec = i),
+                expected_precision[i]
+            );
+        }
+    }
+}
+
 // Negation
 #[test]
 fn it_negates_decimals() {
@@ -2771,6 +2860,12 @@ fn it_converts_from_u128() {
 }
 
 #[test]
+fn it_converts_from_str() {
+    assert_eq!(Decimal::try_from("1").unwrap(), Decimal::ONE);
+    assert_eq!(Decimal::try_from("10").unwrap(), Decimal::TEN);
+}
+
+#[test]
 fn it_converts_from_f32() {
     use num_traits::FromPrimitive;
 
@@ -3076,11 +3171,9 @@ fn it_can_reject_large_numbers_with_panic() {
         "79228162514264337593543950340",
     ];
     for &value in tests {
-        assert!(
-            Decimal::from_str(value).is_err(),
-            "This succeeded unexpectedly: {}",
-            value
-        );
+        if let Ok(out) = Decimal::from_str(value) {
+            panic!("Unexpectedly parsed {} into {}", value, out)
+        }
     }
 }
 
@@ -3231,10 +3324,23 @@ fn test_zero_eq_negative_zero() {
 }
 
 #[test]
+fn declarative_dec_product() {
+    let vs = (1..5).map(|i| i.into()).collect::<Vec<Decimal>>();
+    let product: Decimal = vs.into_iter().product();
+    assert_eq!(product, Decimal::from(24))
+}
+
+#[test]
+fn declarative_ref_dec_product() {
+    let vs = (1..5).map(|i| i.into()).collect::<Vec<Decimal>>();
+    let product: Decimal = vs.iter().product();
+    assert_eq!(product, Decimal::from(24))
+}
+
+#[test]
 fn declarative_dec_sum() {
     let vs = (0..10).map(|i| i.into()).collect::<Vec<Decimal>>();
-    let sum: Decimal = vs.iter().cloned().sum();
-
+    let sum: Decimal = vs.into_iter().sum();
     assert_eq!(sum, Decimal::from(45))
 }
 
@@ -3242,7 +3348,6 @@ fn declarative_dec_sum() {
 fn declarative_ref_dec_sum() {
     let vs = (0..10).map(|i| i.into()).collect::<Vec<Decimal>>();
     let sum: Decimal = vs.iter().sum();
-
     assert_eq!(sum, Decimal::from(45))
 }
 

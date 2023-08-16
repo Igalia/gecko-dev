@@ -24,19 +24,11 @@ const PRIVATE_TEST_URI = `data:text/html;charset=utf8,<!DOCTYPE html>Test consol
     }
   </script>`;
 
-add_task(async function() {
-  await pushPref("devtools.browserconsole.contentMessages", true);
+add_task(async function () {
+  await pushPref("devtools.browsertoolbox.scope", "everything");
+
   const publicTab = await addTab(NON_PRIVATE_TEST_URI);
 
-  await pushPref("devtools.browsertoolbox.fission", false);
-  await testBrowserConsole(publicTab);
-
-  await pushPref("devtools.browsertoolbox.fission", true);
-  await pushPref("devtools.browsertoolbox.scope", "everything");
-  await testBrowserConsole(publicTab);
-});
-
-async function testBrowserConsole(publicTab) {
   const privateWindow = await BrowserTestUtils.openNewBrowserWindow({
     private: true,
   });
@@ -113,11 +105,13 @@ async function testBrowserConsole(publicTab) {
     NON_PRIVATE_MESSAGE,
     ".console-api"
   );
-  SpecialPowers.spawn(gBrowser.selectedBrowser, [NON_PRIVATE_MESSAGE], function(
-    msg
-  ) {
-    content.console.log(msg);
-  });
+  SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [NON_PRIVATE_MESSAGE],
+    function (msg) {
+      content.console.log(msg);
+    }
+  );
   await onBrowserConsoleNonPrivateMessage;
 
   info(
@@ -167,7 +161,7 @@ async function testBrowserConsole(publicTab) {
 
   info("close the browser console again");
   await safeCloseBrowserConsole();
-}
+});
 
 function logPrivateMessages(browser) {
   SpecialPowers.spawn(browser, [], () => content.wrappedJSObject.logMessages());

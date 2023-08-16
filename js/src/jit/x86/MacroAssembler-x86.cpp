@@ -516,7 +516,7 @@ void MacroAssemblerX86::handleFailureWithHandlerTail(Label* profilerExitTail,
   movl(esp, eax);
 
   // Call the handler.
-  using Fn = void (*)(ResumeFromException * rfe);
+  using Fn = void (*)(ResumeFromException* rfe);
   asMasm().setupUnalignedABICall(ecx);
   asMasm().passABIArg(eax);
   asMasm().callWithABI<Fn, HandleException>(
@@ -632,6 +632,7 @@ void MacroAssemblerX86::handleFailureWithHandlerTail(Label* profilerExitTail,
   bind(&wasm);
   loadPtr(Address(esp, ResumeFromException::offsetOfFramePointer()), ebp);
   loadPtr(Address(esp, ResumeFromException::offsetOfStackPointer()), esp);
+  movePtr(ImmPtr((const void*)wasm::FailInstanceReg), InstanceReg);
   masm.ret();
 
   // Found a wasm catch handler, restore state and jump to it.
@@ -888,8 +889,8 @@ void MacroAssembler::loadStoreBuffer(Register ptr, Register buffer) {
   if (ptr != buffer) {
     movePtr(ptr, buffer);
   }
-  orPtr(Imm32(gc::ChunkMask), buffer);
-  loadPtr(Address(buffer, gc::ChunkStoreBufferOffsetFromLastByte), buffer);
+  andPtr(Imm32(~gc::ChunkMask), buffer);
+  loadPtr(Address(buffer, gc::ChunkStoreBufferOffset), buffer);
 }
 
 void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
@@ -912,10 +913,9 @@ void MacroAssembler::branchPtrInNurseryChunkImpl(Condition cond, Register ptr,
                                                  Label* label) {
   MOZ_ASSERT(cond == Assembler::Equal || cond == Assembler::NotEqual);
 
-  orPtr(Imm32(gc::ChunkMask), ptr);
-  branchPtr(InvertCondition(cond),
-            Address(ptr, gc::ChunkStoreBufferOffsetFromLastByte), ImmWord(0),
-            label);
+  andPtr(Imm32(~gc::ChunkMask), ptr);
+  branchPtr(InvertCondition(cond), Address(ptr, gc::ChunkStoreBufferOffset),
+            ImmWord(0), label);
 }
 
 void MacroAssembler::branchValueIsNurseryCell(Condition cond,
@@ -975,17 +975,16 @@ void MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
 // Memory access primitives.
 template <typename T>
 void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
-                                       MIRType valueType, const T& dest,
-                                       MIRType slotType) {
+                                       MIRType valueType, const T& dest) {
+  MOZ_ASSERT(valueType < MIRType::Value);
+
   if (valueType == MIRType::Double) {
     storeDouble(value.reg().typedReg().fpu(), dest);
     return;
   }
 
-  // Store the type tag if needed.
-  if (valueType != slotType) {
-    storeTypeTag(ImmType(ValueTypeFromMIRType(valueType)), Operand(dest));
-  }
+  // Store the type tag.
+  storeTypeTag(ImmType(ValueTypeFromMIRType(valueType)), Operand(dest));
 
   // Store the payload.
   if (value.constant()) {
@@ -997,11 +996,10 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
 
 template void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                                 MIRType valueType,
-                                                const Address& dest,
-                                                MIRType slotType);
+                                                const Address& dest);
 template void MacroAssembler::storeUnboxedValue(
     const ConstantOrRegister& value, MIRType valueType,
-    const BaseObjectElementIndex& dest, MIRType slotType);
+    const BaseObjectElementIndex& dest);
 
 // wasm specific methods, used in both the wasm baseline compiler and ion.
 

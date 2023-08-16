@@ -29,6 +29,7 @@ class RegExpMacroAssembler {
   // The implementation must be able to handle at least:
   static constexpr int kMaxRegisterCount = (1 << 16);
   static constexpr int kMaxRegister = kMaxRegisterCount - 1;
+  static constexpr int kMaxCaptures = (kMaxRegister - 1) / 2;
   static constexpr int kMaxCPOffset = (1 << 15) - 1;
   static constexpr int kMinCPOffset = -(1 << 15);
 
@@ -112,8 +113,8 @@ class RegExpMacroAssembler {
   // character. Returns false if the type of special character class does
   // not have custom support.
   // May clobber the current loaded character.
-  virtual bool CheckSpecialCharacterClass(StandardCharacterSet type,
-                                          Label* on_no_match) {
+  virtual bool CheckSpecialClassRanges(StandardCharacterSet type,
+                                       Label* on_no_match) {
     return false;
   }
 
@@ -167,6 +168,7 @@ class RegExpMacroAssembler {
   V(MIPS)                       \
   V(LOONG64)                    \
   V(RISCV)                      \
+  V(RISCV32)                    \
   V(S390)                       \
   V(PPC)                        \
   V(X64)                        \
@@ -300,8 +302,8 @@ class NativeRegExpMacroAssembler: public RegExpMacroAssembler {
                    int previous_index, Isolate* isolate);
 
   V8_EXPORT_PRIVATE static int ExecuteForTesting(String input, int start_offset,
-                                                 const byte* input_start,
-                                                 const byte* input_end,
+                                                 const uint8_t* input_start,
+                                                 const uint8_t* input_end,
                                                  int* output, int output_size,
                                                  Isolate* isolate,
                                                  JSRegExp regexp);
@@ -327,9 +329,10 @@ class NativeRegExpMacroAssembler: public RegExpMacroAssembler {
   // Called from generated code.
   static int CheckStackGuardState(Isolate* isolate, int start_index,
                                   RegExp::CallOrigin call_origin,
-                                  Address* return_address, Code re_code,
-                                  Address* subject, const byte** input_start,
-                                  const byte** input_end);
+                                  Address* return_address,
+                                  InstructionStream re_code, Address* subject,
+                                  const uint8_t** input_start,
+                                  const uint8_t** input_end);
 
   static Address word_character_map_address() {
     return reinterpret_cast<Address>(&word_character_map[0]);
@@ -339,17 +342,17 @@ class NativeRegExpMacroAssembler: public RegExpMacroAssembler {
   // Byte map of one byte characters with a 0xff if the character is a word
   // character (digit, letter or underscore) and 0x00 otherwise.
   // Used by generated RegExp code.
-  static const byte word_character_map[256];
+  static const uint8_t word_character_map[256];
 
   Handle<ByteArray> GetOrAddRangeArray(const ZoneList<CharacterRange>* ranges);
 
  private:
   // Returns a {Result} sentinel, or the number of successful matches.
-  static int Execute(String input, int start_offset, const byte* input_start,
-                     const byte* input_end, int* output, int output_size,
+  static int Execute(String input, int start_offset, const uint8_t* input_start,
+                     const uint8_t* input_end, int* output, int output_size,
                      Isolate* isolate, JSRegExp regexp);
 
-  ZoneUnorderedMap<uint32_t, Handle<ByteArray>> range_array_cache_;
+  ZoneUnorderedMap<uint32_t, Handle<FixedUInt16Array>> range_array_cache_;
 };
 
 }  // namespace internal

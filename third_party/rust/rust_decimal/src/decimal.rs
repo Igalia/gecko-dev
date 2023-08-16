@@ -4,19 +4,23 @@ use crate::constants::{
 };
 use crate::ops;
 use crate::Error;
-
-#[cfg(feature = "rkyv-safe")]
-use bytecheck::CheckBytes;
 use core::{
     cmp::{Ordering::Equal, *},
     fmt,
     hash::{Hash, Hasher},
-    iter::Sum,
+    iter::{Product, Sum},
     ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Neg, Rem, RemAssign, Sub, SubAssign},
     str::FromStr,
 };
-#[cfg(feature = "diesel")]
+
+// Diesel configuration
+#[cfg(feature = "diesel2")]
+use diesel::deserialize::FromSqlRow;
+#[cfg(feature = "diesel2")]
+use diesel::expression::AsExpression;
+#[cfg(any(feature = "diesel1", feature = "diesel2"))]
 use diesel::sql_types::Numeric;
+
 #[allow(unused_imports)] // It's not actually dead code below, but the compiler thinks it is.
 #[cfg(not(feature = "std"))]
 use num_traits::float::FloatCore;
@@ -99,7 +103,12 @@ pub struct UnpackedDecimal {
 /// where m is an integer such that -2<sup>96</sup> < m < 2<sup>96</sup>, and e is an integer
 /// between 0 and 28 inclusive.
 #[derive(Clone, Copy)]
-#[cfg_attr(feature = "diesel", derive(FromSqlRow, AsExpression), sql_type = "Numeric")]
+#[cfg_attr(
+    all(feature = "diesel1", not(feature = "diesel2")),
+    derive(FromSqlRow, AsExpression),
+    sql_type = "Numeric"
+)]
+#[cfg_attr(feature = "diesel2", derive(FromSqlRow, AsExpression), diesel(sql_type = Numeric))]
 #[cfg_attr(feature = "c-repr", repr(C))]
 #[cfg_attr(
     feature = "borsh",
@@ -109,9 +118,9 @@ pub struct UnpackedDecimal {
     feature = "rkyv",
     derive(Archive, Deserialize, Serialize),
     archive(compare(PartialEq)),
-    archive_attr(derive(Debug))
+    archive_attr(derive(Clone, Copy, Debug))
 )]
-#[cfg_attr(feature = "rkyv-safe", archive_attr(derive(CheckBytes)))]
+#[cfg_attr(feature = "rkyv-safe", archive_attr(derive(bytecheck::CheckBytes)))]
 pub struct Decimal {
     // Bits 0-15: unused
     // Bits 16-23: Contains "e", a value between 0-28 that indicates the scale
@@ -1761,7 +1770,7 @@ impl_try_from_decimal!(u128, Decimal::to_u128, integer_docs!(true));
 // See https://github.com/rust-lang/rustfmt/issues/5062 for more information.
 #[rustfmt::skip]
 macro_rules! impl_try_from_primitive {
-    ($TFrom:ty, $conversion_fn:path) => {
+    ($TFrom:ty, $conversion_fn:path $(, $err:expr)?) => {
         #[doc = concat!(
             "Try to convert a `",
             stringify!($TFrom),
@@ -1772,14 +1781,15 @@ macro_rules! impl_try_from_primitive {
 
             #[inline]
             fn try_from(t: $TFrom) -> Result<Self, Error> {
-                $conversion_fn(t).ok_or_else(|| Error::ConversionTo("Decimal".into()))
+                $conversion_fn(t) $( .ok_or_else(|| $err) )?
             }
         }
     };
 }
 
-impl_try_from_primitive!(f32, Self::from_f32);
-impl_try_from_primitive!(f64, Self::from_f64);
+impl_try_from_primitive!(f32, Self::from_f32, Error::ConversionTo("Decimal".into()));
+impl_try_from_primitive!(f64, Self::from_f64, Error::ConversionTo("Decimal".into()));
+impl_try_from_primitive!(&str, core::str::FromStr::from_str);
 
 macro_rules! impl_from {
     ($T:ty, $from_ty:path) => {
@@ -2522,6 +2532,28 @@ impl PartialOrd for Decimal {
 impl Ord for Decimal {
     fn cmp(&self, other: &Decimal) -> Ordering {
         ops::cmp_impl(self, other)
+    }
+}
+
+impl Product for Decimal {
+    /// Panics if out-of-bounds
+    fn product<I: Iterator<Item = Decimal>>(iter: I) -> Self {
+        let mut product = ONE;
+        for i in iter {
+            product *= i;
+        }
+        product
+    }
+}
+
+impl<'a> Product<&'a Decimal> for Decimal {
+    /// Panics if out-of-bounds
+    fn product<I: Iterator<Item = &'a Decimal>>(iter: I) -> Self {
+        let mut product = ONE;
+        for i in iter {
+            product *= i;
+        }
+        product
     }
 }
 

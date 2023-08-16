@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { EnableDelayHelper } = ChromeUtils.import(
-  "resource://gre/modules/SharedPromptUtils.jsm"
+const { EnableDelayHelper } = ChromeUtils.importESModule(
+  "resource://gre/modules/PromptUtils.sys.mjs"
 );
 
 let dialog = {
@@ -23,6 +23,8 @@ let dialog = {
 
     this._handlerInfo = handler.QueryInterface(Ci.nsIHandlerInfo);
     this._principal = principal?.QueryInterface(Ci.nsIPrincipal);
+    this._addonPolicy =
+      this._principal?.addonPolicy ?? this._principal?.contentScriptAddonPolicy;
     this._browsingContext = browsingContext;
     this._outArgs = outArgs.QueryInterface(Ci.nsIWritablePropertyBag);
     this._preferredHandlerName = preferredHandlerName;
@@ -43,9 +45,7 @@ let dialog = {
     }
 
     document.addEventListener("dialogaccept", () => this.onAccept());
-    document.mozSubdialogReady = this.initL10n().then(() => {
-      window.sizeToContent();
-    });
+    this.initL10n();
 
     this._delayHelper = new EnableDelayHelper({
       disableDialog: () => {
@@ -69,8 +69,8 @@ let dialog = {
       return false;
     }
 
-    let topContentPrincipal = this._browsingContext?.top.embedderElement
-      ?.contentPrincipal;
+    let topContentPrincipal =
+      this._browsingContext?.top.embedderElement?.contentPrincipal;
     if (!topContentPrincipal) {
       return false;
     }
@@ -82,6 +82,13 @@ let dialog = {
    * the triggering principal and the preferred application handler.
    */
   get l10nDescriptionId() {
+    if (this._addonPolicy) {
+      if (this._preferredHandlerName) {
+        return "permission-dialog-description-extension-app";
+      }
+      return "permission-dialog-description-extension";
+    }
+
     if (this._principal?.schemeIs("file")) {
       if (this._preferredHandlerName) {
         return "permission-dialog-description-file-app";
@@ -116,6 +123,9 @@ let dialog = {
       return null;
     }
 
+    if (this._addonPolicy) {
+      return "permission-dialog-remember-extension";
+    }
     if (this._principal.schemeIs("file")) {
       return "permission-dialog-remember-file";
     }
@@ -142,7 +152,7 @@ let dialog = {
     return this._principal?.exposablePrePath;
   },
 
-  async initL10n() {
+  initL10n() {
     // The UI labels depend on whether we will show the application chooser next
     // or directly open the assigned protocol handler.
 
@@ -156,11 +166,10 @@ let dialog = {
       let descriptionExtra = document.getElementById("description-extra");
       descriptionExtra.hidden = false;
     }
+    let acceptButton = this._dialog.getButton("accept");
+    document.l10n.setAttributes(acceptButton, idAcceptButton);
 
     let description = document.getElementById("description");
-
-    document.l10n.pauseObserving();
-    let pendingElements = [description];
 
     let host = this.displayPrePath;
     let scheme = this._handlerInfo.type;
@@ -168,6 +177,7 @@ let dialog = {
     document.l10n.setAttributes(description, this.l10nDescriptionId, {
       host,
       scheme,
+      extension: this._addonPolicy?.name,
       appName: this._preferredHandlerName,
     });
 
@@ -177,26 +187,7 @@ let dialog = {
         host,
         scheme,
       });
-      pendingElements.push(checkboxLabel);
     }
-
-    // Set the dialog button labels.
-    // Ideally we would do this via attributes, however the <dialog> element
-    // does not support changing l10n ids on the fly.
-    let acceptButton = this._dialog.getButton("accept");
-    let [result] = await document.l10n.formatMessages([{ id: idAcceptButton }]);
-    result.attributes.forEach(attr => {
-      if (attr.name == "label") {
-        acceptButton.label = attr.value;
-      } else {
-        acceptButton.accessKey = attr.value;
-      }
-    });
-
-    document.l10n.resumeObserving();
-
-    await document.l10n.translateElements(pendingElements);
-    return document.l10n.ready;
   },
 
   onAccept() {

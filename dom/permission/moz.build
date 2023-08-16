@@ -8,15 +8,19 @@ with Files("**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
 
 EXPORTS.mozilla.dom += [
+    "MidiPermissionStatus.h",
     "Permissions.h",
     "PermissionStatus.h",
+    "StorageAccessPermissionStatus.h",
 ]
 
 UNIFIED_SOURCES += [
+    "MidiPermissionStatus.cpp",
     "PermissionObserver.cpp",
     "Permissions.cpp",
     "PermissionStatus.cpp",
     "PermissionUtils.cpp",
+    "StorageAccessPermissionStatus.cpp",
 ]
 
 MOCHITEST_MANIFESTS += ["tests/mochitest.ini"]

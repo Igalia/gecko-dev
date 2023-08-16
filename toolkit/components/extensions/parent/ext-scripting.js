@@ -10,7 +10,9 @@ const {
   ExtensionScriptingStore,
   makeInternalContentScript,
   makePublicContentScript,
-} = ChromeUtils.import("resource://gre/modules/ExtensionScriptingStore.jsm");
+} = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionScriptingStore.sys.mjs"
+);
 
 var { ExtensionError, parseMatchPatterns } = ExtensionUtils;
 
@@ -25,7 +27,7 @@ const gScriptIdsMap = new Map();
  *
  * @param {BaseContext} context
  *        The extension context for which to perform the injection.
- * @param {Object} details
+ * @param {object} details
  *        The details object, specifying what to inject, where, and when.
  *        Derived from the ScriptInjection or CSSInjection types.
  * @param {string} kind

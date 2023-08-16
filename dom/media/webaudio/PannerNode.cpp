@@ -15,6 +15,7 @@
 #include "PlayingRefChangeHandler.h"
 #include "blink/HRTFPanner.h"
 #include "blink/HRTFDatabaseLoader.h"
+#include "Tracing.h"
 
 using WebCore::HRTFDatabaseLoader;
 using WebCore::HRTFPanner;
@@ -168,6 +169,8 @@ class PannerNodeEngine final : public AudioNodeEngine {
   void ProcessBlock(AudioNodeTrack* aTrack, GraphTime aFrom,
                     const AudioBlock& aInput, AudioBlock* aOutput,
                     bool* aFinished) override {
+    TRACE("PannerNodeEngine::ProcessBlock");
+
     if (aInput.IsNull()) {
       // mLeftOverData != INT_MIN means that the panning model was HRTF and a
       // tail-time reference was added.  Even if the model is now equalpower,
@@ -351,7 +354,7 @@ void PannerNode::SetPanningModel(PanningModelType aPanningModel) {
 static bool SetParamFromDouble(AudioParam* aParam, double aValue,
                                const char (&aParamName)[2], ErrorResult& aRv) {
   float value = static_cast<float>(aValue);
-  if (!mozilla::IsFinite(value)) {
+  if (!std::isfinite(value)) {
     aRv.ThrowTypeError<MSG_NOT_FINITE>(aParamName);
     return false;
   }

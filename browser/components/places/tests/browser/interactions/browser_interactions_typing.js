@@ -29,7 +29,7 @@ const PREF_TYPING_DELAY = "browser.places.interactions.typing_timeout_ms";
 const POST_TYPING_DELAY = 150;
 
 async function sendTextToInput(browser, text) {
-  await SpecialPowers.spawn(browser, [], function() {
+  await SpecialPowers.spawn(browser, [], function () {
     const input = content.document.querySelector(
       "#form1 > input[name='search']"
     );
@@ -39,7 +39,7 @@ async function sendTextToInput(browser, text) {
 
   EventUtils.sendString(text);
 
-  await SpecialPowers.spawn(browser, [{ text }], async function(args) {
+  await SpecialPowers.spawn(browser, [{ text }], async function (args) {
     await ContentTaskUtils.waitForCondition(
       () =>
         content.document.querySelector("#form1 > input[name='search']").value ==
@@ -52,7 +52,7 @@ async function sendTextToInput(browser, text) {
 add_task(async function test_load_and_navigate_away_no_keypresses() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -63,7 +63,7 @@ add_task(async function test_load_and_navigate_away_no_keypresses() {
       },
     ]);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -87,7 +87,7 @@ add_task(async function test_load_type_and_navigate_away() {
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -98,7 +98,7 @@ add_task(async function test_load_type_and_navigate_away() {
       },
     ]);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -381,7 +381,7 @@ add_task(async function test_typing_switch_tabs() {
   ]);
 
   // Typing into the second tab
-  await SpecialPowers.spawn(tab2.linkedBrowser, [], function() {
+  await SpecialPowers.spawn(tab2.linkedBrowser, [], function () {
     const input = content.document.getElementById("input_text");
     input.focus();
   });

@@ -1,14 +1,14 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import
-
 import json
-import tempfile
-import shutil
 import os
-from .symbolication import ProfileSymbolicator
+import shutil
+import tempfile
+
 from mozlog import get_proxy_logger
+
+from .symbolication import ProfileSymbolicator
 
 LOG = get_proxy_logger("profiler")
 
@@ -39,7 +39,7 @@ def symbolicate_profile_json(profile_path, objdir_path):
             # Trace-level logging (verbose)
             "enableTracing": 0,
             # Fallback server if symbol is not found locally
-            "remoteSymbolServer": "https://symbols.mozilla.org/symbolicate/v4",
+            "remoteSymbolServer": "https://symbolication.services.mozilla.com/symbolicate/v4",
             # Maximum number of symbol files to keep in memory
             "maxCacheEntries": 2000000,
             # Frequency of checking for recent symbols to

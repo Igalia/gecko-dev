@@ -11,7 +11,6 @@
 
 #include <algorithm>
 
-#include "gc/GC.h"
 #include "gc/GCParallelTask.h"
 #include "gc/GCRuntime.h"
 #include "js/SliceBudget.h"
@@ -87,8 +86,6 @@ class ParallelWorker : public GCParallelTask {
 };
 
 static constexpr size_t MaxParallelWorkers = 8;
-
-extern size_t ParallelWorkerCount();
 
 // An RAII class that starts a number of ParallelWorkers and waits for them to
 // finish.

@@ -10,6 +10,7 @@
 #include "mozilla/Likely.h"
 #include "mozilla/dom/Comment.h"
 #include "mozilla/dom/CustomElementRegistry.h"
+#include "mozilla/dom/DocGroup.h"
 #include "mozilla/dom/DocumentType.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/LinkStyle.h"
@@ -164,7 +165,8 @@ nsHtml5TreeOperation::~nsHtml5TreeOperation() {
 
     void operator()(const opSetStyleLineNumber& aOperation) {}
 
-    void operator()(const opSetScriptLineNumberAndFreeze& aOperation) {}
+    void operator()(const opSetScriptLineAndColumnNumberAndFreeze& aOperation) {
+    }
 
     void operator()(const opSvgLoad& aOperation) {}
 
@@ -647,7 +649,7 @@ void nsHtml5TreeOperation::SetFormElement(nsIContent* aNode,
   if (formControl &&
       formControl->ControlType() !=
           FormControlType::FormAssociatedCustomElement &&
-      !aNode->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::form)) {
+      !aNode->AsElement()->HasAttr(nsGkAtoms::form)) {
     formControl->SetForm(formElement);
   } else if (HTMLImageElement* domImageElement =
                  dom::HTMLImageElement::FromNodeOrNull(aNode)) {
@@ -1023,11 +1025,13 @@ nsresult nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       return NS_OK;
     }
 
-    nsresult operator()(const opSetScriptLineNumberAndFreeze& aOperation) {
+    nsresult operator()(
+        const opSetScriptLineAndColumnNumberAndFreeze& aOperation) {
       nsIContent* node = *(aOperation.mContent);
       nsCOMPtr<nsIScriptElement> sele = do_QueryInterface(node);
       if (sele) {
         sele->SetScriptLineNumber(aOperation.mLineNumber);
+        sele->SetScriptColumnNumber(aOperation.mColumnNumber);
         sele->FreezeExecutionAttrs(node->OwnerDoc());
       } else {
         MOZ_ASSERT(nsNameSpaceManager::GetInstance()->mSVGDisabled,
@@ -1060,7 +1064,7 @@ nsresult nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       nsDependentString depStr(str);
       // See viewsource.css for the possible classes
       nsAutoString klass;
-      element->GetAttr(kNameSpaceID_None, nsGkAtoms::_class, klass);
+      element->GetAttr(nsGkAtoms::_class, klass);
       if (!klass.IsEmpty()) {
         klass.Append(' ');
         klass.Append(depStr);
@@ -1103,12 +1107,7 @@ nsresult nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       // URLs that return data (e.g. "http:" URLs) should be prefixed with
       // "view-source:".  URLs that don't return data should just be returned
       // undecorated.
-      bool doesNotReturnData = false;
-      rv =
-          NS_URIChainHasFlags(uri, nsIProtocolHandler::URI_DOES_NOT_RETURN_DATA,
-                              &doesNotReturnData);
-      NS_ENSURE_SUCCESS(rv, NS_OK);
-      if (!doesNotReturnData) {
+      if (!nsContentUtils::IsExternalProtocol(uri)) {
         viewSourceUrl.AssignLiteral("view-source:");
       }
 
@@ -1138,7 +1137,7 @@ nsresult nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       nsAtom* otherAtom = aOperation.mOther;
       // See viewsource.css for the possible classes in addition to "error".
       nsAutoString klass;
-      element->GetAttr(kNameSpaceID_None, nsGkAtoms::_class, klass);
+      element->GetAttr(nsGkAtoms::_class, klass);
       if (!klass.IsEmpty()) {
         klass.AppendLiteral(" error");
         element->SetAttr(kNameSpaceID_None, nsGkAtoms::_class, klass, true);
@@ -1166,7 +1165,7 @@ nsresult nsHtml5TreeOperation::Perform(nsHtml5TreeOpExecutor* aBuilder,
       }
 
       nsAutoString title;
-      element->GetAttr(kNameSpaceID_None, nsGkAtoms::title, title);
+      element->GetAttr(nsGkAtoms::title, title);
       if (!title.IsEmpty()) {
         title.Append('\n');
         title.Append(message);

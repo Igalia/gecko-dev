@@ -83,6 +83,7 @@ class InliningRoot {
   JitScriptICStubSpace* jitScriptStubSpace() { return &jitScriptStubSpace_; }
 
   void trace(JSTracer* trc);
+  void traceWeak(JSTracer* trc);
 
   bool addInlinedScript(js::UniquePtr<ICScript> icScript);
 
@@ -141,6 +142,12 @@ mozilla::Maybe<InlinableGetterData> FindInlinableGetterData(
 mozilla::Maybe<InlinableSetterData> FindInlinableSetterData(
     ICCacheIRStub* stub);
 
+enum class TrialInliningDecision {
+  NoInline,
+  Inline,
+  MonomorphicInline,
+};
+
 class MOZ_RAII TrialInliner {
  public:
   TrialInliner(JSContext* cx, HandleScript script, ICScript* icScript)
@@ -167,8 +174,9 @@ class MOZ_RAII TrialInliner {
   [[nodiscard]] bool replaceICStub(ICEntry& entry, ICFallbackStub* fallback,
                                    CacheIRWriter& writer, CacheKind kind);
 
-  bool shouldInline(JSFunction* target, ICCacheIRStub* stub,
-                    BytecodeLocation loc);
+  TrialInliningDecision getInliningDecision(JSFunction* target,
+                                            ICCacheIRStub* stub,
+                                            BytecodeLocation loc);
 
   InliningRoot* getOrCreateInliningRoot();
   InliningRoot* maybeGetInliningRoot() const;

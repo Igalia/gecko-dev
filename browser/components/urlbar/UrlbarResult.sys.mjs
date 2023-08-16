@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a urlbar result class, each representing a single result
  * found by a provider that can be passed from the model to the view through
@@ -12,19 +10,14 @@
  * the result types.
  */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.sys.mjs",
+  JsonSchemaValidator:
+    "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
-  JsonSchemaValidator:
-    "resource://gre/modules/components-utils/JsonSchemaValidator.jsm",
 });
 
 /**
@@ -33,6 +26,7 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
 export class UrlbarResult {
   /**
    * Creates a result.
+   *
    * @param {integer} resultType one of UrlbarUtils.RESULT_TYPE.* values
    * @param {integer} resultSource one of UrlbarUtils.RESULT_SOURCE.* values
    * @param {object} payload data for this result. A payload should always
@@ -41,7 +35,7 @@ export class UrlbarResult {
    * @param {object} [payloadHighlights] payload highlights, if any. Each
    *        property in the payload may have a corresponding property in this
    *        object. The value of each property should be an array of [index,
-   *        length] tuples. Each tuple indicates a substring in the correspoding
+   *        length] tuples. Each tuple indicates a substring in the corresponding
    *        payload property.
    */
   constructor(resultType, resultSource, payload, payloadHighlights = {}) {
@@ -65,6 +59,15 @@ export class UrlbarResult {
     // May be used to indicate an heuristic result. Heuristic results can bypass
     // source filters in the ProvidersManager, that otherwise may skip them.
     this.heuristic = false;
+
+    // Exposure specific properties. These allow us to track the exposure
+    // of a result through the query process.
+    // A non-zero value here indicates that this result's exposure should be
+    // recorded in the exposure event.
+    this.exposureResultType = "";
+
+    // Determines if the exposure result should be hidden from the view.
+    this.exposureResultHidden = false;
 
     // The payload contains result data. Some of the data is common across
     // multiple types, but most of it will vary.
@@ -90,6 +93,7 @@ export class UrlbarResult {
 
   /**
    * Returns a title that could be used as a label for this result.
+   *
    * @returns {string} The label to show in a simplified title / url view.
    */
   get title() {
@@ -98,7 +102,8 @@ export class UrlbarResult {
 
   /**
    * Returns an array of highlights for the title.
-   * @returns {array} The array of highlights.
+   *
+   * @returns {Array} The array of highlights.
    */
   get titleHighlights() {
     return this._titleAndHighlights[1];
@@ -106,7 +111,8 @@ export class UrlbarResult {
 
   /**
    * Returns an array [title, highlights].
-   * @returns {array} The title and array of highlights.
+   *
+   * @returns {Array} The title and array of highlights.
    */
   get _titleAndHighlights() {
     switch (this.type) {
@@ -117,15 +123,25 @@ export class UrlbarResult {
       case lazy.UrlbarUtils.RESULT_TYPE.REMOTE_TAB:
         if (this.payload.qsSuggestion) {
           return [
-            // We will initially only be targetting en-US users with this experiment
+            // We will initially only be targeting en-US users with this experiment
             // but will need to change this to work properly with l10n.
             this.payload.qsSuggestion + " — " + this.payload.title,
             this.payloadHighlights.qsSuggestion,
           ];
         }
-        return this.payload.title
-          ? [this.payload.title, this.payloadHighlights.title]
-          : [this.payload.url || "", this.payloadHighlights.url || []];
+
+        if (this.payload.fallbackTitle) {
+          return [
+            this.payload.fallbackTitle,
+            this.payloadHighlights.fallbackTitle,
+          ];
+        }
+
+        if (this.payload.title) {
+          return [this.payload.title, this.payloadHighlights.title];
+        }
+
+        return [this.payload.url ?? "", this.payloadHighlights.url ?? []];
       case lazy.UrlbarUtils.RESULT_TYPE.SEARCH:
         if (this.payload.providesSearchMode) {
           return ["", []];
@@ -143,6 +159,7 @@ export class UrlbarResult {
 
   /**
    * Returns an icon url.
+   *
    * @returns {string} url of the icon.
    */
   get icon() {
@@ -153,6 +170,7 @@ export class UrlbarResult {
    * Returns whether the result's `suggestedIndex` property is defined.
    * `suggestedIndex` is an optional hint to the muxer that can be set to
    * suggest a specific position among the results.
+   *
    * @returns {boolean} Whether `suggestedIndex` is defined.
    */
   get hasSuggestedIndex() {
@@ -174,7 +192,8 @@ export class UrlbarResult {
     let result = lazy.JsonSchemaValidator.validate(payload, schema, {
       allowExplicitUndefinedProperties: true,
       allowNullAsUndefinedProperties: true,
-      allowExtraProperties: this.type == lazy.UrlbarUtils.RESULT_TYPE.DYNAMIC,
+      allowAdditionalProperties:
+        this.type == lazy.UrlbarUtils.RESULT_TYPE.DYNAMIC,
     });
     if (!result.valid) {
       throw result.error;
@@ -195,7 +214,7 @@ export class UrlbarResult {
    * If the payload doesn't have a title or has an empty title, and it also has
    * a URL, then this function also sets the title to the URL's domain.
    *
-   * @param {array} tokens The tokens that should be highlighted in each of the
+   * @param {Array} tokens The tokens that should be highlighted in each of the
    *        payload properties.
    * @param {object} payloadInfo An object that looks like this:
    *        { payloadPropertyName: payloadPropertyInfo }
@@ -210,7 +229,7 @@ export class UrlbarResult {
    *        UrlbarUtils.getTokenMatches().  If it's an array, then
    *        payloadHighlights will be an array of arrays of match highlights,
    *        one element per element in payloadPropertyValue.
-   * @returns {array} An array [payload, payloadHighlights].
+   * @returns {Array} An array [payload, payloadHighlights].
    */
   static payloadAndSimpleHighlights(tokens, payloadInfo) {
     // Convert scalar values in payloadInfo to [value] arrays.
@@ -222,6 +241,7 @@ export class UrlbarResult {
 
     if (
       (!payloadInfo.title || !payloadInfo.title[0]) &&
+      !payloadInfo.fallbackTitle &&
       payloadInfo.url &&
       typeof payloadInfo.url[0] == "string"
     ) {
@@ -337,6 +357,7 @@ export class UrlbarResult {
   /**
    * This is useful for logging results. If you need the full payload, then it's
    * better to JSON.stringify the result object itself.
+   *
    * @returns {string} string representation of the result.
    */
   toString() {

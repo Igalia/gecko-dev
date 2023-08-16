@@ -15,6 +15,7 @@
 #include "mozilla/gfx/StackArray.h"
 #include "mozilla/layers/HelpersD3D11.h"
 #include "mozilla/layers/SyncObject.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/webrender/DCLayerTree.h"
 #include "mozilla/webrender/RenderThread.h"
@@ -68,16 +69,7 @@ UniquePtr<RenderCompositor> RenderCompositorANGLE::Create(
 RenderCompositorANGLE::RenderCompositorANGLE(
     const RefPtr<widget::CompositorWidget>& aWidget,
     RefPtr<gl::GLContext>&& aGL)
-    : RenderCompositor(aWidget),
-      mGL(aGL),
-      mEGLConfig(nullptr),
-      mEGLSurface(nullptr),
-      mUseTripleBuffering(false),
-      mUseAlpha(false),
-      mUseNativeCompositor(true),
-      mUsePartialPresent(false),
-      mFullRender(false),
-      mDisablingNativeCompositor(false) {
+    : RenderCompositor(aWidget), mGL(aGL) {
   MOZ_ASSERT(mGL);
   LOG("RenderCompositorANGLE::RenderCompositorANGLE()");
 }
@@ -262,11 +254,12 @@ bool RenderCompositorANGLE::CreateSwapChain(nsACString& aError) {
         desc.BufferCount = 2;
       }
       desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
+      desc.Scaling = DXGI_SCALING_NONE;
     } else {
       desc.BufferCount = 1;
       desc.SwapEffect = DXGI_SWAP_EFFECT_SEQUENTIAL;
+      desc.Scaling = DXGI_SCALING_STRETCH;
     }
-    desc.Scaling = DXGI_SCALING_NONE;
     desc.Flags = 0;
 
     hr = dxgiFactory2->CreateSwapChainForHwnd(
@@ -352,15 +345,12 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
   // It does not support triple buffering.
   bool useTripleBuffering =
       gfx::gfxVars::UseWebRenderTripleBufferingWin() && !UseCompositor();
-  // Non Glass window is common since Windows 10.
-  bool useAlpha = false;
   RefPtr<IDXGISwapChain1> swapChain1 =
-      CreateSwapChainForDComp(useTripleBuffering, useAlpha);
+      CreateSwapChainForDComp(useTripleBuffering);
   if (swapChain1) {
     mSwapChain = swapChain1;
     mSwapChain1 = swapChain1;
     mUseTripleBuffering = useTripleBuffering;
-    mUseAlpha = useAlpha;
     mDCLayerTree->SetDefaultSwapChain(swapChain1);
   } else {
     // Clear CLayerTree on falire
@@ -369,7 +359,7 @@ void RenderCompositorANGLE::CreateSwapChainForDCompIfPossible(
 }
 
 RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
-    bool aUseTripleBuffering, bool aUseAlpha) {
+    bool aUseTripleBuffering) {
   HRESULT hr;
   RefPtr<IDXGIDevice> dxgiDevice;
   mDevice->QueryInterface((IDXGIDevice**)getter_AddRefs(dxgiDevice));
@@ -408,12 +398,7 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
   // DXGI_SCALING_NONE caused swap chain creation failure.
   desc.Scaling = DXGI_SCALING_STRETCH;
   desc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_SEQUENTIAL;
-  if (aUseAlpha) {
-    // This could degrade performance. Use it only when it is necessary.
-    desc.AlphaMode = DXGI_ALPHA_MODE_PREMULTIPLIED;
-  } else {
-    desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
-  }
+  desc.AlphaMode = DXGI_ALPHA_MODE_IGNORE;
   desc.Flags = 0;
 
   hr = dxgiFactory2->CreateSwapChainForComposition(mDevice, &desc, nullptr,
@@ -430,37 +415,8 @@ RefPtr<IDXGISwapChain1> RenderCompositorANGLE::CreateSwapChainForDComp(
 bool RenderCompositorANGLE::BeginFrame() {
   mWidget->AsWindows()->UpdateCompositorWndSizeIfNecessary();
 
-  if (!UseCompositor()) {
-    if (mDCLayerTree) {
-      bool useAlpha = mWidget->AsWindows()->HasGlass();
-      // When Alpha usage is changed, SwapChain needs to be recreatd.
-      if (useAlpha != mUseAlpha) {
-        DestroyEGLSurface();
-        mBufferSize.reset();
-
-        RefPtr<IDXGISwapChain1> swapChain1 =
-            CreateSwapChainForDComp(mUseTripleBuffering, useAlpha);
-        if (swapChain1) {
-          mSwapChain = swapChain1;
-          mUseAlpha = useAlpha;
-          mDCLayerTree->SetDefaultSwapChain(swapChain1);
-          // When alpha is used, we want to disable partial present.
-          // See Bug 1595027.
-          if (useAlpha) {
-            mFullRender = true;
-          }
-        } else {
-          gfxCriticalNote << "Failed to re-create SwapChain";
-          RenderThread::Get()->HandleWebRenderError(
-              WebRenderError::NEW_SURFACE);
-          return false;
-        }
-      }
-    }
-
-    if (!ResizeBufferIfNeeded()) {
-      return false;
-    }
+  if (!UseCompositor() && !ResizeBufferIfNeeded()) {
+    return false;
   }
 
   if (!MakeCurrent()) {
@@ -497,14 +453,7 @@ RenderedFrameId RenderCompositorANGLE::EndFrame(
     }
 
     const LayoutDeviceIntSize& bufferSize = mBufferSize.ref();
-
-    // During high contrast mode, alpha is used. In this case,
-    // IDXGISwapChain1::Present1 shows nothing with compositor window.
-    // In this case, we want to disable partial present by full render.
-    // See Bug 1595027
-    MOZ_ASSERT_IF(mUsePartialPresent && mUseAlpha, mFullRender);
-
-    if (mUsePartialPresent && !mUseAlpha && mSwapChain1) {
+    if (mUsePartialPresent && mSwapChain1) {
       // Clear full render flag.
       mFullRender = false;
       // If there is no diry rect, we skip SwapChain present.
@@ -581,7 +530,10 @@ bool RenderCompositorANGLE::WaitForGPU() {
   //   Wait for query #2.
   //
   // This ensures we're done reading textures before swapping buffers.
-  return WaitForPreviousGraphicsCommandsFinishedQuery();
+  if (!StaticPrefs::gfx_webrender_wait_gpu_finished_disabled_AtStartup()) {
+    return WaitForPreviousGraphicsCommandsFinishedQuery();
+  }
+  return true;
 }
 
 bool RenderCompositorANGLE::ResizeBufferIfNeeded() {
@@ -656,14 +608,8 @@ bool RenderCompositorANGLE::CreateEGLSurface() {
     }
   }
 
-  const EGLint pbuffer_attribs[]{
-      LOCAL_EGL_WIDTH,
-      size.width,
-      LOCAL_EGL_HEIGHT,
-      size.height,
-      LOCAL_EGL_FLEXIBLE_SURFACE_COMPATIBILITY_SUPPORTED_ANGLE,
-      LOCAL_EGL_TRUE,
-      LOCAL_EGL_NONE};
+  const EGLint pbuffer_attribs[]{LOCAL_EGL_WIDTH, size.width, LOCAL_EGL_HEIGHT,
+                                 size.height, LOCAL_EGL_NONE};
 
   const auto buffer = reinterpret_cast<EGLClientBuffer>(backBuf.get());
 
@@ -753,6 +699,7 @@ void RenderCompositorANGLE::InsertGraphicsCommandsFinishedWaitQuery(
   }
 
   mCtx->End(query);
+  mCtx->Flush();
   mWaitForPresentQueries.emplace(aFrameId, query);
 }
 
@@ -785,7 +732,8 @@ bool RenderCompositorANGLE::WaitForPreviousGraphicsCommandsFinishedQuery(
 RenderedFrameId RenderCompositorANGLE::GetLastCompletedFrameId() {
   while (!mWaitForPresentQueries.empty()) {
     auto queryPair = mWaitForPresentQueries.front();
-    if (mCtx->GetData(queryPair.second, nullptr, 0, 0) != S_OK) {
+    if (mCtx->GetData(queryPair.second, nullptr, 0,
+                      D3D11_ASYNC_GETDATA_DONOTFLUSH) != S_OK) {
       break;
     }
 
@@ -793,6 +741,10 @@ RenderedFrameId RenderCompositorANGLE::GetLastCompletedFrameId() {
     mLastCompletedFrameId = queryPair.first;
     mWaitForPresentQueries.pop();
   }
+
+  nsPrintfCString marker("Pending frames %u",
+                         (uint32_t)mWaitForPresentQueries.size());
+  PROFILER_MARKER_TEXT("GetLastCompletedFrameId", GRAPHICS, {}, marker);
 
   return mLastCompletedFrameId;
 }
@@ -905,7 +857,13 @@ void RenderCompositorANGLE::GetCompositorCapabilities(
     CompositorCapabilities* aCaps) {
   RenderCompositor::GetCompositorCapabilities(aCaps);
 
-  aCaps->virtual_surface_size = VIRTUAL_SURFACE_SIZE;
+  if (StaticPrefs::gfx_webrender_dcomp_use_virtual_surfaces_AtStartup()) {
+    aCaps->virtual_surface_size = VIRTUAL_SURFACE_SIZE;
+  } else {
+    aCaps->virtual_surface_size = 0;
+  }
+  // DComp video overlay does not support negative scaling. See Bug 1831820
+  aCaps->supports_external_compositor_surface_negative_scaling = false;
 }
 
 void RenderCompositorANGLE::EnableNativeCompositor(bool aEnable) {
@@ -921,21 +879,14 @@ void RenderCompositorANGLE::EnableNativeCompositor(bool aEnable) {
   mUseNativeCompositor = false;
   mDCLayerTree->DisableNativeCompositor();
 
-  bool useAlpha = mWidget->AsWindows()->HasGlass();
   DestroyEGLSurface();
   mBufferSize.reset();
 
   RefPtr<IDXGISwapChain1> swapChain1 =
-      CreateSwapChainForDComp(mUseTripleBuffering, useAlpha);
+      CreateSwapChainForDComp(mUseTripleBuffering);
   if (swapChain1) {
     mSwapChain = swapChain1;
-    mUseAlpha = useAlpha;
     mDCLayerTree->SetDefaultSwapChain(swapChain1);
-    // When alpha is used, we want to disable partial present.
-    // See Bug 1595027.
-    if (useAlpha) {
-      mFullRender = true;
-    }
     ResizeBufferIfNeeded();
   } else {
     gfxCriticalNote << "Failed to re-create SwapChain";

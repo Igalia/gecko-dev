@@ -4,21 +4,13 @@
 
 /* eslint no-shadow: error, mozilla/no-aArgs: error */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  Region: "resource://gre/modules/Region.jsm",
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
 });
 
 const BinaryInputStream = Components.Constructor(
@@ -27,7 +19,7 @@ const BinaryInputStream = Components.Constructor(
   "setInputStream"
 );
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "SearchEngine",
     maxLogLevel: lazy.SearchUtils.loggingEnabled ? "Debug" : "Warn",
@@ -70,6 +62,7 @@ var OS_UNSUPPORTED_PARAMS = [
 
 /**
  * Truncates big blobs of (data-)URIs to console-friendly sizes
+ *
  * @param {string} str
  *   String to tone down
  * @param {number} len
@@ -88,13 +81,13 @@ function limitURILength(str, len) {
 /**
  * Tries to rescale an icon to a given size.
  *
- * @param {array} byteArray
+ * @param {Array} byteArray
  *   Byte array containing the icon payload.
  * @param {string} contentType
  *   Mime type of the payload.
  * @param {number} [size]
  *   Desired icon size.
- * @returns {array}
+ * @returns {Array}
  *   An array of two elements - an array of integers and a string for the content
  *   type.
  * @throws if the icon cannot be rescaled or the rescaled icon is too big.
@@ -127,7 +120,12 @@ const ParamPreferenceCache = {
   ]),
 
   initCache() {
-    this.branch = Services.prefs.getDefaultBranch(
+    // Preference params are normally only on the default branch to avoid these being easily changed.
+    // We allow them on the normal branch in nightly builds to make testing easier.
+    let branchFetcher = AppConstants.NIGHTLY_BUILD
+      ? "getBranch"
+      : "getDefaultBranch";
+    this.branch = Services.prefs[branchFetcher](
       lazy.SearchUtils.BROWSER_SEARCH_PREF + "param."
     );
     this.cache = new Map();
@@ -150,8 +148,15 @@ const ParamPreferenceCache = {
   onNimbusUpdate() {
     let extraParams =
       lazy.NimbusFeatures.search.getVariable("extraParams") || [];
-    for (const { key, value } of extraParams) {
-      this.nimbusCache.set(key, value);
+    this.nimbusCache.clear();
+    // The try catch ensures that if the params were incorrect for some reason,
+    // the search service can still startup properly.
+    try {
+      for (const { key, value } of extraParams) {
+        this.nimbusCache.set(key, value);
+      }
+    } catch (ex) {
+      console.error("Failed to load nimbus variables for extraParams:", ex);
     }
   },
 
@@ -167,15 +172,14 @@ const ParamPreferenceCache = {
 
 /**
  * Represents a name/value pair for a parameter
- * @see nsISearchEngine::addParam
  */
 class QueryParameter {
   /**
-   * @see nsISearchEngine::addParam
    * @param {string} name
+   *   The parameter's name. Must not be null.
    * @param {string} value
-   *  The value of the parameter. May be an empty string, must not be null or
-   *  undefined.
+   *   The value of the parameter. May be an empty string, must not be null or
+   *   undefined.
    * @param {string} purpose
    *   The search purpose for which matches when this parameter should be
    *   applied, e.g. "searchbar", "contextmenu".
@@ -256,6 +260,7 @@ class QueryPreferenceParameter extends QueryParameter {
 
 /**
  * Perform OpenSearch parameter substitution on aParamValue.
+ *
  * @see http://opensearch.a9.com/spec/1.1/querysyntax/#core
  *
  * @param {string} paramValue
@@ -272,7 +277,7 @@ class QueryPreferenceParameter extends QueryParameter {
  */
 function ParamSubstitution(paramValue, searchTerms, engine) {
   const PARAM_REGEXP = /\{((?:\w+:)?\w+)(\??)\}/g;
-  return paramValue.replace(PARAM_REGEXP, function(match, name, optional) {
+  return paramValue.replace(PARAM_REGEXP, function (match, name, optional) {
     // {searchTerms} is by far the most common param so handle it first.
     if (name == USER_DEFINED) {
       return searchTerms;
@@ -336,7 +341,7 @@ export class EngineURL {
   rels = [];
 
   /**
-   * Constructor
+   * Creates an EngineURL.
    *
    * @param {string} mimeType
    *   The name of the MIME type of the search results returned by this URL.
@@ -406,6 +411,7 @@ export class EngineURL {
    * as a special type.
    *
    * @param {object} param
+   *   The parameter to add.
    * @param {string} param.name
    *   The name of the parameter to add to the url.
    * @param {string} [param.condition]
@@ -456,20 +462,9 @@ export class EngineURL {
         continue;
       }
 
-      let paramValue = param.value;
-      // Override the parameter value if the engine has a region
-      // override defined for our current region.
-      if (engine._regionParams?.[lazy.Region.current]) {
-        let override = engine._regionParams[lazy.Region.current].find(
-          p => p.name == param.name
-        );
-        if (override) {
-          paramValue = override.value;
-        }
-      }
       // Preference MozParams might not have a preferenced saved, or a valid value.
-      if (paramValue != null) {
-        var value = ParamSubstitution(paramValue, searchTerms, engine);
+      if (param.value != null) {
+        var value = ParamSubstitution(param.value, searchTerms, engine);
 
         dataArray.push(param.name + "=" + value);
       }
@@ -506,8 +501,21 @@ export class EngineURL {
   }
 
   _getTermsParameterName() {
-    let queryParam = this.params.find(p => p.value == "{" + USER_DEFINED + "}");
-    return queryParam ? queryParam.name : "";
+    let searchTerms = "{" + USER_DEFINED + "}";
+    let paramName = this.params.find(p => p.value == searchTerms)?.name;
+    // Some query params might not be added to this.params
+    // in the engine construction process, so try checking the URL
+    // template for the existence of the query parameter value.
+    if (!paramName) {
+      let urlParms = new URL(this.template).searchParams;
+      for (let [name, value] of urlParms.entries()) {
+        if (value == searchTerms) {
+          paramName = name;
+          break;
+        }
+      }
+    }
+    return paramName ?? "";
   }
 
   _hasRelation(rel) {
@@ -583,18 +591,6 @@ export class SearchEngine {
   #cachedSearchForm = null;
   // Whether or not to send an attribution request to the server.
   _sendAttributionRequest = false;
-  // The number of days between update checks for new versions
-  _updateInterval = null;
-  // The url to check at for a new update
-  _updateURL = null;
-  // The url to check for a new icon
-  _iconUpdateURL = null;
-  // The extension ID if added by an extension.
-  _extensionID = null;
-  // The locale, or "DEFAULT", if required.
-  _locale = null;
-  // Whether the engine is provided by the application.
-  _isAppProvided = false;
   // The order hint from the configuration (if any).
   _orderHint = null;
   // The telemetry id from the configuration (if any).
@@ -614,27 +610,30 @@ export class SearchEngine {
   // The known public suffix of the search url, cached in memory to avoid
   // repeated look-ups.
   _searchUrlPublicSuffix = null;
+  /**
+   * The unique id of the Search Engine.
+   * The id is an UUID.
+   *
+   * @type {string}
+   */
+  #id;
 
   /**
-   * Constructor.
+   *  Creates a Search Engine.
    *
    * @param {object} options
    *   The options for this search engine.
-   * @param {boolean} options.isAppProvided
-   *   Indicates whether the engine is provided by Firefox, either
-   *   shipped in omni.ja or via Normandy. If it is, it will
-   *   be treated as read-only.
+   * @param {string} [options.id]
+   *   The identifier to use for this engine, if none is specified a random
+   *   uuid is created.
    * @param {string} options.loadPath
    *   The path of the engine was originally loaded from. Should be anonymized.
    */
   constructor(options = {}) {
-    if (!("isAppProvided" in options)) {
-      throw new Error("isAppProvided missing from options.");
-    }
+    this.#id = options.id ?? this.#uuid();
     if (!("loadPath" in options)) {
       throw new Error("loadPath missing from options.");
     }
-    this._isAppProvided = options.isAppProvided;
     this._loadPath = options.loadPath;
   }
 
@@ -766,7 +765,7 @@ export class SearchEngine {
       case "http":
       case "https":
       case "ftp":
-        let iconLoadCallback = function(byteArray, contentType) {
+        let iconLoadCallback = function (byteArray, contentType) {
           // This callback may run after we've already set a preferred icon,
           // so check again.
           if (this._hasPreferredIcon && !isPreferred) {
@@ -834,14 +833,14 @@ export class SearchEngine {
    *   The url type.
    * @param {object} params
    *   The URL parameters.
-   * @param {string|array} [params.getParams]
+   * @param {string | Array} [params.getParams]
    *   Any parameters for a GET method. This is either a query string, or
    *   an array of objects which have name/value pairs.
    * @param {string} [params.method]
    *   The type of method, defaults to GET.
    * @param {string} [params.mozParams]
    *   Any special Mozilla Parameters.
-   * @param {string|array} [params.postParams]
+   * @param {string | Array} [params.postParams]
    *   Any parameters for a POST method. This is either a query string, or
    *   an array of objects which have name/value pairs.
    * @param {string} params.template
@@ -893,6 +892,7 @@ export class SearchEngine {
    * Initialize this engine object.
    *
    * @param {object} details
+   *   The details of the engine.
    * @param {string} details.name
    *   The name of the engine.
    * @param {string} details.keyword
@@ -924,7 +924,6 @@ export class SearchEngine {
   _initWithDetails(details, configuration = {}) {
     this._orderHint = configuration.orderHint;
     this._name = details.name.trim();
-    this._regionParams = configuration.regionParams;
     this._sendAttributionRequest =
       configuration.sendAttributionRequest ?? false;
 
@@ -948,6 +947,7 @@ export class SearchEngine {
    * overrideWithExtension / removeExtensionOverride functions as well.
    *
    * @param {object} details
+   *   The details of the engine.
    * @param {string} details.search_url
    *   The search url template for the engine.
    * @param {string} [details.search_url_get_params]
@@ -1006,10 +1006,23 @@ export class SearchEngine {
             details.suggest_url_get_params ||
             "",
           postParams: suggestPostParams,
+          mozParams: configuration.suggestExtraParams || [],
         }
       );
 
       this._urls.push(url);
+    }
+
+    if (configuration?.urls?.trending) {
+      let trending = this._getEngineURLFromMetaData(
+        lazy.SearchUtils.URL_TYPE.TRENDING_JSON,
+        {
+          method: "GET",
+          template: decodeURI(configuration.urls.trending.fullPath),
+          getParams: configuration.urls.trending.query,
+        }
+      );
+      this._urls.push(trending);
     }
 
     if (details.encoding) {
@@ -1098,15 +1111,13 @@ export class SearchEngine {
    *   The json record to use.
    */
   _initWithJSON(json) {
+    this.#id = json.id ?? this.#id;
     this._name = json._name;
     this._description = json.description;
     this._hasPreferredIcon = json._hasPreferredIcon == undefined;
     this._queryCharset =
       json.queryCharset || lazy.SearchUtils.DEFAULT_QUERY_CHARSET;
     this.#cachedSearchForm = json.__searchForm;
-    this._updateInterval = json._updateInterval || null;
-    this._updateURL = json._updateURL || null;
-    this._iconUpdateURL = json._iconUpdateURL || null;
     this._iconURI = lazy.SearchUtils.makeURI(json._iconURL);
     this._iconMapObj = json._iconMapObj || null;
     this._metaData = json._metaData || {};
@@ -1118,8 +1129,6 @@ export class SearchEngine {
       this._definedAliases.push(json._definedAlias);
     }
     this._filePath = json.filePath || json._filePath || null;
-    this._extensionID = json.extensionID || json._extensionID || null;
-    this._locale = json.extensionLocale || json._locale || null;
 
     for (let i = 0; i < json._urls.length; ++i) {
       let url = json._urls[i];
@@ -1135,21 +1144,13 @@ export class SearchEngine {
 
   /**
    * Creates a JavaScript object that represents this engine.
+   *
    * @returns {object}
    *   An object suitable for serialization as JSON.
    */
   toJSON() {
-    // For built-in engines we don't want to store all their data in the settings
-    // file so just store the relevant metadata.
-    if (this._isAppProvided) {
-      return {
-        _name: this.name,
-        _isAppProvided: true,
-        _metaData: this._metaData,
-      };
-    }
-
     const fieldsToCopy = [
+      "id",
       "_name",
       "_loadPath",
       "description",
@@ -1157,15 +1158,9 @@ export class SearchEngine {
       "_iconMapObj",
       "_metaData",
       "_urls",
-      "_isAppProvided",
       "_orderHint",
       "_telemetryId",
-      "_updateInterval",
-      "_updateURL",
-      "_iconUpdateURL",
       "_filePath",
-      "_extensionID",
-      "_locale",
       "_definedAliases",
     ];
 
@@ -1201,22 +1196,15 @@ export class SearchEngine {
     delete this._metaData[name];
   }
 
-  // nsISearchEngine
-
   /**
    * Get the user-defined alias.
    *
-   * @returns {string}
+   * @type {string}
    */
   get alias() {
     return this.getAttr("alias") || "";
   }
 
-  /**
-   * Set the user-defined alias.
-   *
-   * @param {string} val
-   */
   set alias(val) {
     var value = val ? val.trim() : "";
     if (value != this.alias) {
@@ -1289,6 +1277,20 @@ export class SearchEngine {
     }
   }
 
+  get hideOneOffButton() {
+    return this.getAttr("hideOneOffButton") || false;
+  }
+  set hideOneOffButton(val) {
+    const value = !!val;
+    if (value != this.hideOneOffButton) {
+      this.setAttr("hideOneOffButton", value);
+      lazy.SearchUtils.notifyAction(
+        this,
+        lazy.SearchUtils.MODIFIED_TYPE.CHANGED
+      );
+    }
+  }
+
   get iconURI() {
     if (this._iconURI) {
       return this._iconURI;
@@ -1314,15 +1316,36 @@ export class SearchEngine {
     return this._loadPath;
   }
 
+  /**
+   * Whether or not this engine is provided by the application, e.g. it is
+   * in the list of configured search engines.
+   *
+   * @returns {boolean}
+   *   This returns false for most engines, but may be overridden by particular
+   *   engine types, such as add-on engines which are used by the application.
+   */
   get isAppProvided() {
-    return !!(this._extensionID && this._isAppProvided);
+    return false;
+  }
+
+  /**
+   * Whether or not this engine is an in-memory only search engine.
+   * These engines are typically application provided or policy engines,
+   * where they are loaded every time on SearchService initialization
+   * using the policy JSON or the extension manifest. Minimal details of the
+   * in-memory engines are saved to disk, but they are never loaded
+   * from the user's saved settings file.
+   *
+   * @returns {boolean}
+   *   This results false for most engines, but may be overridden by particular
+   *   engine types, such as add-on engines and policy engines.
+   */
+  get inMemory() {
+    return false;
   }
 
   get isGeneralPurposeEngine() {
-    return !!(
-      this._extensionID &&
-      lazy.SearchUtils.GENERAL_SEARCH_ENGINE_IDS.has(this._extensionID)
-    );
+    return false;
   }
 
   get _hasUpdates() {
@@ -1333,22 +1356,26 @@ export class SearchEngine {
     return this._name;
   }
 
+  /**
+   * The searchForm URL points to the engine's organic search page. This should
+   * not contain neither search term parameters nor partner codes, but may
+   * contain parameters which set the engine in the correct way.
+   *
+   * This URL is typically the prePath and filePath of the search submission URI,
+   * but may vary for different engines. For example, some engines may use a
+   * different domain, e.g. https://sub.example.com for the search URI but
+   * https://example.org/ for the organic search page.
+   *
+   * @returns {string}
+   */
   get searchForm() {
-    return this._getSearchFormWithPurpose();
-  }
-
-  get sendAttributionRequest() {
-    return this._sendAttributionRequest;
-  }
-
-  _getSearchFormWithPurpose(purpose) {
     // First look for a <Url rel="searchform">
     var searchFormURL = this._getURLOfType(
       lazy.SearchUtils.URL_TYPE.SEARCH,
       "searchform"
     );
     if (searchFormURL) {
-      let submission = searchFormURL.getSubmission("", this, purpose);
+      let submission = searchFormURL.getSubmission("", this);
 
       // If the rel=searchform URL is not type="get" (i.e. has postData),
       // ignore it, since we can only return a URL.
@@ -1373,43 +1400,39 @@ export class SearchEngine {
     return ParamSubstitution(this._searchForm, "", this);
   }
 
+  get sendAttributionRequest() {
+    return this._sendAttributionRequest;
+  }
+
   get queryCharset() {
     return this._queryCharset || lazy.SearchUtils.DEFAULT_QUERY_CHARSET;
   }
 
-  get _defaultMobileResponseType() {
-    let type = lazy.SearchUtils.URL_TYPE.SEARCH;
-
-    let isTablet = Services.sysinfo.get("tablet");
-    if (
-      isTablet &&
-      this.supportsResponseType("application/x-moz-tabletsearch")
-    ) {
-      // Check for a tablet-specific search URL override
-      type = "application/x-moz-tabletsearch";
-    } else if (
-      !isTablet &&
-      this.supportsResponseType("application/x-moz-phonesearch")
-    ) {
-      // Check for a phone-specific search URL override
-      type = "application/x-moz-phonesearch";
-    }
-
-    Object.defineProperty(this, "_defaultMobileResponseType", {
-      value: type,
-      configurable: true,
-    });
-
-    return type;
-  }
-
-  // from nsISearchEngine
-  getSubmission(data, responseType, purpose) {
+  /**
+   * Gets an object that contains information about what to send to the search
+   * engine, for a request. This will be a URI and may also include data for POST
+   * requests.
+   *
+   * @param {string} searchTerms
+   *   The search term(s) for the submission.
+   *   Note: If an empty data string is supplied, the search form of the search
+   *   engine will be returned. This is intentional, as in some cases on the current
+   *   UI an empty search is intended to open the search engine's home/search page.
+   * @param {lazy.SearchUtils.URL_TYPE} [responseType]
+   *   The MIME type that we'd like to receive in response
+   *   to this submission.  If null, will default to "text/html".
+   * @param {string} [purpose]
+   *   A string that indicates the context of the search request. This may then
+   *   be used to provide different submission data depending on the context.
+   * @returns {nsISearchSubmission|null}
+   *   The submission data. If no appropriate submission can be determined for
+   *   the request type, this may be null.
+   */
+  getSubmission(searchTerms, responseType, purpose) {
+    // We can't use a default parameter as that doesn't work correctly with
+    // the idl interfaces.
     if (!responseType) {
-      responseType =
-        AppConstants.platform == "android"
-          ? this._defaultMobileResponseType
-          : lazy.SearchUtils.URL_TYPE.SEARCH;
+      responseType = lazy.SearchUtils.URL_TYPE.SEARCH;
     }
 
     var url = this._getURLOfType(responseType);
@@ -1418,18 +1441,19 @@ export class SearchEngine {
       return null;
     }
 
-    if (!data) {
+    if (
+      !searchTerms &&
+      responseType != lazy.SearchUtils.URL_TYPE.TRENDING_JSON
+    ) {
       // Return a dummy submission object with our searchForm attribute
-      return new Submission(
-        lazy.SearchUtils.makeURI(this._getSearchFormWithPurpose(purpose))
-      );
+      return new Submission(lazy.SearchUtils.makeURI(this.searchForm));
     }
 
     var submissionData = "";
     try {
       submissionData = Services.textToSubURI.ConvertAndEscape(
         this.queryCharset,
-        data
+        searchTerms
       );
     } catch (ex) {
       lazy.logConsole.warn(
@@ -1437,10 +1461,113 @@ export class SearchEngine {
       );
       submissionData = Services.textToSubURI.ConvertAndEscape(
         lazy.SearchUtils.DEFAULT_QUERY_CHARSET,
-        data
+        searchTerms
       );
     }
     return url.getSubmission(submissionData, this, purpose);
+  }
+
+  /**
+   * Returns a search URL with no search terms. This is typically used for
+   * purposes where we want to check something on the URL, but not use it for
+   * an actual submission to the search engine.
+   *
+   * Note: getSubmission cannot be used for this case, as that returns the
+   * search form when passed an empty string.
+   *
+   * @returns {nsIURI}
+   */
+  get searchURLWithNoTerms() {
+    return this._getURLOfType(lazy.SearchUtils.URL_TYPE.SEARCH).getSubmission(
+      "",
+      this
+    ).uri;
+  }
+
+  /**
+   * Returns the search term of a possible search result URI if and only if:
+   * - The URI has the same scheme, host, and path as the engine.
+   * - All query parameters of the URI have a matching name and value in the engine.
+   * - An exception to the equality check is the engine's termsParameterName
+   *   value, which contains a placeholder, i.e. {searchTerms}.
+   * - If an engine has query parameters with "null" values, they will be ignored.
+   *
+   * @param {nsIURI} uri
+   *   A URI that may or may not be from a search result matching the engine.
+   *
+   * @returns {string}
+   *   A string representing the termsParameterName value of the URI,
+   *   or an empty string if the URI isn't matched to the engine.
+   */
+  searchTermFromResult(uri) {
+    let url = this._getURLOfType(lazy.SearchUtils.URL_TYPE.SEARCH);
+    if (!url) {
+      return "";
+    }
+
+    // The engine URL and URI should have the same scheme, host, and path.
+    if (
+      uri.spec.split("?")[0].toLowerCase() !=
+      url.template.split("?")[0].toLowerCase()
+    ) {
+      return "";
+    }
+
+    let engineParams;
+    if (url.params.length) {
+      engineParams = new URLSearchParams();
+      for (let { name, value } of url.params) {
+        // Some values might be null, so avoid adding
+        // them since the input is unlikely to have it too.
+        if (value) {
+          // Use append() rather than set() so multiple
+          // values of the same name can be stored.
+          engineParams.append(name, value);
+        }
+      }
+    } else {
+      // Try checking the template for the presence of query params.
+      engineParams = new URL(url.template).searchParams;
+    }
+
+    let uriParams = new URLSearchParams(uri.query);
+    if (
+      new Set([...uriParams.keys()]).size !=
+      new Set([...engineParams.keys()]).size
+    ) {
+      return "";
+    }
+
+    let termsParameterName = this.getURLParsingInfo().termsParameterName;
+    for (let [name, value] of uriParams.entries()) {
+      // Don't check the name matching the search
+      // query because its value will differ.
+      if (name == termsParameterName) {
+        continue;
+      }
+      // All params of an input must have a matching
+      // key and value in the list of engine parameters.
+      if (!engineParams.getAll(name).includes(value)) {
+        return "";
+      }
+    }
+
+    // An engine can use a non UTF-8 charset, which URLSearchParams
+    // might not parse properly. Convert the terms parameter value
+    // from the original input using the appropriate charset.
+    if (this.queryCharset.toLowerCase() != "utf-8") {
+      let name = `${termsParameterName}=`;
+      let queryString = uri.query
+        .split("&")
+        .filter(str => str.startsWith(name))
+        .pop();
+      return Services.textToSubURI.UnEscapeAndConvert(
+        this.queryCharset,
+        queryString.substring(queryString.indexOf("=") + 1).replace(/\+/g, " ")
+      );
+    }
+
+    return uriParams.get(termsParameterName);
   }
 
   get searchUrlQueryParamName() {
@@ -1454,7 +1581,7 @@ export class SearchEngine {
     );
 
     if (submission.postData) {
-      Cu.reportError("searchUrlQueryParamName can't handle POST urls.");
+      console.error("searchUrlQueryParamName can't handle POST urls.");
       return (this._searchUrlQueryParamName = "");
     }
 
@@ -1473,12 +1600,8 @@ export class SearchEngine {
     if (this._searchUrlPublicSuffix != null) {
       return this._searchUrlPublicSuffix;
     }
-    let submission = this.getSubmission(
-      "{searchTerms}",
-      lazy.SearchUtils.URL_TYPE.SEARCH
-    );
     let searchURLPublicSuffix = Services.eTLD.getKnownPublicSuffix(
-      submission.uri
+      this.searchURLWithNoTerms
     );
     return (this._searchUrlPublicSuffix = searchURLPublicSuffix);
   }
@@ -1489,15 +1612,8 @@ export class SearchEngine {
   }
 
   // from nsISearchEngine
-  getResultDomain(responseType) {
-    if (!responseType) {
-      responseType =
-        AppConstants.platform == "android"
-          ? this._defaultMobileResponseType
-          : lazy.SearchUtils.URL_TYPE.SEARCH;
-    }
-
-    let url = this._getURLOfType(responseType);
+  get searchUrlDomain() {
+    let url = this._getURLOfType(lazy.SearchUtils.URL_TYPE.SEARCH);
     if (url) {
       return url.templateHost;
     }
@@ -1509,12 +1625,7 @@ export class SearchEngine {
    *   URL parsing properties used by _buildParseSubmissionMap.
    */
   getURLParsingInfo() {
-    let responseType =
-      AppConstants.platform == "android"
-        ? this._defaultMobileResponseType
-        : lazy.SearchUtils.URL_TYPE.SEARCH;
-
-    let url = this._getURLOfType(responseType);
+    let url = this._getURLOfType(lazy.SearchUtils.URL_TYPE.SEARCH);
     if (!url || url.method != "GET") {
       return null;
     }
@@ -1524,9 +1635,7 @@ export class SearchEngine {
       return null;
     }
 
-    let templateUrl = Services.io
-      .newURI(url.template)
-      .QueryInterface(Ci.nsIURL);
+    let templateUrl = Services.io.newURI(url.template);
     return {
       mainDomain: templateUrl.host,
       path: templateUrl.filePath.toLowerCase(),
@@ -1600,23 +1709,24 @@ export class SearchEngine {
    * (and suggest URI, if different) to reduce request latency
    *
    * @param {object} options
+   *   The options object
    * @param {DOMWindow} options.window
    *   The content window for the window performing the search.
    * @param {object} options.originAttributes
    *   The originAttributes for performing the search
    * @throws NS_ERROR_INVALID_ARG if options is omitted or lacks required
-   *         elemeents
+   *         elements
    */
   speculativeConnect(options) {
     if (!options || !options.window) {
-      Cu.reportError(
+      console.error(
         "invalid options arg passed to nsISearchEngine.speculativeConnect"
       );
       throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
     }
     let connector = Services.io.QueryInterface(Ci.nsISpeculativeConnect);
 
-    let searchURI = this.getSubmission("dummy").uri;
+    let searchURI = this.searchURLWithNoTerms;
 
     let callbacks = options.window.docShell.QueryInterface(Ci.nsILoadContext);
 
@@ -1635,10 +1745,10 @@ export class SearchEngine {
     );
 
     try {
-      connector.speculativeConnect(searchURI, principal, callbacks);
+      connector.speculativeConnect(searchURI, principal, callbacks, false);
     } catch (e) {
       // Can't setup speculative connection for this url, just ignore it.
-      Cu.reportError(e);
+      console.error(e);
     }
 
     if (this.supportsResponseType(lazy.SearchUtils.URL_TYPE.SUGGEST_JSON)) {
@@ -1648,13 +1758,28 @@ export class SearchEngine {
       ).uri;
       if (suggestURI.prePath != searchURI.prePath) {
         try {
-          connector.speculativeConnect(suggestURI, principal, callbacks);
+          connector.speculativeConnect(suggestURI, principal, callbacks, false);
         } catch (e) {
           // Can't setup speculative connection for this url, just ignore it.
-          Cu.reportError(e);
+          console.error(e);
         }
       }
     }
+  }
+
+  get id() {
+    return this.#id;
+  }
+
+  /**
+   * Generates an UUID.
+   *
+   * @returns {string}
+   *   An UUID string, without leading or trailing braces.
+   */
+  #uuid() {
+    let uuid = Services.uuid.generateUUID().toString();
+    return uuid.slice(1, uuid.length - 1);
   }
 }
 

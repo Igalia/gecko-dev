@@ -34,6 +34,12 @@ class MIDIPermissionRequest final : public ContentPermissionRequestBase,
 
  private:
   ~MIDIPermissionRequest() = default;
+  nsresult DoPrompt();
+  void CancelWithRandomizedDelay();
+
+  // If we're canceling on a timer, we need to hold a strong ref while it's
+  // outstanding.
+  nsCOMPtr<nsITimer> mCancelTimer;
 
   // Promise for returning MIDIAccess on request success
   RefPtr<Promise> mPromise;

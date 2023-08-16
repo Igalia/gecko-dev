@@ -80,6 +80,7 @@ ${helpers.predefined_type(
     "basic_shape::ClipPath",
     "generics::basic_shape::ClipPath::None",
     engines="gecko",
+    extra_prefixes="webkit",
     animation_value_type="basic_shape::ClipPath",
     spec="https://drafts.fxtf.org/css-masking/#propdef-clip-path",
 )}
@@ -253,6 +254,5 @@ ${helpers.predefined_type(
     "specified::DProperty::none()",
     engines="gecko",
     animation_value_type="ComputedValue",
-    gecko_pref="layout.css.d-property.enabled",
     spec="https://svgwg.org/svg2-draft/paths.html#TheDProperty",
 )}

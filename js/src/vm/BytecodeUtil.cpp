@@ -15,19 +15,14 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/ReverseIterator.h"
 #include "mozilla/Sprintf.h"
-#include "mozilla/Vector.h"
 
-#include <algorithm>
 #include <inttypes.h>
 #include <stdio.h>
 #include <string.h>
-#include <type_traits>
 
 #include "jsapi.h"
-#include "jsnum.h"
 #include "jstypes.h"
 
-#include "frontend/BytecodeCompiler.h"
 #include "frontend/SourceNotes.h"  // SrcNote, SrcNoteType, SrcNoteIterator
 #include "gc/PublicIterators.h"
 #include "jit/IonScript.h"  // IonBlockCounts
@@ -36,25 +31,26 @@
 #include "js/experimental/PCCountProfiling.h"  // JS::{Start,Stop}PCCountProfiling, JS::PurgePCCounts, JS::GetPCCountScript{Count,Summary,Contents}
 #include "js/friend/DumpFunctions.h"           // js::DumpPC, js::DumpScript
 #include "js/friend/ErrorMessages.h"           // js::GetErrorMessage, JSMSG_*
+#include "js/Printer.h"
 #include "js/Printf.h"
 #include "js/Symbol.h"
 #include "util/DifferentialTesting.h"
+#include "util/Identifier.h"  // IsIdentifier
 #include "util/Memory.h"
-#include "util/StringBuffer.h"
 #include "util/Text.h"
 #include "vm/BuiltinObjectKind.h"
 #include "vm/BytecodeIterator.h"  // for AllBytecodesIterable
 #include "vm/BytecodeLocation.h"
 #include "vm/CodeCoverage.h"
 #include "vm/EnvironmentObject.h"
-#include "vm/FrameIter.h"  // js::{,Script}FrameIter
-#include "vm/JSAtom.h"
+#include "vm/FrameIter.h"    // js::{,Script}FrameIter
+#include "vm/JSAtomUtils.h"  // AtomToPrintableString, Atomize
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
+#include "vm/JSONPrinter.h"
 #include "vm/JSScript.h"
 #include "vm/Opcodes.h"
-#include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/Shape.h"
 #include "vm/ToSource.h"       // js::ValueToSource
@@ -62,15 +58,11 @@
 
 #include "gc/GC-inl.h"
 #include "vm/BytecodeIterator-inl.h"
-#include "vm/BytecodeLocation-inl.h"
 #include "vm/JSContext-inl.h"
-#include "vm/JSObject-inl.h"
 #include "vm/JSScript-inl.h"
 #include "vm/Realm-inl.h"
 
 using namespace js;
-
-using js::frontend::IsIdentifier;
 
 /*
  * Index limit must stay within 32 bits.
@@ -583,6 +575,7 @@ uint32_t BytecodeParser::simulateOp(JSOp op, uint32_t offset,
       case JSOp::InitProp:
       case JSOp::InitPropGetter:
       case JSOp::InitPropSetter:
+      case JSOp::MutateProto:
       case JSOp::SetFunName:
         // Keep the second value.
         MOZ_ASSERT(nuses == 2);
@@ -745,10 +738,18 @@ uint32_t BytecodeParser::simulateOp(JSOp op, uint32_t offset,
     case JSOp::IsNoIter:
     case JSOp::IsNullOrUndefined:
     case JSOp::MoreIter:
+    case JSOp::CanSkipAwait:
       // Keep the top value and push one more value.
       MOZ_ASSERT(nuses == 1);
       MOZ_ASSERT(ndefs == 2);
       offsetStack[stackDepth + 1].set(offset, 1);
+      break;
+
+    case JSOp::MaybeExtractAwaitValue:
+      // Keep the top value and replace the second to top value.
+      MOZ_ASSERT(nuses == 2);
+      MOZ_ASSERT(ndefs == 2);
+      offsetStack[stackDepth].set(offset, 0);
       break;
 
     case JSOp::CheckPrivateField:
@@ -1342,11 +1343,12 @@ static bool DecompileAtPCForStackDump(
     JSContext* cx, HandleScript script,
     const OffsetAndDefIndex& offsetAndDefIndex, Sprinter* sp);
 
-static bool PrintShapeProperties(JSContext* cx, Sprinter* sp, Shape* shape) {
+static bool PrintShapeProperties(JSContext* cx, Sprinter* sp,
+                                 SharedShape* shape) {
   // Add all property keys to a vector to allow printing them in property
   // definition order.
   Vector<PropertyKey> props(cx);
-  for (ShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
+  for (SharedShapePropertyIter<NoGC> iter(shape); !iter.done(); iter++) {
     if (!props.append(iter->key())) {
       return false;
     }
@@ -1566,7 +1568,7 @@ static unsigned Disassemble1(JSContext* cx, HandleScript script, jsbytecode* pc,
     }
 
     case JOF_SHAPE: {
-      Shape* shape = script->getShape(pc);
+      SharedShape* shape = script->getShape(pc);
       if (!sp->put(" ")) {
         return 0;
       }
@@ -1953,6 +1955,8 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
       return write(js_this_str);
     case JSOp::NewTarget:
       return write("new.target");
+    case JSOp::ImportMeta:
+      return write("import.meta");
     case JSOp::Call:
     case JSOp::CallContent:
     case JSOp::CallIgnoresRv:
@@ -2014,6 +2018,9 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     case JSOp::SpreadNew:
       return write("(new ") && decompilePCForStackOperand(pc, -4) &&
              write("(...))");
+
+    case JSOp::DynamicImport:
+      return write("import(...)");
 
     case JSOp::Typeof:
     case JSOp::TypeofExpr:
@@ -2079,6 +2086,16 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
     switch (op) {
       case JSOp::Arguments:
         return write("arguments");
+
+      case JSOp::ArgumentsLength:
+        return write("arguments.length");
+
+      case JSOp::GetFrameArg:
+        return sprinter.printf("arguments[%u]", GET_ARGNO(pc));
+
+      case JSOp::GetActualArg:
+        return write("arguments[") && decompilePCForStackOperand(pc, -1) &&
+               write("]");
 
       case JSOp::BindGName:
         return write("GLOBAL");
@@ -2160,9 +2177,6 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
         MOZ_ASSERT(defIndex == 1);
         return write("MOREITER");
 
-      case JSOp::MutateProto:
-        return write("SUCCEEDED");
-
       case JSOp::NewInit:
       case JSOp::NewObject:
       case JSOp::ObjWithProto:
@@ -2212,6 +2226,17 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
       case JSOp::AsyncResolve:
         return write("PROMISE");
 
+      case JSOp::CanSkipAwait:
+        // For stack dump, defIndex == 0 is not used.
+        MOZ_ASSERT(defIndex == 1);
+        return write("CAN_SKIP_AWAIT");
+
+      case JSOp::MaybeExtractAwaitValue:
+        // For stack dump, defIndex == 1 is not used.
+        MOZ_ASSERT(defIndex == 0);
+        return write("MAYBE_RESOLVED(") && decompilePCForStackOperand(pc, -2) &&
+               write(")");
+
       case JSOp::CheckPrivateField:
         return write("HasPrivateField");
 
@@ -2220,6 +2245,10 @@ bool ExpressionDecompiler::decompilePC(jsbytecode* pc, uint8_t defIndex) {
 
       case JSOp::CheckReturn:
         return write("RVAL");
+
+      case JSOp::HasOwn:
+        return write("HasOwn(") && decompilePCForStackOperand(pc, -2) &&
+               write(", ") && decompilePCForStackOperand(pc, -1) && write(")");
 
       default:
         break;
@@ -2433,7 +2462,7 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   FrameIter frameIter(cx);
 
   if (frameIter.done() || !frameIter.hasScript() ||
-      frameIter.realm() != cx->realm()) {
+      frameIter.realm() != cx->realm() || frameIter.inPrologue()) {
     return true;
   }
 
@@ -2449,11 +2478,6 @@ static bool DecompileExpressionFromStack(JSContext* cx, int spindex,
   jsbytecode* valuepc = frameIter.pc();
 
   MOZ_ASSERT(script->containsPC(valuepc));
-
-  // Give up if in prologue.
-  if (valuepc < script->main()) {
-    return true;
-  }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
   BytecodeParser parser(cx, allocScope.alloc(), frameIter.script());
@@ -2745,11 +2769,17 @@ JSString* JS::GetPCCountScriptSummary(JSContext* cx, size_t index) {
 
   json.beginObject();
 
-  RootedString filename(cx, NewStringCopyZ<CanGC>(cx, script->filename()));
-  if (!filename) {
+  Rooted<JSString*> filenameStr(cx);
+  if (const char* filename = script->filename()) {
+    filenameStr =
+        JS_NewStringCopyUTF8N(cx, JS::UTF8Chars(filename, strlen(filename)));
+  } else {
+    filenameStr = JS_GetEmptyString(cx);
+  }
+  if (!filenameStr) {
     return nullptr;
   }
-  if (!JSONStringProperty(sp, json, "file", filename)) {
+  if (!JSONStringProperty(sp, json, "file", filenameStr)) {
     return nullptr;
   }
   json.property("line", script->lineno());
@@ -2927,7 +2957,7 @@ static bool GetPCCountJSON(JSContext* cx, const ScriptAndCounts& sac,
 
   json.endObject();
 
-  return true;
+  return !sp.hadOutOfMemory();
 }
 
 JSString* JS::GetPCCountScriptContents(JSContext* cx, size_t index) {

@@ -3,6 +3,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ErrorList.h"
 #include "TextEditor.h"
 
 #include "AutoRangeArray.h"
@@ -34,7 +35,7 @@
 #include "nsIContent.h"
 #include "nsIHTMLCollection.h"
 #include "nsINode.h"
-#include "nsISupportsBase.h"
+#include "nsISupports.h"
 #include "nsLiteralString.h"
 #include "nsNameSpaceManager.h"
 #include "nsPrintfCString.h"
@@ -47,7 +48,7 @@ using namespace dom;
 
 #define CANCEL_OPERATION_AND_RETURN_EDIT_ACTION_RESULT_IF_READONLY \
   if (IsReadonly()) {                                              \
-    return EditActionCanceled(NS_OK);                              \
+    return EditActionResult::CanceledResult();                     \
   }
 
 void TextEditor::OnStartToHandleTopLevelEditSubAction(
@@ -86,13 +87,11 @@ void TextEditor::OnStartToHandleTopLevelEditSubAction(
     // after inserting text.
     const EditorRawDOMPoint point =
         FindBetterInsertionPoint(EditorRawDOMPoint(SelectionRef().AnchorRef()));
-    NS_WARNING_ASSERTION(
-        point.IsSet(),
-        "EditorBase::FindBetterInsertionPoint() failed, but ignored");
     if (point.IsSet()) {
       SetSpellCheckRestartPoint(point);
       return;
     }
+    NS_WARNING("TextEditor::FindBetterInsertionPoint() failed, but ignored");
   }
   if (SelectionRef().AnchorRef().IsSet()) {
     SetSpellCheckRestartPoint(EditorRawDOMPoint(SelectionRef().AnchorRef()));
@@ -161,14 +160,18 @@ nsresult TextEditor::InsertLineBreakAsSubAction() {
       !ignoredError.Failed(),
       "TextEditor::OnStartToHandleTopLevelEditSubAction() failed, but ignored");
 
-  EditActionResult result = InsertLineFeedCharacterAtSelection();
-  NS_WARNING_ASSERTION(
-      result.Succeeded(),
-      "TextEditor::InsertLineFeedCharacterAtSelection() failed, but ignored");
-  return result.Rv();
+  Result<EditActionResult, nsresult> result =
+      InsertLineFeedCharacterAtSelection();
+  if (MOZ_UNLIKELY(result.isErr())) {
+    NS_WARNING(
+        "TextEditor::InsertLineFeedCharacterAtSelection() failed, but ignored");
+    return result.unwrapErr();
+  }
+  return NS_OK;
 }
 
-EditActionResult TextEditor::InsertLineFeedCharacterAtSelection() {
+Result<EditActionResult, nsresult>
+TextEditor::InsertLineFeedCharacterAtSelection() {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(!IsSingleLineEditor());
 
@@ -178,16 +181,16 @@ EditActionResult TextEditor::InsertLineFeedCharacterAtSelection() {
 
   if (mMaxTextLength >= 0) {
     nsAutoString insertionString(u"\n"_ns);
-    EditActionResult result =
+    Result<EditActionResult, nsresult> result =
         MaybeTruncateInsertionStringForMaxLength(insertionString);
-    if (result.Failed()) {
+    if (MOZ_UNLIKELY(result.isErr())) {
       NS_WARNING(
           "TextEditor::MaybeTruncateInsertionStringForMaxLength() failed");
       return result;
     }
-    if (result.Handled()) {
+    if (result.inspect().Handled()) {
       // Don't return as handled since we stopped inserting the line break.
-      return EditActionCanceled();
+      return EditActionResult::CanceledResult();
     }
   }
 
@@ -198,66 +201,51 @@ EditActionResult TextEditor::InsertLineFeedCharacterAtSelection() {
     if (NS_FAILED(rv)) {
       NS_WARNING(
           "EditorBase::DeleteSelectionAsSubAction(eNone, eNoStrip) failed");
-      return EditActionIgnored(rv);
+      return Err(rv);
     }
   }
 
   const auto pointToInsert = GetFirstSelectionStartPoint<EditorDOMPoint>();
-  if (MOZ_UNLIKELY(NS_WARN_IF(!pointToInsert.IsSet()))) {
-    return EditActionResult(NS_ERROR_FAILURE);
+  if (NS_WARN_IF(!pointToInsert.IsSet())) {
+    return Err(NS_ERROR_FAILURE);
   }
   MOZ_ASSERT(pointToInsert.IsSetAndValid());
   MOZ_ASSERT(!pointToInsert.IsContainerHTMLElement(nsGkAtoms::br));
 
   RefPtr<Document> document = GetDocument();
-  if (MOZ_UNLIKELY(NS_WARN_IF(!document))) {
-    return EditActionResult(NS_ERROR_NOT_INITIALIZED);
+  if (NS_WARN_IF(!document)) {
+    return Err(NS_ERROR_NOT_INITIALIZED);
   }
 
-  // Don't change my selection in sub-transactions.
-  AutoTransactionsConserveSelection dontChangeMySelection(*this);
-
   // Insert a linefeed character.
-  Result<EditorDOMPoint, nsresult> insertTextResult =
+  Result<InsertTextResult, nsresult> insertTextResult =
       InsertTextWithTransaction(*document, u"\n"_ns, pointToInsert);
   if (MOZ_UNLIKELY(insertTextResult.isErr())) {
     NS_WARNING("TextEditor::InsertTextWithTransaction(\"\\n\") failed");
-    return EditActionResult(insertTextResult.unwrapErr());
+    return insertTextResult.propagateErr();
   }
-  if (MOZ_UNLIKELY(!insertTextResult.inspect().IsSet())) {
-    NS_WARNING(
-        "EditorBase::InsertTextWithTransaction(\"\\n\") didn't return position "
-        "of inserted linefeed");
-    return EditActionHandled(NS_ERROR_FAILURE);
+  insertTextResult.inspect().IgnoreCaretPointSuggestion();
+  EditorDOMPoint pointToPutCaret = insertTextResult.inspect().Handled()
+                                       ? insertTextResult.inspect()
+                                             .EndOfInsertedTextRef()
+                                             .To<EditorDOMPoint>()
+                                       : pointToInsert;
+  if (NS_WARN_IF(!pointToPutCaret.IsSetAndValid())) {
+    return Err(NS_ERROR_FAILURE);
   }
-
-  // set the selection to the correct location
-  MOZ_ASSERT(insertTextResult.inspect().IsInTextNode(),
-             "After inserting text into a text node, insertTextResult should "
-             "return a point in a text node");
-  nsresult rv = CollapseSelectionTo(insertTextResult.inspect());
-  if (MOZ_UNLIKELY(NS_FAILED(rv))) {
-    NS_WARNING("EditorBase::CollapseSelectionTo() failed");
-    return EditActionHandled(rv);
-  }
-
   // XXX I don't think we still need this.  This must have been required when
   //     `<textarea>` was implemented with text nodes and `<br>` elements.
-  // see if we're at the end of the editor range
-  const auto endPoint = GetFirstSelectionEndPoint<EditorRawDOMPoint>();
-  if (endPoint == insertTextResult.inspect()) {
-    // SetInterlinePosition(true) means we want the caret to stick to the
-    // content on the "right".  We want the caret to stick to whatever is
-    // past the break.  This is because the break is on the same line we
-    // were on, but the next content will be on the following line.
-    DebugOnly<nsresult> rvIgnored =
-        SelectionRef().SetInterlinePosition(InterlinePosition::StartOfNextLine);
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rvIgnored),
-                         "Selection::SetInterlinePosition(InterlinePosition::"
-                         "StartOfNextLine) failed, but ignored");
+  // We want the caret to stick to the content on the "right".  We want the
+  // caret to stick to whatever is past the break.  This is because the break is
+  // on the same line we were on, but the next content will be on the following
+  // line.
+  pointToPutCaret.SetInterlinePosition(InterlinePosition::StartOfNextLine);
+  nsresult rv = CollapseSelectionTo(pointToPutCaret);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("EditorBase::CollapseSelectionTo() failed");
+    return Err(rv);
   }
-
-  return EditActionHandled();
+  return EditActionResult::HandledResult();
 }
 
 nsresult TextEditor::EnsureCaretNotAtEndOfTextNode() {
@@ -271,16 +259,16 @@ nsresult TextEditor::EnsureCaretNotAtEndOfTextNode() {
     return NS_OK;
   }
 
-  nsresult rv = CollapseSelectionToEndOfLastLeafNode();
+  nsresult rv = CollapseSelectionToEndOfTextNode();
   if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
     NS_WARNING(
-        "EditorBase::CollapseSelectionToEndOfLastLeafNode() caused destroying "
-        "the editor");
+        "TextEditor::CollapseSelectionToEndOfTextNode() caused destroying the "
+        "editor");
     return NS_ERROR_EDITOR_DESTROYED;
   }
   NS_WARNING_ASSERTION(
       NS_SUCCEEDED(rv),
-      "EditorBase::CollapseSelectionToEndOfLastLeafNode() failed, but ignored");
+      "TextEditor::CollapseSelectionToEndOfTextNode() failed, but ignored");
 
   return NS_OK;
 }
@@ -359,7 +347,7 @@ void TextEditor::HandleNewLinesInStringForSingleLineEditor(
   }
 }
 
-EditActionResult TextEditor::HandleInsertText(
+Result<EditActionResult, nsresult> TextEditor::HandleInsertText(
     EditSubAction aEditSubAction, const nsAString& aInsertionString,
     SelectionHandling aSelectionHandling) {
   MOZ_ASSERT(IsEditActionDataAvailable());
@@ -377,23 +365,25 @@ EditActionResult TextEditor::HandleInsertText(
     // because IME transaction depend on them
     // There is more work to do to make the
     // world safe for IME.
-    return EditActionCanceled();
+    return EditActionResult::CanceledResult();
   }
 
   nsAutoString insertionString(aInsertionString);
   if (mMaxTextLength >= 0) {
-    EditActionResult result =
+    Result<EditActionResult, nsresult> result =
         MaybeTruncateInsertionStringForMaxLength(insertionString);
-    if (result.Failed()) {
+    if (MOZ_UNLIKELY(result.isErr())) {
       NS_WARNING(
           "TextEditor::MaybeTruncateInsertionStringForMaxLength() failed");
-      return result.MarkAsHandled();
+      EditActionResult unwrappedResult = result.unwrap();
+      unwrappedResult.MarkAsHandled();
+      return unwrappedResult;
     }
     // If we're exceeding the maxlength when composing IME, we need to clean up
     // the composing text, so we shouldn't return early.
-    if (result.Handled() && insertionString.IsEmpty() &&
+    if (result.inspect().Handled() && insertionString.IsEmpty() &&
         aEditSubAction != EditSubAction::eInsertTextComingFromIME) {
-      return EditActionCanceled();
+      return EditActionResult::CanceledResult();
     }
   }
 
@@ -416,7 +406,7 @@ EditActionResult TextEditor::HandleInsertText(
     if (NS_FAILED(rv)) {
       NS_WARNING(
           "EditorBase::DeleteSelectionAsSubAction(eNone, eNoStrip) failed");
-      return EditActionHandled(rv);
+      return Err(rv);
     }
   }
 
@@ -450,14 +440,14 @@ EditActionResult TextEditor::HandleInsertText(
   }
 
   const auto atStartOfSelection = GetFirstSelectionStartPoint<EditorDOMPoint>();
-  if (MOZ_UNLIKELY(NS_WARN_IF(!atStartOfSelection.IsSetAndValid()))) {
-    return EditActionHandled(NS_ERROR_FAILURE);
+  if (NS_WARN_IF(!atStartOfSelection.IsSetAndValid())) {
+    return Err(NS_ERROR_FAILURE);
   }
   MOZ_ASSERT(!atStartOfSelection.IsContainerHTMLElement(nsGkAtoms::br));
 
   RefPtr<Document> document = GetDocument();
   if (NS_WARN_IF(!document)) {
-    return EditActionHandled(NS_ERROR_NOT_INITIALIZED);
+    return Err(NS_ERROR_NOT_INITIALIZED);
   }
 
   if (aEditSubAction == EditSubAction::eInsertTextComingFromIME) {
@@ -467,35 +457,47 @@ EditActionResult TextEditor::HandleInsertText(
       compositionStartPoint = FindBetterInsertionPoint(atStartOfSelection);
       NS_WARNING_ASSERTION(
           compositionStartPoint.IsSet(),
-          "EditorBase::FindBetterInsertionPoint() failed, but ignored");
+          "TextEditor::FindBetterInsertionPoint() failed, but ignored");
     }
-    Result<EditorDOMPoint, nsresult> insertTextResult =
+    Result<InsertTextResult, nsresult> insertTextResult =
         InsertTextWithTransaction(*document, insertionString,
                                   compositionStartPoint);
     if (MOZ_UNLIKELY(insertTextResult.isErr())) {
       NS_WARNING("EditorBase::InsertTextWithTransaction() failed");
-      return EditActionResult(insertTextResult.unwrapErr());
+      return insertTextResult.propagateErr();
     }
+    nsresult rv = insertTextResult.unwrap().SuggestCaretPointTo(
+        *this, {SuggestCaret::OnlyIfHasSuggestion,
+                SuggestCaret::OnlyIfTransactionsAllowedToDoIt,
+                SuggestCaret::AndIgnoreTrivialError});
+    if (NS_FAILED(rv)) {
+      NS_WARNING("CaretPoint::SuggestCaretPointTo() failed");
+      return Err(rv);
+    }
+    NS_WARNING_ASSERTION(
+        rv != NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR,
+        "CaretPoint::SuggestCaretPointTo() failed, but ignored");
   } else {
     MOZ_ASSERT(aEditSubAction == EditSubAction::eInsertText);
 
-    // don't change my selection in subtransactions
-    AutoTransactionsConserveSelection dontChangeMySelection(*this);
-
-    Result<EditorDOMPoint, nsresult> insertTextResult =
+    Result<InsertTextResult, nsresult> insertTextResult =
         InsertTextWithTransaction(*document, insertionString,
                                   atStartOfSelection);
     if (MOZ_UNLIKELY(insertTextResult.isErr())) {
       NS_WARNING("EditorBase::InsertTextWithTransaction() failed");
-      return EditActionResult(insertTextResult.unwrapErr());
+      return insertTextResult.propagateErr();
     }
-
-    if (insertTextResult.inspect().IsSet()) {
+    // Ignore caret suggestion because there was
+    // AutoTransactionsConserveSelection.
+    insertTextResult.inspect().IgnoreCaretPointSuggestion();
+    if (insertTextResult.inspect().Handled()) {
       // Make the caret attach to the inserted text, unless this text ends with
       // a LF, in which case make the caret attach to the next line.
       const bool endsWithLF =
           !insertionString.IsEmpty() && insertionString.Last() == nsCRT::LF;
-      EditorDOMPoint pointToPutCaret = insertTextResult.unwrap();
+      EditorDOMPoint pointToPutCaret = insertTextResult.inspect()
+                                           .EndOfInsertedTextRef()
+                                           .To<EditorDOMPoint>();
       pointToPutCaret.SetInterlinePosition(
           endsWithLF ? InterlinePosition::StartOfNextLine
                      : InterlinePosition::EndOfLine);
@@ -503,10 +505,8 @@ EditActionResult TextEditor::HandleInsertText(
                  "After inserting text into a text node, insertTextResult "
                  "should return a point in a text node");
       nsresult rv = CollapseSelectionTo(pointToPutCaret);
-      if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
-        NS_WARNING(
-            "EditorBase::CollapseSelectionTo() caused destroying the editor");
-        return EditActionHandled(NS_ERROR_EDITOR_DESTROYED);
+      if (NS_WARN_IF(rv == NS_ERROR_EDITOR_DESTROYED)) {
+        return Err(NS_ERROR_EDITOR_DESTROYED);
       }
       NS_WARNING_ASSERTION(
           NS_SUCCEEDED(rv),
@@ -518,15 +518,17 @@ EditActionResult TextEditor::HandleInsertText(
   if (IsPasswordEditor() && IsMaskingPassword() && CanEchoPasswordNow()) {
     nsresult rv = SetUnmaskRangeAndNotify(start, insertionString.Length(),
                                           LookAndFeel::GetPasswordMaskDelay());
-    NS_WARNING_ASSERTION(NS_SUCCEEDED(rv),
-                         "TextEditor::SetUnmaskRangeAndNotify() failed");
-    return EditActionHandled(rv);
+    if (NS_FAILED(rv)) {
+      NS_WARNING("TextEditor::SetUnmaskRangeAndNotify() failed");
+      return Err(rv);
+    }
+    return EditActionResult::HandledResult();
   }
 
-  return EditActionHandled();
+  return EditActionResult::HandledResult();
 }
 
-EditActionResult TextEditor::SetTextWithoutTransaction(
+Result<EditActionResult, nsresult> TextEditor::SetTextWithoutTransaction(
     const nsAString& aValue) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(!IsIMEComposing());
@@ -559,7 +561,7 @@ EditActionResult TextEditor::SetTextWithoutTransaction(
     if (!textNode->GetNextSibling() ||
         !EditorUtils::IsPaddingBRElementForEmptyLastLine(
             *textNode->GetNextSibling())) {
-      return EditActionIgnored();
+      return EditActionResult::IgnoredResult();
     }
   }
 
@@ -573,13 +575,13 @@ EditActionResult TextEditor::SetTextWithoutTransaction(
   nsresult rv = SetTextNodeWithoutTransaction(sanitizedValue, *textNode);
   if (NS_FAILED(rv)) {
     NS_WARNING("EditorBase::SetTextNodeWithoutTransaction() failed");
-    return EditActionResult(rv);
+    return Err(rv);
   }
 
-  return EditActionHandled();
+  return EditActionResult::HandledResult();
 }
 
-EditActionResult TextEditor::HandleDeleteSelection(
+Result<EditActionResult, nsresult> TextEditor::HandleDeleteSelection(
     nsIEditor::EDirection aDirectionAndAmount,
     nsIEditor::EStripWrappers aStripWrappers) {
   MOZ_ASSERT(IsEditActionDataAvailable());
@@ -590,22 +592,22 @@ EditActionResult TextEditor::HandleDeleteSelection(
   CANCEL_OPERATION_AND_RETURN_EDIT_ACTION_RESULT_IF_READONLY
 
   if (IsEmpty()) {
-    return EditActionCanceled();
+    return EditActionResult::CanceledResult();
   }
-  EditActionResult result =
+  Result<EditActionResult, nsresult> result =
       HandleDeleteSelectionInternal(aDirectionAndAmount, nsIEditor::eNoStrip);
   // HandleDeleteSelectionInternal() creates SelectionBatcher.  Therefore,
   // quitting from it might cause having destroyed the editor.
   if (NS_WARN_IF(Destroyed())) {
-    return result.SetResult(NS_ERROR_EDITOR_DESTROYED);
+    return Err(NS_ERROR_EDITOR_DESTROYED);
   }
   NS_WARNING_ASSERTION(
-      result.Succeeded(),
+      result.isOk(),
       "TextEditor::HandleDeleteSelectionInternal(eNoStrip) failed");
   return result;
 }
 
-EditActionResult TextEditor::HandleDeleteSelectionInternal(
+Result<EditActionResult, nsresult> TextEditor::HandleDeleteSelectionInternal(
     nsIEditor::EDirection aDirectionAndAmount,
     nsIEditor::EStripWrappers aStripWrappers) {
   MOZ_ASSERT(IsEditActionDataAvailable());
@@ -627,28 +629,30 @@ EditActionResult TextEditor::HandleDeleteSelectionInternal(
     const auto selectionStartPoint =
         GetFirstSelectionStartPoint<EditorRawDOMPoint>();
     if (NS_WARN_IF(!selectionStartPoint.IsSet())) {
-      return EditActionResult(NS_ERROR_FAILURE);
+      return Err(NS_ERROR_FAILURE);
     }
 
     if (!SelectionRef().IsCollapsed()) {
       nsresult rv = DeleteSelectionWithTransaction(aDirectionAndAmount,
                                                    nsIEditor::eNoStrip);
-      NS_WARNING_ASSERTION(
-          NS_SUCCEEDED(rv),
-          "EditorBase::DeleteSelectionWithTransaction(eNoStrip) failed");
-      return EditActionHandled(rv);
+      if (NS_FAILED(rv)) {
+        NS_WARNING(
+            "EditorBase::DeleteSelectionWithTransaction(eNoStrip) failed");
+        return Err(rv);
+      }
+      return EditActionResult::HandledResult();
     }
 
     // Test for distance between caret and text that will be deleted
     AutoCaretBidiLevelManager bidiLevelManager(*this, aDirectionAndAmount,
                                                selectionStartPoint);
-    if (bidiLevelManager.Failed()) {
+    if (MOZ_UNLIKELY(bidiLevelManager.Failed())) {
       NS_WARNING("EditorBase::AutoCaretBidiLevelManager() failed");
-      return EditActionResult(NS_ERROR_FAILURE);
+      return Err(NS_ERROR_FAILURE);
     }
     bidiLevelManager.MaybeUpdateCaretBidiLevel(*this);
     if (bidiLevelManager.Canceled()) {
-      return EditActionCanceled();
+      return EditActionResult::CanceledResult();
     }
   }
 
@@ -657,30 +661,43 @@ EditActionResult TextEditor::HandleDeleteSelectionInternal(
       rangesToDelete.ExtendAnchorFocusRangeFor(*this, aDirectionAndAmount);
   if (result.isErr()) {
     NS_WARNING("AutoRangeArray::ExtendAnchorFocusRangeFor() failed");
-    return EditActionResult(result.unwrapErr());
+    return result.propagateErr();
   }
   if (const Text* theTextNode = GetTextNode()) {
     rangesToDelete.EnsureRangesInTextNode(*theTextNode);
   }
 
-  nsresult rv = DeleteRangesWithTransaction(
+  Result<CaretPoint, nsresult> caretPointOrError = DeleteRangesWithTransaction(
       result.unwrap(), nsIEditor::eNoStrip, rangesToDelete);
-  NS_WARNING_ASSERTION(
-      NS_SUCCEEDED(rv),
-      "EditorBase::DeleteRangesWithTransaction(eNoStrip) failed");
-  return EditActionHandled(rv);
+  if (MOZ_UNLIKELY(caretPointOrError.isErr())) {
+    NS_WARNING("EditorBase::DeleteRangesWithTransaction(eNoStrip) failed");
+    return caretPointOrError.propagateErr();
+  }
+
+  nsresult rv = caretPointOrError.inspect().SuggestCaretPointTo(
+      *this, {SuggestCaret::OnlyIfHasSuggestion,
+              SuggestCaret::OnlyIfTransactionsAllowedToDoIt,
+              SuggestCaret::AndIgnoreTrivialError});
+  if (NS_FAILED(rv)) {
+    NS_WARNING("CaretPoint::SuggestCaretPointTo() failed");
+    return Err(rv);
+  }
+  NS_WARNING_ASSERTION(rv != NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR,
+                       "CaretPoint::SuggestCaretPointTo() failed, but ignored");
+
+  return EditActionResult::HandledResult();
 }
 
-EditActionResult TextEditor::ComputeValueFromTextNodeAndBRElement(
-    nsAString& aValue) const {
+Result<EditActionResult, nsresult>
+TextEditor::ComputeValueFromTextNodeAndBRElement(nsAString& aValue) const {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(!IsHTMLEditor());
 
   Element* anonymousDivElement = GetRoot();
-  if (!anonymousDivElement) {
+  if (MOZ_UNLIKELY(!anonymousDivElement)) {
     // Don't warn this case, this is possible, e.g., 997805.html
     aValue.Truncate();
-    return EditActionHandled();
+    return EditActionResult::HandledResult();
   }
 
   Text* textNode = Text::FromNodeOrNull(anonymousDivElement->GetFirstChild());
@@ -688,7 +705,7 @@ EditActionResult TextEditor::ComputeValueFromTextNodeAndBRElement(
 
   if (!textNode->Length()) {
     aValue.Truncate();
-    return EditActionHandled();
+    return EditActionResult::HandledResult();
   }
 
   nsIContent* firstChildExceptText = textNode->GetNextSibling();
@@ -701,21 +718,22 @@ EditActionResult TextEditor::ComputeValueFromTextNodeAndBRElement(
                  !EditorUtils::IsPaddingBRElementForEmptyLastLine(
                      *firstChildExceptText) &&
                  !firstChildExceptText->IsXULElement(nsGkAtoms::scrollbar))) {
-    return EditActionIgnored();
+    return EditActionResult::IgnoredResult();
   }
 
   // Otherwise, the text data is the value.
   textNode->GetData(aValue);
-  return EditActionHandled();
+  return EditActionResult::HandledResult();
 }
 
-EditActionResult TextEditor::MaybeTruncateInsertionStringForMaxLength(
+Result<EditActionResult, nsresult>
+TextEditor::MaybeTruncateInsertionStringForMaxLength(
     nsAString& aInsertionString) {
   MOZ_ASSERT(IsEditActionDataAvailable());
   MOZ_ASSERT(mMaxTextLength >= 0);
 
   if (IsIMEComposing()) {
-    return EditActionIgnored();
+    return EditActionResult::IgnoredResult();
   }
 
   // Ignore user pastes
@@ -730,7 +748,7 @@ EditActionResult TextEditor::MaybeTruncateInsertionStringForMaxLength(
         // By now we are certain that this is a user paste, before we ignore it,
         // lets check if the user explictly enabled truncating user pastes.
         if (!StaticPrefs::editor_truncate_user_pastes()) {
-          return EditActionIgnored();
+          return EditActionResult::IgnoredResult();
         }
       }
       [[fallthrough]];
@@ -742,7 +760,7 @@ EditActionResult TextEditor::MaybeTruncateInsertionStringForMaxLength(
   nsresult rv = GetTextLength(&currentLength);
   if (NS_FAILED(rv)) {
     NS_WARNING("TextEditor::GetTextLength() failed");
-    return EditActionResult(rv);
+    return Err(rv);
   }
 
   uint32_t selectionStart, selectionEnd;
@@ -761,12 +779,12 @@ EditActionResult TextEditor::MaybeTruncateInsertionStringForMaxLength(
       currentLength - kSelectionLength - kOldCompositionStringLength;
   if (kNewLength >= AssertedCast<uint32_t>(mMaxTextLength)) {
     aInsertionString.Truncate();  // Too long, we cannot accept new character.
-    return EditActionHandled();
+    return EditActionResult::HandledResult();
   }
 
   if (aInsertionString.Length() + kNewLength <=
       AssertedCast<uint32_t>(mMaxTextLength)) {
-    return EditActionIgnored();  // Enough short string.
+    return EditActionResult::IgnoredResult();  // Enough short string.
   }
 
   int32_t newInsertionStringLength = mMaxTextLength - kNewLength;
@@ -782,7 +800,7 @@ EditActionResult TextEditor::MaybeTruncateInsertionStringForMaxLength(
   // XXX What should we do if we're removing IVS but its preceding
   //     character won't be removed?
   aInsertionString.Truncate(newInsertionStringLength);
-  return EditActionHandled();
+  return EditActionResult::HandledResult();
 }
 
 bool TextEditor::CanEchoPasswordNow() const {

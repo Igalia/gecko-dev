@@ -6,9 +6,11 @@
 
 #include "mozilla/FOG.h"
 
+#include "mozilla/AppShutdown.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/FOGIPC.h"
+#include "mozilla/browser/NimbusFeatures.h"
 #include "mozilla/glean/bindings/Common.h"
 #include "mozilla/glean/bindings/jog/jog_ffi_generated.h"
 #include "mozilla/glean/fog_ffi_generated.h"
@@ -88,10 +90,24 @@ void FOG::Shutdown() {
   glean::impl::fog_shutdown();
 }
 
+// This allows us to know it's too late to submit a ping in Rust.
+extern "C" bool FOG_TooLateToSend(void) {
+  MOZ_ASSERT(XRE_IsParentProcess());
+  return AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownNetTeardown);
+}
+
 NS_IMETHODIMP
 FOG::InitializeFOG(const nsACString& aDataPathOverride,
                    const nsACString& aAppIdOverride) {
   MOZ_ASSERT(XRE_IsParentProcess());
+  RunOnShutdown(
+      [&] {
+        if (NimbusFeatures::GetBool("glean"_ns, "finalInactive"_ns, false)) {
+          glean::impl::fog_internal_glean_handle_client_inactive();
+        }
+      },
+      ShutdownPhase::AppShutdownConfirmed);
+
   return glean::impl::fog_init(&aDataPathOverride, &aAppIdOverride);
 }
 
@@ -264,6 +280,19 @@ FOG::TestGetExperimentData(const nsACString& aExperimentId, JSContext* aCx,
 }
 
 NS_IMETHODIMP
+FOG::SetMetricsFeatureConfig(const nsACString& aJsonConfig) {
+#ifdef MOZ_GLEAN_ANDROID
+  NS_WARNING(
+      "Don't set metric feature configs from Gecko in Android. Ignoring.");
+  return NS_OK;
+#else
+  MOZ_ASSERT(XRE_IsParentProcess());
+  glean::impl::fog_set_metrics_feature_config(&aJsonConfig);
+  return NS_OK;
+#endif
+}
+
+NS_IMETHODIMP
 FOG::TestFlushAllChildren(JSContext* aCx, mozilla::dom::Promise** aOutPromise) {
   MOZ_ASSERT(XRE_IsParentProcess());
   NS_ENSURE_ARG(aOutPromise);
@@ -343,6 +372,18 @@ FOG::TestRegisterRuntimeMetric(
   *aMetricIdOut = 0;
   *aMetricIdOut = glean::jog::jog_test_register_metric(
       &aType, &aCategory, &aName, &aPings, &aLifetime, aDisabled, &aExtraArgs);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+FOG::TestRegisterRuntimePing(const nsACString& aName,
+                             const bool aIncludeClientId,
+                             const bool aSendIfEmpty,
+                             const nsTArray<nsCString>& aReasonCodes,
+                             uint32_t* aPingIdOut) {
+  *aPingIdOut = 0;
+  *aPingIdOut = glean::jog::jog_test_register_ping(&aName, aIncludeClientId,
+                                                   aSendIfEmpty, &aReasonCodes);
   return NS_OK;
 }
 

@@ -3,7 +3,7 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 // Testing displaying breakpoints in the breakpoints list and the tooltip
-// shows the thread information.
+// shows the source url.
 
 "use strict";
 
@@ -40,8 +40,8 @@ add_task(async function testBreakpointsListForMultipleTargets() {
 
   is(
     breakpointHeadings[0].title,
-    `Main Thread - ${source1.url}`,
-    "The breakpoint heading tooltip shows the thread and source info for the first breakpoint"
+    source1.url,
+    "The breakpoint heading tooltip shows the source info for the first breakpoint"
   );
   is(
     breakpointHeadings[0].textContent,
@@ -54,17 +54,10 @@ add_task(async function testBreakpointsListForMultipleTargets() {
     "The info displayed for the 1st breakpoint is correct"
   );
 
-  // With fission and EFT disabled all the sources are going to be under the Main Thread
-  const expectedThreadName =
-    !Services.prefs.getBoolPref("fission.autostart") &&
-    !Services.prefs.getBoolPref("devtools.every-frame-target.enabled")
-      ? "Main Thread"
-      : "Test remote frame sources";
-
   is(
     breakpointHeadings[1].title,
-    `${expectedThreadName} - ${source2.url}`,
-    "The breakpoint heading tooltip shows the thread and source info for the second breakpoint"
+    source2.url,
+    "The breakpoint heading tooltip shows the source info for the second breakpoint"
   );
   is(
     breakpointHeadings[1].textContent,
@@ -84,7 +77,7 @@ add_task(async function testBreakpointsListForMultipleTargets() {
 add_task(async function testBreakpointsListForOriginalFiles() {
   const dbg = await initDebugger("doc-sourcemaps.html", "entry.js");
 
-  info("Add breakpoint to the entry.js (original source) in the main thread");
+  info("Add breakpoint to the entry.js (original source)");
   await selectSource(dbg, "entry.js");
   const source = findSource(dbg, "entry.js");
   await addBreakpoint(dbg, "entry.js", 5);
@@ -105,8 +98,8 @@ add_task(async function testBreakpointsListForOriginalFiles() {
 
   is(
     breakpointHeadings[0].title,
-    `Main Thread - ${source.url}`,
-    "The breakpoint heading tooltip shows the thread and source info for the first breakpoint"
+    source.url,
+    "The breakpoint heading tooltip shows the source info for the first breakpoint"
   );
   is(
     breakpointHeadings[0].textContent,
@@ -120,4 +113,77 @@ add_task(async function testBreakpointsListForOriginalFiles() {
   );
 
   await removeBreakpoint(dbg, source.id, 5);
+});
+
+add_task(async function testBreakpointsListForIgnoredLines() {
+  const dbg = await initDebugger("doc-sourcemaps.html", "entry.js");
+
+  info("Add breakpoint to the entry.js (original source)");
+  await selectSource(dbg, "entry.js");
+  await addBreakpoint(dbg, "entry.js", 5);
+
+  info("Ignoring line 5 to 6 which has a breakpoint already set");
+  await selectEditorLinesAndOpenContextMenu(dbg, {
+    startLine: 5,
+    endLine: 6,
+  });
+  await selectBlackBoxContextMenuItem(dbg, "blackbox-lines");
+
+  info("Assert the breakpoint on the ignored line");
+  let breakpointItems = findAllElements(dbg, "breakpointItems");
+  is(
+    breakpointItems[0].textContent,
+    "output(times2(1));5",
+    "The info displayed for the 1st breakpoint is correct"
+  );
+  const firstBreakpointCheck = breakpointItems[0].querySelector("input");
+  ok(
+    firstBreakpointCheck.disabled,
+    "The first breakpoint checkbox on an ignored line is disabled"
+  );
+  ok(
+    !firstBreakpointCheck.checked,
+    "The first breakpoint on an ignored line is not checked"
+  );
+
+  info("Ignoring line 8 to 9 which currently has not breakpoint");
+  await selectEditorLinesAndOpenContextMenu(dbg, {
+    startLine: 8,
+    endLine: 9,
+  });
+  await selectBlackBoxContextMenuItem(dbg, "blackbox-lines");
+
+  await addBreakpointViaGutter(dbg, 9);
+
+  breakpointItems = findAllElements(dbg, "breakpointItems");
+  is(
+    breakpointItems[1].textContent,
+    "output(times2(3));9",
+    "The info displayed for the 2nd breakpoint is correct"
+  );
+  const secondBreakpointCheck = breakpointItems[1].querySelector("input");
+  ok(
+    secondBreakpointCheck.disabled,
+    "The second breakpoint checkbox on an ignored line is disabled"
+  );
+  ok(
+    !secondBreakpointCheck.checked,
+    "The second breakpoint on an ignored line is not checked"
+  );
+
+  await clickElement(dbg, "blackbox");
+  await waitForDispatch(dbg.store, "UNBLACKBOX_WHOLE_SOURCES");
+
+  info("Assert that both breakpoints are now enabled");
+  breakpointItems = findAllElements(dbg, "breakpointItems");
+  [...breakpointItems].forEach(breakpointItem => {
+    const check = breakpointItem.querySelector("input");
+    ok(
+      !check.disabled,
+      "The breakpoint checkbox on the unignored line is enabled"
+    );
+    ok(check.checked, "The breakpoint on the unignored line is checked");
+  });
+
+  await dbg.toolbox.closeToolbox();
 });

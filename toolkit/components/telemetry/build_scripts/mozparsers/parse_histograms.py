@@ -2,6 +2,7 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+import atexit
 import collections
 import itertools
 import json
@@ -10,12 +11,11 @@ import os
 import re
 import runpy
 import sys
-import atexit
-from . import shared_telemetry_utils as utils
-
-from ctypes import c_int
-from .shared_telemetry_utils import ParserError
 from collections import OrderedDict
+from ctypes import c_int
+
+from . import shared_telemetry_utils as utils
+from .shared_telemetry_utils import ParserError
 
 atexit.register(ParserError.exit_func)
 
@@ -862,7 +862,7 @@ def add_css_property_counters(histograms, property_name):
 def from_ServoCSSPropList(filename, strict_type_checks):
     histograms = collections.OrderedDict()
     properties = runpy.run_path(filename)["data"]
-    for prop in properties:
+    for prop in properties.values():
         add_css_property_counters(histograms, prop.name)
     return histograms
 

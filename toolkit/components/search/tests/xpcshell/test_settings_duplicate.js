@@ -8,8 +8,8 @@
 
 "use strict";
 
-const { getAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { getAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 
 const enginesSettings = {
@@ -90,9 +90,10 @@ add_task(async function setup() {
   enginesSettings.metaData.hash = SearchUtils.getVerificationHash(
     enginesSettings.metaData.current
   );
-  enginesSettings.metaData.visibleDefaultEnginesHash = SearchUtils.getVerificationHash(
-    enginesSettings.metaData.visibleDefaultEngines
-  );
+  enginesSettings.metaData.visibleDefaultEnginesHash =
+    SearchUtils.getVerificationHash(
+      enginesSettings.metaData.visibleDefaultEngines
+    );
   let appInfo = getAppInfo();
   enginesSettings.buildID = appInfo.platformBuildID;
   enginesSettings.appVersion = appInfo.version;

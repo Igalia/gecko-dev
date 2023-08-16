@@ -4,8 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
@@ -13,7 +11,7 @@ ChromeUtils.defineESModuleGetters(lazy, {
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   lazy,
   "filenamesRegex",
   () =>
@@ -80,7 +78,7 @@ function isFilenameWithSameDate(aSourceName, aTargetName) {
  * @return path string or null.
  */
 function getBackupFileForSameDate(aFilename) {
-  return (async function() {
+  return (async function () {
     let backupFiles = await PlacesBackups.getBackupFiles();
     for (let backupFile of backupFiles) {
       if (isFilenameWithSameDate(PathUtils.filename(backupFile), aFilename)) {
@@ -283,7 +281,7 @@ export var PlacesBackups = {
         .getHistogramById("PLACES_BACKUPS_DAYSFROMLAST")
         .add(backupAge);
     } catch (ex) {
-      Cu.reportError(new Error("Unable to report telemetry."));
+      console.error(new Error("Unable to report telemetry."));
     }
     return backupAge <= maxDays;
   },
@@ -297,10 +295,8 @@ export var PlacesBackups = {
    * @resolves the number of serialized uri nodes.
    */
   async saveBookmarksToJSONFile(aFilePath) {
-    let {
-      count: nodeCount,
-      hash: hash,
-    } = await lazy.BookmarkJSONUtils.exportToFile(aFilePath);
+    let { count: nodeCount, hash: hash } =
+      await lazy.BookmarkJSONUtils.exportToFile(aFilePath);
 
     let backupFolderPath = await this.getBackupFolder();
     if (PathUtils.profileDir == backupFolderPath) {
@@ -417,13 +413,11 @@ export var PlacesBackups = {
       let newBackupFile = PathUtils.join(backupFolder, newBackupFilename);
       let newFilenameWithMetaData;
       try {
-        let {
-          count: nodeCount,
-          hash: hash,
-        } = await lazy.BookmarkJSONUtils.exportToFile(newBackupFile, {
-          compress: true,
-          failIfHashIs: mostRecentHash,
-        });
+        let { count: nodeCount, hash: hash } =
+          await lazy.BookmarkJSONUtils.exportToFile(newBackupFile, {
+            compress: true,
+            failIfHashIs: mostRecentHash,
+          });
         newFilenameWithMetaData = appendMetaDataToFilename(newBackupFilename, {
           count: nodeCount,
           hash,
@@ -516,7 +510,7 @@ export var PlacesBackups = {
         .getHistogramById("PLACES_BACKUPS_BOOKMARKSTREE_MS")
         .add(Date.now() - startTime);
     } catch (ex) {
-      Cu.reportError("Unable to report telemetry.");
+      console.error("Unable to report telemetry.");
     }
     return [root, root.itemsCount];
   },

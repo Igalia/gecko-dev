@@ -5,7 +5,9 @@
 // Test that AnimationPlayerActor.getName returns the right name depending on
 // the type of an animation and the various properties available on it.
 
-const { AnimationPlayerActor } = require("devtools/server/actors/animation");
+const {
+  AnimationPlayerActor,
+} = require("resource://devtools/server/actors/animation.js");
 
 function run_test() {
   // Mock a window with just the properties the AnimationPlayerActor uses.
@@ -85,7 +87,7 @@ function run_test() {
     for (const key in props) {
       animation[key] = props[key];
     }
-    const actor = AnimationPlayerActor({}, animation);
+    const actor = new AnimationPlayerActor({}, animation);
     Assert.equal(actor.getName(), expectedName);
   }
 }

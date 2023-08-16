@@ -3,13 +3,13 @@
 
 "use strict";
 
-const { CustomizableUITestUtils } = ChromeUtils.import(
-  "resource://testing-common/CustomizableUITestUtils.jsm"
+const { CustomizableUITestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CustomizableUITestUtils.sys.mjs"
 );
 
 let gCUITestUtils = new CustomizableUITestUtils(window);
 
-add_setup(async function() {
+add_setup(async function () {
   // gSync.init() is called in a requestIdleCallback. Force its initialization.
   gSync.init();
   // This preference gets set the very first time that the FxA menu gets opened,
@@ -48,6 +48,7 @@ add_task(async function test_navBar_button_visibility() {
     "Button should be hidden with STATUS_NOT_CONFIGURED"
   );
 
+  state.email = "foo@bar.com";
   state.status = UIState.STATUS_NOT_VERIFIED;
   gSync.updateAllUI(state);
   ok(
@@ -86,7 +87,7 @@ add_task(async function test_overflow_navBar_button_visibility() {
   let navbar = document.getElementById(CustomizableUI.AREA_NAVBAR);
   let originalWindowWidth = window.outerWidth;
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     overflowPanel.removeAttribute("animate");
     window.resizeTo(originalWindowWidth, window.outerHeight);
     return TestUtils.waitForCondition(
@@ -178,7 +179,7 @@ add_task(async function test_ui_state_signedin() {
   checkPanelHeader();
   checkFxaToolbarButtonPanel({
     headerTitle: "Manage account",
-    headerDescription: "foo@bar.com",
+    headerDescription: state.displayName,
     enabledItems: [
       "PanelUI-fxa-menu-sendtab-button",
       "PanelUI-fxa-menu-connect-device-button",
@@ -196,7 +197,7 @@ add_task(async function test_ui_state_signedin() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    description: "foo@bar.com",
+    description: "Foo Bar",
     titleHidden: true,
     hideFxAText: true,
   });
@@ -340,7 +341,7 @@ add_task(async function test_ui_state_unconfigured() {
   await closeTabAndMainPanel();
 });
 
-add_task(async function test_ui_state_syncdisabled() {
+add_task(async function test_ui_state_signed_in() {
   await BrowserTestUtils.openNewForegroundTab(gBrowser, "https://example.com/");
 
   let state = {
@@ -348,6 +349,51 @@ add_task(async function test_ui_state_syncdisabled() {
     syncEnabled: false,
     email: "foo@bar.com",
     displayName: "Foo Bar",
+    avatarURL: "https://foo.bar",
+  };
+
+  gSync.updateAllUI(state);
+
+  await openFxaPanel();
+
+  checkMenuBarItem("sync-enable");
+  checkPanelHeader();
+  checkFxaToolbarButtonPanel({
+    headerTitle: "Manage account",
+    headerDescription: "Foo Bar",
+    enabledItems: [
+      "PanelUI-fxa-menu-sendtab-button",
+      "PanelUI-fxa-menu-connect-device-button",
+      "PanelUI-fxa-menu-setup-sync-button",
+      "PanelUI-fxa-menu-account-signout-button",
+    ],
+    disabledItems: [],
+    hiddenItems: [
+      "PanelUI-fxa-menu-syncnow-button",
+      "PanelUI-fxa-menu-sync-prefs-button",
+    ],
+  });
+  checkFxAAvatar("signedin");
+  await closeFxaPanel();
+
+  await openMainPanel();
+
+  checkPanelUIStatusBar({
+    description: "Foo Bar",
+    titleHidden: true,
+    hideFxAText: true,
+  });
+
+  await closeTabAndMainPanel();
+});
+
+add_task(async function test_ui_state_signed_in_no_display_name() {
+  await BrowserTestUtils.openNewForegroundTab(gBrowser, "https://example.com/");
+
+  let state = {
+    status: UIState.STATUS_SIGNED_IN,
+    syncEnabled: false,
+    email: "foo@bar.com",
     avatarURL: "https://foo.bar",
   };
 
@@ -439,6 +485,7 @@ add_task(async function test_ui_state_loginFailed() {
   let state = {
     status: UIState.STATUS_LOGIN_FAILED,
     email: "foo@bar.com",
+    displayName: "Foo Bar",
   };
 
   gSync.updateAllUI(state);
@@ -453,7 +500,7 @@ add_task(async function test_ui_state_loginFailed() {
   checkPanelHeader();
   checkFxaToolbarButtonPanel({
     headerTitle: expectedLabel,
-    headerDescription: state.email,
+    headerDescription: state.displayName,
     enabledItems: [
       "PanelUI-fxa-menu-sendtab-button",
       "PanelUI-fxa-menu-setup-sync-button",
@@ -470,7 +517,7 @@ add_task(async function test_ui_state_loginFailed() {
   await openMainPanel();
 
   checkPanelUIStatusBar({
-    description: state.email,
+    description: state.displayName,
     title: expectedLabel,
     titleHidden: false,
     hideFxAText: true,
@@ -618,8 +665,7 @@ async function checkFxaToolbarButtonPanel({
 
   for (const id of hiddenItems) {
     const el = document.getElementById(id);
-    let elShown = window.getComputedStyle(el).display == "none";
-    is(elShown, true, id + " is hidden");
+    is(el.getAttribute("hidden"), "true", id + " is hidden");
   }
 }
 

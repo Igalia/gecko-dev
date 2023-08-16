@@ -4,11 +4,9 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "HomePage",
-  "resource:///modules/HomePage.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+});
 
 const kPrefProtonToolbarVersion = "browser.proton.toolbar.version";
 const kPrefHomeButtonUsed = "browser.engagement.home-button.has-used";
@@ -54,8 +52,8 @@ async function testToolbarButtons(aActions) {
   });
   CustomizableUIInternal._updateForNewProtonVersion();
 
-  let navbarPlacements = CustomizableUI.getTestOnlyInternalProp("gSavedState")
-    .placements["nav-bar"];
+  let navbarPlacements =
+    CustomizableUI.getTestOnlyInternalProp("gSavedState").placements["nav-bar"];
   let includesHomeButton = navbarPlacements.includes("home-button");
   let includesLibraryButton = navbarPlacements.includes("library-button");
   let includesSidebarButton = navbarPlacements.includes("sidebar-button");

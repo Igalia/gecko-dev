@@ -7,14 +7,14 @@ let testURL =
   "https://example.com/browser/" +
   "uriloader/exthandler/tests/mochitest/FTPprotocolHandler.html";
 
-add_task(async function() {
+add_task(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [["security.external_protocol_requires_permission", false]],
   });
 
   // Load a page registering a protocol handler.
   let browser = gBrowser.selectedBrowser;
-  BrowserTestUtils.loadURI(browser, testURL);
+  BrowserTestUtils.loadURIString(browser, testURL);
   await BrowserTestUtils.browserLoaded(browser, false, testURL);
 
   // Register the protocol handler by clicking the notificationbar button.

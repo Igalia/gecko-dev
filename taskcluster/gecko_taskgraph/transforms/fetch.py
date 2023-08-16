@@ -19,6 +19,7 @@ from taskgraph.util.treeherder import join_symbol
 from voluptuous import Any, Extra, Optional, Required
 
 import gecko_taskgraph
+
 from ..util.cached_tasks import add_optimization
 
 CACHE_TYPE = "content.v1"
@@ -123,13 +124,16 @@ def make_task(config, jobs):
         if alias:
             attributes["fetch-alias"] = alias
 
+        task_expires = "28 days" if attributes.get("cached_task") is False else expires
+        artifact_expires = (
+            "2 days" if attributes.get("cached_task") is False else expires
+        )
+
         task = {
             "attributes": attributes,
             "name": name,
             "description": job["description"],
-            "expires-after": "2 days"
-            if attributes.get("cached_task") is False
-            else expires,
+            "expires-after": task_expires,
             "label": "fetch-%s" % name,
             "run-on-projects": [],
             "treeherder": {
@@ -143,7 +147,7 @@ def make_task(config, jobs):
                 "checkout": False,
                 "command": job["command"],
             },
-            "worker-type": "images",
+            "worker-type": "b-linux-gcp",
             "worker": {
                 "chain-of-trust": True,
                 "docker-image": {"in-tree": "fetch"},
@@ -154,6 +158,7 @@ def make_task(config, jobs):
                         "type": "directory",
                         "name": artifact_prefix,
                         "path": "/builds/worker/artifacts",
+                        "expires-after": artifact_expires,
                     }
                 ],
             },

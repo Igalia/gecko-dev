@@ -19,9 +19,11 @@ namespace mozilla {
 
 DDLoggedTypeDeclNameAndBase(VPXDecoder, MediaDataDecoder);
 
-class VPXDecoder : public MediaDataDecoder,
-                   public DecoderDoctorLifeLogger<VPXDecoder> {
+class VPXDecoder final : public MediaDataDecoder,
+                         public DecoderDoctorLifeLogger<VPXDecoder> {
  public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(VPXDecoder, final);
+
   explicit VPXDecoder(const CreateDecoderParams& aParams);
 
   RefPtr<InitPromise> Init() override;
@@ -32,6 +34,7 @@ class VPXDecoder : public MediaDataDecoder,
   nsCString GetDescriptionName() const override {
     return "libvpx video decoder"_ns;
   }
+  nsCString GetCodecName() const override;
 
   enum Codec : uint8_t {
     VP8 = 1 << 0,
@@ -92,6 +95,37 @@ class VPXDecoder : public MediaDataDecoder,
           return gfx::YUVColorSpace::BT2020;
         default:
           return gfx::YUVColorSpace::Default;
+      }
+    }
+
+    uint8_t mColorPrimaries = gfx::CICP::ColourPrimaries::CP_UNSPECIFIED;
+    gfx::ColorSpace2 ColorPrimaries() const {
+      switch (mColorPrimaries) {
+        case gfx::CICP::ColourPrimaries::CP_BT709:
+          return gfx::ColorSpace2::BT709;
+        case gfx::CICP::ColourPrimaries::CP_UNSPECIFIED:
+          return gfx::ColorSpace2::BT709;
+        case gfx::CICP::ColourPrimaries::CP_BT2020:
+          return gfx::ColorSpace2::BT2020;
+        default:
+          return gfx::ColorSpace2::BT709;
+      }
+    }
+
+    uint8_t mTransferFunction =
+        gfx::CICP::TransferCharacteristics::TC_UNSPECIFIED;
+    gfx::TransferFunction TransferFunction() const {
+      switch (mTransferFunction) {
+        case gfx::CICP::TransferCharacteristics::TC_BT709:
+          return gfx::TransferFunction::BT709;
+        case gfx::CICP::TransferCharacteristics::TC_SRGB:
+          return gfx::TransferFunction::SRGB;
+        case gfx::CICP::TransferCharacteristics::TC_SMPTE2084:
+          return gfx::TransferFunction::PQ;
+        case gfx::CICP::TransferCharacteristics::TC_HLG:
+          return gfx::TransferFunction::HLG;
+        default:
+          return gfx::TransferFunction::BT709;
       }
     }
 
@@ -166,6 +200,7 @@ class VPXDecoder : public MediaDataDecoder,
 
   const Codec mCodec;
   const bool mLowLatency;
+  const Maybe<TrackingId> mTrackingId;
 };
 
 }  // namespace mozilla

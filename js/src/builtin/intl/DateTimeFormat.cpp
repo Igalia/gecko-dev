@@ -9,12 +9,10 @@
 #include "builtin/intl/DateTimeFormat.h"
 
 #include "mozilla/Assertions.h"
-#include "mozilla/EnumSet.h"
 #include "mozilla/intl/Calendar.h"
 #include "mozilla/intl/DateIntervalFormat.h"
 #include "mozilla/intl/DateTimeFormat.h"
 #include "mozilla/intl/DateTimePart.h"
-#include "mozilla/intl/DateTimePatternGenerator.h"
 #include "mozilla/intl/Locale.h"
 #include "mozilla/intl/TimeZone.h"
 #include "mozilla/Range.h"
@@ -25,9 +23,7 @@
 #include "builtin/intl/FormatBuffer.h"
 #include "builtin/intl/LanguageTag.h"
 #include "builtin/intl/SharedIntlData.h"
-#include "builtin/intl/TimeZoneDataGenerated.h"
 #include "gc/GCContext.h"
-#include "js/CharacterEncoding.h"
 #include "js/Date.h"
 #include "js/experimental/Intl.h"     // JS::AddMozDateTimeFormatConstructor
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
@@ -406,13 +402,9 @@ bool js::intl_defaultTimeZone(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  // The current default might be stale, because JS::ResetTimeZone() doesn't
-  // immediately update ICU's default time zone. So perform an update if
-  // needed.
-  js::ResyncICUDefaultTimeZone();
-
   FormatBuffer<char16_t, intl::INITIAL_CHAR_BUFFER_SIZE> timeZone(cx);
-  auto result = mozilla::intl::TimeZone::GetDefaultTimeZone(timeZone);
+  auto result =
+      DateTimeInfo::timeZoneId(DateTimeInfo::forceUTC(cx->realm()), timeZone);
   if (result.isErr()) {
     intl::ReportInternalError(cx, result.unwrapErr());
     return false;
@@ -431,13 +423,8 @@ bool js::intl_defaultTimeZoneOffset(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
 
-  auto timeZone = mozilla::intl::TimeZone::TryCreate();
-  if (timeZone.isErr()) {
-    intl::ReportInternalError(cx, timeZone.unwrapErr());
-    return false;
-  }
-
-  auto offset = timeZone.unwrap()->GetRawOffsetMs();
+  auto offset =
+      DateTimeInfo::getRawOffsetMs(DateTimeInfo::forceUTC(cx->realm()));
   if (offset.isErr()) {
     intl::ReportInternalError(cx, offset.unwrapErr());
     return false;
@@ -459,13 +446,9 @@ bool js::intl_isDefaultTimeZone(JSContext* cx, unsigned argc, Value* vp) {
     return true;
   }
 
-  // The current default might be stale, because JS::ResetTimeZone() doesn't
-  // immediately update ICU's default time zone. So perform an update if
-  // needed.
-  js::ResyncICUDefaultTimeZone();
-
   FormatBuffer<char16_t, intl::INITIAL_CHAR_BUFFER_SIZE> chars(cx);
-  auto result = mozilla::intl::TimeZone::GetDefaultTimeZone(chars);
+  auto result =
+      DateTimeInfo::timeZoneId(DateTimeInfo::forceUTC(cx->realm()), chars);
   if (result.isErr()) {
     intl::ReportInternalError(cx, result.unwrapErr());
     return false;

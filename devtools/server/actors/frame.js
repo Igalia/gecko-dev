@@ -4,13 +4,15 @@
 
 "use strict";
 
-const { Cu } = require("chrome");
+const { Actor } = require("resource://devtools/shared/protocol/Actor.js");
+const { Pool } = require("resource://devtools/shared/protocol/Pool.js");
+const { frameSpec } = require("resource://devtools/shared/specs/frame.js");
+
 const Debugger = require("Debugger");
-const { assert } = require("devtools/shared/DevToolsUtils");
-const { Pool } = require("devtools/shared/protocol/Pool");
-const { createValueGrip } = require("devtools/server/actors/object/utils");
-const { ActorClassWithSpec, Actor } = require("devtools/shared/protocol");
-const { frameSpec } = require("devtools/shared/specs/frame");
+const { assert } = require("resource://devtools/shared/DevToolsUtils.js");
+const {
+  createValueGrip,
+} = require("resource://devtools/server/actors/object/utils.js");
 
 function formatDisplayName(frame) {
   if (frame.type === "call") {
@@ -67,7 +69,7 @@ function getSavedFrameParent(threadActor, savedFrame) {
 /**
  * An actor for a specified stack frame.
  */
-const FrameActor = ActorClassWithSpec(frameSpec, {
+class FrameActor extends Actor {
   /**
    * Creates the Frame actor.
    *
@@ -76,24 +78,24 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
    * @param threadActor ThreadActor
    *        The parent thread actor for this frame.
    */
-  initialize(frame, threadActor, depth) {
-    Actor.prototype.initialize.call(this, threadActor.conn);
+  constructor(frame, threadActor, depth) {
+    super(threadActor.conn, frameSpec);
 
     this.frame = frame;
     this.threadActor = threadActor;
     this.depth = depth;
-  },
+  }
 
   /**
    * A pool that contains frame-lifetime objects, like the environment.
    */
-  _frameLifetimePool: null,
+  _frameLifetimePool = null;
   get frameLifetimePool() {
     if (!this._frameLifetimePool) {
       this._frameLifetimePool = new Pool(this.conn, "frame");
     }
     return this._frameLifetimePool;
-  },
+  }
 
   /**
    * Finalization handler that is called when the actor is being evicted from
@@ -104,8 +106,8 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
       this._frameLifetimePool.destroy();
       this._frameLifetimePool = null;
     }
-    Actor.prototype.destroy.call(this);
-  },
+    super.destroy();
+  }
 
   getEnvironment() {
     try {
@@ -125,7 +127,7 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
     );
 
     return envActor.form();
-  },
+  }
 
   /**
    * Returns a frame form for use in a protocol message.
@@ -200,7 +202,7 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
     }
 
     return form;
-  },
+  }
 
   _args() {
     if (!this.frame.onStack || !this.frame.arguments) {
@@ -214,8 +216,8 @@ const FrameActor = ActorClassWithSpec(frameSpec, {
         this.threadActor.objectGrip
       )
     );
-  },
-});
+  }
+}
 
 exports.FrameActor = FrameActor;
 exports.formatDisplayName = formatDisplayName;

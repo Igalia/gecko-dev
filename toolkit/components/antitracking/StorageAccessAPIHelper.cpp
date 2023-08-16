@@ -12,14 +12,18 @@
 #include "mozilla/Components.h"
 #include "mozilla/ContentBlockingAllowList.h"
 #include "mozilla/ContentBlockingUserInteraction.h"
+#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/BrowsingContextGroup.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/ContentParent.h"
+#include "mozilla/dom/Document.h"
+#include "mozilla/dom/FeaturePolicy.h"
 #include "mozilla/dom/WindowContext.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "mozilla/PermissionManager.h"
+#include "mozilla/StaticPrefs_network.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/Telemetry.h"
 #include "mozIThirdPartyUtil.h"
@@ -37,6 +41,8 @@
 #include "nsIWebProgressListener.h"
 #include "nsScriptSecurityManager.h"
 #include "RejectForeignAllowList.h"
+#include "StorageAccess.h"
+#include "nsStringFwd.h"
 
 namespace mozilla {
 
@@ -70,7 +76,7 @@ bool GetTopLevelWindowId(BrowsingContext* aParentContext, uint32_t aBehavior,
 StorageAccessAPIHelper::AllowAccessFor(
     nsIPrincipal* aPrincipal, dom::BrowsingContext* aParentContext,
     ContentBlockingNotifier::StorageAccessPermissionGrantedReason aReason,
-    const StorageAccessAPIHelper::PerformFinalChecks& aPerformFinalChecks) {
+    const StorageAccessAPIHelper::PerformPermissionGrant& aPerformFinalChecks) {
   MOZ_ASSERT(aParentContext);
 
   switch (aReason) {
@@ -102,7 +108,7 @@ StorageAccessAPIHelper::AllowAccessFor(
 
   if (MOZ_LOG_TEST(gAntiTrackingLog, mozilla::LogLevel::Debug)) {
     nsAutoCString origin;
-    aPrincipal->GetAsciiOrigin(origin);
+    aPrincipal->GetOriginNoSuffix(origin);
     LOG(("Adding a first-party storage exception for %s, triggered by %s",
          PromiseFlatCString(origin).get(),
          AntiTrackingUtils::GrantedReasonToString(aReason).get()));
@@ -168,7 +174,7 @@ StorageAccessAPIHelper::AllowAccessFor(
   // We are a first party resource.
   if (!isParentThirdParty) {
     nsAutoCString origin;
-    nsresult rv = aPrincipal->GetAsciiOrigin(origin);
+    nsresult rv = aPrincipal->GetOriginNoSuffix(origin);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       LOG(("Can't get the origin from the URI"));
       return StorageAccessPermissionGrantPromise::CreateAndReject(false,
@@ -289,7 +295,7 @@ StorageAccessAPIHelper::AllowAccessFor(
   }
 
   MOZ_ASSERT(XRE_IsContentProcess());
-  // Only support PerformFinalChecks when we run ::CompleteAllowAccessFor in
+  // Only support PerformPermissionGrant when we run ::CompleteAllowAccessFor in
   // the same process. This callback is only used by eStorageAccessAPI,
   // which is always runned in the same process.
   MOZ_ASSERT(!aPerformFinalChecks);
@@ -300,8 +306,8 @@ StorageAccessAPIHelper::AllowAccessFor(
   RefPtr<BrowsingContext> bc = aParentContext;
   return cc
       ->SendCompleteAllowAccessFor(aParentContext, topLevelWindowId,
-                                   IPC::Principal(trackingPrincipal),
-                                   trackingOrigin, behavior, aReason)
+                                   trackingPrincipal, trackingOrigin, behavior,
+                                   aReason)
       ->Then(GetCurrentSerialEventTarget(), __func__,
              [bc, trackingOrigin, behavior,
               aReason](const ContentChild::CompleteAllowAccessForPromise::
@@ -361,7 +367,7 @@ StorageAccessAPIHelper::CompleteAllowAccessFor(
     nsIPrincipal* aTrackingPrincipal, const nsACString& aTrackingOrigin,
     uint32_t aCookieBehavior,
     ContentBlockingNotifier::StorageAccessPermissionGrantedReason aReason,
-    const PerformFinalChecks& aPerformFinalChecks) {
+    const PerformPermissionGrant& aPerformFinalChecks) {
   MOZ_ASSERT(aParentContext);
   MOZ_ASSERT_IF(XRE_IsContentProcess(), aParentContext->IsInProcess());
 
@@ -450,7 +456,8 @@ StorageAccessAPIHelper::CompleteAllowAccessFor(
       // we'll return to the content process we need to inform when this
       // function is done. So we don't need to create an extra IPC for the case.
       if (aReason != ContentBlockingNotifier::eOpener) {
-        ContentParent* cp = aParentContext->Canonical()->GetContentParent();
+        dom::ContentParent* cp =
+            aParentContext->Canonical()->GetContentParent();
         Unused << cp->SendOnAllowAccessFor(aParentContext, trackingOrigin,
                                            aCookieBehavior, aReason);
       }
@@ -473,9 +480,11 @@ StorageAccessAPIHelper::CompleteAllowAccessFor(
 
     if (XRE_IsParentProcess()) {
       LOG(("Saving the permission: trackingOrigin=%s", trackingOrigin.get()));
-      return SaveAccessForOriginOnParentProcess(aTopLevelWindowId,
-                                                aParentContext,
-                                                trackingPrincipal, aAllowMode)
+      bool frameOnly = StaticPrefs::dom_storage_access_frame_only() &&
+                       aReason == ContentBlockingNotifier::eStorageAccessAPI;
+      return SaveAccessForOriginOnParentProcess(
+                 aTopLevelWindowId, aParentContext, trackingPrincipal,
+                 aAllowMode, frameOnly)
           ->Then(
               GetCurrentSerialEventTarget(), __func__,
               [aReason, trackingPrincipal](
@@ -507,11 +516,12 @@ StorageAccessAPIHelper::CompleteAllowAccessFor(
 
     // This is not really secure, because here we have the content process
     // sending the request of storing a permission.
+    bool frameOnly = StaticPrefs::dom_storage_access_frame_only() &&
+                     aReason == ContentBlockingNotifier::eStorageAccessAPI;
     return cc
         ->SendStorageAccessPermissionGrantedForOrigin(
-            aTopLevelWindowId, aParentContext,
-            IPC::Principal(trackingPrincipal), trackingOrigin, aAllowMode,
-            reportReason)
+            aTopLevelWindowId, aParentContext, trackingPrincipal,
+            trackingOrigin, aAllowMode, reportReason, frameOnly)
         ->Then(
             GetCurrentSerialEventTarget(), __func__,
             [aReason, trackingPrincipal](
@@ -612,7 +622,7 @@ StorageAccessAPIHelper::CompleteAllowAccessFor(
 RefPtr<mozilla::StorageAccessAPIHelper::ParentAccessGrantPromise>
 StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
     uint64_t aTopLevelWindowId, BrowsingContext* aParentContext,
-    nsIPrincipal* aTrackingPrincipal, int aAllowMode,
+    nsIPrincipal* aTrackingPrincipal, int aAllowMode, bool aFrameOnly,
     uint64_t aExpirationTime) {
   MOZ_ASSERT(aTopLevelWindowId != 0);
   MOZ_ASSERT(aTrackingPrincipal);
@@ -644,7 +654,7 @@ StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
                                                            trackingOrigin);
 
   return StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
-      wgp->DocumentPrincipal(), aTrackingPrincipal, aAllowMode,
+      wgp->DocumentPrincipal(), aTrackingPrincipal, aAllowMode, aFrameOnly,
       aExpirationTime);
 }
 
@@ -652,7 +662,7 @@ StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
 RefPtr<mozilla::StorageAccessAPIHelper::ParentAccessGrantPromise>
 StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
     nsIPrincipal* aParentPrincipal, nsIPrincipal* aTrackingPrincipal,
-    int aAllowMode, uint64_t aExpirationTime) {
+    int aAllowMode, bool aFrameOnly, uint64_t aExpirationTime) {
   MOZ_ASSERT(XRE_IsParentProcess());
   MOZ_ASSERT(aAllowMode == eAllow || aAllowMode == eAllowAutoGrant);
 
@@ -708,7 +718,15 @@ StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
   }
 
   nsAutoCString type;
-  AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, type);
+  if (aFrameOnly) {
+    bool success = AntiTrackingUtils::CreateStorageFramePermissionKey(
+        aTrackingPrincipal, type);
+    if (NS_WARN_IF(!success)) {
+      return ParentAccessGrantPromise::CreateAndReject(false, __func__);
+    }
+  } else {
+    AntiTrackingUtils::CreateStoragePermissionKey(trackingOrigin, type);
+  }
 
   LOG(
       ("Computed permission key: %s, expiry: %u, proceeding to save in the "
@@ -742,7 +760,7 @@ StorageAccessAPIHelper::CheckCookiesPermittedDecidesStorageAccessAPI(
     nsIPrincipal* aRequestingPrincipal) {
   MOZ_ASSERT(aCookieJarSettings);
   MOZ_ASSERT(aRequestingPrincipal);
-  uint32_t cookiePermission = CheckCookiePermissionForPrincipal(
+  uint32_t cookiePermission = detail::CheckCookiePermissionForPrincipal(
       aCookieJarSettings, aRequestingPrincipal);
   if (cookiePermission == nsICookiePermission::ACCESS_ALLOW ||
       cookiePermission == nsICookiePermission::ACCESS_SESSION) {
@@ -768,8 +786,7 @@ StorageAccessAPIHelper::AsyncCheckCookiesPermittedDecidesStorageAccessAPI(
   MOZ_ASSERT(cc);
 
   return cc
-      ->SendTestCookiePermissionDecided(aBrowsingContext,
-                                        IPC::Principal(aRequestingPrincipal))
+      ->SendTestCookiePermissionDecided(aBrowsingContext, aRequestingPrincipal)
       ->Then(
           GetCurrentSerialEventTarget(), __func__,
           [](const ContentChild::TestCookiePermissionDecidedPromise::
@@ -849,6 +866,21 @@ Maybe<bool> StorageAccessAPIHelper::CheckCallingContextDecidesStorageAccessAPI(
 
   if (aDocument->IsTopLevelContentDocument()) {
     return Some(true);
+  }
+
+  if (aRequestingStorageAccess) {
+    // Perform a Permission Policy Request
+    dom::FeaturePolicy* policy = aDocument->FeaturePolicy();
+    MOZ_ASSERT(policy);
+
+    if (!policy->AllowsFeature(u"storage-access"_ns,
+                               dom::Optional<nsAString>())) {
+      nsContentUtils::ReportToConsole(
+          nsIScriptError::errorFlag, nsLiteralCString("requestStorageAccess"),
+          aDocument, nsContentUtils::eDOM_PROPERTIES,
+          "RequestStorageAccessPermissionsPolicy");
+      return Some(false);
+    }
   }
 
   RefPtr<BrowsingContext> bc = aDocument->GetBrowsingContext();
@@ -960,6 +992,34 @@ StorageAccessAPIHelper::CheckExistingPermissionDecidesStorageAccessAPI(
     return Some(true);
   }
   return Nothing();
+}
+
+// static
+RefPtr<StorageAccessAPIHelper::StorageAccessPermissionGrantPromise>
+StorageAccessAPIHelper::RequestStorageAccessAsyncHelper(
+    dom::Document* aDocument, nsPIDOMWindowInner* aInnerWindow,
+    dom::BrowsingContext* aBrowsingContext, nsIPrincipal* aPrincipal,
+    bool aHasUserInteraction, bool aFrameOnly,
+    ContentBlockingNotifier::StorageAccessPermissionGrantedReason aNotifier,
+    bool aRequireGrant) {
+  MOZ_ASSERT(aDocument);
+
+  if (!aRequireGrant) {
+    // Try to allow access for the given principal.
+    return StorageAccessAPIHelper::AllowAccessFor(aPrincipal, aBrowsingContext,
+                                                  aNotifier);
+  }
+
+  RefPtr<nsIPrincipal> principal(aPrincipal);
+
+  // This is a lambda function that has some variables bound to it. It will be
+  // called later in CompleteAllowAccessFor inside of AllowAccessFor.
+  auto performPermissionGrant = aDocument->CreatePermissionGrantPromise(
+      aInnerWindow, principal, aHasUserInteraction, Nothing(), aFrameOnly);
+
+  // Try to allow access for the given principal.
+  return StorageAccessAPIHelper::AllowAccessFor(
+      principal, aBrowsingContext, aNotifier, performPermissionGrant);
 }
 
 // There are two methods to handle permission update:

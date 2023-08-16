@@ -73,6 +73,8 @@ static ProxyAutoConfig* GetRunning() {
 
 static void SetRunning(ProxyAutoConfig* arg) {
   MOZ_ASSERT(RunningIndex() != 0xdeadbeef);
+  MOZ_DIAGNOSTIC_ASSERT_IF(!arg, GetRunning() != nullptr);
+  MOZ_DIAGNOSTIC_ASSERT_IF(arg, GetRunning() == nullptr);
   PR_SetThreadPrivate(RunningIndex(), arg);
 }
 
@@ -237,13 +239,13 @@ bool ProxyAutoConfig::ResolveAddress(const nsACString& aHostName,
   // When the PAC script attempts to resolve a domain, we must make sure we
   // don't use TRR, otherwise the TRR channel might also attempt to resolve
   // a name and we'll have a deadlock.
-  uint32_t flags =
+  nsIDNSService::DNSFlags flags =
       nsIDNSService::RESOLVE_PRIORITY_MEDIUM |
       nsIDNSService::GetFlagsFromTRRMode(nsIRequest::TRR_DISABLED_MODE);
 
   if (NS_FAILED(dns->AsyncResolveNative(
           aHostName, nsIDNSService::RESOLVE_TYPE_DEFAULT, flags, nullptr,
-          helper, GetCurrentEventTarget(), attrs,
+          helper, GetCurrentSerialEventTarget(), attrs,
           getter_AddRefs(helper->mRequest)))) {
     return false;
   }
@@ -486,7 +488,7 @@ nsresult ProxyAutoConfig::ConfigurePAC(const nsACString& aPACURI,
                                        const nsACString& aPACScriptData,
                                        bool aIncludePath,
                                        uint32_t aExtraHeapSize,
-                                       nsIEventTarget* aEventTarget) {
+                                       nsISerialEventTarget* aEventTarget) {
   mShutdown = false;  // Shutdown needs to be called prior to destruction
 
   mPACURI = aPACURI;
@@ -504,7 +506,9 @@ nsresult ProxyAutoConfig::ConfigurePAC(const nsACString& aPACURI,
   // PAC scripts be both UTF-8- and Latin-1-compatible: that is, they must be
   // ASCII.
   mConcatenatedPACData = sAsciiPacUtils;
-  mConcatenatedPACData.Append(aPACScriptData);
+  if (!mConcatenatedPACData.Append(aPACScriptData, mozilla::fallible)) {
+    return NS_ERROR_OUT_OF_MEMORY;
+  }
 
   mIncludePath = aIncludePath;
   mExtraHeapSize = aExtraHeapSize;
@@ -518,7 +522,10 @@ nsresult ProxyAutoConfig::ConfigurePAC(const nsACString& aPACURI,
 
 nsresult ProxyAutoConfig::SetupJS() {
   mJSNeedsSetup = false;
-  MOZ_ASSERT(!GetRunning(), "JIT is running");
+  MOZ_DIAGNOSTIC_ASSERT(!GetRunning(), "JIT is running");
+  if (GetRunning()) {
+    return NS_ERROR_ALREADY_INITIALIZED;
+  }
 
 #if defined(XP_MACOSX)
   nsMacUtilsImpl::EnableTCSMIfAvailable();
@@ -897,7 +904,7 @@ nsresult RemoteProxyAutoConfig::ConfigurePAC(const nsACString& aPACURI,
                                              const nsACString& aPACScriptData,
                                              bool aIncludePath,
                                              uint32_t aExtraHeapSize,
-                                             nsIEventTarget*) {
+                                             nsISerialEventTarget*) {
   Unused << mProxyAutoConfigParent->SendConfigurePAC(
       aPACURI, aPACScriptData, aIncludePath, aExtraHeapSize);
   return NS_OK;
@@ -920,10 +927,8 @@ void RemoteProxyAutoConfig::GetProxyForURIWithCallback(
 
   mProxyAutoConfigParent->SendGetProxyForURI(
       aTestURI, aTestHost,
-      [aCallback](Tuple<nsresult, nsCString>&& aResult) {
-        nsresult status;
-        nsCString result;
-        Tie(status, result) = aResult;
+      [aCallback](std::tuple<nsresult, nsCString>&& aResult) {
+        auto [status, result] = aResult;
         aCallback(status, result);
       },
       [aCallback](mozilla::ipc::ResponseRejectReason&& aReason) {

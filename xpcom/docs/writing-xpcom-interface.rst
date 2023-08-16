@@ -58,6 +58,7 @@ And hook it up to the :code:`path/to/moz.build`
 
 Next write the initial :code:`.idl` file: :code:`path/to/nsIComponentName.idl`
 
+.. _contract_ids:
 .. code:: c++
 
     /* This Source Code Form is subject to the terms of the Mozilla Public
@@ -139,7 +140,7 @@ Now write the header: :code:`path/to/ComponentName.h`
       // This second macro includes the declarations for the attributes. There is
       // no need to duplicate these declarations.
       //
-      // In our case it includes a declaration for the isAlive attribue:
+      // In our case it includes a declaration for the isAlive attribute:
       //   GetIsAlive(bool *aIsAlive)
       NS_DECL_NSICOMPONENTNAME
 
@@ -210,6 +211,8 @@ Now update the :code:`moz.build` to point to it.
     ]
 
 It is probably worth reading over :ref:`defining_xpcom_components`, but the following config will be sufficient to hook up our component to the :code:`Services` object.
+Services should also be added to ``tools/lint/eslint/eslint-plugin-mozilla/lib/services.json``.
+The easiest way to do that is to copy from ``<objdir>/xpcom/components/services.json``.
 
 .. code:: python
 

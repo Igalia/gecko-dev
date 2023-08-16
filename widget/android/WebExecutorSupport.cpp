@@ -92,6 +92,9 @@ class ByteBufferStream final : public nsIInputStream {
   }
 
   NS_IMETHOD
+  StreamStatus() override { return mClosed ? NS_BASE_STREAM_CLOSED : NS_OK; }
+
+  NS_IMETHOD
   Read(char* aBuf, uint32_t aCount, uint32_t* aCountRead) override {
     if (mClosed) {
       return NS_BASE_STREAM_CLOSED;
@@ -383,8 +386,8 @@ nsresult WebExecutorSupport::CreateStreamLoader(
     channel->SetLoadFlags(nsIRequest::LOAD_ANONYMOUS);
   }
 
-  bool shouldResistFingerprinting =
-      nsContentUtils::ShouldResistFingerprinting(channel);
+  bool shouldResistFingerprinting = nsContentUtils::ShouldResistFingerprinting(
+      channel, RFPTarget::IsAlwaysEnabledForPrecompute);
   nsCOMPtr<nsICookieJarSettings> cookieJarSettings;
   if (aFlags & java::GeckoWebExecutor::FETCH_FLAGS_PRIVATE) {
     nsCOMPtr<nsIPrivateBrowsingChannel> pbChannel = do_QueryInterface(channel);
@@ -442,8 +445,9 @@ static nsresult ResolveHost(nsCString& host, java::GeckoResult::Param result) {
 
   nsCOMPtr<nsICancelable> cancelable;
   RefPtr<DNSListener> listener = new DNSListener(host, result);
-  rv = dns->AsyncResolveNative(host, nsIDNSService::RESOLVE_TYPE_DEFAULT, 0,
-                               nullptr, listener, nullptr /* aListenerTarget */,
+  rv = dns->AsyncResolveNative(host, nsIDNSService::RESOLVE_TYPE_DEFAULT,
+                               nsIDNSService::RESOLVE_DEFAULT_FLAGS, nullptr,
+                               listener, nullptr /* aListenerTarget */,
                                OriginAttributes(), getter_AddRefs(cancelable));
   return rv;
 }

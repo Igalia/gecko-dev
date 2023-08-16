@@ -291,8 +291,8 @@ bool StartMacSandbox(MacSandboxInfo const& aInfo, std::string& aErrorMessage) {
         // Nothing to do here specifically
         break;
 
-      case ipc::SandboxingKind::UTILITY_AUDIO_DECODING: {
-        profile.append(SandboxPolicyUtilityAudioDecoderAddend);
+      case ipc::SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA: {
+        profile.append(SandboxPolicyUtilityAudioDecoderAppleMediaAddend);
         params.push_back("MAC_OS_VERSION");
         params.push_back(combinedVersion.c_str());
       } break;

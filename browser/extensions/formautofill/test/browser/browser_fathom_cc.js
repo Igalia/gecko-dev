@@ -2,7 +2,7 @@
  * By default this test only tests 1 sample. This is to avoid publishing all samples we have
  * to the codebase. If you update the Fathom CC model, please follow the instruction below
  * and run the test. Doing this makes sure the optimized (Native implementation) CC fathom model produces
- * exactly the same result as the non-optimized model (JS implementation, See CreditCardRuleset.jsm).
+ * exactly the same result as the non-optimized model (JS implementation, See CreditCardRuleset.sys.mjs).
  *
  * To test this:
  * 1. Run the test setup script (fathom/test-setup.sh) to download all samples to the local
@@ -62,11 +62,11 @@ async function run_test(path, dirs) {
         browser,
         [{ eligibleElementSelector, file }],
         obj => {
-          const { FieldScanner } = ChromeUtils.import(
-            "resource://autofill/FormAutofillHeuristics.jsm"
+          const { FormAutofillHeuristics } = ChromeUtils.importESModule(
+            "resource://gre/modules/shared/FormAutofillHeuristics.sys.mjs"
           );
-          const { FormAutofillUtils } = ChromeUtils.import(
-            "resource://autofill/FormAutofillUtils.jsm"
+          const { FormAutofillUtils } = ChromeUtils.importESModule(
+            "resource://gre/modules/shared/FormAutofillUtils.sys.mjs"
           );
 
           let eligibleFields = [];
@@ -81,12 +81,10 @@ async function run_test(path, dirs) {
           let failedFields = [];
 
           info("Running CC fathom model");
-          let nativeConfidencesKeyedByType = ChromeUtils.getFormAutofillConfidences(
-            eligibleFields
-          );
-          let jsConfidencesKeyedByType = FieldScanner.getFormAutofillConfidences(
-            eligibleFields
-          );
+          let nativeConfidencesKeyedByType =
+            ChromeUtils.getFormAutofillConfidences(eligibleFields);
+          let jsConfidencesKeyedByType =
+            FormAutofillHeuristics.getFormAutofillConfidences(eligibleFields);
 
           if (eligibleFields.length != nativeConfidencesKeyedByType.length) {
             ok(
@@ -102,8 +100,8 @@ async function run_test(path, dirs) {
           }
 
           // This value should sync with the number of supported types in
-          // CreditCardRuleset.jsm (See `get types()` in `this.creditCardRulesets`).
-          const EXPECTED_NUM_OF_CONFIDENCE = 1;
+          // CreditCardRuleset.sys.mjs (See `get types()` in `this.creditCardRulesets`).
+          const EXPECTED_NUM_OF_CONFIDENCE = 2;
           for (let i = 0; i < eligibleFields.length; i++) {
             if (
               Object.keys(nativeConfidencesKeyedByType[i]).length !=
@@ -129,9 +127,12 @@ async function run_test(path, dirs) {
             )) {
               // Fix to 10 digit to ignore rounding error between js and c++.
               let nativeConfidence = confidence.toFixed(10);
-              let jsConfidence = jsConfidencesKeyedByType[i][
-                FormAutofillUtils.formAutofillConfidencesKeyToCCFieldType(type)
-              ].toFixed(10);
+              let jsConfidence =
+                jsConfidencesKeyedByType[i][
+                  FormAutofillUtils.formAutofillConfidencesKeyToCCFieldType(
+                    type
+                  )
+                ].toFixed(10);
               if (jsConfidence != nativeConfidence) {
                 info(
                   `${obj.file}: Element(id=${eligibleFields[i].id} doesn't have the same confidence value when rule type is ${type}`

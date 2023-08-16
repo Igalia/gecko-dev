@@ -88,7 +88,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID, ColorScheme, nscolor& aResult) {
     case ColorID::Captiontext:
     case ColorID::Menutext:
     case ColorID::Infotext:
-    case ColorID::MozMenubartext:
     case ColorID::Windowtext:
       aResult = mColorDarkText;
       break;
@@ -172,7 +171,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID, ColorScheme, nscolor& aResult) {
     case ColorID::MozColheaderhovertext:
       aResult = mColorDarkText;
       break;
-    case ColorID::MozDragtargetzone:
     case ColorID::MozMacChromeActive:
     case ColorID::MozMacChromeInactive:
       aResult = NS_RGB(0xaa, 0xaa, 0xaa);
@@ -194,9 +192,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID, ColorScheme, nscolor& aResult) {
       break;
     case ColorID::MozMacMenuselect:
       aResult = NS_RGB(0xaa, 0xaa, 0xaa);
-      break;
-    case ColorID::MozButtondefault:
-      aResult = NS_RGB(0xDC, 0xDC, 0xDC);
       break;
     case ColorID::MozCellhighlight:
     case ColorID::Selecteditem:
@@ -291,12 +286,8 @@ nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       break;
     case IntID::DWMCompositor:
     case IntID::WindowsClassic:
-    case IntID::WindowsDefaultTheme:
       aResult = 0;
       res = NS_ERROR_NOT_IMPLEMENTED;
-      break;
-    case IntID::MacGraphiteTheme:
-      aResult = 0;
       break;
     case IntID::TabFocusModel:
       aResult = 1;  // default to just textboxes
@@ -311,10 +302,10 @@ nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
     case IntID::IMEConvertedTextUnderlineStyle:
     case IntID::IMESelectedRawTextUnderlineStyle:
     case IntID::IMESelectedConvertedTextUnderline:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_SOLID;
+      aResult = static_cast<int32_t>(StyleTextDecorationStyle::Solid);
       break;
     case IntID::SpellCheckerUnderlineStyle:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_DOTTED;
+      aResult = static_cast<int32_t>(StyleTextDecorationStyle::Dotted);
       break;
     case IntID::ContextMenuOffsetVertical:
     case IntID::ContextMenuOffsetHorizontal:

@@ -22,12 +22,20 @@
     }                                                \
   }
 
+namespace JS::loader {
+class ModuleLoaderBase;
+}
+
 namespace mozilla {
 
 class ErrorResult;
 class WorkletImpl;
 
 namespace dom {
+
+namespace loader {
+class WorkletModuleLoader;
+}
 
 class Console;
 
@@ -36,7 +44,7 @@ class WorkletGlobalScope : public nsIGlobalObject, public nsWrapperCache {
   NS_DECLARE_STATIC_IID_ACCESSOR(WORKLET_IID)
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WorkletGlobalScope)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WorkletGlobalScope)
 
   WorkletGlobalScope(WorkletImpl*);
 
@@ -65,9 +73,15 @@ class WorkletGlobalScope : public nsIGlobalObject, public nsWrapperCache {
     return duration.ToMilliseconds();
   }
 
+  void InitModuleLoader(loader::WorkletModuleLoader* aModuleLoader);
+
+  JS::loader::ModuleLoaderBase* GetModuleLoader(
+      JSContext* aCx = nullptr) override;
+
   OriginTrials Trials() const override;
   Maybe<nsID> GetAgentClusterId() const override;
   bool IsSharedMemoryAllowed() const override;
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const override;
 
  protected:
   ~WorkletGlobalScope();
@@ -77,6 +91,7 @@ class WorkletGlobalScope : public nsIGlobalObject, public nsWrapperCache {
  private:
   TimeStamp mCreationTimeStamp;
   RefPtr<Console> mConsole;
+  RefPtr<loader::WorkletModuleLoader> mModuleLoader;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(WorkletGlobalScope, WORKLET_IID)

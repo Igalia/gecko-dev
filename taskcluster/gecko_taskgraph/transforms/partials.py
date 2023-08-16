@@ -47,13 +47,13 @@ def _generate_task_output_files(job, filenames, locale=None):
 
 
 def identify_desired_signing_keys(project, product):
-    if project in ["mozilla-central", "comm-central", "oak"]:
+    if project in ["mozilla-central", "comm-central", "pine"]:
         return "nightly"
-    elif project == "mozilla-beta":
+    if project == "mozilla-beta":
         if product == "devedition":
             return "nightly"
         return "release"
-    elif (
+    if (
         project in ["mozilla-release", "comm-beta"]
         or project.startswith("mozilla-esr")
         or project.startswith("comm-esr")
@@ -134,7 +134,7 @@ def make_task_description(config, jobs):
             "implementation": "docker-worker",
             "docker-image": {"in-tree": "funsize-update-generator"},
             "os": "linux",
-            "max-run-time": 3600 if "asan" in dep_job.label else 900,
+            "max-run-time": 3600 if "asan" in dep_job.label else 1800,
             "chain-of-trust": True,
             "taskcluster-proxy": True,
             "env": {
@@ -151,7 +151,7 @@ def make_task_description(config, jobs):
         task = {
             "label": label,
             "description": f"{dep_job.description} Partials",
-            "worker-type": "b-linux",
+            "worker-type": "b-linux-gcp",
             "dependencies": dependencies,
             "scopes": [],
             "attributes": attributes,

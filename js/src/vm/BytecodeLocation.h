@@ -16,7 +16,6 @@
 #include "vm/CompletionKind.h"      // CompletionKind
 #include "vm/FunctionPrefixKind.h"  // FunctionPrefixKind
 #include "vm/GeneratorResumeKind.h"
-#include "vm/StringType.h"
 
 namespace js {
 
@@ -160,7 +159,7 @@ class BytecodeLocation {
   }
 
   // Add an offset.
-  BytecodeLocation operator+(const BytecodeLocationOffset& offset) {
+  BytecodeLocation operator+(const BytecodeLocationOffset& offset) const {
     return BytecodeLocation(*this, rawBytecode_ + offset.rawOffset());
   }
 
@@ -217,7 +216,7 @@ class BytecodeLocation {
   }
 
   bool resultIsPopped() const {
-    MOZ_ASSERT(StackDefs(rawBytecode_) == 1);
+    MOZ_ASSERT(StackDefs(getOp()) == 1);
     return BytecodeIsPopped(rawBytecode_);
   }
 

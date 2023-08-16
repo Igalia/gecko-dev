@@ -8,9 +8,11 @@ const {
   getUnicodeUrl,
   getUnicodeUrlPath,
   getUnicodeHostname,
-} = require("devtools/client/shared/unicode-url");
+} = require("resource://devtools/client/shared/unicode-url.js");
 
-const { UPDATE_PROPS } = require("devtools/client/netmonitor/src/constants");
+const {
+  UPDATE_PROPS,
+} = require("resource://devtools/client/netmonitor/src/constants.js");
 
 const CONTENT_MIME_TYPE_ABBREVIATIONS = {
   ecmascript: "js",
@@ -340,12 +342,7 @@ function parseQueryString(query) {
       return {
         name: param[0] ? getUnicodeUrlPath(param[0].replace(/\+/g, " ")) : "",
         value: param[1]
-          ? getUnicodeUrlPath(
-              param
-                .slice(1)
-                .join("=")
-                .replace(/\+/g, " ")
-            )
+          ? getUnicodeUrlPath(param.slice(1).join("=").replace(/\+/g, " "))
           : "",
       };
     });
@@ -478,7 +475,7 @@ function getFormattedProtocol(item) {
        *
        * @see https://bugzilla.mozilla.org/show_bug.cgi?id=1501357
        */
-      if (h.value !== undefined && h.value.length > 0) {
+      if (h.value !== undefined && h.value.length) {
         if (
           h.value.toLowerCase() !== "http/1.1" ||
           protocol[0].toLowerCase() !== "http/1.1"

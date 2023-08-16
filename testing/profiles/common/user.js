@@ -59,7 +59,7 @@ user_pref("security.certerrors.mitm.priming.enabled", false);
 user_pref("security.turn_off_all_security_so_that_viruses_can_take_over_this_computer", true);
 user_pref("xpinstall.signatures.required", false);
 // Prevent Remote Settings to issue non local connections.
-user_pref("services.settings.server", "http://localhost/remote-settings-dummy/v1");
+user_pref("services.settings.server", "data:,#remote-settings-dummy/v1");
 // Ensure autoplay is enabled for all platforms.
 user_pref("media.autoplay.default", 0); // 0=Allowed, 1=Blocked, 2=Prompt
 user_pref("media.autoplay.blocking_policy", 0);
@@ -87,3 +87,6 @@ user_pref("telemetry.fog.test.localhost_port", -1);
 //
 // We test the relevant overlay scrollbar code-paths on Android.
 user_pref("widget.gtk.overlay-scrollbars.enabled", false);
+// Generally, we don't want daily idle tasks run during tests. Specific tests
+// can re-enable if needed.
+user_pref("idle.lastDailyNotification", -1);

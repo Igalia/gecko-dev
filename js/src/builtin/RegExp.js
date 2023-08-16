@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// ECMAScript 2020 draft (2020/03/12) 21.2.5.4 get RegExp.prototype.flags
-// https://tc39.es/ecma262/#sec-get-regexp.prototype.flags
+// https://github.com/tc39/ecma262/pull/2418 22.2.6.4 get RegExp.prototype.flags
+// https://arai-a.github.io/ecma262-compare/?pr=2418&id=sec-get-regexp.prototype.flags
 // Uncloned functions with `$` prefix are allocated as extended function
 // to store the original name in `SetCanonicalName`.
 function $RegExpFlagsGetter() {
@@ -46,12 +46,17 @@ function $RegExpFlagsGetter() {
     result += "u";
   }
 
-  // Steps 16-17
+  // Steps 16-17.
+  if (R.unicodeSets) {
+    result += "v";
+  }
+
+  // Steps 18-19
   if (R.sticky) {
     result += "y";
   }
 
-  // Step 18.
+  // Step 20.
   return result;
 }
 SetCanonicalName($RegExpFlagsGetter, "get flags");
@@ -120,7 +125,8 @@ function AdvanceStringIndex(S, index) {
   return index + 2;
 }
 
-// ES 2017 draft rev 6859bb9ccaea9c6ede81d71e5320e3833b92cb3e 21.2.5.6.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.8 RegExp.prototype [ @@match ] ( string )
 function RegExpMatch(string) {
   // Step 1.
   var rx = this;
@@ -148,23 +154,27 @@ function RegExpMatch(string) {
     }
 
     // Step 5.
-    return RegExpBuiltinExec(rx, S, false);
+    return RegExpBuiltinExec(rx, S);
   }
 
   // Stes 4-6
   return RegExpMatchSlowPath(rx, S);
 }
 
-// ES 2017 draft rev 6859bb9ccaea9c6ede81d71e5320e3833b92cb3e 21.2.5.6
-// steps 4-6.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.8 RegExp.prototype [ @@match ] ( string )
+// Steps 4-6
 function RegExpMatchSlowPath(rx, S) {
-  // Steps 4-5.
-  if (!rx.global) {
-    return RegExpExec(rx, S, false);
+  // Step 4.
+  var flags = ToString(rx.flags);
+
+  // Step 5.
+  if (!callFunction(std_String_includes, flags, "g")) {
+    return RegExpExec(rx, S);
   }
 
   // Step 6.a.
-  var fullUnicode = !!rx.unicode;
+  var fullUnicode = callFunction(std_String_includes, flags, "u");
 
   // Step 6.b.
   rx.lastIndex = 0;
@@ -178,7 +188,7 @@ function RegExpMatchSlowPath(rx, S) {
   // Step 6.e.
   while (true) {
     // Step 6.e.i.
-    var result = RegExpExec(rx, S, false);
+    var result = RegExpExec(rx, S);
 
     // Step 6.e.ii.
     if (result === null) {
@@ -191,7 +201,7 @@ function RegExpMatchSlowPath(rx, S) {
     // Step 6.e.iii.2.
     DefineDataProperty(A, n, matchStr);
 
-    // Step 6.e.iii.4.
+    // Step 6.e.iii.3.
     if (matchStr === "") {
       var lastIndex = ToLength(rx.lastIndex);
       rx.lastIndex = fullUnicode
@@ -199,7 +209,7 @@ function RegExpMatchSlowPath(rx, S) {
         : lastIndex + 1;
     }
 
-    // Step 6.e.iii.5.
+    // Step 6.e.iii.4.
     n++;
   }
 }
@@ -263,6 +273,7 @@ function RegExpGlobalMatchOpt(rx, S, fullUnicode) {
 //   * dotAll
 //   * sticky
 //   * unicode
+//   * unicodeSets
 //   * exec
 //   * lastIndex
 function IsRegExpMethodOptimizable(rx) {
@@ -280,7 +291,8 @@ function IsRegExpMethodOptimizable(rx) {
   );
 }
 
-// ES 2017 draft rev 03bfda119d060aca4099d2b77cf43f6d4f11cfa2 21.2.5.8.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
 function RegExpReplace(string, replaceValue) {
   // Step 1.
   var rx = this;
@@ -315,12 +327,13 @@ function RegExpReplace(string, replaceValue) {
 
   // Optimized paths.
   if (IsRegExpMethodOptimizable(rx)) {
+    // Step 7.
     var flags = UnsafeGetInt32FromReservedSlot(rx, REGEXP_FLAGS_SLOT);
 
-    // Step 7.
+    // Step 9.
     var global = !!(flags & REGEXP_GLOBAL_FLAG);
 
-    // Steps 8-16.
+    // Steps 9-17.
     if (global) {
       if (functionalReplace) {
         // For large strings check if the replacer function is
@@ -374,7 +387,7 @@ function RegExpReplace(string, replaceValue) {
     return RegExpLocalReplaceOpt(rx, S, lengthS, replaceValue);
   }
 
-  // Steps 8-16.
+  // Steps 7-17.
   return RegExpReplaceSlowPath(
     rx,
     S,
@@ -385,8 +398,9 @@ function RegExpReplace(string, replaceValue) {
   );
 }
 
-// ES 2017 draft rev 03bfda119d060aca4099d2b77cf43f6d4f11cfa2 21.2.5.8
-// steps 7-16.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
+// Steps 7-17.
 // Slow path for @@replace.
 function RegExpReplaceSlowPath(
   rx,
@@ -397,44 +411,47 @@ function RegExpReplaceSlowPath(
   firstDollarIndex
 ) {
   // Step 7.
-  var global = !!rx.global;
+  var flags = ToString(rx.flags);
 
   // Step 8.
+  var global = callFunction(std_String_includes, flags, "g");
+
+  // Step 9.
   var fullUnicode = false;
   if (global) {
-    // Step 8.a.
-    fullUnicode = !!rx.unicode;
+    // Step 9.a.
+    fullUnicode = callFunction(std_String_includes, flags, "u");
 
-    // Step 8.b.
+    // Step 9.b.
     rx.lastIndex = 0;
   }
 
-  // Step 9.
+  // Step 10.
   var results = new_List();
   var nResults = 0;
 
-  // Step 11.
+  // Steps 11-12.
   while (true) {
-    // Step 11.a.
-    var result = RegExpExec(rx, S, false);
+    // Step 12.a.
+    var result = RegExpExec(rx, S);
 
-    // Step 11.b.
+    // Step 12.b.
     if (result === null) {
       break;
     }
 
-    // Step 11.c.i.
+    // Step 12.c.i.
     DefineDataProperty(results, nResults++, result);
 
-    // Step 11.c.ii.
+    // Step 12.c.ii.
     if (!global) {
       break;
     }
 
-    // Step 11.c.iii.1.
+    // Step 12.c.iii.1.
     var matchStr = ToString(result[0]);
 
-    // Step 11.c.iii.2.
+    // Step 12.c.iii.2.
     if (matchStr === "") {
       var lastIndex = ToLength(rx.lastIndex);
       rx.lastIndex = fullUnicode
@@ -443,34 +460,34 @@ function RegExpReplaceSlowPath(
     }
   }
 
-  // Step 12.
+  // Step 13.
   var accumulatedResult = "";
 
-  // Step 13.
+  // Step 14.
   var nextSourcePosition = 0;
 
-  // Step 14.
+  // Step 15.
   for (var i = 0; i < nResults; i++) {
     result = results[i];
 
-    // Steps 14.a-b.
+    // Steps 15.a-b.
     var nCaptures = std_Math_max(ToLength(result.length) - 1, 0);
 
-    // Step 14.c.
+    // Step 15.c.
     var matched = ToString(result[0]);
 
-    // Step 14.d.
+    // Step 15.d.
     var matchLength = matched.length;
 
-    // Steps 14.e-f.
+    // Steps 15.e-f.
     var position = std_Math_max(
       std_Math_min(ToInteger(result.index), lengthS),
       0
     );
 
-    var n, capN, replacement;
+    var replacement;
     if (functionalReplace || firstDollarIndex !== -1) {
-      // Steps 14.g-k.
+      // Steps 15.g-l.
       replacement = RegExpGetComplexReplacement(
         result,
         matched,
@@ -482,54 +499,57 @@ function RegExpReplaceSlowPath(
         firstDollarIndex
       );
     } else {
-      // Step 14.g, 14.i, 14.i.iv.
+      // Steps 15.g, 15.i, 15.i.iv.
       // We don't need captures array, but ToString is visible to script.
-      for (n = 1; n <= nCaptures; n++) {
-        // Step 14.i.i-ii.
-        capN = result[n];
+      for (var n = 1; n <= nCaptures; n++) {
+        // Steps 15.i.i-ii.
+        var capN = result[n];
 
-        // Step 14.i.ii.
+        // Step 15.i.ii.
         if (capN !== undefined) {
           ToString(capN);
         }
       }
-      // Step 14.j, 14.l., GetSubstitution Step 11.
+
+      // Steps 15.j, 15.l.i.
       // We don't need namedCaptures, but ToObject is visible to script.
       var namedCaptures = result.groups;
       if (namedCaptures !== undefined) {
         ToObject(namedCaptures);
       }
 
+      // Step 15.l.ii.
       replacement = replaceValue;
     }
 
-    // Step 14.m.
+    // Step 15.m.
     if (position >= nextSourcePosition) {
-      // Step 14.m.ii.
+      // Step 15.m.ii.
       accumulatedResult +=
         Substring(S, nextSourcePosition, position - nextSourcePosition) +
         replacement;
 
-      // Step 14.m.iii.
+      // Step 15.m.iii.
       nextSourcePosition = position + matchLength;
     }
   }
 
-  // Step 15.
+  // Step 16.
   if (nextSourcePosition >= lengthS) {
     return accumulatedResult;
   }
 
-  // Step 16.
+  // Step 17.
   return (
     accumulatedResult +
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }
 
-// ES 2021 draft 21.2.5.10
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
 // https://tc39.es/ecma262/#sec-regexp.prototype-@@replace
-// steps 14.g-l.
+// Steps 15.g-l.
 // Calculates functional/substitution replacement from match result.
 // Used in the following functions:
 //   * RegExpReplaceSlowPath
@@ -543,31 +563,31 @@ function RegExpGetComplexReplacement(
   functionalReplace,
   firstDollarIndex
 ) {
-  // Step 14.h.
+  // Step 15.g.
   var captures = new_List();
   var capturesLength = 0;
 
-  // Step 14.k.i (reordered).
+  // Step 15.k.i (reordered).
   DefineDataProperty(captures, capturesLength++, matched);
 
-  // Step 14.g, 14.i, 14.i.iv.
+  // Steps 15.h, 15.i, 15.i.v.
   for (var n = 1; n <= nCaptures; n++) {
-    // Step 14.i.i.
+    // Step 15.i.i.
     var capN = result[n];
 
-    // Step 14.i.ii.
+    // Step 15.i.ii.
     if (capN !== undefined) {
       capN = ToString(capN);
     }
 
-    // Step 14.i.iii.
+    // Step 15.i.iii.
     DefineDataProperty(captures, capturesLength++, capN);
   }
 
-  // Step 14.j.
+  // Step 15.j.
   var namedCaptures = result.groups;
 
-  // Step 14.k.
+  // Step 15.k.
   if (functionalReplace) {
     // For `nCaptures` <= 4 case, call `replaceValue` directly, otherwise
     // use `std_Function_apply` with all arguments stored in `captures`.
@@ -625,7 +645,8 @@ function RegExpGetComplexReplacement(
           );
       }
     }
-    // Steps 14.k.ii-v.
+
+    // Steps 15.k.ii-vi.
     DefineDataProperty(captures, capturesLength++, position);
     DefineDataProperty(captures, capturesLength++, S);
     if (namedCaptures !== undefined) {
@@ -636,7 +657,7 @@ function RegExpGetComplexReplacement(
     );
   }
 
-  // Step 14.l.
+  // Step 15.l.
   if (namedCaptures !== undefined) {
     namedCaptures = ToObject(namedCaptures);
   }
@@ -650,9 +671,10 @@ function RegExpGetComplexReplacement(
   );
 }
 
-// ES 2021 draft 21.2.5.10
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
 // https://tc39.es/ecma262/#sec-regexp.prototype-@@replace
-// steps 14.g-k.
+// Steps 15.g-k.
 // Calculates functional replacement from match result.
 // Used in the following functions:
 //   * RegExpGlobalReplaceOptFunc
@@ -664,7 +686,7 @@ function RegExpGetFunctionalReplacement(result, S, position, replaceValue) {
   assert(result.length >= 1, "RegExpMatcher doesn't return an empty array");
   var nCaptures = result.length - 1;
 
-  // Step 14.j (reordered)
+  // Step 15.j (reordered)
   var namedCaptures = result.groups;
 
   if (namedCaptures === undefined) {
@@ -722,7 +744,7 @@ function RegExpGetFunctionalReplacement(result, S, position, replaceValue) {
     }
   }
 
-  // Steps 14.g-i, 14.k.i-ii.
+  // Steps 15.g-i, 15.k.i-ii.
   var captures = new_List();
   for (var n = 0; n <= nCaptures; n++) {
     assert(
@@ -732,47 +754,48 @@ function RegExpGetFunctionalReplacement(result, S, position, replaceValue) {
     DefineDataProperty(captures, n, result[n]);
   }
 
-  // Step 14.k.iii.
+  // Step 15.k.iii.
   DefineDataProperty(captures, nCaptures + 1, position);
   DefineDataProperty(captures, nCaptures + 2, S);
 
-  // Step 14.k.iv.
+  // Step 15.k.iv.
   if (namedCaptures !== undefined) {
     DefineDataProperty(captures, nCaptures + 3, namedCaptures);
   }
 
-  // Steps 14.k.v-vi.
+  // Steps 15.k.v-vi.
   return ToString(
     callFunction(std_Function_apply, replaceValue, undefined, captures)
   );
 }
 
-// ES 2017 draft rev 03bfda119d060aca4099d2b77cf43f6d4f11cfa2 21.2.5.8
-// steps 8.b-16.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
+// Steps 9.b-17.
 // Optimized path for @@replace with the following conditions:
 //   * global flag is true
 //   * S is a short string (lengthS < 0x7fff)
 //   * replaceValue is a string without "$"
 function RegExpGlobalReplaceShortOpt(rx, S, lengthS, replaceValue, flags) {
-  // Step 8.a.
+  // Step 9.a.
   var fullUnicode = !!(flags & REGEXP_UNICODE_FLAG);
 
-  // Step 8.b.
+  // Step 9.b.
   var lastIndex = 0;
   rx.lastIndex = 0;
 
-  // Step 12 (reordered).
+  // Step 13 (reordered).
   var accumulatedResult = "";
 
-  // Step 13 (reordered).
+  // Step 14 (reordered).
   var nextSourcePosition = 0;
 
-  // Step 11.
+  // Step 12.
   while (true) {
-    // Step 11.a.
+    // Step 12.a.
     var result = RegExpSearcher(rx, S, lastIndex);
 
-    // Step 11.b.
+    // Step 12.b.
     if (result === -1) {
       break;
     }
@@ -780,15 +803,15 @@ function RegExpGlobalReplaceShortOpt(rx, S, lengthS, replaceValue, flags) {
     var position = result & 0x7fff;
     lastIndex = (result >> 15) & 0x7fff;
 
-    // Step 14.l.ii.
+    // Step 15.m.ii.
     accumulatedResult +=
       Substring(S, nextSourcePosition, position - nextSourcePosition) +
       replaceValue;
 
-    // Step 14.l.iii.
+    // Step 15.m.iii.
     nextSourcePosition = lastIndex;
 
-    // Step 11.c.iii.2.
+    // Step 12.c.iii.2.
     if (lastIndex === position) {
       lastIndex = fullUnicode
         ? AdvanceStringIndex(S, lastIndex)
@@ -799,20 +822,21 @@ function RegExpGlobalReplaceShortOpt(rx, S, lengthS, replaceValue, flags) {
     }
   }
 
-  // Step 15.
+  // Step 16.
   if (nextSourcePosition >= lengthS) {
     return accumulatedResult;
   }
 
-  // Step 16.
+  // Step 17.
   return (
     accumulatedResult +
     Substring(S, nextSourcePosition, lengthS - nextSourcePosition)
   );
 }
 
-// ES 2017 draft rev 03bfda119d060aca4099d2b77cf43f6d4f11cfa2 21.2.5.8
-// steps 8-16.
+// ES2023 draft rev 2c78e6f6b5bc6bfbf79dd8a12a9593e5b57afcd2
+// 22.2.5.11 RegExp.prototype [ @@replace ] ( string, replaceValue )
+// Steps 7-17.
 // Optimized path for @@replace.
 
 // Conditions:
@@ -958,7 +982,7 @@ function RegExpSearch(string) {
 // Steps 6-10.
 function RegExpSearchSlowPath(rx, S, previousLastIndex) {
   // Step 6.
-  var result = RegExpExec(rx, S, false);
+  var result = RegExpExec(rx, S);
 
   // Step 7.
   var currentLastIndex = rx.lastIndex;
@@ -1015,7 +1039,7 @@ function RegExpSplit(string, limit) {
 
   var optimizable =
     IsRegExpSplitOptimizable(rx, C) &&
-    (limit === undefined || typeof limit == "number");
+    (limit === undefined || typeof limit === "number");
 
   var flags, unicodeMatching, splitter;
   if (optimizable) {
@@ -1084,7 +1108,7 @@ function RegExpSplit(string, limit) {
     if (optimizable) {
       z = RegExpMatcher(splitter, S, 0);
     } else {
-      z = RegExpExec(splitter, S, false);
+      z = RegExpExec(splitter, S);
     }
 
     // Step 17.b.
@@ -1130,7 +1154,7 @@ function RegExpSplit(string, limit) {
       splitter.lastIndex = q;
 
       // Step 19.b.
-      z = RegExpExec(splitter, S, false);
+      z = RegExpExec(splitter, S);
 
       // Step 19.c.
       if (z === null) {
@@ -1218,121 +1242,7 @@ function RegExp_prototype_Exec(string) {
   var S = ToString(string);
 
   // Step 6.
-  return RegExpBuiltinExec(R, S, false);
-}
-
-// ES6 21.2.5.2.1.
-function RegExpExec(R, S, forTest) {
-  // Steps 1-2 (skipped).
-
-  // Steps 3-4.
-  var exec = R.exec;
-
-  // Step 5.
-  // If exec is the original RegExp.prototype.exec, use the same, faster,
-  // path as for the case where exec isn't callable.
-  if (exec === RegExp_prototype_Exec || !IsCallable(exec)) {
-    // ES6 21.2.5.2 steps 1-2, 4-5 (skipped) for optimized case.
-
-    // Steps 6-7 or ES6 21.2.5.2 steps 3, 6 for optimized case.
-    return RegExpBuiltinExec(R, S, forTest);
-  }
-
-  // Steps 5.a-b.
-  var result = callContentFunction(exec, R, S);
-
-  // Step 5.c.
-  if (result !== null && !IsObject(result)) {
-    ThrowTypeError(JSMSG_EXEC_NOT_OBJORNULL);
-  }
-
-  // Step 5.d.
-  return forTest ? result !== null : result;
-}
-
-// ES2017 draft rev 6390c2f1b34b309895d31d8c0512eac8660a0210
-// 21.2.5.2.2 Runtime Semantics: RegExpBuiltinExec ( R, S )
-function RegExpBuiltinExec(R, S, forTest) {
-  // 21.2.5.2.1 Runtime Semantics: RegExpExec, step 5.
-  // This check is here for RegExpTest.  RegExp_prototype_Exec does same
-  // thing already.
-  if (!IsRegExpObject(R)) {
-    return UnwrapAndCallRegExpBuiltinExec(R, S, forTest);
-  }
-
-  // Steps 1-3 (skipped).
-
-  // Step 4.
-  var lastIndex = ToLength(R.lastIndex);
-
-  // Step 5.
-  var flags = UnsafeGetInt32FromReservedSlot(R, REGEXP_FLAGS_SLOT);
-
-  // Steps 6-7.
-  var globalOrSticky = !!(flags & (REGEXP_GLOBAL_FLAG | REGEXP_STICKY_FLAG));
-
-  // Step 8.
-  if (!globalOrSticky) {
-    lastIndex = 0;
-  } else {
-    // Step 12.a.
-    if (lastIndex > S.length) {
-      // Steps 12.a.i-ii.
-      if (globalOrSticky) {
-        R.lastIndex = 0;
-      }
-      return forTest ? false : null;
-    }
-  }
-
-  if (forTest) {
-    // Steps 3, 9-25, except 12.a.i-ii, 12.c.i.1-2, 15.
-    var endIndex = RegExpTester(R, S, lastIndex);
-    if (endIndex == -1) {
-      // Steps 12.a.i-ii, 12.c.i.1-2.
-      if (globalOrSticky) {
-        R.lastIndex = 0;
-      }
-      return false;
-    }
-
-    // Step 15.
-    if (globalOrSticky) {
-      R.lastIndex = endIndex;
-    }
-
-    return true;
-  }
-
-  // Steps 3, 9-25, except 12.a.i-ii, 12.c.i.1-2, 15.
-  var result = RegExpMatcher(R, S, lastIndex);
-  if (result === null) {
-    // Steps 12.a.i, 12.c.i.
-    if (globalOrSticky) {
-      R.lastIndex = 0;
-    }
-  } else {
-    // Step 15.
-    if (globalOrSticky) {
-      R.lastIndex = result.index + result[0].length;
-    }
-  }
-
-  return result;
-}
-
-function UnwrapAndCallRegExpBuiltinExec(R, S, forTest) {
-  return callFunction(
-    CallRegExpMethodIfWrapped,
-    R,
-    S,
-    forTest,
-    "CallRegExpBuiltinExec"
-  );
-}
-
-function CallRegExpBuiltinExec(S, forTest) {
-  return RegExpBuiltinExec(this, S, forTest);
+  return RegExpBuiltinExec(R, S);
 }
 
 // ES6 21.2.5.13.
@@ -1347,7 +1257,7 @@ function RegExpTest(string) {
   var S = ToString(string);
 
   // Steps 5-6.
-  return RegExpExec(R, S, true);
+  return RegExpExecForTest(R, S);
 }
 
 // ES 2016 draft Mar 25, 2016 21.2.4.2.
@@ -1601,7 +1511,7 @@ function RegExpStringIteratorNext() {
   }
 
   // Step 9.
-  var match = RegExpExec(regexp, string, false);
+  var match = RegExpExec(regexp, string);
 
   // Step 10.
   if (match === null) {

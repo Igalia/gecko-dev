@@ -7,9 +7,9 @@
 #[cfg(feature = "servo")]
 use crate::animation::DocumentAnimationSet;
 use crate::bloom::StyleBloom;
+use crate::computed_value_flags::ComputedValueFlags;
 use crate::data::{EagerPseudoStyles, ElementData};
 use crate::dom::{SendElement, TElement};
-use crate::font_metrics::FontMetricsProvider;
 #[cfg(feature = "gecko")]
 use crate::gecko_bindings::structs;
 use crate::parallel::{STACK_SAFETY_MARGIN_KB, STYLE_THREAD_STACK_SIZE_KB};
@@ -30,7 +30,7 @@ use euclid::default::Size2D;
 use euclid::Scale;
 #[cfg(feature = "servo")]
 use fxhash::FxHashMap;
-use selectors::NthIndexCache;
+use selectors::context::SelectorCaches;
 #[cfg(feature = "gecko")]
 use servo_arc::Arc;
 #[cfg(feature = "servo")]
@@ -190,14 +190,18 @@ pub struct CascadeInputs {
     /// element. A element's "relevant link" is the element being matched if it
     /// is a link or the nearest ancestor link.
     pub visited_rules: Option<StrongRuleNode>,
+
+    /// The set of flags from container queries that we need for invalidation.
+    pub flags: ComputedValueFlags,
 }
 
 impl CascadeInputs {
     /// Construct inputs from previous cascade results, if any.
     pub fn new_from_style(style: &ComputedValues) -> Self {
-        CascadeInputs {
+        Self {
             rules: style.rules.clone(),
             visited_rules: style.visited_style().and_then(|v| v.rules.clone()),
+            flags: style.flags.for_cascade_inputs(),
         }
     }
 }
@@ -415,6 +419,10 @@ bitflags! {
         /// the second animation restyles for the script animations in the case where
         /// the display property was changed from 'none' to others.
         const DISPLAY_CHANGED_FROM_NONE = structs::UpdateAnimationsTasks_DisplayChangedFromNone;
+        /// Update CSS named scroll progress timelines.
+        const SCROLL_TIMELINES = structs::UpdateAnimationsTasks_ScrollTimelines;
+        /// Update CSS named view progress timelines.
+        const VIEW_TIMELINES = structs::UpdateAnimationsTasks_ViewTimelines;
     }
 }
 
@@ -640,48 +648,26 @@ pub struct ThreadLocalStyleContext<E: TElement> {
     pub tasks: SequentialTaskList<E>,
     /// Statistics about the traversal.
     pub statistics: PerThreadTraversalStatistics,
-    /// The struct used to compute and cache font metrics from style
-    /// for evaluation of the font-relative em/ch units and font-size
-    pub font_metrics_provider: E::FontMetricsProvider,
     /// A checker used to ensure that parallel.rs does not recurse indefinitely
     /// even on arbitrarily deep trees.  See Gecko bug 1376883.
     pub stack_limit_checker: StackLimitChecker,
-    /// A cache for nth-index-like selectors.
-    pub nth_index_cache: NthIndexCache,
+    /// Collection of caches for speeding up expensive selector matches.
+    pub selector_caches: SelectorCaches,
 }
 
 impl<E: TElement> ThreadLocalStyleContext<E> {
-    /// Creates a new `ThreadLocalStyleContext` from a shared one.
-    #[cfg(feature = "servo")]
-    pub fn new(shared: &SharedStyleContext) -> Self {
+    /// Creates a new `ThreadLocalStyleContext`
+    pub fn new() -> Self {
         ThreadLocalStyleContext {
             sharing_cache: StyleSharingCache::new(),
             rule_cache: RuleCache::new(),
             bloom_filter: StyleBloom::new(),
             tasks: SequentialTaskList(Vec::new()),
             statistics: PerThreadTraversalStatistics::default(),
-            font_metrics_provider: E::FontMetricsProvider::create_from(shared),
             stack_limit_checker: StackLimitChecker::new(
                 (STYLE_THREAD_STACK_SIZE_KB - STACK_SAFETY_MARGIN_KB) * 1024,
             ),
-            nth_index_cache: NthIndexCache::default(),
-        }
-    }
-
-    #[cfg(feature = "gecko")]
-    /// Creates a new `ThreadLocalStyleContext` from a shared one.
-    pub fn new(shared: &SharedStyleContext) -> Self {
-        ThreadLocalStyleContext {
-            sharing_cache: StyleSharingCache::new(),
-            rule_cache: RuleCache::new(),
-            bloom_filter: StyleBloom::new(),
-            tasks: SequentialTaskList(Vec::new()),
-            statistics: PerThreadTraversalStatistics::default(),
-            font_metrics_provider: E::FontMetricsProvider::create_from(shared),
-            stack_limit_checker: StackLimitChecker::new(
-                (STYLE_THREAD_STACK_SIZE_KB - STACK_SAFETY_MARGIN_KB) * 1024,
-            ),
-            nth_index_cache: NthIndexCache::default(),
+            selector_caches: SelectorCaches::default(),
         }
     }
 }

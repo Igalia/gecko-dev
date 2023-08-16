@@ -20,6 +20,8 @@ toolbar-context-menu-bookmark-selected-tabs =
 toolbar-context-menu-select-all-tabs =
     .label = Select All Tabs
     .accesskey = S
+# Variables
+#   $tabCount (number) - Number of tabs
 toolbar-context-menu-reopen-closed-tabs =
     .label =
         { $tabCount ->
@@ -63,6 +65,11 @@ toolbar-context-menu-view-customize-toolbar =
 toolbar-context-menu-view-customize-toolbar-2 =
     .label = Customize Toolbar…
     .accesskey = C
+# This is only ever shown when toolbar-context-menu-pin-to-overflow-menu
+# is hidden, so they can share access keys.
+toolbar-context-menu-pin-to-toolbar =
+    .label = Pin to Toolbar
+    .accesskey = P
 
 toolbar-context-menu-bookmarks-toolbar-always-show-2 =
     .label = Always Show

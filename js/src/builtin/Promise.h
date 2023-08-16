@@ -7,17 +7,18 @@
 #ifndef builtin_Promise_h
 #define builtin_Promise_h
 
-#include "js/Promise.h"
-
 #include "jstypes.h"  // JS_PUBLIC_API
 
-#include "js/CallArgs.h"    // JS::CallArgs
 #include "js/RootingAPI.h"  // JS::{,Mutable}Handle
 #include "js/TypeDecls.h"   // JS::HandleObjectVector
-#include "js/Value.h"       // JS::Value
 
 struct JS_PUBLIC_API JSContext;
 class JS_PUBLIC_API JSObject;
+
+namespace JS {
+class CallArgs;
+class Value;
+}  // namespace JS
 
 namespace js {
 
@@ -256,6 +257,10 @@ struct PromiseReactionRecordBuilder {
     JSContext* cx, JS::Handle<AsyncGeneratorObject*> generator,
     JS::Handle<JS::Value> value, PromiseHandler onFulfilled,
     PromiseHandler onRejected);
+
+bool IsPromiseWithDefaultResolvingFunction(PromiseObject* promise);
+void SetAlreadyResolvedPromiseWithDefaultResolvingFunction(
+    PromiseObject* promise);
 
 }  // namespace js
 

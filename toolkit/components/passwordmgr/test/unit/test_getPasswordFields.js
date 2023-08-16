@@ -5,11 +5,11 @@
 /* globals todo_check_eq */
 "use strict";
 
-const { LoginFormFactory } = ChromeUtils.import(
-  "resource://gre/modules/LoginFormFactory.jsm"
+const { LoginFormFactory } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginFormFactory.sys.mjs"
 );
-const { LoginFormState } = ChromeUtils.import(
-  "resource://gre/modules/LoginManagerChild.jsm"
+const { LoginFormState } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginManagerChild.sys.mjs"
 );
 const TESTCASES = [
   {
@@ -167,9 +167,9 @@ const TESTCASES = [
 for (let tc of TESTCASES) {
   info("Sanity checking the testcase: " + tc.description);
 
-  (function() {
+  (function () {
     let testcase = tc;
-    add_task(async function() {
+    add_task(async function () {
       info("Starting testcase: " + testcase.description);
       let document = MockDocument.createTestDocument(
         "http://localhost:8080/test/",
@@ -283,9 +283,9 @@ const EMOJI_TESTCASES = [
 for (let tc of EMOJI_TESTCASES) {
   info("Sanity checking the testcase: " + tc.description);
 
-  (function() {
+  (function () {
     let testcase = tc;
-    add_task(async function() {
+    add_task(async function () {
       info("Starting testcase: " + testcase.description);
       let document = MockDocument.createTestDocument(
         "http://localhost:8080/test/",

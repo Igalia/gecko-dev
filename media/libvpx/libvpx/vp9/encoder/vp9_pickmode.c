@@ -268,6 +268,7 @@ static void block_variance(const uint8_t *src, int src_stride,
 #endif
                            uint32_t *sse8x8, int *sum8x8, uint32_t *var8x8) {
   int i, j, k = 0;
+  uint32_t k_sqr = 0;
 
   *sse = 0;
   *sum = 0;
@@ -305,7 +306,8 @@ static void block_variance(const uint8_t *src, int src_stride,
 #endif
       *sse += sse8x8[k];
       *sum += sum8x8[k];
-      var8x8[k] = sse8x8[k] - (uint32_t)(((int64_t)sum8x8[k] * sum8x8[k]) >> 6);
+      k_sqr = (uint32_t)(((int64_t)sum8x8[k] * sum8x8[k]) >> 6);
+      var8x8[k] = sse8x8[k] > k_sqr ? sse8x8[k] - k_sqr : k_sqr - sse8x8[k];
       k++;
     }
   }
@@ -319,6 +321,7 @@ static void calculate_variance(int bw, int bh, TX_SIZE tx_size,
   const int nw = 1 << (bw - b_width_log2_lookup[unit_size]);
   const int nh = 1 << (bh - b_height_log2_lookup[unit_size]);
   int i, j, k = 0;
+  uint32_t k_sqr = 0;
 
   for (i = 0; i < nh; i += 2) {
     for (j = 0; j < nw; j += 2) {
@@ -326,9 +329,10 @@ static void calculate_variance(int bw, int bh, TX_SIZE tx_size,
                  sse_i[(i + 1) * nw + j] + sse_i[(i + 1) * nw + j + 1];
       sum_o[k] = sum_i[i * nw + j] + sum_i[i * nw + j + 1] +
                  sum_i[(i + 1) * nw + j] + sum_i[(i + 1) * nw + j + 1];
-      var_o[k] = sse_o[k] - (uint32_t)(((int64_t)sum_o[k] * sum_o[k]) >>
-                                       (b_width_log2_lookup[unit_size] +
-                                        b_height_log2_lookup[unit_size] + 6));
+      k_sqr = (uint32_t)(((int64_t)sum_o[k] * sum_o[k]) >>
+                         (b_width_log2_lookup[unit_size] +
+                          b_height_log2_lookup[unit_size] + 6));
+      var_o[k] = sse_o[k] > k_sqr ? sse_o[k] - k_sqr : k_sqr - sse_o[k];
       k++;
     }
   }
@@ -452,6 +456,7 @@ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
   unsigned int var8x8[64] = { 0 };
   TX_SIZE tx_size;
   int i, k;
+  uint32_t sum_sqr;
 #if CONFIG_VP9_HIGHBITDEPTH
   const vpx_bit_depth_t bd = cpi->common.bit_depth;
 #endif
@@ -463,7 +468,8 @@ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
                  cpi->common.use_highbitdepth, bd,
 #endif
                  sse8x8, sum8x8, var8x8);
-  var = sse - (unsigned int)(((int64_t)sum * sum) >> (bw + bh + 4));
+  sum_sqr = (uint32_t)((int64_t)sum * sum) >> (bw + bh + 4);
+  var = sse > sum_sqr ? sse - sum_sqr : sum_sqr - sse;
 
   *var_y = var;
   *sse_y = sse;
@@ -560,23 +566,26 @@ static void model_rd_for_sb_y_large(VP9_COMP *cpi, BLOCK_SIZE bsize,
 
     // Transform skipping test in UV planes.
     for (i = 1; i <= 2; i++) {
-      struct macroblock_plane *const p = &x->plane[i];
-      struct macroblockd_plane *const pd = &xd->plane[i];
-      const TX_SIZE uv_tx_size = get_uv_tx_size(xd->mi[0], pd);
+      struct macroblock_plane *const p_uv = &x->plane[i];
+      struct macroblockd_plane *const pd_uv = &xd->plane[i];
+      const TX_SIZE uv_tx_size = get_uv_tx_size(xd->mi[0], pd_uv);
       const BLOCK_SIZE unit_size = txsize_to_bsize[uv_tx_size];
-      const BLOCK_SIZE uv_bsize = get_plane_block_size(bsize, pd);
+      const BLOCK_SIZE uv_bsize = get_plane_block_size(bsize, pd_uv);
       const int uv_bw = b_width_log2_lookup[uv_bsize];
       const int uv_bh = b_height_log2_lookup[uv_bsize];
       const int sf = (uv_bw - b_width_log2_lookup[unit_size]) +
                      (uv_bh - b_height_log2_lookup[unit_size]);
-      const uint32_t uv_dc_thr = pd->dequant[0] * pd->dequant[0] >> (6 - sf);
-      const uint32_t uv_ac_thr = pd->dequant[1] * pd->dequant[1] >> (6 - sf);
+      const uint32_t uv_dc_thr =
+          pd_uv->dequant[0] * pd_uv->dequant[0] >> (6 - sf);
+      const uint32_t uv_ac_thr =
+          pd_uv->dequant[1] * pd_uv->dequant[1] >> (6 - sf);
       int j = i - 1;
 
       vp9_build_inter_predictors_sbp(xd, mi_row, mi_col, bsize, i);
       flag_preduv_computed[i - 1] = 1;
-      var_uv[j] = cpi->fn_ptr[uv_bsize].vf(
-          p->src.buf, p->src.stride, pd->dst.buf, pd->dst.stride, &sse_uv[j]);
+      var_uv[j] = cpi->fn_ptr[uv_bsize].vf(p_uv->src.buf, p_uv->src.stride,
+                                           pd_uv->dst.buf, pd_uv->dst.stride,
+                                           &sse_uv[j]);
 
       if ((var_uv[j] < uv_ac_thr || var_uv[j] == 0) &&
           (sse_uv[j] - var_uv[j] < uv_dc_thr || sse_uv[j] == var_uv[j]))
@@ -762,7 +771,7 @@ static void block_yrd(VP9_COMP *cpi, MACROBLOCK *x, RD_COST *this_rdc,
   for (r = 0; r < max_blocks_high; r += block_step) {
     for (c = 0; c < num_4x4_w; c += block_step) {
       if (c < max_blocks_wide) {
-        const scan_order *const scan_order = &vp9_default_scan_orders[tx_size];
+        const ScanOrder *const scan_order = &vp9_default_scan_orders[tx_size];
         tran_low_t *const coeff = BLOCK_OFFSET(p->coeff, block);
         tran_low_t *const qcoeff = BLOCK_OFFSET(p->qcoeff, block);
         tran_low_t *const dqcoeff = BLOCK_OFFSET(pd->dqcoeff, block);
@@ -1112,7 +1121,7 @@ static INLINE int rd_less_than_thresh_row_mt(int64_t best_rd, int thresh,
 }
 
 static INLINE void update_thresh_freq_fact_row_mt(
-    VP9_COMP *cpi, TileDataEnc *tile_data, int source_variance,
+    VP9_COMP *cpi, TileDataEnc *tile_data, unsigned int source_variance,
     int thresh_freq_fact_idx, MV_REFERENCE_FRAME ref_frame,
     THR_MODES best_mode_idx, PREDICTION_MODE mode) {
   THR_MODES thr_mode_idx = mode_idx[ref_frame][mode_offset(mode)];
@@ -1627,9 +1636,9 @@ static int search_new_mv(VP9_COMP *cpi, MACROBLOCK *x,
         return -1;
 
       // Exit NEWMV search if base_mv_sse is large.
-      if (sf->base_mv_aggressive && base_mv_sse > (best_sse_sofar << scale))
+      if (sf->base_mv_aggressive && (base_mv_sse >> scale) > best_sse_sofar)
         return -1;
-      if (base_mv_sse < (best_sse_sofar << 1)) {
+      if ((base_mv_sse >> 1) < best_sse_sofar) {
         // Base layer mv is good.
         // Exit NEWMV search if the base_mv is (0, 0) and sse is low, since
         // (0, 0) mode is already tested.
@@ -1927,15 +1936,15 @@ void vp9_pick_inter_mode(VP9_COMP *cpi, MACROBLOCK *x, TileDataEnc *tile_data,
   if (cpi->use_svc && svc->force_zero_mode_spatial_ref &&
       svc->spatial_layer_id > 0 && !gf_temporal_ref) {
     if (cpi->ref_frame_flags & VP9_LAST_FLAG) {
-      struct scale_factors *const sf = &cm->frame_refs[LAST_FRAME - 1].sf;
-      if (vp9_is_scaled(sf)) {
+      struct scale_factors *const ref_sf = &cm->frame_refs[LAST_FRAME - 1].sf;
+      if (vp9_is_scaled(ref_sf)) {
         svc_force_zero_mode[LAST_FRAME - 1] = 1;
         inter_layer_ref = LAST_FRAME;
       }
     }
     if (cpi->ref_frame_flags & VP9_GOLD_FLAG) {
-      struct scale_factors *const sf = &cm->frame_refs[GOLDEN_FRAME - 1].sf;
-      if (vp9_is_scaled(sf)) {
+      struct scale_factors *const ref_sf = &cm->frame_refs[GOLDEN_FRAME - 1].sf;
+      if (vp9_is_scaled(ref_sf)) {
         svc_force_zero_mode[GOLDEN_FRAME - 1] = 1;
         inter_layer_ref = GOLDEN_FRAME;
       }
@@ -2766,9 +2775,10 @@ void vp9_pick_inter_mode_sub8x8(VP9_COMP *cpi, MACROBLOCK *x, int mi_row,
     if ((cpi->ref_frame_flags & ref_frame_to_flag(ref_frame)) &&
         (yv12 != NULL)) {
       int_mv *const candidates = mbmi_ext->ref_mvs[ref_frame];
-      const struct scale_factors *const sf = &cm->frame_refs[ref_frame - 1].sf;
-      vp9_setup_pred_block(xd, yv12_mb[ref_frame], yv12, mi_row, mi_col, sf,
-                           sf);
+      const struct scale_factors *const ref_sf =
+          &cm->frame_refs[ref_frame - 1].sf;
+      vp9_setup_pred_block(xd, yv12_mb[ref_frame], yv12, mi_row, mi_col, ref_sf,
+                           ref_sf);
       vp9_find_mv_refs(cm, xd, xd->mi[0], ref_frame, candidates, mi_row, mi_col,
                        mbmi_ext->mode_context);
 

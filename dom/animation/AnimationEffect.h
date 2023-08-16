@@ -30,7 +30,7 @@ class Document;
 class AnimationEffect : public nsISupports, public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(AnimationEffect)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(AnimationEffect)
 
   AnimationEffect(Document* aDocument, TimingParams&& aTiming);
 
@@ -106,6 +106,9 @@ class AnimationEffect : public nsISupports, public nsWrapperCache {
   RefPtr<Animation> mAnimation;
   TimingParams mTiming;
   Maybe<TimingParams> mNormalizedTiming;
+
+  // Whether the Animation is System, ResistFingerprinting, or neither
+  enum RTPCallerType mRTPCallerType;
 };
 
 }  // namespace dom

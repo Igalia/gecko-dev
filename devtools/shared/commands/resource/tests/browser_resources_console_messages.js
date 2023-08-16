@@ -12,7 +12,7 @@
 const FISSION_TEST_URL = URL_ROOT_SSL + "fission_document.html";
 const IFRAME_URL = URL_ROOT_ORG_SSL + "fission_iframe.html";
 
-add_task(async function() {
+add_task(async function () {
   info("Execute test in top level document");
   await testTabConsoleMessagesResources(false);
   await testTabConsoleMessagesResourcesWithIgnoreExistingResources(false);
@@ -38,12 +38,10 @@ async function testTabConsoleMessagesResources(executeInIframe) {
   const targetDocumentUrl = executeInIframe ? IFRAME_URL : FISSION_TEST_URL;
 
   let runtimeDoneResolve;
-  const expectedExistingCalls = getExpectedExistingConsoleCalls(
-    targetDocumentUrl
-  );
-  const expectedRuntimeCalls = getExpectedRuntimeConsoleCalls(
-    targetDocumentUrl
-  );
+  const expectedExistingCalls =
+    getExpectedExistingConsoleCalls(targetDocumentUrl);
+  const expectedRuntimeCalls =
+    getExpectedRuntimeConsoleCalls(targetDocumentUrl);
   const onRuntimeDone = new Promise(resolve => (runtimeDoneResolve = resolve));
   const onAvailable = resources => {
     for (const resource of resources) {
@@ -53,10 +51,9 @@ async function testTabConsoleMessagesResources(executeInIframe) {
         "Received a message"
       );
       ok(resource.message, "message is wrapped into a message attribute");
-      const isCachedMessage = expectedExistingCalls.length > 0;
-      const expected = (isCachedMessage
-        ? expectedExistingCalls
-        : expectedRuntimeCalls
+      const isCachedMessage = !!expectedExistingCalls.length;
+      const expected = (
+        isCachedMessage ? expectedExistingCalls : expectedRuntimeCalls
       ).shift();
       checkConsoleAPICall(resource.message, expected);
       is(
@@ -65,7 +62,7 @@ async function testTabConsoleMessagesResources(executeInIframe) {
         "isAlreadyExistingResource has the expected value"
       );
 
-      if (expectedRuntimeCalls.length == 0) {
+      if (!expectedRuntimeCalls.length) {
         runtimeDoneResolve();
       }
     }
@@ -135,9 +132,8 @@ async function testTabConsoleMessagesResourcesWithIgnoreExistingResources(
   );
   await logRuntimeMessages(tab.linkedBrowser, executeInIframe);
   const targetDocumentUrl = executeInIframe ? IFRAME_URL : FISSION_TEST_URL;
-  const expectedRuntimeConsoleCalls = getExpectedRuntimeConsoleCalls(
-    targetDocumentUrl
-  );
+  const expectedRuntimeConsoleCalls =
+    getExpectedRuntimeConsoleCalls(targetDocumentUrl);
   await waitUntil(
     () => availableResources.length === expectedRuntimeConsoleCalls.length
   );
@@ -214,13 +210,17 @@ function evalInBrowsingContext(browsingContext, script) {
 const EXPECTED_FUNCTION_NAME = "pageScript";
 
 const NUMBER_REGEX = /^\d+$/;
+// timeStamp are the result of a number in microsecond divided by 1000.
+// so we can't expect a precise number of decimals, or even if there would
+// be decimals at all.
+const FRACTIONAL_NUMBER_REGEX = /^\d+(\.\d{1,3})?$/;
 
 function getExpectedExistingConsoleCalls(documentFilename) {
   const defaultProperties = {
     filename: documentFilename,
     columnNumber: NUMBER_REGEX,
     lineNumber: NUMBER_REGEX,
-    timeStamp: NUMBER_REGEX,
+    timeStamp: FRACTIONAL_NUMBER_REGEX,
     innerWindowID: NUMBER_REGEX,
     chromeContext: undefined,
     counter: undefined,
@@ -265,7 +265,7 @@ function getExpectedRuntimeConsoleCalls(documentFilename) {
     filename: documentFilename,
     columnNumber: NUMBER_REGEX,
     lineNumber: NUMBER_REGEX,
-    timeStamp: NUMBER_REGEX,
+    timeStamp: FRACTIONAL_NUMBER_REGEX,
     innerWindowID: NUMBER_REGEX,
     chromeContext: undefined,
     counter: undefined,
@@ -296,6 +296,11 @@ function getExpectedRuntimeConsoleCalls(documentFilename) {
       ...defaultProperties,
       level: "log",
       arguments: ["Float from number: 1.300000"],
+    },
+    {
+      ...defaultProperties,
+      level: "log",
+      arguments: ["BigInt 123 and 456"],
     },
     {
       ...defaultProperties,
@@ -551,6 +556,7 @@ async function logRuntimeMessages(browser, executeInIframe) {
     console.log("Float from not a number: %f", "foo");
     console.log("Float from string: %f", "1.2");
     console.log("Float from number: %f", 1.3);
+    console.log("BigInt %d and %i", 123n, 456n);
     console.log(
       "%cmessage with %cstyle",
       "color: blue;",
@@ -587,7 +593,7 @@ async function logRuntimeMessages(browser, executeInIframe) {
       console.error("foobarBaz-asmjs-error", undefined);
     }
 
-    (function(global, foreign) {
+    (function (global, foreign) {
       "use asm";
       function inAsmJS2() {
         foreign.fromAsmJS();

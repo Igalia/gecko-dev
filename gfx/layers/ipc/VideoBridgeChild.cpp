@@ -9,12 +9,15 @@
 #include "CompositorThread.h"
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/ipc/Endpoint.h"
+#include "mozilla/StaticMutex.h"
 #include "transport/runnable_utils.h"
 #include "SynchronousTask.h"
 
 namespace mozilla {
 namespace layers {
 
+// Singleton
+static StaticMutex sVideoBridgeLock MOZ_UNANNOTATED;
 StaticRefPtr<VideoBridgeChild> sVideoBridge;
 
 /* static */
@@ -30,7 +33,9 @@ void VideoBridgeChild::StartupForGPUProcess() {
   VideoBridgeParent::Open(std::move(parentPipe), VideoBridgeSource::GpuProcess);
 }
 
+/* static */
 void VideoBridgeChild::Open(Endpoint<PVideoBridgeChild>&& aEndpoint) {
+  StaticMutexAutoLock lock(sVideoBridgeLock);
   MOZ_ASSERT(!sVideoBridge || !sVideoBridge->CanSend());
   sVideoBridge = new VideoBridgeChild();
 
@@ -42,6 +47,7 @@ void VideoBridgeChild::Open(Endpoint<PVideoBridgeChild>&& aEndpoint) {
 
 /* static */
 void VideoBridgeChild::Shutdown() {
+  StaticMutexAutoLock lock(sVideoBridgeLock);
   if (sVideoBridge) {
     sVideoBridge->Close();
     sVideoBridge = nullptr;
@@ -49,13 +55,14 @@ void VideoBridgeChild::Shutdown() {
 }
 
 VideoBridgeChild::VideoBridgeChild()
-    : mIPDLSelfRef(this),
-      mThread(GetCurrentSerialEventTarget()),
-      mCanSend(true) {}
+    : mThread(GetCurrentSerialEventTarget()), mCanSend(true) {}
 
 VideoBridgeChild::~VideoBridgeChild() = default;
 
-VideoBridgeChild* VideoBridgeChild::GetSingleton() { return sVideoBridge; }
+VideoBridgeChild* VideoBridgeChild::GetSingleton() {
+  StaticMutexAutoLock lock(sVideoBridgeLock);
+  return sVideoBridge;
+}
 
 bool VideoBridgeChild::AllocUnsafeShmem(size_t aSize, ipc::Shmem* aShmem) {
   if (!mThread->IsOnCurrentThread()) {
@@ -155,8 +162,6 @@ void VideoBridgeChild::ActorDestroy(ActorDestroyReason aWhy) {
   mCanSend = false;
 }
 
-void VideoBridgeChild::ActorDealloc() { mIPDLSelfRef = nullptr; }
-
 PTextureChild* VideoBridgeChild::CreateTexture(
     const SurfaceDescriptor& aSharedData, ReadLockDescriptor&& aReadLock,
     LayersBackend aLayersBackend, TextureFlags aFlags, uint64_t aSerial,
@@ -170,7 +175,7 @@ bool VideoBridgeChild::IsSameProcess() const {
   return OtherPid() == base::GetCurrentProcId();
 }
 
-void VideoBridgeChild::HandleFatalError(const char* aMsg) const {
+void VideoBridgeChild::HandleFatalError(const char* aMsg) {
   dom::ContentChild::FatalErrorIfNotUsingGPUProcess(aMsg, OtherPid());
 }
 

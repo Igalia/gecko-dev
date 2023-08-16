@@ -15,7 +15,7 @@ DIRS += [
     "fluent-l10n",
     "redux",
     "remote-debugging",
-    "source-map",
+    "source-map-loader",
     "sourceeditor",
     "vendor",
     "widgets",
@@ -24,6 +24,7 @@ DIRS += [
 DevToolsModules(
     "async-store-helper.js",
     "autocomplete-popup.js",
+    "classnames.js",
     "css-angle.js",
     "curl.js",
     "devices.js",

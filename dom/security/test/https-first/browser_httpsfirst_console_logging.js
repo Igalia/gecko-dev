@@ -26,7 +26,7 @@ let tests = [
   },
 ];
 
-add_task(async function() {
+add_task(async function () {
   // A longer timeout is necessary for this test than the plain mochitests
   // due to opening a new tab with the web console.
   requestLongerTimeout(4);
@@ -37,7 +37,7 @@ add_task(async function() {
   });
   Services.console.registerListener(on_new_message);
   // 1. Upgrade page to https://
-  await BrowserTestUtils.loadURI(
+  await BrowserTestUtils.loadURIString(
     gBrowser.selectedBrowser,
     "http://httpsfirst.com"
   );

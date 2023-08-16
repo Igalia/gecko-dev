@@ -56,6 +56,7 @@ EXPORTS.mozilla.storage += [
 # SEE ABOVE NOTE!
 
 UNIFIED_SOURCES += [
+    "BaseVFS.cpp",
     "FileSystemModule.cpp",
     "mozStorageArgValueArray.cpp",
     "mozStorageAsyncStatement.cpp",
@@ -74,9 +75,10 @@ UNIFIED_SOURCES += [
     "mozStorageStatementParams.cpp",
     "mozStorageStatementRow.cpp",
     "ObfuscatingVFS.cpp",
+    "QuotaVFS.cpp",
+    "ReadOnlyNoLockVFS.cpp",
     "SQLCollations.cpp",
     "StorageBaseStatementInternal.cpp",
-    "TelemetryVFS.cpp",
     "VacuumManager.cpp",
     "Variant.cpp",
 ]
@@ -105,5 +107,3 @@ LOCAL_INCLUDES += [
 ]
 
 CXXFLAGS += CONFIG["SQLITE_CFLAGS"]
-
-REQUIRES_UNIFIED_BUILD = True

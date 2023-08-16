@@ -114,7 +114,7 @@ extern bool enableWasmBaseline;
 extern bool enableWasmOptimizing;
 
 #define WASM_FEATURE(NAME, ...) extern bool enableWasm##NAME;
-JS_FOR_WASM_FEATURES(WASM_FEATURE, WASM_FEATURE, WASM_FEATURE);
+JS_FOR_WASM_FEATURES(WASM_FEATURE);
 #undef WASM_FEATURE
 
 extern bool enableWasmVerbose;
@@ -122,22 +122,18 @@ extern bool enableTestWasmAwaitTier2;
 extern bool enableSourcePragmas;
 extern bool enableAsyncStacks;
 extern bool enableAsyncStackCaptureDebuggeeOnly;
-extern bool enableStreams;
-extern bool enableReadableByteStreams;
-extern bool enableBYOBStreamReaders;
-
-extern bool enableReadableStreamPipeTo;
 extern bool enableWeakRefs;
 extern bool enableToSource;
 extern bool enablePropertyErrorMessageFix;
 extern bool enableIteratorHelpers;
 extern bool enableShadowRealms;
 extern bool enableArrayGrouping;
+extern bool enableArrayFromAsync;
+extern bool enableWellFormedUnicodeStrings;
+extern bool enableArrayBufferTransfer;
 extern bool enablePrivateClassFields;
 extern bool enablePrivateClassMethods;
-#ifdef ENABLE_CHANGE_ARRAY_BY_COPY
 extern bool enableChangeArrayByCopy;
-#endif
 #ifdef ENABLE_NEW_SET_METHODS
 extern bool enableNewSetMethods;
 #endif
@@ -175,8 +171,6 @@ extern UniqueChars processWideModuleLoadPath;
 // global names.
 bool CreateAlias(JSContext* cx, const char* dstName,
                  JS::HandleObject namespaceObj, const char* srcName);
-
-enum class OffThreadJobKind { CompileScript, CompileModule, Decode };
 
 class NonshrinkingGCObjectVector
     : public GCVector<HeapPtr<JSObject*>, 0, SystemAllocPolicy> {

@@ -10,17 +10,16 @@ import platform
 import re
 import subprocess
 import sys
-from packaging.version import Version
 from filecmp import dircmp
 
 from mozbuild.nodeutil import (
+    NODE_MIN_VERSION,
+    NPM_MIN_VERSION,
     find_node_executable,
     find_npm_executable,
-    NPM_MIN_VERSION,
-    NODE_MIN_VERSION,
 )
 from mozfile.mozfile import remove as mozfileremove
-
+from packaging.version import Version
 
 NODE_MACHING_VERSION_NOT_FOUND_MESSAGE = """
 Could not find Node.js executable later than %s.
@@ -76,6 +75,15 @@ def eslint_setup(should_clobber=False):
     package_setup(get_project_root(), "eslint", should_clobber=should_clobber)
 
 
+def remove_directory(path):
+    print("Clobbering %s..." % path)
+    if sys.platform.startswith("win") and have_winrm():
+        process = subprocess.Popen(["winrm", "-rf", path])
+        process.wait()
+    else:
+        mozfileremove(path)
+
+
 def package_setup(
     package_root,
     package_name,
@@ -107,13 +115,15 @@ def package_setup(
         os.chdir(project_root)
 
         if should_clobber:
-            node_modules_path = os.path.join(project_root, "node_modules")
-            print("Clobbering %s..." % node_modules_path)
-            if sys.platform.startswith("win") and have_winrm():
-                process = subprocess.Popen(["winrm", "-rf", node_modules_path])
-                process.wait()
-            else:
-                mozfileremove(node_modules_path)
+            remove_directory(os.path.join(project_root, "node_modules"))
+
+        # Always remove the eslint-plugin-mozilla sub-directory as that can
+        # sometimes conflict with the top level node_modules, see bug 1809036.
+        remove_directory(
+            os.path.join(
+                get_eslint_module_path(), "eslint-plugin-mozilla", "node_modules"
+            )
+        )
 
         npm_path, _ = find_npm_executable()
         if not npm_path:
@@ -274,6 +284,14 @@ def eslint_module_needs_setup():
             print("ESLint is an old version, clobbering node_modules directory")
             needs_clobber = True
             has_issues = True
+            continue
+
+        # For @microsoft/eslint-plugin-sdl we are loading a static version as
+        # long that PR is not merged into the master branch. Bug 1786290
+        if (name == "@microsoft/eslint-plugin-sdl") and (
+            version_range
+            == "github:mozfreddyb/eslint-plugin-sdl#17b22cd527682108af7a1a4edacf69cb7a9b4a06"
+        ):
             continue
 
         if not version_in_range(data["version"], version_range):

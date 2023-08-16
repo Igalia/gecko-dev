@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 const { SearchTestUtils } = ChromeUtils.importESModule(
@@ -15,11 +15,13 @@ const { SearchUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/SearchUtils.sys.mjs"
 );
 
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
 
-const { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
 
 const URLTYPE_SUGGEST_JSON = "application/x-suggestions+json";
 
@@ -95,7 +97,7 @@ add_task(async function test_extension_changing_to_app_provided_default() {
   let ext1 = ExtensionTestUtils.loadExtension({
     manifest: {
       icons: {
-        "16": "foo.ico",
+        16: "foo.ico",
       },
       chrome_settings_overrides: {
         search_provider: {
@@ -156,13 +158,13 @@ add_task(async function test_extension_overriding_app_provided_default() {
 
   let ext1 = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "test@thirdparty.example.com",
         },
       },
       icons: {
-        "16": "foo.ico",
+        16: "foo.ico",
       },
       chrome_settings_overrides: {
         search_provider: {

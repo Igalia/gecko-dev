@@ -15,15 +15,12 @@ const { SearchSuggestionController } = ChromeUtils.importESModule(
 
 let gEngine;
 
-add_setup(async function() {
-  await SearchTestUtils.installSearchExtension();
+add_setup(async function () {
+  await SearchTestUtils.installSearchExtension({}, { setAsDefault: true });
   gEngine = Services.search.getEngineByName("Example");
-  let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(gEngine);
   await UrlbarTestUtils.formHistory.clear();
 
-  registerCleanupFunction(async function() {
-    await Services.search.setDefault(oldDefaultEngine);
+  registerCleanupFunction(async function () {
     await UrlbarTestUtils.formHistory.clear();
   });
 });

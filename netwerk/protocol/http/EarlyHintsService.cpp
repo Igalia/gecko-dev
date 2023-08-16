@@ -6,9 +6,13 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "EarlyHintsService.h"
+#include "EarlyHintPreconnect.h"
 #include "EarlyHintPreloader.h"
+#include "mozilla/dom/LinkStyle.h"
 #include "mozilla/PreloadHashKey.h"
 #include "mozilla/Telemetry.h"
+#include "mozilla/glean/GleanMetrics.h"
+#include "mozilla/StoragePrincipalHelper.h"
 #include "nsContentUtils.h"
 #include "nsIChannel.h"
 #include "nsICookieJarSettings.h"
@@ -28,10 +32,20 @@ EarlyHintsService::EarlyHintsService()
 EarlyHintsService::~EarlyHintsService() = default;
 
 void EarlyHintsService::EarlyHint(const nsACString& aLinkHeader,
-                                  nsIURI* aBaseURI, nsIChannel* aChannel) {
+                                  nsIURI* aBaseURI, nsIChannel* aChannel,
+                                  const nsACString& aReferrerPolicy,
+                                  const nsACString& aCSPHeader,
+                                  nsIInterfaceRequestor* aCallbacks) {
   mEarlyHintsCount++;
-  if (!mFirstEarlyHint) {
+  if (mFirstEarlyHint.isNothing()) {
     mFirstEarlyHint.emplace(TimeStamp::NowLoRes());
+  } else {
+    // Only allow one early hint response with link headers. See
+    // https://html.spec.whatwg.org/multipage/semantics.html#early-hints
+    // > Note: Only the first early hint response served during the navigation
+    // > is handled, and it is discarded if it is succeeded by a cross-origin
+    // > redirect.
+    return;
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
@@ -75,8 +89,27 @@ void EarlyHintsService::EarlyHint(const nsACString& aLinkHeader,
   auto linkHeaders = ParseLinkHeader(NS_ConvertUTF8toUTF16(aLinkHeader));
 
   for (auto& linkHeader : linkHeaders) {
-    EarlyHintPreloader::MaybeCreateAndInsertPreload(
-        mOngoingEarlyHints, linkHeader, aBaseURI, principal, cookieJarSettings);
+    CollectLinkTypeTelemetry(linkHeader.mRel);
+    if (linkHeader.mRel.LowerCaseEqualsLiteral("preconnect")) {
+      mLinkType |= dom::LinkStyle::ePRECONNECT;
+      OriginAttributes originAttributes;
+      StoragePrincipalHelper::GetOriginAttributesForNetworkState(
+          aChannel, originAttributes);
+      EarlyHintPreconnect::MaybePreconnect(linkHeader, aBaseURI,
+                                           std::move(originAttributes));
+    } else if (linkHeader.mRel.LowerCaseEqualsLiteral("preload")) {
+      mLinkType |= dom::LinkStyle::ePRELOAD;
+      EarlyHintPreloader::MaybeCreateAndInsertPreload(
+          mOngoingEarlyHints, linkHeader, aBaseURI, principal,
+          cookieJarSettings, aReferrerPolicy, aCSPHeader,
+          loadInfo->GetBrowsingContextID(), aCallbacks, false);
+    } else if (linkHeader.mRel.LowerCaseEqualsLiteral("modulepreload")) {
+      mLinkType |= dom::LinkStyle::eMODULE_PRELOAD;
+      EarlyHintPreloader::MaybeCreateAndInsertPreload(
+          mOngoingEarlyHints, linkHeader, aBaseURI, principal,
+          cookieJarSettings, aReferrerPolicy, aCSPHeader,
+          loadInfo->GetBrowsingContextID(), aCallbacks, true);
+    }
   }
 }
 
@@ -84,18 +117,16 @@ void EarlyHintsService::FinalResponse(uint32_t aResponseStatus) {
   // We will collect telemetry mosly once for a document.
   // In case of a reddirect this will be called multiple times.
   CollectTelemetry(Some(aResponseStatus));
-  if (aResponseStatus >= 300) {
-    mOngoingEarlyHints->CancelAllOngoingPreloads();
-    mCanceled = true;
-  }
 }
 
-void EarlyHintsService::Cancel() {
-  if (!mCanceled) {
-    CollectTelemetry(Nothing());
-    mOngoingEarlyHints->CancelAllOngoingPreloads();
-    mCanceled = true;
-  }
+void EarlyHintsService::Cancel(const nsACString& aReason) {
+  CollectTelemetry(Nothing());
+  mOngoingEarlyHints->CancelAll(aReason);
+}
+
+void EarlyHintsService::RegisterLinksAndGetConnectArgs(
+    dom::ContentParentId aCpId, nsTArray<EarlyHintConnectArgs>& aOutLinks) {
+  mOngoingEarlyHints->RegisterLinksAndGetConnectArgs(aCpId, aOutLinks);
 }
 
 void EarlyHintsService::CollectTelemetry(Maybe<uint32_t> aResponseStatus) {
@@ -134,6 +165,28 @@ void EarlyHintsService::CollectTelemetry(Maybe<uint32_t> aResponseStatus) {
   // Reset telemetry counters and timestamps.
   mEarlyHintsCount = 0;
   mFirstEarlyHint = Nothing();
+}
+
+void EarlyHintsService::CollectLinkTypeTelemetry(const nsAString& aRel) {
+  if (aRel.LowerCaseEqualsLiteral("dns-prefetch")) {
+    glean::netwerk::eh_link_type.Get("dns-prefetch"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("icon")) {
+    glean::netwerk::eh_link_type.Get("icon"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("modulepreload")) {
+    glean::netwerk::eh_link_type.Get("modulepreload"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("preconnect")) {
+    glean::netwerk::eh_link_type.Get("preconnect"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("prefetch")) {
+    glean::netwerk::eh_link_type.Get("prefetch"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("preload")) {
+    glean::netwerk::eh_link_type.Get("preload"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("prerender")) {
+    glean::netwerk::eh_link_type.Get("prerender"_ns).Add(1);
+  } else if (aRel.LowerCaseEqualsLiteral("stylesheet")) {
+    glean::netwerk::eh_link_type.Get("stylesheet"_ns).Add(1);
+  } else {
+    glean::netwerk::eh_link_type.Get("other"_ns).Add(1);
+  }
 }
 
 }  // namespace mozilla::net

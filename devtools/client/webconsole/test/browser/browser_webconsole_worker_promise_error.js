@@ -10,14 +10,7 @@ const TEST_URI =
   "https://example.com/browser/devtools/client/webconsole/" +
   "test/browser/test-worker-promise-error.html";
 
-add_task(async function() {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["dom.audioworklet.enabled", true],
-      ["dom.worklet.enabled", true],
-    ],
-  });
-
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
   await waitFor(() =>
     findErrorMessage(hud, "uncaught exception: worker-error")

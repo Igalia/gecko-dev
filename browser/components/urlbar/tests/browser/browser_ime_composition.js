@@ -24,7 +24,7 @@ function composeAndCheckPanel(string, isPopupOpen) {
   );
 }
 
-add_task(async function() {
+add_task(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0],
@@ -45,16 +45,15 @@ add_task(async function() {
     parentGuid: PlacesUtils.bookmarks.menuGuid,
   });
 
-  await SearchTestUtils.installSearchExtension({
-    name: "Test",
-    keyword: "@test",
-  });
-
-  let originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(Services.search.getEngineByName("Test"));
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "Test",
+      keyword: "@test",
+    },
+    { setAsDefault: true }
+  );
 
   registerCleanupFunction(async () => {
-    await Services.search.setDefault(originalEngine);
     await PlacesUtils.bookmarks.remove(bm);
     await PlacesUtils.history.clear();
   });

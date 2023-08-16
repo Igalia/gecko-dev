@@ -16,6 +16,13 @@
 
 namespace mozilla::dom::locks {
 
+LockManagerChild::LockManagerChild(nsIGlobalObject* aOwner) : mOwner(aOwner) {
+  if (!NS_IsMainThread()) {
+    mWorkerRef = IPCWorkerRef::Create(GetCurrentThreadWorkerPrivate(),
+                                      "LockManagerChild");
+  }
+}
+
 void LockManagerChild::NotifyBFCacheOnMainThread(nsPIDOMWindowInner* aInner,
                                                  bool aCreated) {
   AssertIsOnMainThread();
@@ -68,8 +75,6 @@ class BFCacheNotifyLockRunnable final : public WorkerProxyToMainThreadRunnable {
 };
 
 NS_IMPL_CYCLE_COLLECTION(LockManagerChild, mOwner)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(LockManagerChild, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(LockManagerChild, Release)
 
 void LockManagerChild::RequestLock(const LockRequest& aRequest,
                                    const LockOptions& aOptions) {

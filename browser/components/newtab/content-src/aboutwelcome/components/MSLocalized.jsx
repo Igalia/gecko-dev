@@ -3,7 +3,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 import React, { useEffect } from "react";
-const CONFIGURABLE_STYLES = [
+export const CONFIGURABLE_STYLES = [
   "color",
   "fontSize",
   "fontWeight",
@@ -44,7 +44,7 @@ export const Localized = ({ text, children }) => {
   const zapRef = React.createRef();
   useEffect(() => {
     const { current } = zapRef;
-    if (current)
+    if (current) {
       requestAnimationFrame(() =>
         current?.classList.replace(
           "short",
@@ -53,6 +53,7 @@ export const Localized = ({ text, children }) => {
             : "short"
         )
       );
+    }
   });
 
   // Skip rendering of children with no text.
@@ -63,12 +64,18 @@ export const Localized = ({ text, children }) => {
   // Allow augmenting existing child container properties.
   const props = { children: [], className: "", style: {}, ...children?.props };
   // Support nested Localized by starting with their children.
-  const textNodes = props.children;
+  const textNodes = Array.isArray(props.children)
+    ? props.children
+    : [props.children];
 
   // Pick desired fluent or raw/plain text to render.
   if (text.string_id) {
+    // Set the key so React knows not to reuse when switching to plain text.
+    props.key = text.string_id;
     props["data-l10n-id"] = text.string_id;
-    if (text.args) props["data-l10n-args"] = JSON.stringify(text.args);
+    if (text.args) {
+      props["data-l10n-args"] = JSON.stringify(text.args);
+    }
   } else if (text.raw) {
     textNodes.push(text.raw);
   } else if (typeof text === "string") {
@@ -85,9 +92,15 @@ export const Localized = ({ text, children }) => {
     );
   }
 
+  if (text.aria_label) {
+    props["aria-label"] = text.aria_label;
+  }
+
   // Apply certain configurable styles.
   CONFIGURABLE_STYLES.forEach(style => {
-    if (text[style] !== undefined) props.style[style] = text[style];
+    if (text[style] !== undefined) {
+      props.style[style] = text[style];
+    }
   });
 
   return React.cloneElement(

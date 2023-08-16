@@ -29,10 +29,10 @@
 class nsIFile;
 class nsIFileURL;
 class nsIEventTarget;
+class nsISerialEventTarget;
 class nsIThread;
 
-namespace mozilla {
-namespace storage {
+namespace mozilla::storage {
 
 class Connection final : public mozIStorageConnection,
                          public nsIInterfaceRequestor {
@@ -84,7 +84,8 @@ class Connection final : public mozIStorageConnection,
    */
   Connection(Service* aService, int aFlags,
              ConnectionOperation aSupportedOperations,
-             bool aInterruptible = false, bool aIgnoreLockingMode = false);
+             const nsCString& aTelemetryFilename, bool aInterruptible = false,
+             bool aIgnoreLockingMode = false);
 
   /**
    * Creates the connection to an in-memory database.
@@ -107,8 +108,7 @@ class Connection final : public mozIStorageConnection,
    *        The nsIFileURL of the location of the database to open, or create if
    * it does not exist.
    */
-  nsresult initialize(nsIFileURL* aFileURL,
-                      const nsACString& aTelemetryFilename);
+  nsresult initialize(nsIFileURL* aFileURL);
 
   /**
    * Same as initialize, but to be used on the async thread.
@@ -178,15 +178,14 @@ class Connection final : public mozIStorageConnection,
   SQLiteMutex sharedDBMutex;
 
   /**
-   * References the thread this database was opened on.  This MUST be thread it
-   * is closed on.
+   * References the event target this database was opened on.
    */
-  const nsCOMPtr<nsIThread> threadOpenedOn;
+  const nsCOMPtr<nsISerialEventTarget> eventTargetOpenedOn;
 
   /**
    * Closes the SQLite database, and warns about any non-finalized statements.
    */
-  nsresult internalClose(sqlite3* aDBConn);
+  nsresult internalClose(sqlite3* aNativeconnection);
 
   /**
    * Shuts down the passed-in async thread.
@@ -316,6 +315,25 @@ class Connection final : public mozIStorageConnection,
    * @param srv The sqlite result for the failure or SQLITE_OK.
    */
   void RecordQueryStatus(int srv);
+
+  /**
+   * Returns the number of pages in the free list that can be removed.
+   *
+   * A database may use chunked growth to reduce filesystem fragmentation, then
+   * Sqlite will allocate and release multiple pages in chunks. We want to
+   * preserve the chunked space to reduce the likelihood of fragmentation,
+   * releasing free pages only when there's a large amount of them. This can be
+   * used to decide if it's worth vacuuming the database and how many pages can
+   * be vacuumed in case of incremental vacuum.
+   * Note this returns 0, and asserts, in case of errors.
+   */
+  int32_t RemovablePagesInFreeList(const nsACString& aSchemaName);
+
+  /**
+   * Whether the statement currently running on the helper thread can be
+   * interrupted.
+   */
+  Atomic<bool> mIsStatementOnHelperThreadInterruptible;
 
  private:
   ~Connection();
@@ -483,6 +501,11 @@ class Connection final : public mozIStorageConnection,
    * sharedAsyncExecutionMutex.
    */
   bool mConnectionClosed;
+
+  /**
+   * Stores the growth increment chunk size, set through SetGrowthIncrement().
+   */
+  Atomic<int32_t> mGrowthChunkSize;
 };
 
 /**
@@ -523,8 +546,7 @@ class CallbackComplete final : public Runnable {
   RefPtr<mozIStorageCompletionCallback> mCallback;
 };
 
-}  // namespace storage
-}  // namespace mozilla
+}  // namespace mozilla::storage
 
 /**
  * Casting Connection to nsISupports is ambiguous.

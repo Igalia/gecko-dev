@@ -3,20 +3,25 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 loader.lazyRequireGetter(
   this,
   ["clearNamedTimeout", "setNamedTimeout"],
-  "devtools/client/shared/widgets/view-helpers",
+  "resource://devtools/client/shared/widgets/view-helpers.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "naturalSortCaseInsensitive",
-  "devtools/shared/natural-sort",
+  "resource://devtools/shared/natural-sort.js",
   true
 );
-const { KeyCodes } = require("devtools/client/shared/keycodes");
+loader.lazyGetter(this, "standardSessionString", () => {
+  const l10n = new Localization(["devtools/client/storage.ftl"], true);
+  return l10n.formatValueSync("storage-expires-session");
+});
+
+const { KeyCodes } = require("resource://devtools/client/shared/keycodes.js");
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const AFTER_SCROLL_DELAY = 100;
@@ -731,7 +736,7 @@ TableWidget.prototype = {
       menuitem.setAttribute("label", column.header.getAttribute("value"));
       menuitem.setAttribute("data-id", column.id);
       menuitem.setAttribute("type", "checkbox");
-      menuitem.setAttribute("checked", !column.wrapper.hidden);
+      menuitem.setAttribute("checked", !column.hidden);
       if (column.id == this.uniqueId) {
         menuitem.setAttribute("disabled", "true");
       }
@@ -999,9 +1004,16 @@ TableWidget.prototype = {
       return;
     }
 
+    // First sort the column to "sort by" explicitly.
     const sortedItems = this.columns.get(column).sort([...this.items.values()]);
+
+    // Then, sort all the other columns (id !== column) only based on the
+    // sortedItems provided by the first sort.
+    // Each column keeps track of the fact that it is the "sort by" column or
+    // not, so this will not shuffle the items and will just make sure each
+    // column displays the correct value.
     for (const [id, col] of this.columns) {
-      if (id === col) {
+      if (id !== column) {
         col.sort(sortedItems);
       }
     }
@@ -1098,22 +1110,14 @@ function Column(table, id, header) {
 
   this.highlightUpdated = table.highlightUpdated;
 
-  // This wrapping element is required solely so that position:sticky works on
-  // the headers of the columns.
-  this.wrapper = this.document.createXULElement("vbox");
-  this.wrapper.className = "table-widget-wrapper";
-  this.wrapper.setAttribute("flex", "1");
-  this.wrapper.setAttribute("tabindex", "0");
-  this.tbody.appendChild(this.wrapper);
+  this.column = this.document.createElementNS(HTML_NS, "div");
+  this.column.id = id;
+  this.column.className = "table-widget-column";
+  this.tbody.appendChild(this.column);
 
   this.splitter = this.document.createXULElement("splitter");
   this.splitter.className = "devtools-side-splitter";
   this.tbody.appendChild(this.splitter);
-
-  this.column = this.document.createElementNS(HTML_NS, "div");
-  this.column.id = id;
-  this.column.className = "table-widget-column";
-  this.wrapper.appendChild(this.column);
 
   this.header = this.document.createXULElement("label");
   this.header.className = "devtools-toolbar table-widget-column-header";
@@ -1171,7 +1175,7 @@ Column.prototype = {
    * Returns a boolean indicating whether the column is hidden.
    */
   get hidden() {
-    return this.wrapper.hidden;
+    return this.column.hidden;
   },
 
   /**
@@ -1319,7 +1323,7 @@ Column.prototype = {
     this.column.removeEventListener("mousedown", this.onMousedown);
 
     this.splitter.remove();
-    this.column.parentNode.remove();
+    this.column.remove();
     this.cells = null;
     this.items = null;
     this.selectedRow = null;
@@ -1391,11 +1395,23 @@ Column.prototype = {
       let index;
       if (this.sorted == 1) {
         index = this.cells.findIndex(element => {
-          return naturalSortCaseInsensitive(value, element.value) === -1;
+          return (
+            naturalSortCaseInsensitive(
+              value,
+              element.value,
+              standardSessionString
+            ) === -1
+          );
         });
       } else {
         index = this.cells.findIndex(element => {
-          return naturalSortCaseInsensitive(value, element.value) === 1;
+          return (
+            naturalSortCaseInsensitive(
+              value,
+              element.value,
+              standardSessionString
+            ) === 1
+          );
         });
       }
       index = index >= 0 ? index : this.cells.length;
@@ -1437,19 +1453,19 @@ Column.prototype = {
    *        true if the column is visible
    */
   toggleColumn(id, checked) {
-    if (arguments.length == 0) {
+    if (!arguments.length) {
       // Act like a toggling method when called with no params
       id = this.id;
-      checked = this.wrapper.hidden;
+      checked = this.column.hidden;
     }
     if (id != this.id) {
       return;
     }
     if (checked) {
-      this.wrapper.hidden = false;
-      this.tbody.insertBefore(this.splitter, this.wrapper.nextSibling);
+      this.column.hidden = false;
+      this.tbody.insertBefore(this.splitter, this.column.nextSibling);
     } else {
-      this.wrapper.hidden = true;
+      this.column.hidden = true;
       this.splitter.remove();
     }
   },
@@ -1521,19 +1537,23 @@ Column.prototype = {
     // Only sort the array if we are sorting based on this column
     if (this.sorted == 1) {
       items.sort((a, b) => {
-        const val1 =
-          a[this.id] instanceof Node ? a[this.id].textContent : a[this.id];
-        const val2 =
-          b[this.id] instanceof Node ? b[this.id].textContent : b[this.id];
-        return naturalSortCaseInsensitive(val1, val2);
+        const val1 = Node.isInstance(a[this.id])
+          ? a[this.id].textContent
+          : a[this.id];
+        const val2 = Node.isInstance(b[this.id])
+          ? b[this.id].textContent
+          : b[this.id];
+        return naturalSortCaseInsensitive(val1, val2, standardSessionString);
       });
     } else if (this.sorted > 1) {
       items.sort((a, b) => {
-        const val1 =
-          a[this.id] instanceof Node ? a[this.id].textContent : a[this.id];
-        const val2 =
-          b[this.id] instanceof Node ? b[this.id].textContent : b[this.id];
-        return naturalSortCaseInsensitive(val2, val1);
+        const val1 = Node.isInstance(a[this.id])
+          ? a[this.id].textContent
+          : a[this.id];
+        const val2 = Node.isInstance(b[this.id])
+          ? b[this.id].textContent
+          : b[this.id];
+        return naturalSortCaseInsensitive(val2, val1, standardSessionString);
       });
     }
 
@@ -1683,13 +1703,13 @@ Cell.prototype = {
       return;
     }
 
-    if (this.wrapTextInElements && !(value instanceof Node)) {
+    if (this.wrapTextInElements && !Node.isInstance(value)) {
       const span = this.label.ownerDocument.createElementNS(HTML_NS, "span");
       span.textContent = value;
       value = span;
     }
 
-    if (value instanceof Node) {
+    if (Node.isInstance(value)) {
       this.label.removeAttribute("value");
 
       while (this.label.firstChild) {

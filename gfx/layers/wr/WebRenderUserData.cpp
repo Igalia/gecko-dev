@@ -146,7 +146,7 @@ Maybe<wr::ImageKey> WebRenderImageData::UpdateImageKey(
   ImageClientSingle* imageClient = mImageClient->AsImageClientSingle();
   uint32_t oldCounter = imageClient->GetLastUpdateGenerationCounter();
 
-  bool ret = imageClient->UpdateImage(aContainer, /* unused */ 0);
+  bool ret = imageClient->UpdateImage(aContainer);
   RefPtr<TextureClient> currentTexture = imageClient->GetForwardedTexture();
   if (!ret || !currentTexture) {
     // Delete old key
@@ -225,8 +225,7 @@ void WebRenderImageData::CreateAsyncImageWebRenderCommands(
   // context need to be done manually and pushed over to the parent side,
   // where it will be done when we build the display list for the iframe.
   // That happens in AsyncImagePipelineManager.
-  wr::LayoutRect r = wr::ToLayoutRect(aBounds);
-  aBuilder.PushIFrame(r, aIsBackfaceVisible, mPipelineId.ref(),
+  aBuilder.PushIFrame(aBounds, aIsBackfaceVisible, mPipelineId.ref(),
                       /*ignoreMissingPipelines*/ false);
 
   WrBridge()->AddWebRenderParentCommand(OpUpdateAsyncImagePipeline(
@@ -286,61 +285,6 @@ bool WebRenderImageProviderData::Invalidate(ImageProviderId aProviderId) const {
   nsresult rv =
       mProvider->UpdateKey(mManager, mManager->AsyncResourceUpdates(), key);
   return NS_SUCCEEDED(rv) && mKey.ref() == key;
-}
-
-WebRenderInProcessImageData::WebRenderInProcessImageData(
-    RenderRootStateManager* aManager, nsDisplayItem* aItem)
-    : WebRenderUserData(aManager, aItem) {}
-
-WebRenderInProcessImageData::WebRenderInProcessImageData(
-    RenderRootStateManager* aManager, uint32_t aDisplayItemKey,
-    nsIFrame* aFrame)
-    : WebRenderUserData(aManager, aDisplayItemKey, aFrame) {}
-
-WebRenderInProcessImageData::~WebRenderInProcessImageData() {
-  if (mPipelineId) {
-    mManager->RemovePipelineIdForCompositable(mPipelineId.ref());
-  }
-}
-
-void WebRenderInProcessImageData::CreateWebRenderCommands(
-    mozilla::wr::DisplayListBuilder& aBuilder,
-    const CompositableHandle& aHandle, const StackingContextHelper& aSc,
-    const LayoutDeviceRect& aBounds, const LayoutDeviceRect& aSCBounds,
-    VideoInfo::Rotation aRotation, const wr::ImageRendering& aFilter,
-    const wr::MixBlendMode& aMixBlendMode, bool aIsBackfaceVisible) {
-  MOZ_ASSERT(aHandle);
-
-  if (mPipelineId.isSome() && !(mHandle == aHandle)) {
-    // In this case, we need to remove the existed pipeline and create new one
-    // because the CompositableHandle has changed.
-    WrBridge()->RemovePipelineIdForCompositable(mPipelineId.ref());
-    mPipelineId.reset();
-  }
-
-  if (!mPipelineId) {
-    // Alloc in process image pipeline id.
-    mPipelineId =
-        Some(WrBridge()->GetCompositorBridgeChild()->GetNextPipelineId());
-    WrBridge()->AddPipelineIdForCompositable(
-        mPipelineId.ref(), aHandle, CompositableHandleOwner::InProcessManager);
-    mHandle = aHandle;
-  }
-
-  // Push IFrame for in process image pipeline.
-  //
-  // We don't push a stacking context for this in process image pipeline here.
-  // Instead, we do it inside the iframe that hosts the image. As a result,
-  // a bunch of the calculations normally done as part of that stacking
-  // context need to be done manually and pushed over to the parent side,
-  // where it will be done when we build the display list for the iframe.
-  // That happens in AsyncImagePipelineManager.
-  wr::LayoutRect r = wr::ToLayoutRect(aBounds);
-  aBuilder.PushIFrame(r, aIsBackfaceVisible, mPipelineId.ref(),
-                      /*ignoreMissingPipelines*/ false);
-
-  WrBridge()->AddWebRenderParentCommand(OpUpdateAsyncImagePipeline(
-      mPipelineId.value(), aSCBounds, aRotation, aFilter, aMixBlendMode));
 }
 
 WebRenderFallbackData::WebRenderFallbackData(RenderRootStateManager* aManager,

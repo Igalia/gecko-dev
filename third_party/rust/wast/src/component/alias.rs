@@ -4,125 +4,26 @@ use crate::parser::{Parse, Parser, Result};
 use crate::token::{Id, Index, NameAnnotation, Span};
 
 /// A inline alias for component exported items.
+///
+/// Handles both `core export` and `export` aliases
 #[derive(Debug)]
-pub struct InlineExportAlias<'a> {
+pub struct InlineExportAlias<'a, const CORE: bool> {
     /// The instance to alias the export from.
     pub instance: Index<'a>,
     /// The name of the export to alias.
     pub name: &'a str,
 }
 
-impl<'a> Parse<'a> for InlineExportAlias<'a> {
+impl<'a, const CORE: bool> Parse<'a> for InlineExportAlias<'a, CORE> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         parser.parse::<kw::alias>()?;
+        if CORE {
+            parser.parse::<kw::core>()?;
+        }
         parser.parse::<kw::export>()?;
         let instance = parser.parse()?;
         let name = parser.parse()?;
         Ok(Self { instance, name })
-    }
-}
-
-/// An alias to a core item.
-#[derive(Debug)]
-pub struct CoreAlias<'a> {
-    /// Where this `core alias` was defined.
-    pub span: Span,
-    /// An identifier that this alias is resolved with (optionally) for name
-    /// resolution.
-    pub id: Option<Id<'a>>,
-    /// An optional name for this alias stored in the custom `name` section.
-    pub name: Option<NameAnnotation<'a>>,
-    /// The target of the alias.
-    pub target: CoreAliasTarget<'a>,
-}
-
-impl<'a> CoreAlias<'a> {
-    /// Parses only an outer type alias.
-    pub fn parse_outer_type_alias(span: Span, parser: Parser<'a>) -> Result<Self> {
-        parser.parse::<kw::outer>()?;
-        let outer = parser.parse()?;
-        let index = parser.parse()?;
-
-        let (kind, id, name) =
-            parser.parens(|parser| Ok((parser.parse()?, parser.parse()?, parser.parse()?)))?;
-
-        Ok(Self {
-            span,
-            target: CoreAliasTarget::Outer { outer, index, kind },
-            id,
-            name,
-        })
-    }
-}
-
-impl<'a> Parse<'a> for CoreAlias<'a> {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        let span = parser.parse::<kw::core>()?.0;
-        parser.parse::<kw::alias>()?.0;
-
-        let mut l = parser.lookahead1();
-
-        if l.peek::<kw::outer>() {
-            // As only types are supported for outer core aliases, delegate
-            // to `parse_outer_type_alias`
-            Self::parse_outer_type_alias(span, parser)
-        } else if l.peek::<kw::export>() {
-            parser.parse::<kw::export>()?;
-            let instance = parser.parse()?;
-            let export_name = parser.parse()?;
-            let (kind, id, name) =
-                parser.parens(|parser| Ok((parser.parse()?, parser.parse()?, parser.parse()?)))?;
-
-            Ok(Self {
-                span,
-                target: CoreAliasTarget::Export {
-                    instance,
-                    name: export_name,
-                    kind,
-                },
-                id,
-                name,
-            })
-        } else {
-            Err(l.error())
-        }
-    }
-}
-
-/// The target of a core alias.
-#[derive(Debug)]
-pub enum CoreAliasTarget<'a> {
-    /// The alias is to an export of a core module instance.
-    Export {
-        /// The core module index exporting the item.
-        instance: Index<'a>,
-        /// The name of the exported item being aliased.
-        name: &'a str,
-        /// The export kind of the alias.
-        kind: ExportKind,
-    },
-    /// The alias is to an item from an outer scope.
-    Outer {
-        /// The number of enclosing scopes to skip.
-        outer: Index<'a>,
-        /// The index of the item being aliased.
-        index: Index<'a>,
-        /// The outer alias kind.
-        kind: CoreOuterAliasKind,
-    },
-}
-
-/// Represents the kind of core outer alias.
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
-pub enum CoreOuterAliasKind {
-    /// The alias is to an outer type.
-    Type,
-}
-
-impl<'a> Parse<'a> for CoreOuterAliasKind {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
-        parser.parse::<kw::r#type>()?;
-        Ok(Self::Type)
     }
 }
 
@@ -142,16 +43,21 @@ pub struct Alias<'a> {
 
 impl<'a> Alias<'a> {
     /// Parses only an outer type alias.
-    pub fn parse_outer_type_alias(parser: Parser<'a>) -> Result<Self> {
+    pub fn parse_outer_core_type_alias(parser: Parser<'a>) -> Result<Self> {
         let span = parser.parse::<kw::alias>()?.0;
         parser.parse::<kw::outer>()?;
         let outer = parser.parse()?;
         let index = parser.parse()?;
 
         let (kind, id, name) = parser.parens(|parser| {
-            let kind: ComponentOuterAliasKind = parser.parse()?;
+            let mut kind: ComponentOuterAliasKind = parser.parse()?;
             match kind {
-                ComponentOuterAliasKind::CoreType | ComponentOuterAliasKind::Type => {}
+                ComponentOuterAliasKind::CoreType => {
+                    return Err(parser.error("expected type for outer alias"))
+                }
+                ComponentOuterAliasKind::Type => {
+                    kind = ComponentOuterAliasKind::CoreType;
+                }
                 _ => return Err(parser.error("expected core type or type for outer alias")),
             }
 
@@ -173,7 +79,7 @@ impl<'a> Parse<'a> for Alias<'a> {
 
         let mut l = parser.lookahead1();
 
-        let (target, id, name) = if l.peek::<kw::outer>() {
+        let (target, id, name) = if l.peek::<kw::outer>()? {
             parser.parse::<kw::outer>()?;
             let outer = parser.parse()?;
             let index = parser.parse()?;
@@ -181,7 +87,7 @@ impl<'a> Parse<'a> for Alias<'a> {
                 parser.parens(|parser| Ok((parser.parse()?, parser.parse()?, parser.parse()?)))?;
 
             (AliasTarget::Outer { outer, index, kind }, id, name)
-        } else if l.peek::<kw::export>() {
+        } else if l.peek::<kw::export>()? {
             parser.parse::<kw::export>()?;
             let instance = parser.parse()?;
             let export_name = parser.parse()?;
@@ -190,6 +96,25 @@ impl<'a> Parse<'a> for Alias<'a> {
 
             (
                 AliasTarget::Export {
+                    instance,
+                    name: export_name,
+                    kind,
+                },
+                id,
+                name,
+            )
+        } else if l.peek::<kw::core>()? {
+            parser.parse::<kw::core>()?;
+            parser.parse::<kw::export>()?;
+            let instance = parser.parse()?;
+            let export_name = parser.parse()?;
+            let (kind, id, name) = parser.parens(|parser| {
+                parser.parse::<kw::core>()?;
+                Ok((parser.parse()?, parser.parse()?, parser.parse()?))
+            })?;
+
+            (
+                AliasTarget::CoreExport {
                     instance,
                     name: export_name,
                     kind,
@@ -230,28 +155,28 @@ pub enum ComponentExportAliasKind {
 impl<'a> Parse<'a> for ComponentExportAliasKind {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::core>() {
+        if l.peek::<kw::core>()? {
             parser.parse::<kw::core>()?;
             let mut l = parser.lookahead1();
-            if l.peek::<kw::module>() {
+            if l.peek::<kw::module>()? {
                 parser.parse::<kw::module>()?;
                 Ok(Self::CoreModule)
             } else {
                 Err(l.error())
             }
-        } else if l.peek::<kw::func>() {
+        } else if l.peek::<kw::func>()? {
             parser.parse::<kw::func>()?;
             Ok(Self::Func)
-        } else if l.peek::<kw::value>() {
+        } else if l.peek::<kw::value>()? {
             parser.parse::<kw::value>()?;
             Ok(Self::Value)
-        } else if l.peek::<kw::r#type>() {
+        } else if l.peek::<kw::r#type>()? {
             parser.parse::<kw::r#type>()?;
             Ok(Self::Type)
-        } else if l.peek::<kw::component>() {
+        } else if l.peek::<kw::component>()? {
             parser.parse::<kw::component>()?;
             Ok(Self::Component)
-        } else if l.peek::<kw::instance>() {
+        } else if l.peek::<kw::instance>()? {
             parser.parse::<kw::instance>()?;
             Ok(Self::Instance)
         } else {
@@ -276,22 +201,22 @@ pub enum ComponentOuterAliasKind {
 impl<'a> Parse<'a> for ComponentOuterAliasKind {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::core>() {
+        if l.peek::<kw::core>()? {
             parser.parse::<kw::core>()?;
             let mut l = parser.lookahead1();
-            if l.peek::<kw::module>() {
+            if l.peek::<kw::module>()? {
                 parser.parse::<kw::module>()?;
                 Ok(Self::CoreModule)
-            } else if l.peek::<kw::r#type>() {
+            } else if l.peek::<kw::r#type>()? {
                 parser.parse::<kw::r#type>()?;
                 Ok(Self::CoreType)
             } else {
                 Err(l.error())
             }
-        } else if l.peek::<kw::r#type>() {
+        } else if l.peek::<kw::r#type>()? {
             parser.parse::<kw::r#type>()?;
             Ok(Self::Type)
-        } else if l.peek::<kw::component>() {
+        } else if l.peek::<kw::component>()? {
             parser.parse::<kw::component>()?;
             Ok(Self::Component)
         } else {
@@ -311,6 +236,15 @@ pub enum AliasTarget<'a> {
         name: &'a str,
         /// The export kind of the alias.
         kind: ComponentExportAliasKind,
+    },
+    /// The alias is to an export of a module instance.
+    CoreExport {
+        /// The module instance exporting the item.
+        instance: Index<'a>,
+        /// The name of the exported item to alias.
+        name: &'a str,
+        /// The export kind of the alias.
+        kind: ExportKind,
     },
     /// The alias is to an item from an outer component.
     Outer {

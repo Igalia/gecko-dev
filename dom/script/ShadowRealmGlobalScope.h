@@ -12,6 +12,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/OriginTrials.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "nsContentUtils.h"
 #include "nsIGlobalObject.h"
 #include "nsWrapperCache.h"
 
@@ -31,7 +32,7 @@ namespace mozilla::dom {
 class ShadowRealmGlobalScope : public nsIGlobalObject, public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(ShadowRealmGlobalScope)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(ShadowRealmGlobalScope)
 
   NS_DECLARE_STATIC_IID_ACCESSOR(SHADOWREALMGLOBALSCOPE_IID)
 
@@ -53,6 +54,13 @@ class ShadowRealmGlobalScope : public nsIGlobalObject, public nsWrapperCache {
   }
 
   JS::loader::ModuleLoaderBase* GetModuleLoader(JSContext* aCx) override;
+
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const override {
+    return nsContentUtils::ShouldResistFingerprinting(
+        "Presently we don't have enough context to make an informed decision"
+        "on JS Sandboxes. See 1782853",
+        aTarget);
+  }
 
  private:
   virtual ~ShadowRealmGlobalScope() = default;

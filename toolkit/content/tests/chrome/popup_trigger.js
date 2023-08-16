@@ -11,7 +11,7 @@ var gCachedEvent2 = null;
 function cacheEvent(modifiers) {
   var cachedEvent = null;
 
-  var mouseFn = function(event) {
+  var mouseFn = function (event) {
     cachedEvent = event;
   };
 
@@ -453,28 +453,26 @@ var popupTests = [
       gMenuPopup.openPopup(gTrigger, step, 0, 0, false, false);
     },
     result(testname, step) {
-      var rightmod =
-        step == "before_end" ||
-        step == "after_end" ||
-        step == "start_before" ||
-        step == "start_after" ||
-        step.match(/topright$/) ||
-        step.match(/bottomright$/);
-      var bottommod =
-        step == "before_start" ||
-        step == "before_end" ||
-        step == "start_after" ||
-        step == "end_after" ||
-        step.match(/bottomleft$/) ||
-        step.match(/bottomright$/);
-      // Negative margins expand available screen position.
-      compareEdge(
-        gTrigger,
-        gMenuPopup,
-        step,
-        rightmod ? 1000 : -1000,
-        bottommod ? 1000 : -1000,
-        testname
+      var popuprect = gMenuPopup.getBoundingClientRect();
+      // using negative margins causes the reverse of positive margins, and
+      // popups will appear on the left or top corners.
+      var expectedleft =
+        step == "before_end" || step == "after_end"
+          ? Math.round(window.innerWidth - gPopupWidth)
+          : 0;
+      var expectedtop =
+        step == "start_after" || step == "end_after"
+          ? Math.round(window.innerHeight - gPopupHeight)
+          : 0;
+      is(
+        Math.round(popuprect.left),
+        expectedleft,
+        testname + " x position " + step
+      );
+      is(
+        Math.round(popuprect.top),
+        expectedtop,
+        testname + " y position " + step
       );
       gMenuPopup.removeAttribute("style");
     },
@@ -606,7 +604,6 @@ var popupTests = [
       "command item3",
       "popuphiding thepopup",
       "popuphidden thepopup",
-      "DOMMenuItemInactive item3",
     ],
     test(testname, step) {
       var item3 = document.getElementById("item3");
@@ -660,7 +657,6 @@ var popupTests = [
       "command amenu",
       "popuphiding thepopup",
       "popuphidden thepopup",
-      "DOMMenuItemInactive amenu",
     ],
     test() {
       sendString("M");
@@ -758,7 +754,6 @@ var popupTests = [
       "popuphidden submenupopup",
       "DOMMenuItemInactive submenuitem",
       "DOMMenuInactive submenupopup",
-      "DOMMenuItemActive submenu",
     ],
     test() {
       synthesizeKey("KEY_ArrowLeft");
@@ -800,7 +795,6 @@ var popupTests = [
       "popuphidden submenupopup",
       "DOMMenuItemInactive submenuitem",
       "DOMMenuInactive submenupopup",
-      "DOMMenuItemActive submenu",
     ],
     test() {
       synthesizeKey("KEY_Escape");
@@ -864,7 +858,6 @@ var popupTests = [
       "command amenu",
       "popuphiding thepopup",
       "popuphidden thepopup",
-      "DOMMenuItemInactive amenu",
     ],
     test() {
       sendString("M");
@@ -928,7 +921,6 @@ var popupTests = [
       "popuphiding thepopup",
       "popuphidden thepopup",
       "DOMMenuInactive submenupopup",
-      "DOMMenuItemInactive submenu",
       "DOMMenuItemInactive submenu",
       "DOMMenuInactive thepopup",
     ],
@@ -1060,7 +1052,6 @@ var popupTests = [
       "command item1",
       "popuphiding thepopup",
       "popuphidden thepopup",
-      "DOMMenuItemInactive item1",
     ],
     test(testname, step) {
       synthesizeKey("KEY_ArrowDown");
@@ -1143,7 +1134,6 @@ var popupTests = [
     },
   },
   {
-    // openPopup using object as position argument with event
     testname: "openPopup with object argument with event",
     events: ["popupshowing thepopup 1000", "popupshown thepopup"],
     autohide: "thepopup",
@@ -1158,7 +1148,6 @@ var popupTests = [
     },
   },
   {
-    // openPopup with no arguments
     testname: "openPopup with no arguments",
     events: ["popupshowing thepopup", "popupshown thepopup"],
     autohide: "thepopup",

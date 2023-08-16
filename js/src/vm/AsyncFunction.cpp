@@ -22,6 +22,7 @@
 #include "vm/Realm.h"
 #include "vm/SelfHosting.h"
 
+#include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
 
 using namespace js;
@@ -29,12 +30,7 @@ using namespace js;
 using mozilla::Maybe;
 
 static JSObject* CreateAsyncFunction(JSContext* cx, JSProtoKey key) {
-  RootedObject proto(
-      cx, GlobalObject::getOrCreateFunctionConstructor(cx, cx->global()));
-  if (!proto) {
-    return nullptr;
-  }
-
+  RootedObject proto(cx, &cx->global()->getFunctionConstructor());
   Handle<PropertyName*> name = cx->names().AsyncFunction;
   return NewFunctionWithProto(cx, AsyncFunctionConstructor, 1,
                               FunctionFlags::NATIVE_CTOR, nullptr, name, proto,

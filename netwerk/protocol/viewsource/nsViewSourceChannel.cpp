@@ -263,6 +263,20 @@ nsViewSourceChannel::GetStatus(nsresult* status) {
   return mChannel->GetStatus(status);
 }
 
+NS_IMETHODIMP nsViewSourceChannel::SetCanceledReason(
+    const nsACString& aReason) {
+  return nsIViewSourceChannel::SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::GetCanceledReason(nsACString& aReason) {
+  return nsIViewSourceChannel::GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::CancelWithReason(nsresult aStatus,
+                                                    const nsACString& aReason) {
+  return nsIViewSourceChannel::CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 nsViewSourceChannel::Cancel(nsresult status) {
   NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
@@ -457,7 +471,8 @@ nsViewSourceChannel::GetContentType(nsACString& aContentType) {
     // content decoder will then kick in automatically, and it
     // will call our SetOriginalContentType method instead of our
     // SetContentType method to set the type it determines.
-    if (!contentType.EqualsLiteral(UNKNOWN_CONTENT_TYPE)) {
+    if (!contentType.EqualsLiteral(UNKNOWN_CONTENT_TYPE) &&
+        !contentType.IsEmpty()) {
       contentType = VIEWSOURCE_CONTENT_TYPE;
     }
 
@@ -621,7 +636,7 @@ nsViewSourceChannel::SetNotificationCallbacks(
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
+nsViewSourceChannel::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   NS_ENSURE_TRUE(mChannel, NS_ERROR_FAILURE);
 
   return mChannel->GetSecurityInfo(aSecurityInfo);
@@ -753,15 +768,15 @@ nsViewSourceChannel::SetTopLevelContentWindowId(uint64_t aWindowId) {
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::GetTopBrowsingContextId(uint64_t* aId) {
+nsViewSourceChannel::GetBrowserId(uint64_t* aId) {
   return !mHttpChannel ? NS_ERROR_NULL_POINTER
-                       : mHttpChannel->GetTopBrowsingContextId(aId);
+                       : mHttpChannel->GetBrowserId(aId);
 }
 
 NS_IMETHODIMP
-nsViewSourceChannel::SetTopBrowsingContextId(uint64_t aId) {
+nsViewSourceChannel::SetBrowserId(uint64_t aId) {
   return !mHttpChannel ? NS_ERROR_NULL_POINTER
-                       : mHttpChannel->SetTopBrowsingContextId(aId);
+                       : mHttpChannel->SetBrowserId(aId);
 }
 
 NS_IMETHODIMP
@@ -1003,6 +1018,33 @@ nsViewSourceChannel::SetIsMainDocumentChannel(bool aValue) {
                        : mHttpChannel->SetIsMainDocumentChannel(aValue);
 }
 
+NS_IMETHODIMP nsViewSourceChannel::SetClassicScriptHintCharset(
+    const nsAString& aClassicScriptHintCharset) {
+  return !mHttpChannel ? NS_ERROR_NULL_POINTER
+                       : mHttpChannel->SetClassicScriptHintCharset(
+                             aClassicScriptHintCharset);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::GetClassicScriptHintCharset(
+    nsAString& aClassicScriptHintCharset) {
+  return !mHttpChannel ? NS_ERROR_NULL_POINTER
+                       : mHttpChannel->GetClassicScriptHintCharset(
+                             aClassicScriptHintCharset);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::SetDocumentCharacterSet(
+    const nsAString& aDocumentCharacterSet) {
+  return !mHttpChannel
+             ? NS_ERROR_NULL_POINTER
+             : mHttpChannel->SetDocumentCharacterSet(aDocumentCharacterSet);
+}
+
+NS_IMETHODIMP nsViewSourceChannel::GetDocumentCharacterSet(
+    nsAString& aDocumentCharacterSet) {
+  return !mHttpChannel
+             ? NS_ERROR_NULL_POINTER
+             : mHttpChannel->GetDocumentCharacterSet(aDocumentCharacterSet);
+}
 // Have to manually forward SetCorsPreflightParameters since it's [notxpcom]
 void nsViewSourceChannel::SetCorsPreflightParameters(
     const nsTArray<nsCString>& aUnsafeHeaders,
@@ -1021,13 +1063,14 @@ void nsViewSourceChannel::DisableAltDataCache() {
 
 NS_IMETHODIMP
 nsViewSourceChannel::LogBlockedCORSRequest(const nsAString& aMessage,
-                                           const nsACString& aCategory) {
+                                           const nsACString& aCategory,
+                                           bool aIsWarning) {
   if (!mHttpChannel) {
     NS_WARNING(
         "nsViewSourceChannel::LogBlockedCORSRequest mHttpChannel is null");
     return NS_ERROR_UNEXPECTED;
   }
-  return mHttpChannel->LogBlockedCORSRequest(aMessage, aCategory);
+  return mHttpChannel->LogBlockedCORSRequest(aMessage, aCategory, aIsWarning);
 }
 
 NS_IMETHODIMP
@@ -1053,18 +1096,6 @@ nsViewSourceChannel::PreferredAlternativeDataTypes() {
     return mCacheInfoChannel->PreferredAlternativeDataTypes();
   }
   return mEmptyArray;
-}
-
-void nsViewSourceChannel::SetIPv4Disabled() {
-  if (mHttpChannelInternal) {
-    mHttpChannelInternal->SetIPv4Disabled();
-  }
-}
-
-void nsViewSourceChannel::SetIPv6Disabled() {
-  if (mHttpChannelInternal) {
-    mHttpChannelInternal->SetIPv6Disabled();
-  }
 }
 
 void nsViewSourceChannel::DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() {

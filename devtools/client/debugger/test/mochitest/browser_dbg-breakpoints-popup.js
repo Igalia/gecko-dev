@@ -23,7 +23,7 @@ const POPUP_DEBUGGER_STATEMENT_URL = `https://example.com/document-builder.sjs?h
 `)}`;
 
 function isPopupPaused(popupBrowsingContext) {
-  return SpecialPowers.spawn(popupBrowsingContext, [], function(url) {
+  return SpecialPowers.spawn(popupBrowsingContext, [], function (url) {
     return content.wrappedJSObject.paused;
   });
 }
@@ -36,7 +36,7 @@ async function openPopup(popupUrl, browser = gBrowser.selectedBrowser) {
   const popupBrowsingContext = await SpecialPowers.spawn(
     browser,
     [popupUrl],
-    function(url) {
+    function (url) {
       const popup = content.open(url);
       return popup.browsingContext;
     }
@@ -55,7 +55,7 @@ async function closePopup(browsingContext) {
     gBrowser.tabContainer,
     "TabSelect"
   );
-  await SpecialPowers.spawn(browsingContext, [], function() {
+  await SpecialPowers.spawn(browsingContext, [], function () {
     content.close();
   });
   await onPreviousTabSelected;
@@ -89,15 +89,7 @@ add_task(async function testPausedByBreakpoint() {
   );
 
   await waitForSource(dbg, POPUP_URL);
-  const newSource = findSource(dbg, POPUP_URL);
-
-  isnot(
-    source,
-    newSource,
-    "The second one is related to the new popup and is different"
-  );
-  isnot(source.id, newSource.id, "The source IDs are different");
-  assertPausedAtSourceAndLine(dbg, newSource.id, 4);
+  assertPausedAtSourceAndLine(dbg, source.id, 4);
 
   await resume(dbg);
   is(
@@ -227,7 +219,7 @@ add_task(async function testPausedInTwoPopups() {
   );
 
   info("Resume the execution of the first popup");
-  await dbg.actions.selectThread(getContext(dbg), firstThread);
+  await dbg.actions.selectThread(firstThread);
   await resume(dbg);
   is(
     await isPopupPaused(firstPopupBrowsingContext),

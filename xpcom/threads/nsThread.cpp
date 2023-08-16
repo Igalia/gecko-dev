@@ -47,7 +47,6 @@
 #include "nsThreadSyncDispatch.h"
 #include "nsServiceManagerUtils.h"
 #include "GeckoProfiler.h"
-#include "InputEventStatistics.h"
 #include "ThreadEventQueue.h"
 #include "ThreadEventTarget.h"
 #include "ThreadDelay.h"
@@ -86,6 +85,7 @@ using GetCurrentThreadStackLimitsFn = void(WINAPI*)(PULONG_PTR LowLimit,
 #ifdef XP_MACOSX
 #  include <mach/mach.h>
 #  include <mach/thread_policy.h>
+#  include <sys/qos.h>
 #endif
 
 #ifdef MOZ_CANARY
@@ -378,7 +378,14 @@ void nsThread::ThreadFunc(void* aArg) {
 
   {
     // Scope for MessageLoop.
-    MessageLoop loop(MessageLoop::TYPE_MOZILLA_NONMAINTHREAD, self);
+    MessageLoop loop(
+#if defined(XP_WIN) || defined(XP_MACOSX)
+        self->mIsUiThread ? MessageLoop::TYPE_MOZILLA_NONMAINUITHREAD
+                          : MessageLoop::TYPE_MOZILLA_NONMAINTHREAD,
+#else
+        MessageLoop::TYPE_MOZILLA_NONMAINTHREAD,
+#endif
+        self);
 
     // Now, process incoming events...
     loop.Run();
@@ -545,27 +552,35 @@ int sCanaryOutputFD = -1;
 #endif
 
 nsThread::nsThread(NotNull<SynchronizedEventQueue*> aQueue,
-                   MainThreadFlag aMainThread, uint32_t aStackSize)
+                   MainThreadFlag aMainThread,
+                   nsIThreadManager::ThreadCreationOptions aOptions)
     : mEvents(aQueue.get()),
-      mEventTarget(
-          new ThreadEventTarget(mEvents.get(), aMainThread == MAIN_THREAD)),
+      mEventTarget(new ThreadEventTarget(
+          mEvents.get(), aMainThread == MAIN_THREAD, aOptions.blockDispatch)),
       mOutstandingShutdownContexts(0),
       mShutdownContext(nullptr),
       mScriptObserver(nullptr),
       mThreadName("<uninitialized>"),
-      mStackSize(aStackSize),
+      mStackSize(aOptions.stackSize),
       mNestedEventLoopDepth(0),
       mShutdownRequired(false),
       mPriority(PRIORITY_NORMAL),
       mIsMainThread(aMainThread == MAIN_THREAD),
       mUseHangMonitor(aMainThread == MAIN_THREAD),
+      mIsUiThread(aOptions.isUiThread),
       mIsAPoolThreadFree(nullptr),
       mCanInvokeJS(false),
 #ifdef EARLY_BETA_OR_EARLIER
       mLastWakeupCheckTime(TimeStamp::Now()),
 #endif
       mPerformanceCounterState(mNestedEventLoopDepth, mIsMainThread) {
+#if !(defined(XP_WIN) || defined(XP_MACOSX))
+  MOZ_ASSERT(!mIsUiThread,
+             "Non-main UI threads are only supported on Windows and macOS");
+#endif
   if (mIsMainThread) {
+    MOZ_ASSERT(!mIsUiThread,
+               "Setting isUIThread is not supported for main threads");
     mozilla::TaskController::Get()->SetPerformanceCounterState(
         &mPerformanceCounterState);
   }
@@ -584,6 +599,7 @@ nsThread::nsThread()
       mPriority(PRIORITY_NORMAL),
       mIsMainThread(false),
       mUseHangMonitor(false),
+      mIsUiThread(false),
       mCanInvokeJS(false),
 #ifdef EARLY_BETA_OR_EARLIER
       mLastWakeupCheckTime(TimeStamp::Now()),
@@ -909,7 +925,7 @@ nsThread::HasPendingEvents(bool* aResult) {
     return NS_ERROR_NOT_SAME_THREAD;
   }
 
-  if (mIsMainThread && !mIsInLocalExecutionMode) {
+  if (mIsMainThread) {
     *aResult = TaskController::Get()->HasMainThreadPendingTasks();
   } else {
     *aResult = mEvents->HasPendingEvent();
@@ -944,6 +960,33 @@ nsThread::DispatchToQueue(already_AddRefed<nsIRunnable> aEvent,
     return NS_ERROR_UNEXPECTED;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP nsThread::SetThreadQoS(nsIThread::QoSPriority aPriority) {
+  if (!StaticPrefs::threads_use_low_power_enabled()) {
+    return NS_OK;
+  }
+  // The approach here is to have a thread set itself for its QoS level,
+  // so we assert if we aren't on the current thread.
+  MOZ_ASSERT(IsOnCurrentThread(), "Can only change the current thread's QoS");
+
+#if defined(XP_MACOSX)
+  // Only arm64 macs may possess heterogeneous cores. On these, we can tell
+  // a thread to set its own QoS status. On intel macs things should behave
+  // normally, and the OS will ignore the QoS state of the thread.
+  if (aPriority == nsIThread::QOS_PRIORITY_LOW) {
+    pthread_set_qos_class_self_np(QOS_CLASS_BACKGROUND, 0);
+  } else if (NS_IsMainThread()) {
+    // MacOS documentation specifies that a main thread should be initialized at
+    // the USER_INTERACTIVE priority, so when we restore thread priorities the
+    // main thread should be setting itself to this.
+    pthread_set_qos_class_self_np(QOS_CLASS_USER_INTERACTIVE, 0);
+  } else {
+    pthread_set_qos_class_self_np(QOS_CLASS_DEFAULT, 0);
+  }
+#endif
+  // Do nothing if an OS-specific implementation is unavailable.
   return NS_OK;
 }
 
@@ -989,46 +1032,6 @@ void canary_alarm_handler(int signum) {
       }                                                                    \
     }                                                                      \
   } while (0)
-
-#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
-// static
-bool nsThread::GetLabeledRunnableName(nsIRunnable* aEvent, nsACString& aName,
-                                      EventQueuePriority aPriority) {
-  bool labeled = false;
-  if (RefPtr<SchedulerGroup::Runnable> groupRunnable = do_QueryObject(aEvent)) {
-    labeled = true;
-    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(groupRunnable->GetName(aName)));
-  } else if (nsCOMPtr<nsINamed> named = do_QueryInterface(aEvent)) {
-    MOZ_ALWAYS_TRUE(NS_SUCCEEDED(named->GetName(aName)));
-  } else {
-    aName.AssignLiteral("non-nsINamed runnable");
-  }
-  if (aName.IsEmpty()) {
-    aName.AssignLiteral("anonymous runnable");
-  }
-
-  if (!labeled && aPriority > EventQueuePriority::InputHigh) {
-    aName.AppendLiteral("(unlabeled)");
-  }
-
-  return labeled;
-}
-#endif
-
-mozilla::PerformanceCounter* nsThread::GetPerformanceCounter(
-    nsIRunnable* aEvent) const {
-  return GetPerformanceCounterBase(aEvent);
-}
-
-// static
-mozilla::PerformanceCounter* nsThread::GetPerformanceCounterBase(
-    nsIRunnable* aEvent) {
-  RefPtr<SchedulerGroup::Runnable> docRunnable = do_QueryObject(aEvent);
-  if (docRunnable) {
-    return docRunnable->GetPerformanceCounter();
-  }
-  return nullptr;
-}
 
 size_t nsThread::ShallowSizeOfIncludingThis(
     mozilla::MallocSizeOf aMallocSizeOf) const {
@@ -1076,18 +1079,6 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
   // event loop since its state change hasn't happened yet.
   bool reallyWait = aMayWait && (mNestedEventLoopDepth > 0 || !ShuttingDown());
 
-  if (mIsInLocalExecutionMode) {
-    if (nsCOMPtr<nsIRunnable> event = mEvents->GetEvent(reallyWait)) {
-      *aResult = true;
-      LogRunnable::Run log(event);
-      event->Run();
-      event = nullptr;
-    } else {
-      *aResult = false;
-    }
-    return NS_OK;
-  }
-
   Maybe<dom::AutoNoJSAPI> noJSAPI;
 
   if (mUseHangMonitor && reallyWait) {
@@ -1109,6 +1100,8 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
     mScriptObserver->BeforeProcessTask(reallyWait);
   }
 
+  DrainDirectTasks();
+
 #ifdef EARLY_BETA_OR_EARLIER
   // Need to capture mayWaitForWakeup state before OnProcessNextEvent,
   // since on the main thread OnProcessNextEvent ends up waiting for the new
@@ -1123,6 +1116,8 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
 
   NOTIFY_EVENT_OBSERVERS(EventQueue()->EventObservers(), OnProcessNextEvent,
                          (this, reallyWait));
+
+  DrainDirectTasks();
 
 #ifdef MOZ_CANARY
   Canary canary;
@@ -1188,8 +1183,7 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
 
       Maybe<PerformanceCounterState::Snapshot> snapshot;
       if (!usingTaskController) {
-        snapshot.emplace(mPerformanceCounterState.RunnableWillRun(
-            GetPerformanceCounter(event), now, false));
+        snapshot.emplace(mPerformanceCounterState.RunnableWillRun(now, false));
       }
 
       mLastEventStart = now;
@@ -1208,7 +1202,8 @@ nsThread::ProcessNextEvent(bool aMayWait, bool* aResult) {
       if (usingTaskController) {
         *aResult = TaskController::Get()->MTTaskRunnableProcessedTask();
       } else {
-        mPerformanceCounterState.RunnableDidRun(std::move(snapshot.ref()));
+        mPerformanceCounterState.RunnableDidRun(EmptyCString(),
+                                                std::move(snapshot.ref()));
       }
 
       // To cover the event's destructor code inside the LogRunnable span.
@@ -1383,13 +1378,6 @@ void nsThread::DoMainThreadSpecificProcessing() const {
   }
 }
 
-NS_IMETHODIMP
-nsThread::GetEventTarget(nsIEventTarget** aEventTarget) {
-  nsCOMPtr<nsIEventTarget> target = this;
-  target.forget(aEventTarget);
-  return NS_OK;
-}
-
 //-----------------------------------------------------------------------------
 // nsIDirectTaskDispatcher
 
@@ -1417,33 +1405,6 @@ NS_IMETHODIMP nsThread::HaveDirectTasks(bool* aValue) {
 
   *aValue = mDirectTasks.HaveTasks();
   return NS_OK;
-}
-
-nsIEventTarget* nsThread::EventTarget() { return this; }
-
-nsISerialEventTarget* nsThread::SerialEventTarget() { return this; }
-
-nsLocalExecutionRecord nsThread::EnterLocalExecution() {
-  MOZ_RELEASE_ASSERT(!mIsInLocalExecutionMode);
-  MOZ_ASSERT(IsOnCurrentThread());
-  MOZ_ASSERT(EventQueue());
-  return nsLocalExecutionRecord(*EventQueue(), mIsInLocalExecutionMode);
-}
-
-nsLocalExecutionGuard::nsLocalExecutionGuard(
-    nsLocalExecutionRecord&& aLocalExecutionRecord)
-    : mEventQueueStack(aLocalExecutionRecord.mEventQueueStack),
-      mLocalEventTarget(mEventQueueStack.PushEventQueue()),
-      mLocalExecutionFlag(aLocalExecutionRecord.mLocalExecutionFlag) {
-  MOZ_ASSERT(mLocalEventTarget);
-  MOZ_ASSERT(!mLocalExecutionFlag);
-  mLocalExecutionFlag = true;
-}
-
-nsLocalExecutionGuard::~nsLocalExecutionGuard() {
-  MOZ_ASSERT(mLocalExecutionFlag);
-  mLocalExecutionFlag = false;
-  mEventQueueStack.PopEventQueue(mLocalEventTarget);
 }
 
 NS_IMPL_ISUPPORTS(nsThreadShutdownContext, nsIThreadShutdown)
@@ -1497,25 +1458,24 @@ void nsThreadShutdownContext::MarkCompleted() {
 
 namespace mozilla {
 PerformanceCounterState::Snapshot PerformanceCounterState::RunnableWillRun(
-    PerformanceCounter* aCounter, TimeStamp aNow, bool aIsIdleRunnable) {
+    TimeStamp aNow, bool aIsIdleRunnable) {
   if (IsNestedRunnable()) {
     // Flush out any accumulated time that should be accounted to the
     // current runnable before we start running a nested runnable.
-    MaybeReportAccumulatedTime(aNow);
+    MaybeReportAccumulatedTime("nested runnable"_ns, aNow);
   }
 
-  Snapshot snapshot(mCurrentEventLoopDepth, mCurrentPerformanceCounter,
-                    mCurrentRunnableIsIdleRunnable);
+  Snapshot snapshot(mCurrentEventLoopDepth, mCurrentRunnableIsIdleRunnable);
 
   mCurrentEventLoopDepth = mNestedEventLoopDepth;
-  mCurrentPerformanceCounter = aCounter;
   mCurrentRunnableIsIdleRunnable = aIsIdleRunnable;
   mCurrentTimeSliceStart = aNow;
 
   return snapshot;
 }
 
-void PerformanceCounterState::RunnableDidRun(Snapshot&& aSnapshot) {
+void PerformanceCounterState::RunnableDidRun(const nsCString& aName,
+                                             Snapshot&& aSnapshot) {
   // First thing: Restore our mCurrentEventLoopDepth so we can use
   // IsNestedRunnable().
   mCurrentEventLoopDepth = aSnapshot.mOldEventLoopDepth;
@@ -1523,15 +1483,14 @@ void PerformanceCounterState::RunnableDidRun(Snapshot&& aSnapshot) {
   // We may not need the current timestamp; don't bother computing it if we
   // don't.
   TimeStamp now;
-  if (mCurrentPerformanceCounter || mIsMainThread || IsNestedRunnable()) {
+  if (mIsMainThread || IsNestedRunnable()) {
     now = TimeStamp::Now();
   }
-  if (mCurrentPerformanceCounter || mIsMainThread) {
-    MaybeReportAccumulatedTime(now);
+  if (mIsMainThread) {
+    MaybeReportAccumulatedTime(aName, now);
   }
 
   // And now restore the rest of our state.
-  mCurrentPerformanceCounter = std::move(aSnapshot.mOldPerformanceCounter);
   mCurrentRunnableIsIdleRunnable = aSnapshot.mOldIsIdleRunnable;
   if (IsNestedRunnable()) {
     // Reset mCurrentTimeSliceStart to right now, so our parent runnable's
@@ -1543,20 +1502,23 @@ void PerformanceCounterState::RunnableDidRun(Snapshot&& aSnapshot) {
   }
 }
 
-void PerformanceCounterState::MaybeReportAccumulatedTime(TimeStamp aNow) {
+void PerformanceCounterState::MaybeReportAccumulatedTime(const nsCString& aName,
+                                                         TimeStamp aNow) {
   MOZ_ASSERT(mCurrentTimeSliceStart,
              "How did we get here if we're not in a timeslice?");
 
-  if (!mCurrentPerformanceCounter && !mIsMainThread) {
+  if (!mIsMainThread) {
     // No one cares about this timeslice.
     return;
   }
 
   TimeDuration duration = aNow - mCurrentTimeSliceStart;
-  if (mCurrentPerformanceCounter) {
-    mCurrentPerformanceCounter->IncrementExecutionDuration(
-        duration.ToMicroseconds());
+#ifdef MOZ_COLLECTING_RUNNABLE_TELEMETRY
+  if (mIsMainThread && duration.ToMilliseconds() > LONGTASK_TELEMETRY_MS) {
+    Telemetry::Accumulate(Telemetry::EVENT_LONGTASK, aName,
+                          duration.ToMilliseconds());
   }
+#endif
 
   // Long tasks only matter on the main thread.
   if (mIsMainThread && duration.ToMilliseconds() > LONGTASK_BUSY_WINDOW_MS) {
@@ -1578,7 +1540,9 @@ void PerformanceCounterState::MaybeReportAccumulatedTime(TimeStamp aNow) {
         static MarkerSchema MarkerTypeDisplay() {
           using MS = MarkerSchema;
           MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
-          schema.AddKeyLabelFormat("category", "Type", MS::Format::String);
+          schema.AddKeyLabelFormatSearchable("category", "Type",
+                                             MS::Format::String,
+                                             MS::Searchable::Searchable);
           return schema;
         }
       };

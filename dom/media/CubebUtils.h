@@ -18,7 +18,7 @@ MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(cubeb_stream_prefs)
 
 namespace mozilla {
 
-class AudioThreadRegistry;
+class CallbackThreadRegistry;
 
 namespace CubebUtils {
 
@@ -44,15 +44,11 @@ void ShutdownLibrary();
 
 bool SandboxEnabled();
 
-// Returns the global instance of AudioThreadRegistry. Initialized and
-// destroying in Init/ShutdownLibrary(), and safe from all threads.
-AudioThreadRegistry* GetAudioThreadRegistry();
-
 // Returns the maximum number of channels supported by the audio hardware.
 uint32_t MaxNumberOfChannels();
 
 // Get the sample rate the hardware/mixer runs at. Thread safe.
-uint32_t PreferredSampleRate();
+uint32_t PreferredSampleRate(bool aShouldResistFingerprinting);
 
 // Initialize a cubeb stream. A pass through wrapper for cubeb_stream_init,
 // that can simulate streams that are very slow to start, by setting the pref
@@ -93,8 +89,8 @@ bool RouteOutputAsVoice();
 bool EstimatedRoundTripLatencyDefaultDevices(double* aMean, double* aStdDev);
 
 #  ifdef MOZ_WIDGET_ANDROID
-uint32_t AndroidGetAudioOutputSampleRate();
-uint32_t AndroidGetAudioOutputFramesPerBuffer();
+int32_t AndroidGetAudioOutputSampleRate();
+int32_t AndroidGetAudioOutputFramesPerBuffer();
 #  endif
 
 #  ifdef ENABLE_SET_CUBEB_BACKEND

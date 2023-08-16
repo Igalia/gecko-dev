@@ -8,10 +8,10 @@
 const TEST_URI = `
   <style>
   body {
-    -moz-binding: none;
+    text-size-adjust: none;
   }
   div {
-    -moz-binding: none;
+    text-size-adjust: none;
   }
   </style>
   <body><div></div></body>
@@ -19,9 +19,9 @@ const TEST_URI = `
 
 const {
   COMPATIBILITY_UPDATE_TARGET_BROWSERS_COMPLETE,
-} = require("devtools/client/inspector/compatibility/actions/index");
+} = require("resource://devtools/client/inspector/compatibility/actions/index.js");
 
-add_task(async function() {
+add_task(async function () {
   registerCleanupFunction(() => {
     Services.prefs.clearUserPref(
       "devtools.inspector.compatibility.target-browsers"

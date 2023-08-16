@@ -8,7 +8,13 @@
 #define mozilla_dom_workers_scriptloader_h__
 
 #include "js/loader/ScriptLoadRequest.h"
+#include "js/loader/ModuleLoadRequest.h"
+#include "js/loader/ModuleLoaderBase.h"
+#include "mozilla/dom/WorkerBinding.h"
 #include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerLoadContext.h"
+#include "mozilla/dom/WorkerRef.h"
+#include "mozilla/dom/workerinternals/WorkerModuleLoader.h"
 #include "mozilla/Maybe.h"
 #include "nsIContentPolicy.h"
 #include "nsStringFwd.h"
@@ -38,8 +44,8 @@ enum WorkerScriptType { WorkerScript, DebuggerScript };
 namespace workerinternals {
 
 namespace loader {
-class ScriptLoaderRunnable;
 class ScriptExecutorRunnable;
+class ScriptLoaderRunnable;
 class CachePromiseHandler;
 class CacheLoadHandler;
 class CacheCreator;
@@ -66,19 +72,30 @@ class NetworkLoadHandler;
  *    +----------------------------+
  *    | new WorkerScriptLoader(..) |
  *    +----------------------------+
- *                |
- *                | Create the loader, along with the ScriptLoadRequests
- *                | call DispatchLoadScripts()
- *                | Create ScriptLoaderRunnable
- *                |
+ *                   |
+ *                   V
+ *            +-------------------------------------------+
+ *            | WorkerScriptLoader::DispatchLoadScripts() |
+ *            +-------------------------------------------+
+ *                   |
+ *                   V
+ *            +............................+
+ *            | new ScriptLoaderRunnable() |
+ *            +............................+
+ *                   :
+ *                   V
  *  #####################################################################
  *                             Enter Main thread
  *  #####################################################################
- *                |
- *                V
- *            +---------------+    For each request: Is a normal Worker?
- *            | LoadScripts() |--------------------------------------+
- *            +---------------+                                      |
+ *                   :
+ *                   V
+ *  +.............................+     For each: Is a normal Worker?
+ *  | ScriptLoaderRunnable::Run() |----------------------------------+
+ *  +.............................+                                  |
+ *                   |                                               V
+ *                   |               +----------------------------------+
+ *                   |               | WorkerScriptLoader::LoadScript() |
+ *                   |               +----------------------------------+
  *                   |                                               |
  *                   | For each request: Is a ServiceWorker?         |
  *                   |                                               |
@@ -86,85 +103,120 @@ class NetworkLoadHandler;
  *   +==================+   No script in cache?   +====================+
  *   | CacheLoadHandler |------------------------>| NetworkLoadHandler |
  *   +==================+                         +====================+
- *      :                                            :
- *      : Loaded from Cache                          : Loaded by Network
- *      :            +--------------------+          :
- *      +----------->| OnStreamComplete() |<---------+
- *                   +--------------------+
+ *      :                                                    :
+ *      : Loaded from Cache                                  : Loaded by Network
+ *      :   +..........................................+     :
+ *      +---| ScriptLoaderRunnable::OnStreamComplete() |<----+
+ *          +..........................................+
  *                             |
  *                             | A request is ready, is it in post order?
  *                             |
  *                             | call DispatchPendingProcessRequests()
  *                             | This creates ScriptExecutorRunnable
- *                             |
+ *            +..............................+
+ *            | new ScriptLoaderExecutable() |
+ *            +..............................+
+ *                             :
+ *                             V
  *  #####################################################################
  *                           Enter worker thread
  *  #####################################################################
- *                             |
- *                             |
+ *                             :
  *                             V
- *               +-------------------------+       All Scripts Executed?
- *               | ProcessPendingScripts() |-------------+
- *               +-------------------------+             |
- *                                                       |
- *                                                       | yes.
- *                                                       |
- *                                                       V
- *                                          +------------------------+
- *                                          | ShutdownScriptLoader() |
- *                                          +------------------------+
+ *          +...............................+         All Scripts Executed?
+ *          | ScriptLoaderExecutable::Run() | -------------+
+ *          +...............................+              :
+ *                                                         :
+ *                                                         : yes. Do execution
+ *                                                         : then shutdown.
+ *                                                         :
+ *                                                         V
+ *                       +--------------------------------------------+
+ *                       | WorkerScriptLoader::ShutdownScriptLoader() |
+ *                       +--------------------------------------------+
  */
 
-class WorkerScriptLoader final : public nsINamed {
-  friend class ScriptLoaderRunnable;
+class WorkerScriptLoader : public JS::loader::ScriptLoaderInterface,
+                           public nsINamed {
   friend class ScriptExecutorRunnable;
+  friend class ScriptLoaderRunnable;
   friend class CachePromiseHandler;
   friend class CacheLoadHandler;
   friend class CacheCreator;
   friend class NetworkLoadHandler;
+  friend class WorkerModuleLoader;
 
-  using ScriptLoadRequest = JS::loader::ScriptLoadRequest;
-  using ScriptLoadRequestList = JS::loader::ScriptLoadRequestList;
-  using ScriptFetchOptions = JS::loader::ScriptFetchOptions;
-
-  WorkerPrivate* const mWorkerPrivate;
+  RefPtr<ThreadSafeWorkerRef> mWorkerRef;
   UniquePtr<SerializedStackHolder> mOriginStack;
   nsString mOriginStackJSON;
-  nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
-  JS::loader::ScriptLoadRequestList mLoadingRequests;
-  JS::loader::ScriptLoadRequestList mLoadedRequests;
-  Maybe<ClientInfo> mClientInfo;
+  nsCOMPtr<nsISerialEventTarget> mSyncLoopTarget;
+  ScriptLoadRequestList mLoadingRequests;
+  ScriptLoadRequestList mLoadedRequests;
   Maybe<ServiceWorkerDescriptor> mController;
-  const bool mIsMainScript;
   WorkerScriptType mWorkerScriptType;
-  Maybe<nsresult> mCancelMainThread;
   ErrorResult& mRv;
   bool mExecutionAborted = false;
   bool mMutedErrorFlag = false;
+
+  // Count of loading module requests. mLoadingRequests doesn't keep track of
+  // child module requests.
+  // This member should be accessed on worker thread.
+  uint32_t mLoadingModuleRequestCount;
+
+  // Worker cancellation related Mutex
+  //
+  // Modified on the worker thread.
+  // It is ok to *read* this without a lock on the worker.
+  // Main thread must always acquire a lock.
+  bool mCleanedUp MOZ_GUARDED_BY(
+      mCleanUpLock);  // To specify if the cleanUp() has been done.
+
+  Mutex& CleanUpLock() MOZ_RETURN_CAPABILITY(mCleanUpLock) {
+    return mCleanUpLock;
+  }
+
+  bool CleanedUp() const MOZ_REQUIRES(mCleanUpLock) {
+    mCleanUpLock.AssertCurrentThreadOwns();
+    return mCleanedUp;
+  }
+
+  // Ensure the worker and the main thread won't race to access |mCleanedUp|.
+  // Should be a MutexSingleWriter, but that causes a lot of issues when you
+  // expose the lock via Lock().
+  Mutex mCleanUpLock;
 
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
   WorkerScriptLoader(WorkerPrivate* aWorkerPrivate,
                      UniquePtr<SerializedStackHolder> aOriginStack,
-                     nsIEventTarget* aSyncLoopTarget,
-                     const nsTArray<nsString>& aScriptURLs,
-                     const mozilla::Encoding* aDocumentEncoding,
-                     const Maybe<ClientInfo>& aClientInfo,
-                     const Maybe<ServiceWorkerDescriptor>& aController,
-                     bool aIsMainScript, WorkerScriptType aWorkerScriptType,
-                     ErrorResult& aRv);
+                     nsISerialEventTarget* aSyncLoopTarget,
+                     WorkerScriptType aWorkerScriptType, ErrorResult& aRv);
 
-  void CancelMainThreadWithBindingAborted() {
-    CancelMainThread(NS_BINDING_ABORTED);
-  }
+  bool CreateScriptRequests(const nsTArray<nsString>& aScriptURLs,
+                            const mozilla::Encoding* aDocumentEncoding,
+                            bool aIsMainScript);
+
+  ScriptLoadRequest* GetMainScript();
+
+  already_AddRefed<ScriptLoadRequest> CreateScriptLoadRequest(
+      const nsString& aScriptURL, const mozilla::Encoding* aDocumentEncoding,
+      bool aIsMainScript);
+
+  bool DispatchLoadScript(ScriptLoadRequest* aRequest);
 
   bool DispatchLoadScripts();
 
- protected:
-  nsIURI* GetBaseURI();
+  void TryShutdown();
 
-  void MaybeExecuteFinishedScripts(ScriptLoadRequest* aRequest);
+  WorkerScriptType GetWorkerScriptType() { return mWorkerScriptType; }
+
+ protected:
+  nsIURI* GetBaseURI() const override;
+
+  nsIURI* GetInitialBaseURI();
+
+  nsIGlobalObject* GetGlobal();
 
   void MaybeMoveToLoadedList(ScriptLoadRequest* aRequest);
 
@@ -176,16 +228,6 @@ class WorkerScriptLoader final : public nsINamed {
     return mLoadingRequests.isEmpty() && mLoadedRequests.isEmpty();
   }
 
-  nsresult OnStreamComplete(ScriptLoadRequest* aRequest, nsresult aStatus);
-
-  // Are we loading the primary script, which is not a Debugger Script?
-  bool IsMainWorkerScript() const {
-    return mIsMainScript && mWorkerScriptType == WorkerScript;
-  }
-
-  // Are we loading the primary script, regardless of the script type?
-  bool IsMainScript() const { return mIsMainScript; }
-
   bool IsDebuggerScript() const { return mWorkerScriptType == DebuggerScript; }
 
   void SetController(const Maybe<ServiceWorkerDescriptor>& aDescriptor) {
@@ -194,16 +236,9 @@ class WorkerScriptLoader final : public nsINamed {
 
   Maybe<ServiceWorkerDescriptor>& GetController() { return mController; }
 
-  bool IsCancelled() { return mCancelMainThread.isSome(); }
+  nsresult LoadScript(ThreadSafeRequestHandle* aRequestHandle);
 
-  void CancelMainThread(nsresult aCancelResult);
-
-  nsresult LoadScripts();
-
-  nsresult LoadScript(ScriptLoadRequest* aRequest);
-
-  void ShutdownScriptLoader(JSContext* aCx, WorkerPrivate* aWorkerPrivate,
-                            bool aResult, bool aMutedError);
+  void ShutdownScriptLoader(bool aResult, bool aMutedError);
 
  private:
   ~WorkerScriptLoader() = default;
@@ -214,28 +249,109 @@ class WorkerScriptLoader final : public nsINamed {
     return NS_OK;
   }
 
-  void LoadingFinished(ScriptLoadRequest* aRequest, nsresult aRv);
+  void InitModuleLoader();
 
-  void DispatchMaybeMoveToLoadedList(ScriptLoadRequest* aRequest);
+  nsTArray<RefPtr<ThreadSafeRequestHandle>> GetLoadingList();
+
+  bool IsDynamicImport(ScriptLoadRequest* aRequest);
+
+  nsContentPolicyType GetContentPolicyType(ScriptLoadRequest* aRequest);
 
   bool EvaluateScript(JSContext* aCx, ScriptLoadRequest* aRequest);
 
+  nsresult FillCompileOptionsForRequest(
+      JSContext* cx, ScriptLoadRequest* aRequest, JS::CompileOptions* aOptions,
+      JS::MutableHandle<JSScript*> aIntroductionScript) override;
+
+  void ReportErrorToConsole(ScriptLoadRequest* aRequest,
+                            nsresult aResult) const override;
+
+  // Only used by import maps, crash if we get here.
+  void ReportWarningToConsole(
+      ScriptLoadRequest* aRequest, const char* aMessageName,
+      const nsTArray<nsString>& aParams = nsTArray<nsString>()) const override {
+    MOZ_CRASH("Import maps have not been implemented for this context");
+  }
+
   void LogExceptionToConsole(JSContext* aCx, WorkerPrivate* aWorkerPrivate);
+
+  bool AllModuleRequestsLoaded() const;
+  void IncreaseLoadingModuleRequestCount();
+  void DecreaseLoadingModuleRequestCount();
+};
+
+/* ScriptLoaderRunnable
+ *
+ * Responsibilities of this class:
+ *   - the actual dispatch
+ *   - delegating the load back to WorkerScriptLoader
+ *   - handling the collections of scripts being requested
+ *   - handling main thread cancellation
+ *   - dispatching back to the worker thread
+ */
+class ScriptLoaderRunnable final : public nsIRunnable, public nsINamed {
+  RefPtr<WorkerScriptLoader> mScriptLoader;
+  RefPtr<ThreadSafeWorkerRef> mWorkerRef;
+  nsTArrayView<RefPtr<ThreadSafeRequestHandle>> mLoadingRequests;
+  Maybe<nsresult> mCancelMainThread;
+  RefPtr<CacheCreator> mCacheCreator;
+
+ public:
+  NS_DECL_THREADSAFE_ISUPPORTS
+
+  explicit ScriptLoaderRunnable(
+      WorkerScriptLoader* aScriptLoader,
+      nsTArray<RefPtr<ThreadSafeRequestHandle>> aLoadingRequests);
+
+  nsresult OnStreamComplete(ThreadSafeRequestHandle* aRequestHandle,
+                            nsresult aStatus);
+
+  void LoadingFinished(ThreadSafeRequestHandle* aRequestHandle, nsresult aRv);
+
+  void MaybeExecuteFinishedScripts(ThreadSafeRequestHandle* aRequestHandle);
+
+  bool IsCancelled() { return mCancelMainThread.isSome(); }
+
+  nsresult GetCancelResult() {
+    return (IsCancelled()) ? mCancelMainThread.ref() : NS_OK;
+  }
+
+  void CancelMainThreadWithBindingAborted();
+
+  CacheCreator* GetCacheCreator() { return mCacheCreator; };
+
+ private:
+  ~ScriptLoaderRunnable() = default;
+
+  void CancelMainThread(nsresult aCancelResult);
+
+  void DispatchProcessPendingRequests();
+
+  NS_IMETHOD
+  Run() override;
+
+  NS_IMETHOD
+  GetName(nsACString& aName) override {
+    aName.AssignLiteral("ScriptLoaderRunnable");
+    return NS_OK;
+  }
 };
 
 }  // namespace loader
 
 nsresult ChannelFromScriptURLMainThread(
     nsIPrincipal* aPrincipal, Document* aParentDoc, nsILoadGroup* aLoadGroup,
-    nsIURI* aScriptURL, const Maybe<ClientInfo>& aClientInfo,
+    nsIURI* aScriptURL, const WorkerType& aWorkerType,
+    const RequestCredentials& aCredentials,
+    const Maybe<ClientInfo>& aClientInfo,
     nsContentPolicyType aContentPolicyType,
     nsICookieJarSettings* aCookieJarSettings, nsIReferrerInfo* aReferrerInfo,
     nsIChannel** aChannel);
 
-nsresult ChannelFromScriptURLWorkerThread(JSContext* aCx,
-                                          WorkerPrivate* aParent,
-                                          const nsAString& aScriptURL,
-                                          WorkerLoadInfo& aLoadInfo);
+nsresult ChannelFromScriptURLWorkerThread(
+    JSContext* aCx, WorkerPrivate* aParent, const nsAString& aScriptURL,
+    const WorkerType& aWorkerType, const RequestCredentials& aCredentials,
+    WorkerLoadInfo& aLoadInfo);
 
 void ReportLoadError(ErrorResult& aRv, nsresult aLoadResult,
                      const nsAString& aScriptURL);

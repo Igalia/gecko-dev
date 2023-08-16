@@ -5,7 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "AnimationInfo.h"
-#include "Layers.h"
 #include "mozilla/LayerAnimationInfo.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/layers/AnimationHelper.h"
@@ -14,10 +13,12 @@
 #include "mozilla/dom/CSSTransition.h"
 #include "mozilla/dom/KeyframeEffect.h"
 #include "mozilla/EffectSet.h"
+#include "mozilla/MotionPathUtils.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "nsIContent.h"
 #include "nsLayoutUtils.h"
+#include "nsPresContextInlines.h"
 #include "nsStyleTransformMatrix.h"
 #include "PuppetWidget.h"
 
@@ -83,15 +84,6 @@ void AnimationInfo::ClearAnimationsForNextTransaction() {
   mPendingAnimations->Clear();
 }
 
-void AnimationInfo::SetCompositorAnimations(
-    const LayersId& aLayersId,
-    const CompositorAnimations& aCompositorAnimations) {
-  mCompositorAnimationsId = aCompositorAnimations.id();
-
-  mStorageData = AnimationHelper::ExtractAnimations(
-      aLayersId, aCompositorAnimations.animations());
-}
-
 bool AnimationInfo::StartPendingAnimations(const TimeStamp& aReadyTime) {
   bool updated = false;
   for (size_t animIdx = 0, animEnd = mAnimations.Length(); animIdx < animEnd;
@@ -120,8 +112,6 @@ bool AnimationInfo::StartPendingAnimations(const TimeStamp& aReadyTime) {
   }
   return updated;
 }
-
-void AnimationInfo::TransferMutatedFlagToLayer(Layer* aLayer) {}
 
 bool AnimationInfo::ApplyPendingUpdatesForThisTransaction() {
   if (mPendingAnimations) {
@@ -343,16 +333,6 @@ static Maybe<ScrollTimelineOptions> GetScrollTimelineOptions(
   return Some(ScrollTimelineOptions(source, timeline->Axis()));
 }
 
-// FIXME: Bug 1489392: We don't have to normalize the path here if we accept
-// the spec issue which would like to normalize svg paths at computed time.
-static StyleOffsetPath NormalizeOffsetPath(const StyleOffsetPath& aOffsetPath) {
-  if (aOffsetPath.IsPath()) {
-    return StyleOffsetPath::Path(
-        MotionPathUtils::NormalizeSVGPathData(aOffsetPath.AsPath()));
-  }
-  return StyleOffsetPath(aOffsetPath);
-}
-
 static void SetAnimatable(nsCSSPropertyID aProperty,
                           const AnimationValue& aAnimationValue,
                           nsIFrame* aFrame, TransformReferenceBox& aRefBox,
@@ -391,8 +371,8 @@ static void SetAnimatable(nsCSSPropertyID aProperty,
           aAnimationValue.GetTransformProperty(), aRefBox);
       break;
     case eCSSProperty_offset_path:
-      aAnimatable =
-          NormalizeOffsetPath(aAnimationValue.GetOffsetPathProperty());
+      aAnimatable = StyleOffsetPath::None();
+      aAnimationValue.GetOffsetPathProperty(aAnimatable.get_StyleOffsetPath());
       break;
     case eCSSProperty_offset_distance:
       aAnimatable = aAnimationValue.GetOffsetDistanceProperty();
@@ -402,6 +382,9 @@ static void SetAnimatable(nsCSSPropertyID aProperty,
       break;
     case eCSSProperty_offset_anchor:
       aAnimatable = aAnimationValue.GetOffsetAnchorProperty();
+      break;
+    case eCSSProperty_offset_position:
+      aAnimatable = aAnimationValue.GetOffsetPositionProperty();
       break;
     default:
       MOZ_ASSERT_UNREACHABLE("Unsupported property");
@@ -802,9 +785,23 @@ static Maybe<TransformData> CreateAnimationData(
         styleOrigin.horizontal, styleOrigin.vertical, refBox);
     CSSPoint anchorAdjustment =
         MotionPathUtils::ComputeAnchorPointAdjustment(*aFrame);
-
-    motionPathData = Some(layers::MotionPathData(
-        motionPathOrigin, anchorAdjustment, RayReferenceData(aFrame)));
+    // Note: If there is no containing block or coord-box is empty, we still
+    // pass it to the compositor. Just render them as no path on the compositor
+    // thread.
+    nsRect coordBox;
+    const nsIFrame* containingBlockFrame =
+        MotionPathUtils::GetOffsetPathReferenceBox(aFrame, coordBox);
+    nsTArray<nscoord> radii;
+    if (containingBlockFrame) {
+      radii = MotionPathUtils::ComputeBorderRadii(
+          containingBlockFrame->StyleBorder()->mBorderRadius, coordBox);
+    }
+    motionPathData.emplace(
+        std::move(motionPathOrigin), std::move(anchorAdjustment),
+        std::move(coordBox),
+        containingBlockFrame ? aFrame->GetOffsetTo(containingBlockFrame)
+                             : aFrame->GetPosition(),
+        MotionPathUtils::GetRayContainReferenceSize(aFrame), std::move(radii));
   }
 
   Maybe<PartialPrerenderData> partialPrerenderData;
@@ -839,7 +836,6 @@ void AnimationInfo::AddNonAnimatingTransformLikePropertiesStyles(
   const nsStyleDisplay* display = aFrame->StyleDisplay();
   // A simple optimization. We don't need to send offset-* properties if we
   // don't have offset-path and offset-position.
-  // FIXME: Bug 1559232: Add offset-position here.
   bool hasMotion =
       !display->mOffsetPath.IsNone() ||
       !aNonAnimatingProperties.HasProperty(eCSSProperty_offset_path);
@@ -872,7 +868,7 @@ void AnimationInfo::AddNonAnimatingTransformLikePropertiesStyles(
         break;
       case eCSSProperty_offset_path:
         if (!display->mOffsetPath.IsNone()) {
-          appendFakeAnimation(id, NormalizeOffsetPath(display->mOffsetPath));
+          appendFakeAnimation(id, display->mOffsetPath);
         }
         break;
       case eCSSProperty_offset_distance:
@@ -889,6 +885,11 @@ void AnimationInfo::AddNonAnimatingTransformLikePropertiesStyles(
       case eCSSProperty_offset_anchor:
         if (hasMotion && !display->mOffsetAnchor.IsAuto()) {
           appendFakeAnimation(id, display->mOffsetAnchor);
+        }
+        break;
+      case eCSSProperty_offset_position:
+        if (hasMotion && !display->mOffsetPosition.IsAuto()) {
+          appendFakeAnimation(id, display->mOffsetPosition);
         }
         break;
       default:
@@ -913,7 +914,7 @@ void AnimationInfo::AddAnimationsForDisplayItem(
   // layer, we still need to mark it as up-to-date with regards to animations.
   // Otherwise, in RestyleManager we'll notice the discrepancy between the
   // animation generation numbers and update the layer indefinitely.
-  EffectSet* effects = EffectSet::GetEffectSetForFrame(aFrame, aType);
+  EffectSet* effects = EffectSet::GetForFrame(aFrame, aType);
   uint64_t animationGeneration =
       effects ? effects->GetAnimationGeneration() : 0;
   SetAnimationGeneration(animationGeneration);

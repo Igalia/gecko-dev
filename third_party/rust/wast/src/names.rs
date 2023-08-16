@@ -54,7 +54,7 @@ impl<'a> Namespace<'a> {
         if let Some(_prev) = self.names.insert(name, index) {
             return Err(Error::new(
                 name.span(),
-                format!("duplicate identifier for {}", desc),
+                format!("duplicate identifier `{}` for {}", name.name(), desc),
             ));
         }
         Ok(())
@@ -81,6 +81,6 @@ pub fn resolve_error(id: Id<'_>, ns: &str) -> Error {
     );
     Error::new(
         id.span(),
-        format!("failed to find {} named `${}`", ns, id.name()),
+        format!("unknown {ns}: failed to find name `${}`", id.name()),
     )
 }

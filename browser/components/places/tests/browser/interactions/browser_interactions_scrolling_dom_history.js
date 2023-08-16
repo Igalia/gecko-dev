@@ -29,7 +29,7 @@ async function waitForScrollEvent(aBrowser, aTask) {
 add_task(async function test_scroll_pushState() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -46,7 +46,7 @@ add_task(async function test_scroll_pushState() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -67,7 +67,7 @@ add_task(async function test_scroll_pushState() {
 add_task(async function test_scroll_pushState_sameUrl() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -87,7 +87,7 @@ add_task(async function test_scroll_pushState_sameUrl() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -103,7 +103,7 @@ add_task(async function test_scroll_pushState_sameUrl() {
 add_task(async function test_scroll_replaceState() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -120,7 +120,7 @@ add_task(async function test_scroll_replaceState() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -141,7 +141,7 @@ add_task(async function test_scroll_replaceState() {
 add_task(async function test_scroll_replaceState_sameUrl() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -161,7 +161,7 @@ add_task(async function test_scroll_replaceState_sameUrl() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -177,7 +177,7 @@ add_task(async function test_scroll_replaceState_sameUrl() {
 add_task(async function test_scroll_hashchange() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -194,7 +194,7 @@ add_task(async function test_scroll_hashchange() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([

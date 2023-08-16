@@ -100,7 +100,7 @@ const attributesTests = [
 addAccessibleTask(
   `
   <input id="textbox" value="hello">`,
-  async function(browser, accDoc) {
+  async function (browser, accDoc) {
     let textbox = findAccessibleChildByID(accDoc, "textbox");
     for (let {
       desc,
@@ -131,10 +131,10 @@ addAccessibleTask(
     }
   },
   {
-    // These tests don't work yet with the parent process cache enabled.
-    topLevel: !isCacheEnabled,
-    iframe: !isCacheEnabled,
-    remoteIframe: !isCacheEnabled,
+    // These tests don't work yet with the parent process cache.
+    topLevel: false,
+    iframe: false,
+    remoteIframe: false,
   }
 );
 
@@ -146,7 +146,7 @@ addAccessibleTask(
 <p id="p">text</p>
 <textarea id="textarea"></textarea>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     testAttrs(docAcc, { tag: "body" }, true);
     const p = findAccessibleChildByID(docAcc, "p");
     testAttrs(p, { tag: "p" }, true);
@@ -172,7 +172,7 @@ addAccessibleTask(
   <input id="checkbox" type="checkbox">
   <input id="radio" type="radio">
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     function testInputType(id, inputType) {
       if (inputType == undefined) {
         testAbsentAttrs(findAccessibleChildByID(docAcc, id), {
@@ -208,8 +208,14 @@ addAccessibleTask(
   <ins id="ins">a</ins>
   <button id="button">b</button>
 </div>
+<p>
+  <span id="presentationalSpan" role="none"
+      style="display: block; position: absolute; top: 0; left: 0; translate: 1px;">
+    a
+  </span>
+</p>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const div = findAccessibleChildByID(docAcc, "div");
     testAttrs(div, { display: "block" }, true);
     const ins = findAccessibleChildByID(docAcc, "ins");
@@ -228,8 +234,42 @@ addAccessibleTask(
       "block",
       "ins display attribute changed to block"
     );
+
+    // This span has role="none", but we force a generic Accessible because it
+    // has a transform. role="none" might have been used to avoid exposing
+    // display: block, so ensure we don't expose that.
+    const presentationalSpan = findAccessibleChildByID(
+      docAcc,
+      "presentationalSpan"
+    );
+    testAbsentAttrs(presentationalSpan, { display: "" });
   },
   { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test that there is no display attribute on image map areas.
+ */
+addAccessibleTask(
+  `
+<map name="normalMap">
+  <area id="normalArea" shape="default">
+</map>
+<img src="http://example.com/a11y/accessible/tests/mochitest/moz.png" usemap="#normalMap">
+<audio>
+  <map name="unslottedMap">
+    <area id="unslottedArea" shape="default">
+  </map>
+</audio>
+<img src="http://example.com/a11y/accessible/tests/mochitest/moz.png" usemap="#unslottedMap">
+  `,
+  async function (browser, docAcc) {
+    const normalArea = findAccessibleChildByID(docAcc, "normalArea");
+    testAbsentAttrs(normalArea, { display: "" });
+    const unslottedArea = findAccessibleChildByID(docAcc, "unslottedArea");
+    testAbsentAttrs(unslottedArea, { display: "" });
+  },
+  { topLevel: true }
 );
 
 /**
@@ -244,7 +284,7 @@ addAccessibleTask(
 <button id="buttonSummary"><details><summary>test</summary></details></button>
 <div id="div"></div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const h1 = findAccessibleChildByID(docAcc, "h1");
     testAbsentAttrs(h1, { "explicit-name": "" });
     const buttonContent = findAccessibleChildByID(docAcc, "buttonContent");
@@ -297,7 +337,7 @@ addAccessibleTask(
 <div id="foo" aria-foo="bar">foo</div>
 <div id="mutate" aria-current="true">mutate</div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const currentTrue = findAccessibleChildByID(docAcc, "currentTrue");
     testAttrs(currentTrue, { current: "true" }, true);
     const currentFalse = findAccessibleChildByID(docAcc, "currentFalse");
@@ -388,7 +428,7 @@ addAccessibleTask(
 <article id="markupWithRole" role="banner">markupWithRole</article>
 <article id="markupWithEmptyRole" role="">markupWithEmptyRole</article>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const knownRole = findAccessibleChildByID(docAcc, "knownRole");
     testAttrs(knownRole, { "xml-roles": "main" }, true);
     const emptyRole = findAccessibleChildByID(docAcc, "emptyRole");
@@ -434,7 +474,7 @@ addAccessibleTask(
 <div id="nonLiveRole" role="group"><p>nonLiveRole</p></div>
 <div id="other" aria-atomic="true" aria-busy="true" aria-relevant="additions"><p>other</p></div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const noLive = findAccessibleChildByID(docAcc, "noLive");
     for (const acc of [noLive, noLive.firstChild]) {
       testAbsentAttrs(acc, {
@@ -485,4 +525,128 @@ addAccessibleTask(
     );
   },
   { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test the id attribute.
+ */
+addAccessibleTask(
+  `
+<p id="withId">withId</p>
+<div id="noIdParent"><p>noId</p></div>
+  `,
+  async function (browser, docAcc) {
+    const withId = findAccessibleChildByID(docAcc, "withId");
+    testAttrs(withId, { id: "withId" }, true);
+    const noId = findAccessibleChildByID(docAcc, "noIdParent").firstChild;
+    testAbsentAttrs(noId, { id: "" });
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test the valuetext attribute.
+ */
+addAccessibleTask(
+  `
+<div id="valuenow" role="slider" aria-valuenow="1"></div>
+<div id="valuetext" role="slider" aria-valuetext="text"></div>
+<div id="noValue" role="button"></div>
+  `,
+  async function (browser, docAcc) {
+    const valuenow = findAccessibleChildByID(docAcc, "valuenow");
+    testAttrs(valuenow, { valuetext: "1" }, true);
+    const valuetext = findAccessibleChildByID(docAcc, "valuetext");
+    testAttrs(valuetext, { valuetext: "text" }, true);
+    const noValue = findAccessibleChildByID(docAcc, "noValue");
+    testAbsentAttrs(noValue, { valuetext: "valuetext" });
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+function untilCacheAttrIs(acc, attr, val, msg) {
+  return untilCacheOk(() => {
+    try {
+      return acc.attributes.getStringProperty(attr) == val;
+    } catch (e) {
+      return false;
+    }
+  }, msg);
+}
+
+function untilCacheAttrAbsent(acc, attr, msg) {
+  return untilCacheOk(() => {
+    try {
+      acc.attributes.getStringProperty(attr);
+    } catch (e) {
+      return true;
+    }
+    return false;
+  }, msg);
+}
+
+/**
+ * Test the class attribute.
+ */
+addAccessibleTask(
+  `
+<div id="oneClass" class="c1">oneClass</div>
+<div id="multiClass" class="c1 c2">multiClass</div>
+<div id="noClass">noClass</div>
+<div id="mutate">mutate</div>
+  `,
+  async function (browser, docAcc) {
+    const oneClass = findAccessibleChildByID(docAcc, "oneClass");
+    testAttrs(oneClass, { class: "c1" }, true);
+    const multiClass = findAccessibleChildByID(docAcc, "multiClass");
+    testAttrs(multiClass, { class: "c1 c2" }, true);
+    const noClass = findAccessibleChildByID(docAcc, "noClass");
+    testAbsentAttrs(noClass, { class: "" });
+
+    const mutate = findAccessibleChildByID(docAcc, "mutate");
+    testAbsentAttrs(mutate, { class: "" });
+    info("Adding class to mutate");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("mutate").className = "c1 c2";
+    });
+    await untilCacheAttrIs(mutate, "class", "c1 c2", "mutate class correct");
+    info("Removing class from mutate");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("mutate").removeAttribute("class");
+    });
+    await untilCacheAttrAbsent(mutate, "class", "mutate class not present");
+  },
+  { chrome: true, topLevel: true }
+);
+
+/**
+ * Test the src attribute.
+ */
+const kImgUrl = "https://example.com/a11y/accessible/tests/mochitest/moz.png";
+addAccessibleTask(
+  `
+<img id="noAlt" src="${kImgUrl}">
+<img id="alt" alt="alt" src="${kImgUrl}">
+<img id="mutate">
+  `,
+  async function (browser, docAcc) {
+    const noAlt = findAccessibleChildByID(docAcc, "noAlt");
+    testAttrs(noAlt, { src: kImgUrl }, true);
+    const alt = findAccessibleChildByID(docAcc, "alt");
+    testAttrs(alt, { src: kImgUrl }, true);
+
+    const mutate = findAccessibleChildByID(docAcc, "mutate");
+    testAbsentAttrs(mutate, { src: "" });
+    info("Adding src to mutate");
+    await invokeContentTask(browser, [kImgUrl], url => {
+      content.document.getElementById("mutate").src = url;
+    });
+    await untilCacheAttrIs(mutate, "src", kImgUrl, "mutate src correct");
+    info("Removing src from mutate");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("mutate").removeAttribute("src");
+    });
+    await untilCacheAttrAbsent(mutate, "src", "mutate src not present");
+  },
+  { chrome: true, topLevel: true }
 );

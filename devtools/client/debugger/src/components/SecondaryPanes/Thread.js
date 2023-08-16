@@ -5,17 +5,17 @@
 import React, { Component } from "react";
 import PropTypes from "prop-types";
 import { connect } from "../../utils/connect";
-import classnames from "classnames";
 
 import actions from "../../actions";
-import { getCurrentThread, getIsPaused, getContext } from "../../selectors";
+import { getCurrentThread, getIsPaused } from "../../selectors";
 import AccessibleImage from "../shared/AccessibleImage";
+
+const classnames = require("devtools/client/shared/classnames.js");
 
 export class Thread extends Component {
   static get propTypes() {
     return {
       currentThread: PropTypes.string.isRequired,
-      cx: PropTypes.object.isRequired,
       isPaused: PropTypes.bool.isRequired,
       selectThread: PropTypes.func.isRequired,
       thread: PropTypes.object.isRequired,
@@ -23,8 +23,7 @@ export class Thread extends Component {
   }
 
   onSelectThread = () => {
-    const { thread } = this.props;
-    this.props.selectThread(this.props.cx, thread.actor);
+    this.props.selectThread(this.props.thread.actor);
   };
 
   render() {
@@ -59,7 +58,6 @@ export class Thread extends Component {
 }
 
 const mapStateToProps = (state, props) => ({
-  cx: getContext(state),
   currentThread: getCurrentThread(state),
   isPaused: getIsPaused(state, props.thread.actor),
 });

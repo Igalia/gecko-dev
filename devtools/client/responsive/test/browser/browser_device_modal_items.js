@@ -6,16 +6,17 @@
 // Test the content of device items in the modal.
 
 const TEST_URL = "data:text/html;charset=utf-8,";
-const { parseUserAgent } = require("devtools/client/responsive/utils/ua");
+const {
+  parseUserAgent,
+} = require("resource://devtools/client/responsive/utils/ua.js");
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/device.properties",
   true
 );
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { store, document } = toolWindow;
 

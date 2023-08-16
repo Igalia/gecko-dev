@@ -1,5 +1,5 @@
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 if (AppConstants.platform != "android") {
@@ -70,6 +70,10 @@ const kConditionalCSSTestCases = [
   {
     data: `#foo { display: none } @media (min-width: 300px) { #bar { display: none } }`,
     sanitized: `#foo { display: none }`,
+  },
+  {
+    data: `@media (min-width: 300px) { #bar { display: none } }`,
+    sanitized: ``,
   },
 ];
 

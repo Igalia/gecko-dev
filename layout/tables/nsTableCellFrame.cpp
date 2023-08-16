@@ -9,6 +9,7 @@
 #include "gfxUtils.h"
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/Helpers.h"
 #include "nsTableFrame.h"
@@ -82,10 +83,7 @@ void nsTableCellFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 
 void nsTableCellFrame::DestroyFrom(nsIFrame* aDestructRoot,
                                    PostDestroyData& aPostDestroyData) {
-  if (HasAnyStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN)) {
-    nsTableFrame::UnregisterPositionedTablePart(this, aDestructRoot);
-  }
-
+  nsTableFrame::MaybeUnregisterPositionedTablePart(this, aDestructRoot);
   nsContainerFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
 }
 
@@ -168,7 +166,7 @@ nsresult nsTableCellFrame::AttributeChanged(int32_t aNameSpaceID,
   // BasicTableLayoutStrategy
   if (aNameSpaceID == kNameSpaceID_None && aAttribute == nsGkAtoms::nowrap &&
       PresContext()->CompatibilityMode() == eCompatibility_NavQuirks) {
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_IS_DIRTY);
   }
 
@@ -182,9 +180,11 @@ nsresult nsTableCellFrame::AttributeChanged(int32_t aNameSpaceID,
 /* virtual */
 void nsTableCellFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
   nsContainerFrame::DidSetComputedStyle(aOldComputedStyle);
+  nsTableFrame::PositionedTablePartMaybeChanged(this, aOldComputedStyle);
 
-  if (!aOldComputedStyle)  // avoid this on init
-    return;
+  if (!aOldComputedStyle) {
+    return;  // avoid the following on init
+  }
 
 #ifdef ACCESSIBILITY
   if (nsAccessibilityService* accService = GetAccService()) {
@@ -215,13 +215,13 @@ void nsTableCellFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
 
 #ifdef DEBUG
 void nsTableCellFrame::AppendFrames(ChildListID aListID,
-                                    nsFrameList& aFrameList) {
+                                    nsFrameList&& aFrameList) {
   MOZ_CRASH("unsupported operation");
 }
 
 void nsTableCellFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                                     const nsLineList::iterator* aPrevFrameLine,
-                                    nsFrameList& aFrameList) {
+                                    nsFrameList&& aFrameList) {
   MOZ_CRASH("unsupported operation");
 }
 
@@ -533,13 +533,16 @@ nscoord nsTableCellFrame::GetCellBaseline() const {
   // Ignore the position of the inner frame relative to the cell frame
   // since we want the position as though the inner were top-aligned.
   nsIFrame* inner = mFrames.FirstChild();
-  nscoord borderPadding = GetUsedBorderAndPadding().top;
+  const auto wm = GetWritingMode();
+  const auto borderPadding = GetLogicalUsedBorderAndPadding(wm);
   nscoord result;
   if (!StyleDisplay()->IsContainLayout() &&
-      nsLayoutUtils::GetFirstLineBaseline(GetWritingMode(), inner, &result)) {
-    return result + borderPadding;
+      nsLayoutUtils::GetFirstLineBaseline(wm, inner, &result)) {
+    return result + borderPadding.BStart(wm);
   }
-  return inner->GetContentRectRelativeToSelf().YMost() + borderPadding;
+  const auto logicalSize = inner->GetLogicalSize(wm);
+  // ::-moz-cell-content shouldn't have any border/padding.
+  return logicalSize.BSize(wm) + borderPadding.BStart(wm);
 }
 
 int32_t nsTableCellFrame::GetRowSpan() {
@@ -680,7 +683,6 @@ void nsTableCellFrame::Reflow(nsPresContext* aPresContext,
       aReflowInput.ComputedLogicalPadding(wm) + GetBorderWidth(wm);
 
   ReflowOutput kidSize(wm);
-  kidSize.ClearSize();
   SetPriorAvailISize(aReflowInput.AvailableISize());
   nsIFrame* firstKid = mFrames.FirstChild();
   NS_ASSERTION(
@@ -986,8 +988,9 @@ ImgDrawResult nsBCTableCellFrame::PaintBackground(gfxContext& aRenderingContext,
 
   nsStyleBorder myBorder(*StyleBorder());
 
+  const auto a2d = PresContext()->AppUnitsPerDevPixel();
   for (const auto side : mozilla::AllPhysicalSides()) {
-    myBorder.SetBorderWidth(side, borderWidth.Side(side));
+    myBorder.SetBorderWidth(side, borderWidth.Side(side), a2d);
   }
 
   // bypassing nsCSSRendering::PaintBackground is safe because this kind
@@ -1044,14 +1047,9 @@ void nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     nsRect bgRect = GetRectRelativeToSelf() + aBuilder->ToReferenceFrame(this);
 
     // display background if we need to.
-    AppendedBackgroundType result = AppendedBackgroundType::None;
-    if (aBuilder->IsForEventDelivery() ||
-        !StyleBackground()->IsTransparent(this) ||
-        StyleDisplay()->HasAppearance()) {
-      result = nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
-          aBuilder, this, bgRect, aLists.BorderBackground());
-    }
-
+    const AppendedBackgroundType result =
+        nsDisplayBackgroundImage::AppendBackgroundItemsToTop(
+            aBuilder, this, bgRect, aLists.BorderBackground());
     if (result == AppendedBackgroundType::None) {
       aBuilder->BuildCompositorHitTestInfoIfNeeded(this,
                                                    aLists.BorderBackground());
@@ -1064,7 +1062,8 @@ void nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     }
 
     // display borders if we need to
-    ProcessBorders(GetTableFrame(), aBuilder, aLists);
+    nsTableFrame* tableFrame = GetTableFrame();
+    ProcessBorders(tableFrame, aBuilder, aLists);
 
     // and display the selection border if we need to
     if (IsSelected()) {
@@ -1094,16 +1093,18 @@ void nsTableCellFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
       DisplayListClipState::AutoSaveRestore clipState(aBuilder);
       nsDisplayListBuilder::AutoCurrentActiveScrolledRootSetter asrSetter(
           aBuilder);
-      if (IsStackingContext()) {
+      if (IsStackingContext() || row->IsStackingContext() ||
+          rowGroup->IsStackingContext() || tableFrame->IsStackingContext()) {
         // The col/colgroup items we create below will be inserted directly into
         // the BorderBackgrounds list of the table frame. That means that
-        // they'll be moved *outside* of any wrapper items from this table cell,
-        // and will not participate in this table cell's opacity / transform /
-        // filter / mask effects. If this cell is a stacking context, then we
+        // they'll be moved *outside* of any wrapper items created for any
+        // frames between this table cell frame and the table wrapper frame, and
+        // will not participate in those frames's opacity / transform / filter /
+        // mask effects. If one of those frames is a stacking context, then we
         // may have one or more of those wrapper items, and one of them may have
         // captured a clip. In order to ensure correct clipping and scrolling of
         // the col/colgroup items, restore the clip and ASR that we observed
-        // when we entered the table frame. If this cell is a stacking context
+        // when we entered the table frame. If that frame is a stacking context
         // but doesn't have any clip capturing wrapper items, then we'll
         // double-apply the clip. That's ok.
         clipState.SetClipChainForContainingBlockDescendants(

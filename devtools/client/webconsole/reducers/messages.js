@@ -7,27 +7,27 @@ const {
   isGroupType,
   isMessageNetworkError,
   l10n,
-} = require("devtools/client/webconsole/utils/messages");
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
-const constants = require("devtools/client/webconsole/constants");
+const constants = require("resource://devtools/client/webconsole/constants.js");
 const { DEFAULT_FILTERS, FILTERS, MESSAGE_TYPE, MESSAGE_SOURCE } = constants;
 
 loader.lazyRequireGetter(
   this,
   "getGripPreviewItems",
-  "devtools/client/shared/components/reps/index",
+  "resource://devtools/client/shared/components/reps/index.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "getUnicodeUrlPath",
-  "devtools/client/shared/unicode-url",
+  "resource://devtools/client/shared/unicode-url.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "getSourceNames",
-  "devtools/client/shared/source-utils",
+  "resource://devtools/client/shared/source-utils.js",
   true
 );
 loader.lazyRequireGetter(
@@ -41,15 +41,17 @@ loader.lazyRequireGetter(
     "getParentWarningGroupMessageId",
     "getNaturalOrder",
   ],
-  "devtools/client/webconsole/utils/messages",
+  "resource://devtools/client/webconsole/utils/messages.js",
   true
 );
 
-const { UPDATE_REQUEST } = require("devtools/client/netmonitor/src/constants");
+const {
+  UPDATE_REQUEST,
+} = require("resource://devtools/client/netmonitor/src/constants.js");
 
 const {
   processNetworkUpdates,
-} = require("devtools/client/netmonitor/src/utils/request-utils");
+} = require("resource://devtools/client/netmonitor/src/utils/request-utils.js");
 
 const MessageState = overrides =>
   Object.freeze(
@@ -318,9 +320,8 @@ function addMessage(newMessage, state, filtersState, prefsState, uiState) {
 
       // We loop backward through the warning group's messages to get the latest visible
       // messages in it.
-      const messagesInWarningGroup = state.warningGroupsById.get(
-        warningGroupId
-      );
+      const messagesInWarningGroup =
+        state.warningGroupsById.get(warningGroupId);
       for (let i = messagesInWarningGroup.length - 1; i >= 0; i--) {
         const idx = state.visibleMessages.indexOf(messagesInWarningGroup[i]);
         if (idx > -1) {
@@ -730,7 +731,6 @@ function messages(
     case constants.FILTER_TEXT_SET:
     case constants.FILTERS_CLEAR:
     case constants.DEFAULT_FILTERS_RESET:
-    case constants.SHOW_CONTENT_MESSAGES_TOGGLE:
       return setVisibleMessages({
         messagesState: state,
         filtersState,
@@ -862,7 +862,7 @@ function getNewCurrentGroup(currentGroup, groupsById, ignoredIds = []) {
   const parents = groupsById.get(currentGroup);
 
   // If there's at least one parent, make the first one the new currentGroup.
-  if (Array.isArray(parents) && parents.length > 0) {
+  if (Array.isArray(parents) && parents.length) {
     // If the found group must be ignored, let's search for its parent.
     if (ignoredIds.includes(parents[0])) {
       return getNewCurrentGroup(parents[0], groupsById, ignoredIds);
@@ -882,7 +882,7 @@ function getParentGroups(currentGroup, groupsById) {
 
     // As well as all its parents, if it has some.
     const parentGroups = groupsById.get(currentGroup);
-    if (Array.isArray(parentGroups) && parentGroups.length > 0) {
+    if (Array.isArray(parentGroups) && parentGroups.length) {
       groups = groups.concat(parentGroups);
     }
   }
@@ -980,7 +980,7 @@ function removeMessagesFromState(state, removedMessagesIds) {
     state.visibleMessages = visibleMessages;
   }
 
-  if (frontsToRelease.length > 0) {
+  if (frontsToRelease.length) {
     state.frontsToRelease = state.frontsToRelease.concat(frontsToRelease);
   }
 
@@ -1129,21 +1129,6 @@ function getMessageVisibility(
     hasMatchedAncestor = false,
   }
 ) {
-  // Do not display the message if it's not from chromeContext and we don't show content
-  // messages.
-  if (
-    !uiState.showContentMessages &&
-    // chromeContext is only included in message when it is true
-    message.chromeContext !== true &&
-    message.type !== MESSAGE_TYPE.COMMAND &&
-    message.type !== MESSAGE_TYPE.RESULT
-  ) {
-    return {
-      visible: false,
-      cause: "contentMessage",
-    };
-  }
-
   const warningGroupMessageId = getParentWarningGroupMessageId(message);
   const parentWarningGroupMessage = messagesState.mutableMessagesById.get(
     warningGroupMessageId

@@ -45,9 +45,6 @@ NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(DOMSVGLength)
   NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(DOMSVGLength, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(DOMSVGLength, Release)
-
 DOMSVGLength::DOMSVGLength(DOMSVGLengthList* aList, uint8_t aAttrEnum,
                            uint32_t aListIndex, bool aIsAnimValItem)
     : mOwner(aList),
@@ -135,16 +132,26 @@ uint16_t DOMSVGLength::UnitType() {
   if (mIsAnimValItem) {
     Element()->FlushAnimations();
   }
+  uint16_t unitType;
   if (nsCOMPtr<SVGElement> svg = do_QueryInterface(mOwner)) {
-    return svg->GetAnimatedLength(mAttrEnum)->GetSpecifiedUnitType();
+    unitType = svg->GetAnimatedLength(mAttrEnum)->GetSpecifiedUnitType();
+  } else {
+    unitType = HasOwner() ? InternalItem().GetUnit() : mUnit;
   }
-  return HasOwner() ? InternalItem().GetUnit() : mUnit;
+
+  return SVGLength::IsValidUnitType(unitType)
+             ? unitType
+             : SVGLength_Binding::SVG_LENGTHTYPE_UNKNOWN;
 }
 
 float DOMSVGLength::GetValue(ErrorResult& aRv) {
   if (mIsAnimValItem) {
     Element()->FlushAnimations();  // May make HasOwner() == false
   }
+
+  // If the unit depends on style then we need to flush before converting
+  // to pixels.
+  FlushStyleIfNeeded();
 
   if (nsCOMPtr<SVGElement> svg = do_QueryInterface(mOwner)) {
     SVGAnimatedLength* length = svg->GetAnimatedLength(mAttrEnum);
@@ -153,17 +160,16 @@ float DOMSVGLength::GetValue(ErrorResult& aRv) {
   }
 
   if (nsCOMPtr<DOMSVGLengthList> lengthList = do_QueryInterface(mOwner)) {
-    float value = InternalItem().GetValueInUserUnits(lengthList->Element(),
-                                                     lengthList->Axis());
-    if (!IsFinite(value)) {
+    float value = InternalItem().GetValueInPixels(lengthList->Element(),
+                                                  lengthList->Axis());
+    if (!std::isfinite(value)) {
       aRv.Throw(NS_ERROR_FAILURE);
     }
     return value;
   }
 
-  float unitToPx;
-  if (UserSpaceMetrics::ResolveAbsoluteUnit(mUnit, unitToPx)) {
-    return mValue * unitToPx;
+  if (SVGLength::IsAbsoluteUnit(mUnit)) {
+    return SVGLength(mValue, mUnit).GetValueInPixels(nullptr, 0);
   }
 
   // else [SVGWG issue] Can't convert this length's value to user units
@@ -178,6 +184,10 @@ void DOMSVGLength::SetValue(float aUserUnitValue, ErrorResult& aRv) {
     return;
   }
 
+  // If the unit depends on style then we need to flush before converting
+  // from pixels.
+  FlushStyleIfNeeded();
+
   if (nsCOMPtr<SVGElement> svg = do_QueryInterface(mOwner)) {
     aRv = svg->GetAnimatedLength(mAttrEnum)->SetBaseValue(aUserUnitValue, svg,
                                                           true);
@@ -191,23 +201,23 @@ void DOMSVGLength::SetValue(float aUserUnitValue, ErrorResult& aRv) {
 
   if (nsCOMPtr<DOMSVGLengthList> lengthList = do_QueryInterface(mOwner)) {
     SVGLength& internalItem = InternalItem();
-    if (internalItem.GetValueInUserUnits(
-            lengthList->Element(), lengthList->Axis()) == aUserUnitValue) {
+    if (internalItem.GetValueInPixels(lengthList->Element(),
+                                      lengthList->Axis()) == aUserUnitValue) {
       return;
     }
-    float uuPerUnit = internalItem.GetUserUnitsPerUnit(lengthList->Element(),
-                                                       lengthList->Axis());
+    float uuPerUnit = internalItem.GetPixelsPerUnit(
+        SVGElementMetrics(lengthList->Element()), lengthList->Axis());
     if (uuPerUnit > 0) {
       float newValue = aUserUnitValue / uuPerUnit;
-      if (IsFinite(newValue)) {
+      if (std::isfinite(newValue)) {
         AutoChangeLengthListNotifier notifier(this);
         internalItem.SetValueAndUnit(newValue, internalItem.GetUnit());
         return;
       }
     }
-  } else if (mUnit == SVGLength_Binding::SVG_LENGTHTYPE_NUMBER ||
-             mUnit == SVGLength_Binding::SVG_LENGTHTYPE_PX) {
-    mValue = aUserUnitValue;
+  } else if (SVGLength::IsAbsoluteUnit(mUnit)) {
+    mValue = aUserUnitValue * SVGLength::GetAbsUnitsPerAbsUnit(
+                                  mUnit, SVGLength_Binding::SVG_LENGTHTYPE_PX);
     return;
   }
   // else [SVGWG issue] Can't convert user unit value to this length's unit
@@ -358,9 +368,12 @@ void DOMSVGLength::ConvertToSpecifiedUnits(uint16_t aUnit, ErrorResult& aRv) {
     val = length.GetValueInSpecifiedUnit(aUnit, lengthList->Element(),
                                          lengthList->Axis());
   } else {
+    if (mUnit == aUnit) {
+      return;
+    }
     val = SVGLength(mValue, mUnit).GetValueInSpecifiedUnit(aUnit, nullptr, 0);
   }
-  if (IsFinite(val)) {
+  if (std::isfinite(val)) {
     if (HasOwner()) {
       AutoChangeLengthListNotifier notifier(this);
       InternalItem().SetValueAndUnit(val, aUnit);
@@ -431,6 +444,24 @@ SVGLength& DOMSVGLength::InternalItem() {
       lengthList->Element()->GetAnimatedLengthList(mAttrEnum);
   return mIsAnimValItem && alist->mAnimVal ? (*alist->mAnimVal)[mListIndex]
                                            : alist->mBaseVal[mListIndex];
+}
+
+void DOMSVGLength::FlushStyleIfNeeded() {
+  auto MaybeFlush = [](uint16_t aUnitType, SVGElement* aSVGElement) {
+    if (!SVGLength::IsFontRelativeUnit(aUnitType)) {
+      return;
+    }
+    if (auto* currentDoc = aSVGElement->GetComposedDoc()) {
+      currentDoc->FlushPendingNotifications(FlushType::Style);
+    }
+  };
+
+  if (nsCOMPtr<SVGElement> svg = do_QueryInterface(mOwner)) {
+    MaybeFlush(svg->GetAnimatedLength(mAttrEnum)->GetSpecifiedUnitType(), svg);
+  }
+  if (nsCOMPtr<DOMSVGLengthList> lengthList = do_QueryInterface(mOwner)) {
+    MaybeFlush(InternalItem().GetUnit(), lengthList->Element());
+  }
 }
 
 #ifdef DEBUG

@@ -58,7 +58,7 @@ function initTestScript() {
 }
 var initTestScriptURL = "data:,(" + initTestScript.toString() + ")()";
 
-var checkProcess = async function(mm) {
+var checkProcess = async function (mm) {
   let { target } = await promiseMessage(mm, "ProcessTest:Loaded");
   target.sendAsyncMessage("ProcessTest:Reply");
   await promiseMessage(target, "ProcessTest:Finished");
@@ -76,14 +76,14 @@ function promiseMessage(messageManager, message) {
   });
 }
 
-add_task(async function() {
+add_task(async function () {
   // We want to count processes in this test, so let's disable the pre-allocated process manager.
   await SpecialPowers.pushPrefEnv({
     set: [["dom.ipc.processPrelaunch.enabled", false]],
   });
 });
 
-add_task(async function() {
+add_task(async function () {
   // This test is only relevant in e10s.
   if (!gMultiProcessBrowser) {
     return;
@@ -121,7 +121,7 @@ add_task(async function() {
 });
 
 // Test that loading a process script loads in all existing processes
-add_task(async function() {
+add_task(async function () {
   let checks = [];
   for (let i = 0; i < Services.ppmm.childCount; i++) {
     checks.push(checkProcess(Services.ppmm.getChildAt(i)));
@@ -132,7 +132,7 @@ add_task(async function() {
 });
 
 // Test that loading a process script loads in new processes
-add_task(async function() {
+add_task(async function () {
   // This test is only relevant in e10s
   if (!gMultiProcessBrowser) {
     return;
@@ -143,7 +143,7 @@ add_task(async function() {
   );
 
   // Load something in the main process
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:mozilla");
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:mozilla");
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   let init = Services.ppmm.initialProcessData;
@@ -169,7 +169,7 @@ add_task(async function() {
     gBrowser.updateBrowserRemoteness(gBrowser.selectedBrowser, {
       remoteType: E10SUtils.DEFAULT_REMOTE_TYPE,
     });
-    BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:blank");
+    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:blank");
     await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
     checkBaseProcessCount(

@@ -11,7 +11,7 @@ const TEST_FILE = "test-network-request.html";
 const TEST_PATH =
   "https://example.com/browser/devtools/client/webconsole/test/browser/";
 
-registerCleanupFunction(async function() {
+registerCleanupFunction(async function () {
   await new Promise(resolve => {
     Services.clearData.deleteData(Ci.nsIClearDataService.CLEAR_ALL, value =>
       resolve()
@@ -39,7 +39,7 @@ add_task(async function task() {
   ok(openResendRequestMenuItem, "resend network request item is enabled");
 
   // Wait for message containing the resent request url
-  openResendRequestMenuItem.click();
+  menuPopup.activateItem(openResendRequestMenuItem);
   await waitFor(
     () => findMessagesByType(hud, documentUrl, ".network").length === 2
   );

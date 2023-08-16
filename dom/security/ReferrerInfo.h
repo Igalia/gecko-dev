@@ -40,8 +40,6 @@ class nsHttpChannel;
 }  // namespace net
 }  // namespace mozilla
 
-using mozilla::Maybe;
-
 namespace mozilla::dom {
 
 /**
@@ -137,21 +135,11 @@ class ReferrerInfo : public nsIReferrerInfo {
    * Helper function to create new ReferrerInfo object from a given document.
    * The returned nsIReferrerInfo object will be used for any requests or
    * resources referenced by internal stylesheet (for example style="" or
-   * wrapped by <style> tag).
+   * wrapped by <style> tag), as well as SVG resources.
    *
    * @param aDocument the document to init referrerInfo object.
    */
-  static already_AddRefed<nsIReferrerInfo> CreateForInternalCSSResources(
-      Document* aDocument);
-
-  /**
-   * Helper function to create new ReferrerInfo object from a given document.
-   * The returned nsIReferrerInfo object will be used for any requests or
-   * resources referenced by SVG.
-   *
-   * @param aDocument the document to init referrerInfo object.
-   */
-  static already_AddRefed<nsIReferrerInfo> CreateForSVGResources(
+  static already_AddRefed<nsIReferrerInfo> CreateForInternalCSSAndSVGResources(
       Document* aDocument);
 
   /**
@@ -428,6 +416,13 @@ class ReferrerInfo : public nsIReferrerInfo {
   nsresult LimitReferrerLength(nsIHttpChannel* aChannel, nsIURI* aReferrer,
                                TrimmingPolicy aTrimmingPolicy,
                                nsACString& aInAndOutTrimmedReferrer) const;
+
+  /**
+   * The helper function to read the old data format before gecko 100 for
+   * deserialization.
+   */
+  nsresult ReadTailDataBeforeGecko100(const uint32_t& aData,
+                                      nsIObjectInputStream* aInputStream);
 
   /*
    * Write message to the error console

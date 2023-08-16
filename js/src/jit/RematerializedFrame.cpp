@@ -10,6 +10,7 @@
 #include <utility>
 
 #include "jit/Bailouts.h"
+#include "jit/JSJitFrameIter.h"
 #include "js/friend/DumpFunctions.h"  // js::DumpValue
 #include "vm/ArgumentsObject.h"
 
@@ -50,9 +51,9 @@ RematerializedFrame::RematerializedFrame(JSContext* cx, uint8_t* top,
   }
 
   CopyValueToRematerializedFrame op(slots_);
-  iter.readFrameArgsAndLocals(cx, op, op, &envChain_, &hasInitialEnv_,
-                              &returnValue_, &argsObj_, &thisArgument_,
-                              ReadFrame_Actuals, fallback);
+  iter.readFrameArgsAndLocals(
+      cx, op, op, &envChain_, &hasInitialEnv_, &returnValue_, &argsObj_,
+      &thisArgument_, ReadFrameArgsBehavior::ActualsAndFormals, fallback);
 }
 
 /* static */

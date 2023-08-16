@@ -2,24 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  JsonSchemaValidator:
+    "resource://gre/modules/components-utils/JsonSchemaValidator.sys.mjs",
   OpenGraphPageData: "resource:///modules/pagedata/OpenGraphPageData.sys.mjs",
   SchemaOrgPageData: "resource:///modules/pagedata/SchemaOrgPageData.sys.mjs",
   TwitterPageData: "resource:///modules/pagedata/TwitterPageData.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  JsonSchemaValidator:
-    "resource://gre/modules/components-utils/JsonSchemaValidator.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
   return console.createInstance({
     prefix: "PageData",
     maxLogLevel: Services.prefs.getBoolPref("browser.pagedata.log", false)
@@ -40,7 +33,7 @@ XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
  * The data returned need not be valid, collectors should return whatever they
  * can and then we drop anything that is invalid once all data is joined.
  */
-XPCOMUtils.defineLazyGetter(lazy, "DATA_COLLECTORS", function() {
+ChromeUtils.defineLazyGetter(lazy, "DATA_COLLECTORS", function () {
   return [lazy.SchemaOrgPageData, lazy.OpenGraphPageData, lazy.TwitterPageData];
 });
 
@@ -82,7 +75,7 @@ async function validateData(schemaName, data) {
   let result = lazy.JsonSchemaValidator.validate(data, schema, {
     allowExplicitUndefinedProperties: true,
     // Allowed for future expansion of the schema.
-    allowExtraProperties: true,
+    allowAdditionalProperties: true,
   });
 
   if (!result.valid) {

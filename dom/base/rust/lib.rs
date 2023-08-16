@@ -9,6 +9,7 @@ use bitflags::bitflags;
 bitflags! {
     /// Event-based element states.
     #[repr(C)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct ElementState: u64 {
         /// The mouse is down on this element.
         /// <https://html.spec.whatwg.org/multipage/#selector-active>
@@ -124,6 +125,9 @@ bitflags! {
         const VALUE_EMPTY = 1u64 << 47;
         /// For :-moz-revealed.
         const REVEALED = 1u64 << 48;
+        /// https://html.spec.whatwg.org/#selector-popover-open
+        /// Match element's popover visibility state of showing
+        const POPOVER_OPEN = 1u64 << 49;
 
         /// Some convenience unions.
         const DIR_STATES = Self::LTR.bits | Self::RTL.bits;
@@ -162,12 +166,14 @@ bitflags! {
             Self::FOCUSRING.bits |
             Self::FOCUS_WITHIN.bits |
             Self::FULLSCREEN.bits |
+            Self::POPOVER_OPEN.bits |
             Self::HOVER.bits |
             Self::URLTARGET.bits |
             Self::MODAL.bits |
             Self::INERT.bits |
             Self::TOPMOST_MODAL.bits |
-            Self::REVEALED.bits;
+            Self::REVEALED.bits |
+            Self::VALUE_EMPTY.bits;
 
         const INTRINSIC_STATES = !Self::EXTERNALLY_MANAGED_STATES.bits;
     }
@@ -176,6 +182,7 @@ bitflags! {
 bitflags! {
     /// Event-based document states.
     #[repr(C)]
+    #[derive(Clone, Copy, Eq, PartialEq)]
     pub struct DocumentState: u64 {
         /// Window activation status
         const WINDOW_INACTIVE = 1 << 0;

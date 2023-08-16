@@ -35,7 +35,6 @@ class SVGViewportElement;
 
 class UserSpaceMetrics {
  public:
-  static bool ResolveAbsoluteUnit(uint8_t aUnitType, float& aRes);
   virtual ~UserSpaceMetrics() = default;
 
   virtual float GetEmLength() const = 0;
@@ -46,32 +45,32 @@ class UserSpaceMetrics {
 class UserSpaceMetricsWithSize : public UserSpaceMetrics {
  public:
   virtual gfx::Size GetSize() const = 0;
-  virtual float GetAxisLength(uint8_t aCtxType) const override;
+  float GetAxisLength(uint8_t aCtxType) const override;
 };
 
 class SVGElementMetrics : public UserSpaceMetrics {
  public:
-  explicit SVGElementMetrics(SVGElement* aSVGElement,
-                             SVGViewportElement* aCtx = nullptr);
+  explicit SVGElementMetrics(const SVGElement* aSVGElement,
+                             const SVGViewportElement* aCtx = nullptr);
 
-  virtual float GetEmLength() const override;
-  virtual float GetExLength() const override;
-  virtual float GetAxisLength(uint8_t aCtxType) const override;
+  float GetEmLength() const override;
+  float GetExLength() const override;
+  float GetAxisLength(uint8_t aCtxType) const override;
 
  private:
   bool EnsureCtx() const;
 
-  SVGElement* mSVGElement;
-  mutable SVGViewportElement* mCtx;
+  const SVGElement* mSVGElement;
+  mutable const SVGViewportElement* mCtx;
 };
 
 class NonSVGFrameUserSpaceMetrics : public UserSpaceMetricsWithSize {
  public:
   explicit NonSVGFrameUserSpaceMetrics(nsIFrame* aFrame);
 
-  virtual float GetEmLength() const override;
-  virtual float GetExLength() const override;
-  virtual gfx::Size GetSize() const override;
+  float GetEmLength() const override;
+  float GetExLength() const override;
+  gfx::Size GetSize() const override;
 
  private:
   nsIFrame* mFrame;
@@ -114,17 +113,17 @@ class SVGAnimatedLength {
   void GetBaseValueString(nsAString& aValue) const;
   void GetAnimValueString(nsAString& aValue) const;
 
-  float GetBaseValue(SVGElement* aSVGElement) const {
+  float GetBaseValue(const SVGElement* aSVGElement) const {
     return mBaseVal * GetPixelsPerUnit(aSVGElement, mSpecifiedUnitType);
   }
 
-  float GetAnimValue(SVGElement* aSVGElement) const {
+  float GetAnimValue(const SVGElement* aSVGElement) const {
     return mAnimVal * GetPixelsPerUnit(aSVGElement, mSpecifiedUnitType);
   }
   float GetAnimValue(nsIFrame* aFrame) const {
     return mAnimVal * GetPixelsPerUnit(aFrame, mSpecifiedUnitType);
   }
-  float GetAnimValue(SVGViewportElement* aCtx) const {
+  float GetAnimValue(const SVGViewportElement* aCtx) const {
     return mAnimVal * GetPixelsPerUnit(aCtx, mSpecifiedUnitType);
   }
   float GetAnimValue(const UserSpaceMetrics& aMetrics) const {
@@ -139,10 +138,6 @@ class SVGAnimatedLength {
   }
   float GetAnimValInSpecifiedUnits() const { return mAnimVal; }
   float GetBaseValInSpecifiedUnits() const { return mBaseVal; }
-
-  float GetBaseValue(SVGViewportElement* aCtx) const {
-    return mBaseVal * GetPixelsPerUnit(aCtx, mSpecifiedUnitType);
-  }
 
   bool HasBaseVal() const { return mIsBaseSet; }
   // Returns true if the animated value of this length has been explicitly
@@ -173,8 +168,10 @@ class SVGAnimatedLength {
   float GetPixelsPerUnit(nsIFrame* aFrame, uint8_t aUnitType) const;
   float GetPixelsPerUnit(const UserSpaceMetrics& aMetrics,
                          uint8_t aUnitType) const;
-  float GetPixelsPerUnit(SVGElement* aSVGElement, uint8_t aUnitType) const;
-  float GetPixelsPerUnit(SVGViewportElement* aCtx, uint8_t aUnitType) const;
+  float GetPixelsPerUnit(const SVGElement* aSVGElement,
+                         uint8_t aUnitType) const;
+  float GetPixelsPerUnit(const SVGViewportElement* aCtx,
+                         uint8_t aUnitType) const;
 
   // SetBaseValue and SetAnimValue set the value in user units. This may fail
   // if unit conversion fails e.g. conversion to ex or em units where the
@@ -206,12 +203,13 @@ class SVGAnimatedLength {
     SVGElement* mSVGElement;
 
     // SMILAttr methods
-    virtual nsresult ValueFromString(
-        const nsAString& aStr, const dom::SVGAnimationElement* aSrcElement,
-        SMILValue& aValue, bool& aPreventCachingOfSandwich) const override;
-    virtual SMILValue GetBaseValue() const override;
-    virtual void ClearAnimValue() override;
-    virtual nsresult SetAnimValue(const SMILValue& aValue) override;
+    nsresult ValueFromString(const nsAString& aStr,
+                             const dom::SVGAnimationElement* aSrcElement,
+                             SMILValue& aValue,
+                             bool& aPreventCachingOfSandwich) const override;
+    SMILValue GetBaseValue() const override;
+    void ClearAnimValue() override;
+    nsresult SetAnimValue(const SMILValue& aValue) override;
   };
 };
 

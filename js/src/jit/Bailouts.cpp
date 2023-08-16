@@ -9,6 +9,7 @@
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/ScopeExit.h"
 
+#include "gc/GC.h"
 #include "jit/Assembler.h"  // jit::FramePointer
 #include "jit/BaselineJIT.h"
 #include "jit/JitFrames.h"
@@ -17,6 +18,7 @@
 #include "jit/JSJitFrameIter.h"
 #include "jit/SafepointIndex.h"
 #include "jit/ScriptFromCalleeToken.h"
+#include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/Stack.h"
 
@@ -116,6 +118,14 @@ bool jit::Bailout(BailoutStack* sp, BaselineBailoutInfo** bailoutInfo) {
                            0, 0x1000),
              "Fake exitfp pointer should be within the first page.");
 
+#ifdef DEBUG
+  // Reset the counter when we bailed after MDebugEnterGCUnsafeRegion, but
+  // before the matching MDebugLeaveGCUnsafeRegion.
+  //
+  // NOTE: EnterJit ensures the counter is zero when we enter JIT code.
+  cx->resetInUnsafeRegion();
+#endif
+
   cx->activation()->asJit()->setJSExitFP(FAKE_EXITFP_FOR_BAILOUT);
 
   JitActivationIterator jitActivations(cx);
@@ -184,6 +194,14 @@ bool jit::InvalidationBailout(InvalidationBailoutStack* sp,
   sp->checkInvariants();
 
   JSContext* cx = TlsContext.get();
+
+#ifdef DEBUG
+  // Reset the counter when we bailed after MDebugEnterGCUnsafeRegion, but
+  // before the matching MDebugLeaveGCUnsafeRegion.
+  //
+  // NOTE: EnterJit ensures the counter is zero when we enter JIT code.
+  cx->resetInUnsafeRegion();
+#endif
 
   // We don't have an exit frame.
   cx->activation()->asJit()->setJSExitFP(FAKE_EXITFP_FOR_BAILOUT);

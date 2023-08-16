@@ -61,7 +61,7 @@ bool IsOffscreenCanvasEnabled(JSContext* aCx, JSObject* aObj);
 
 // Check site-specific permission and display prompt if appropriate.
 bool IsImageExtractionAllowed(dom::Document* aDocument, JSContext* aCx,
-                              Maybe<nsIPrincipal*> aPrincipal);
+                              nsIPrincipal& aPrincipal);
 
 // Make a double out of |v|, treating undefined values as 0.0 (for
 // the sake of sparse arrays).  Return true iff coercion
@@ -70,7 +70,7 @@ bool CoerceDouble(const JS::Value& v, double* d);
 
 /* Float validation stuff */
 #define VALIDATE(_f) \
-  if (!IsFinite(_f)) return false
+  if (!std::isfinite(_f)) return false
 
 inline bool FloatValidate(double f1) {
   VALIDATE(f1);

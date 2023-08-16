@@ -4,28 +4,29 @@
 
 "use strict";
 
-const Services = require("Services");
-const MarkupContainer = require("devtools/client/inspector/markup/views/markup-container");
-const ElementEditor = require("devtools/client/inspector/markup/views/element-editor");
-const { ELEMENT_NODE } = require("devtools/shared/dom-node-constants");
-const { extend } = require("devtools/shared/extend");
+const MarkupContainer = require("resource://devtools/client/inspector/markup/views/markup-container.js");
+const ElementEditor = require("resource://devtools/client/inspector/markup/views/element-editor.js");
+const {
+  ELEMENT_NODE,
+} = require("resource://devtools/shared/dom-node-constants.js");
+const { extend } = require("resource://devtools/shared/extend.js");
 
 loader.lazyRequireGetter(
   this,
   "EventTooltip",
-  "devtools/client/shared/widgets/tooltip/EventTooltipHelper",
+  "resource://devtools/client/shared/widgets/tooltip/EventTooltipHelper.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   ["setImageTooltip", "setBrokenImageTooltip"],
-  "devtools/client/shared/widgets/tooltip/ImageTooltipHelper",
+  "resource://devtools/client/shared/widgets/tooltip/ImageTooltipHelper.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "clipboardHelper",
-  "devtools/shared/platform/clipboard"
+  "resource://devtools/shared/platform/clipboard.js"
 );
 
 const PREVIEW_MAX_DIM_PREF = "devtools.inspector.imagePreviewTooltipSize";
@@ -144,7 +145,7 @@ MarkupElementContainer.prototype = extend(MarkupContainer.prototype, {
     }
 
     // Fetch the preview from the server.
-    this.tooltipDataPromise = async function() {
+    this.tooltipDataPromise = async function () {
       const maxDim = Services.prefs.getIntPref(PREVIEW_MAX_DIM_PREF);
       const preview = await this.node.getImageData(maxDim);
       const data = await preview.data.string();

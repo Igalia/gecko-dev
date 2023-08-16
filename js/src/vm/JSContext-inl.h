@@ -10,21 +10,14 @@
 #include "vm/JSContext.h"
 
 #include <type_traits>
-#include <utility>
 
-#include "builtin/Object.h"
+#include "gc/Marking.h"
 #include "gc/Zone.h"
 #include "jit/JitFrames.h"
-#include "js/friend/StackLimits.h"  // js::CheckRecursionLimit
-#include "proxy/Proxy.h"
 #include "util/DiagnosticAssertions.h"
 #include "vm/BigIntType.h"
 #include "vm/GlobalObject.h"
-#include "vm/HelperThreads.h"
-#include "vm/Interpreter.h"
-#include "vm/Iteration.h"
 #include "vm/Realm.h"
-#include "vm/SymbolType.h"
 
 #include "vm/Activation-inl.h"  // js::Activation::hasWasmExitFP
 
@@ -270,8 +263,6 @@ MOZ_ALWAYS_INLINE bool CheckForInterrupt(JSContext* cx) {
 
 } /* namespace js */
 
-inline js::Nursery& JSContext::nursery() { return runtime()->gc.nursery(); }
-
 inline void JSContext::minorGC(JS::GCReason reason) {
   runtime()->gc.minorGC(reason);
 }
@@ -299,10 +290,7 @@ inline void JSContext::enterAtomsZone() {
   setZone(runtime_->unsafeAtomsZone());
 }
 
-inline void JSContext::setZone(js::Zone* zone) {
-  MOZ_ASSERT(!isHelperThreadContext());
-  zone_ = zone;
-}
+inline void JSContext::setZone(js::Zone* zone) { zone_ = zone; }
 
 inline void JSContext::enterRealmOf(JSObject* target) {
   JS::AssertCellIsNotGray(target);

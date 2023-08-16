@@ -7,6 +7,7 @@
 include("/dom/media/webrtc/third_party_build/webrtc.mozbuild")
 
 DEFINES["ENABLE_SET_CUBEB_BACKEND"] = True
+DEFINES["VISIBLE_TIMEUNIT_INTERNALS"] = True
 
 LOCAL_INCLUDES += [
     "/dom/media/mediasink",
@@ -53,6 +54,7 @@ UNIFIED_SOURCES += [
     "TestMediaMIMETypes.cpp",
     "TestMediaQueue.cpp",
     "TestMediaSpan.cpp",
+    "TestMediaUtils.cpp",
     "TestMP3Demuxer.cpp",
     "TestMP4Demuxer.cpp",
     "TestMuxer.cpp",
@@ -67,7 +69,6 @@ UNIFIED_SOURCES += [
     "TestVPXDecoding.cpp",
     "TestWebMBuffered.cpp",
     "TestWebMWriter.cpp",
-    "WaitFor.cpp",
     "YUVBufferGenerator.cpp",
 ]
 
@@ -109,6 +110,13 @@ TEST_HARNESS_FILES.gtest += [
     "test_case_1224361.vp8.ivf",
     "test_case_1224363.vp8.ivf",
     "test_case_1224369.vp8.ivf",
+    "test_InvalidElementId.webm",
+    "test_InvalidElementSize.webm",
+    "test_InvalidLargeEBMLMaxIdLength.webm",
+    "test_InvalidLargeElementId.webm",
+    "test_InvalidSmallEBMLMaxIdLength.webm",
+    "test_ValidLargeEBMLMaxIdLength.webm",
+    "test_ValidSmallEBMLMaxSizeLength.webm",
     "test_vbri.mp3",
 ]
 

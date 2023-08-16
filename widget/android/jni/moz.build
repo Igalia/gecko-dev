@@ -13,6 +13,7 @@ EXPORTS.mozilla.jni += [
     "GeckoBundleUtils.h",
     "GeckoResultUtils.h",
     "Natives.h",
+    "NativesInlines.h",
     "Refs.h",
     "TypeAdapter.h",
     "Types.h",
@@ -33,5 +34,3 @@ LOCAL_INCLUDES += [
     "/widget",
     "/widget/android",
 ]
-
-REQUIRES_UNIFIED_BUILD = True

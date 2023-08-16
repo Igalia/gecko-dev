@@ -2,16 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
-import { showFeatureCallout } from "./featureCallout.mjs";
-
-window.addEventListener("DOMContentLoaded", () => {
+window.addEventListener("DOMContentLoaded", async () => {
   Services.telemetry.setEventRecordingEnabled("firefoxview", true);
-  Services.telemetry.setEventRecordingEnabled("colorways", true);
   Services.telemetry.recordEvent("firefoxview", "entered", "firefoxview", null);
   document.getElementById("recently-closed-tabs-container").onLoad();
-  showFeatureCallout("FIREFOX_VIEW_FEATURE_TOUR");
+  // If Firefox View was reloaded by the user, force syncing of tabs
+  // to get the most up to date synced tabs.
+  if (
+    performance
+      .getEntriesByType("navigation")
+      .map(nav => nav.type)
+      .includes("reload")
+  ) {
+    await document.getElementById("tab-pickup-container").onReload();
+  }
 });
 
 window.addEventListener("unload", () => {

@@ -8,7 +8,9 @@
 const TEST_URI = CHROME_URL_ROOT + "doc_tableWidget_keyboard_interaction.xhtml";
 const TEST_OPT = "chrome,titlebar,toolbar,centerscreen,resizable,dialog=no";
 
-const { TableWidget } = require("devtools/client/shared/widgets/TableWidget");
+const {
+  TableWidget,
+} = require("resource://devtools/client/shared/widgets/TableWidget.js");
 
 var doc, table;
 
@@ -18,8 +20,8 @@ function test() {
 
   win.addEventListener(
     "load",
-    function() {
-      waitForFocus(function() {
+    function () {
+      waitForFocus(function () {
         doc = win.document;
         table = new TableWidget(doc.querySelector("box"), {
           initialColumns: {
@@ -50,7 +52,7 @@ function endTests() {
   finish();
 }
 
-var startTests = async function() {
+var startTests = async function () {
   populateTable();
   await testKeyboardInteraction();
   endTests();
@@ -144,7 +146,7 @@ function getNodeByValue(value) {
  * Tests if pressing navigation keys on the table items does the expected
  * behavior.
  */
-var testKeyboardInteraction = async function() {
+var testKeyboardInteraction = async function () {
   info("Testing keyboard interaction with the table");
   info("clicking on the row containing id2");
   const node = getNodeByValue("id2");

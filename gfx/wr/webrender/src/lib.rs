@@ -84,6 +84,7 @@ mod capture;
 mod clip;
 mod space;
 mod spatial_tree;
+mod command_buffer;
 mod composite;
 mod compositor;
 mod debug_colors;
@@ -94,10 +95,7 @@ mod ellipse;
 mod filterdata;
 mod frame_builder;
 mod freelist;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-mod gamma_lut;
 mod glyph_cache;
-mod glyph_rasterizer;
 mod gpu_cache;
 mod gpu_types;
 mod hit_test;
@@ -142,43 +140,6 @@ pub mod shader_source {
     include!(concat!(env!("OUT_DIR"), "/shaders.rs"));
 }
 
-mod platform {
-    #[cfg(target_os = "macos")]
-    pub use crate::platform::macos::font;
-    #[cfg(any(target_os = "android", all(unix, not(target_os = "macos"))))]
-    pub use crate::platform::unix::font;
-    #[cfg(target_os = "windows")]
-    pub use crate::platform::windows::font;
-
-    #[cfg(target_os = "macos")]
-    pub mod macos {
-        pub mod font;
-    }
-    #[cfg(any(target_os = "android", all(unix, not(target_os = "macos"))))]
-    pub mod unix {
-        pub mod font;
-    }
-    #[cfg(target_os = "windows")]
-    pub mod windows {
-        pub mod font;
-    }
-}
-
-#[cfg(target_os = "macos")]
-extern crate core_foundation;
-#[cfg(target_os = "macos")]
-extern crate core_graphics;
-#[cfg(target_os = "macos")]
-extern crate core_text;
-
-#[cfg(all(unix, not(target_os = "macos")))]
-extern crate freetype;
-#[cfg(all(unix, not(target_os = "macos")))]
-extern crate libc;
-
-#[cfg(target_os = "windows")]
-extern crate dwrote;
-
 extern crate bincode;
 extern crate byteorder;
 pub extern crate euclid;
@@ -209,23 +170,25 @@ pub use crate::device::{ProgramBinary, ProgramCache, ProgramCacheObserver, Forma
 pub use crate::device::Device;
 pub use crate::profiler::{ProfilerHooks, set_profiler_hooks};
 pub use crate::renderer::{
-    AsyncPropertySampler, CpuProfile, DebugFlags, GpuProfile, GraphicsApi,
-    GraphicsApiInfo, PipelineInfo, Renderer, RendererError, RendererOptions, RenderResults,
-    RendererStats, SceneBuilderHooks, Shaders, SharedShaders, ShaderPrecacheFlags,
-    MAX_VERTEX_TEXTURE_WIDTH, ONE_TIME_USAGE_HINT,
+    CpuProfile, DebugFlags, GpuProfile, GraphicsApi,
+    GraphicsApiInfo, PipelineInfo, Renderer, RendererError, RenderResults,
+    RendererStats, Shaders, SharedShaders, ShaderPrecacheFlags,
+    MAX_VERTEX_TEXTURE_WIDTH,
 };
+pub use crate::renderer::init::{WebRenderOptions, create_webrender_instance, AsyncPropertySampler, SceneBuilderHooks, ONE_TIME_USAGE_HINT};
 pub use crate::hit_test::SharedHitTester;
 pub use crate::internal_types::FastHashMap;
 pub use crate::screen_capture::{AsyncScreenshotHandle, RecordedFrameHandle};
 pub use crate::texture_cache::TextureCacheConfig;
 pub use api as webrender_api;
-pub use webrender_build::shader::ProgramSourceDigest;
+pub use webrender_build::shader::{ProgramSourceDigest, ShaderKind};
 pub use crate::picture::{TileDescriptor, TileId, InvalidationReason};
 pub use crate::picture::{PrimitiveCompareResult, CompareHelperResult};
 pub use crate::picture::{TileNode, TileNodeKind, TileOffset};
 pub use crate::intern::ItemUid;
 pub use crate::render_api::*;
 pub use crate::tile_cache::{PictureCacheDebugInfo, DirtyTileDebugInfo, TileDebugInfo, SliceDebugInfo};
+pub use glyph_rasterizer;
 
 #[cfg(feature = "sw_compositor")]
 pub use crate::compositor::sw_compositor;

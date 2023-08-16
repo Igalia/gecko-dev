@@ -9,8 +9,6 @@
   }],
 */
 
-/* import-globals-from ../../../../testing/mochitest/tests/SimpleTest/SimpleTest.js */
-
 var gPopupShownExpected = false;
 var gPopupShownListener;
 var gLastAutoCompleteResults;
@@ -26,28 +24,16 @@ const TelemetryFilterPropsAC = Object.freeze({
  * Returns the element with the specified |name| attribute.
  */
 function getFormElementByName(formNum, name) {
-  let form = document.getElementById("form" + formNum);
-  if (!form) {
-    ok(false, "getFormElementByName couldn't find requested form " + formNum);
+  const formElement = document.querySelector(
+    `#form${formNum} [name="${name}"]`
+  );
+
+  if (!formElement) {
+    ok(false, `getFormElementByName: Couldn't find specified CSS selector.`);
     return null;
   }
 
-  let element = form.elements.namedItem(name);
-  if (!element) {
-    ok(false, "getFormElementByName couldn't find requested element " + name);
-    return null;
-  }
-
-  // Note that namedItem is a bit stupid, and will prefer an
-  // |id| attribute over a |name| attribute when looking for
-  // the element.
-
-  if (element.hasAttribute("name") && element.getAttribute("name") != name) {
-    ok(false, "getFormElementByName got confused.");
-    return null;
-  }
-
-  return element;
+  return formElement;
 }
 
 function registerPopupShownListener(listener) {
@@ -132,54 +118,35 @@ function countEntries(name, value, then = null) {
 function updateFormHistory(changes, then = null) {
   return new Promise(resolve => {
     gChromeScript.sendAsyncMessage("updateFormHistory", { changes });
-    gChromeScript.addMessageListener("formHistoryUpdated", function updated({
-      ok,
-    }) {
-      gChromeScript.removeMessageListener("formHistoryUpdated", updated);
-      if (!ok) {
-        ok(false, "Error occurred updating form history");
-        SimpleTest.finish();
-        return;
-      }
+    gChromeScript.addMessageListener(
+      "formHistoryUpdated",
+      function updated({ ok }) {
+        gChromeScript.removeMessageListener("formHistoryUpdated", updated);
+        if (!ok) {
+          ok(false, "Error occurred updating form history");
+          SimpleTest.finish();
+          return;
+        }
 
-      if (then) {
-        then();
+        if (then) {
+          then();
+        }
+        resolve();
       }
-      resolve();
-    });
+    );
   });
 }
 
-function notifyMenuChanged(expectedCount, expectedFirstValue, then = null) {
-  return new Promise(resolve => {
-    gChromeScript.sendAsyncMessage("waitForMenuChange", {
-      expectedCount,
-      expectedFirstValue,
-    });
-    gChromeScript.addMessageListener("gotMenuChange", function changed({
-      results,
-    }) {
-      gChromeScript.removeMessageListener("gotMenuChange", changed);
-      gLastAutoCompleteResults = results;
-      if (then) {
-        then(results);
-      }
-      resolve(results);
-    });
-  });
+async function notifyMenuChanged(expectedCount, expectedFirstValue) {
+  gLastAutoCompleteResults = await gChromeScript.sendQuery(
+    "waitForMenuChange",
+    { expectedCount, expectedFirstValue }
+  );
+  return gLastAutoCompleteResults;
 }
 
-function notifySelectedIndex(expectedIndex, then = null) {
-  return new Promise(resolve => {
-    gChromeScript.sendAsyncMessage("waitForSelectedIndex", { expectedIndex });
-    gChromeScript.addMessageListener("gotSelectedIndex", function changed() {
-      gChromeScript.removeMessageListener("gotSelectedIndex", changed);
-      if (then) {
-        then();
-      }
-      resolve();
-    });
-  });
+function notifySelectedIndex(expectedIndex) {
+  return gChromeScript.sendQuery("waitForSelectedIndex", { expectedIndex });
 }
 
 function testMenuEntry(index, statement) {
@@ -216,26 +183,43 @@ function listenForUnexpectedPopupShown() {
   };
 }
 
-async function promiseNoUnexpectedPopupShown() {
+async function popupBy(triggerFn) {
+  gPopupShownExpected = true;
+  const promise = new Promise(resolve => {
+    gPopupShownListener = ({ results }) => {
+      gPopupShownExpected = false;
+      resolve(results);
+    };
+  });
+  if (triggerFn) {
+    triggerFn();
+  }
+  return promise;
+}
+
+async function noPopupBy(triggerFn) {
   gPopupShownExpected = false;
   listenForUnexpectedPopupShown();
   SimpleTest.requestFlakyTimeout(
     "Giving a chance for an unexpected popupshown to occur"
   );
-  await new Promise(resolve => setTimeout(resolve, 1000));
+  if (triggerFn) {
+    await triggerFn();
+  }
+  await new Promise(resolve => setTimeout(resolve, 500));
 }
 
-/**
- * Resolve at the next popupshown event for the autocomplete popup
- * @returns {Promise} with the results
- */
-function promiseACShown() {
-  gPopupShownExpected = true;
-  return new Promise(resolve => {
-    gPopupShownListener = ({ results }) => {
-      gPopupShownExpected = false;
-      resolve(results);
-    };
+async function popupByArrowDown() {
+  return popupBy(() => {
+    synthesizeKey("KEY_Escape"); // in case popup is already open
+    synthesizeKey("KEY_ArrowDown");
+  });
+}
+
+async function noPopupByArrowDown() {
+  await noPopupBy(() => {
+    synthesizeKey("KEY_Escape"); // in case popup is already open
+    synthesizeKey("KEY_ArrowDown");
   });
 }
 
@@ -277,6 +261,63 @@ function satchelCommonSetup() {
     await gChromeScript.sendQuery("cleanup");
     gChromeScript.destroy();
   });
+}
+
+function add_named_task(name, fn) {
+  add_task(
+    {
+      [name]() {
+        return fn();
+      },
+    }[name]
+  );
+}
+
+function preventSubmitOnForms() {
+  for (const form of document.querySelectorAll("form")) {
+    form.onsubmit = e => e.preventDefault();
+  }
+}
+
+/**
+ * Press requested keys and assert input's value
+ *
+ * @param {HTMLInputElement} input
+ * @param {string | Array} keys
+ * @param {string} expectedValue
+ */
+function assertValueAfterKeys(input, keys, expectedValue) {
+  if (!Array.isArray(keys)) {
+    keys = [keys];
+  }
+  for (const key of keys) {
+    synthesizeKey(key);
+  }
+
+  is(input.value, expectedValue, "input value");
+}
+
+function assertAutocompleteItems(...expectedValues) {
+  const actualValues = getMenuEntries();
+  isDeeply(actualValues, expectedValues, "expected autocomplete list");
+}
+
+function deleteSelectedAutocompleteItem() {
+  synthesizeKey("KEY_Delete", { shiftKey: true });
+}
+
+async function openPopupOn(
+  inputOrSelector,
+  { inputValue = "", expectPopup = true } = {}
+) {
+  const input =
+    typeof inputOrSelector == "string"
+      ? document.querySelector(inputOrSelector)
+      : inputOrSelector;
+  input.value = inputValue;
+  input.focus();
+  const items = await (expectPopup ? popupByArrowDown() : noPopupByArrowDown());
+  return { input, items };
 }
 
 satchelCommonSetup();

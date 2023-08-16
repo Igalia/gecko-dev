@@ -14,11 +14,14 @@
 #include "GLLibraryEGL.h"
 #include "mozilla/gfx/Logging.h"
 
+#ifdef MOZ_WIDGET_ANDROID
+#  include "mozilla/layers/LayersSurfaces.h"
+#endif
+
 using namespace mozilla;
 using namespace mozilla::gl;
 
-namespace mozilla {
-namespace layers {
+namespace mozilla::layers {
 
 static RefPtr<GLContext> sSnapshotContext;
 
@@ -72,17 +75,17 @@ already_AddRefed<gfx::SourceSurface> GLImage::GetAsSourceSurface() {
 }
 
 #ifdef MOZ_WIDGET_ANDROID
-SurfaceTextureImage::SurfaceTextureImage(AndroidSurfaceTextureHandle aHandle,
-                                         const gfx::IntSize& aSize,
-                                         bool aContinuous,
-                                         gl::OriginPos aOriginPos,
-                                         bool aHasAlpha /* = true */)
+SurfaceTextureImage::SurfaceTextureImage(
+    AndroidSurfaceTextureHandle aHandle, const gfx::IntSize& aSize,
+    bool aContinuous, gl::OriginPos aOriginPos, bool aHasAlpha,
+    Maybe<gfx::Matrix4x4> aTransformOverride)
     : GLImage(ImageFormat::SURFACE_TEXTURE),
       mHandle(aHandle),
       mSize(aSize),
       mContinuous(aContinuous),
       mOriginPos(aOriginPos),
-      mHasAlpha(aHasAlpha) {
+      mHasAlpha(aHasAlpha),
+      mTransformOverride(aTransformOverride) {
   MOZ_ASSERT(mHandle);
 }
 
@@ -90,10 +93,9 @@ Maybe<SurfaceDescriptor> SurfaceTextureImage::GetDesc() {
   SurfaceDescriptor sd = SurfaceTextureDescriptor(
       mHandle, mSize,
       mHasAlpha ? gfx::SurfaceFormat::R8G8B8A8 : gfx::SurfaceFormat::R8G8B8X8,
-      false /* NOT continuous */, false /* do not ignore transform */);
+      false /* NOT continuous */, mTransformOverride);
   return Some(sd);
 }
 #endif
 
-}  // namespace layers
-}  // namespace mozilla
+}  // namespace mozilla::layers

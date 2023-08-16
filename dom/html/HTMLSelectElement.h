@@ -13,6 +13,7 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/UnionTypes.h"
 #include "mozilla/dom/HTMLOptionsCollection.h"
+#include "mozilla/EnumSet.h"
 #include "nsCheapSets.h"
 #include "nsCOMPtr.h"
 #include "nsError.h"
@@ -53,7 +54,7 @@ class MOZ_STACK_CLASS SafeOptionListMutation {
   void MutationFailed() { mNeedsRebuild = true; }
 
  private:
-  static void* operator new(size_t) noexcept(true) { return 0; }
+  static void* operator new(size_t) noexcept(true) { return nullptr; }
   static void operator delete(void*, size_t) {}
   /** The select element which option list is being mutated. */
   RefPtr<HTMLSelectElement> mSelect;
@@ -77,26 +78,31 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
                                 public ConstraintValidation {
  public:
   /**
-   *  IS_SELECTED   whether to set the option(s) to true or false
+   *  IsSelected        whether to set the option(s) to true or false
    *
-   *  CLEAR_ALL     whether to clear all other options (for example, if you
-   *                are normal-clicking on the current option)
+   *  ClearAll          whether to clear all other options (for example, if you
+   *                     are normal-clicking on the current option)
    *
-   *  SET_DISABLED  whether it is permissible to set disabled options
-   *                (for JavaScript)
+   *  SetDisabled       whether it is permissible to set disabled options
+   *                     (for JavaScript)
    *
-   *  NOTIFY        whether to notify frames and such
+   *  Notify             whether to notify frames and such
    *
-   *  NO_RESELECT   no need to select something after an option is deselected
-   *                (for reset)
+   *  NoReselect        no need to select something after an option is
+   * deselected (for reset)
+   *
+   *  InsertingOptions  if an option has just been inserted some bailouts can't
+   * be taken
    */
-  enum OptionType {
-    IS_SELECTED = 1 << 0,
-    CLEAR_ALL = 1 << 1,
-    SET_DISABLED = 1 << 2,
-    NOTIFY = 1 << 3,
-    NO_RESELECT = 1 << 4
+  enum class OptionFlag : uint8_t {
+    IsSelected,
+    ClearAll,
+    SetDisabled,
+    Notify,
+    NoReselect,
+    InsertingOptions
   };
+  using OptionFlags = EnumSet<OptionFlag>;
 
   using ConstraintValidation::GetValidationMessage;
 
@@ -109,16 +115,12 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   // nsISupports
   NS_DECL_ISUPPORTS_INHERITED
 
-  virtual int32_t TabIndexDefault() override;
+  int32_t TabIndexDefault() override;
 
   // Element
-  virtual bool IsInteractiveHTMLContent() const override { return true; }
+  bool IsInteractiveHTMLContent() const override { return true; }
 
   // WebIdl HTMLSelectElement
-  bool Autofocus() const { return GetBoolAttr(nsGkAtoms::autofocus); }
-  void SetAutofocus(bool aVal, ErrorResult& aRv) {
-    SetHTMLBoolAttr(nsGkAtoms::autofocus, aVal, aRv);
-  }
   void GetAutocomplete(DOMString& aValue);
   void SetAutocomplete(const nsAString& aValue, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::autocomplete, aValue, aRv);
@@ -186,22 +188,21 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   using nsINode::Remove;
 
   // nsINode
-  virtual JSObject* WrapNode(JSContext* aCx,
-                             JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapNode(JSContext*, JS::Handle<JSObject*> aGivenProto) override;
 
   // nsIContent
   void GetEventTargetParent(EventChainPreVisitor& aVisitor) override;
   MOZ_CAN_RUN_SCRIPT
   nsresult PostHandleEvent(EventChainPostVisitor& aVisitor) override;
 
-  virtual bool IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
-                               int32_t* aTabIndex) override;
-  virtual void InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
-                                 bool aNotify, ErrorResult& aRv) override;
-  virtual void RemoveChildNode(nsIContent* aKid, bool aNotify) override;
+  bool IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
+                       int32_t* aTabIndex) override;
+  void InsertChildBefore(nsIContent* aKid, nsIContent* aBeforeThis,
+                         bool aNotify, ErrorResult& aRv) override;
+  void RemoveChildNode(nsIContent* aKid, bool aNotify) override;
 
   // nsGenericHTMLElement
-  virtual bool IsDisabledForEvents(WidgetEvent* aEvent) override;
+  bool IsDisabledForEvents(WidgetEvent* aEvent) override;
 
   // nsGenericHTMLFormElement
   void SaveState() override;
@@ -211,7 +212,7 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   NS_IMETHOD Reset() override;
   NS_IMETHOD SubmitNamesValues(FormData* aFormData) override;
 
-  virtual void FieldSetDisabledChanged(bool aNotify) override;
+  void FieldSetDisabledChanged(bool aNotify) override;
 
   ElementState IntrinsicState() const override;
 
@@ -262,36 +263,32 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
    * @return whether any options were actually changed
    */
   bool SetOptionsSelectedByIndex(int32_t aStartIndex, int32_t aEndIndex,
-                                 uint32_t aOptionsMask);
+                                 OptionFlags aOptionsMask);
 
   /**
    * Called when an attribute is about to be changed
    */
-  virtual nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  virtual void UnbindFromTree(bool aNullParent) override;
-  virtual nsresult BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                 const nsAttrValueOrString* aValue,
-                                 bool aNotify) override;
-  virtual nsresult AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aSubjectPrincipal,
-                                bool aNotify) override;
+  nsresult BindToTree(BindContext&, nsINode& aParent) override;
+  void UnbindFromTree(bool aNullParent) override;
+  void BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                     const nsAttrValue* aValue, bool aNotify) override;
+  void AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                    const nsAttrValue* aValue, const nsAttrValue* aOldValue,
+                    nsIPrincipal* aSubjectPrincipal, bool aNotify) override;
 
-  virtual void DoneAddingChildren(bool aHaveNotified) override;
-  virtual bool IsDoneAddingChildren() override { return mIsDoneAddingChildren; }
+  void DoneAddingChildren(bool aHaveNotified) override;
+  bool IsDoneAddingChildren() const { return mIsDoneAddingChildren; }
 
-  virtual bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
-                              const nsAString& aValue,
-                              nsIPrincipal* aMaybeScriptedPrincipal,
-                              nsAttrValue& aResult) override;
-  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction()
-      const override;
-  virtual nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
-                                              int32_t aModType) const override;
+  bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
+                      const nsAString& aValue,
+                      nsIPrincipal* aMaybeScriptedPrincipal,
+                      nsAttrValue& aResult) override;
+  nsMapRuleToAttributesFunc GetAttributeMappingFunction() const override;
+  nsChangeHint GetAttributeChangeHint(const nsAtom* aAttribute,
+                                      int32_t aModType) const override;
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const override;
 
-  virtual nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
+  nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
 
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(
       HTMLSelectElement, nsGenericHTMLFormControlElementWithState)
@@ -543,8 +540,7 @@ class HTMLSelectElement final : public nsGenericHTMLFormControlElementWithState,
   nsString mPreviewValue;
 
  private:
-  static void MapAttributesIntoRule(const nsMappedAttributes* aAttributes,
-                                    MappedDeclarations&);
+  static void MapAttributesIntoRule(MappedDeclarationsBuilder&);
 };
 
 }  // namespace dom

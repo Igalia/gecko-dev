@@ -86,6 +86,7 @@ Structure:
           ua: <string>, // identifier derived from the user agent downloading the installer, e.g., chrome, Google Chrome 123
           dltoken: <string>, // Unique token created at Firefox download time. ex: c18f86a3-f228-4d98-91bb-f90135c0aa9c
           msstoresignedin: <boolean>, // optional, only present if the installation was done through the Microsoft Store, and was able to retrieve the "campaign ID" it was first installed with. this value is "true" if the user was signed into the Microsoft Store when they first installed, and false otherwise
+          dlsource: <string>, // identifier that indicate where installations of Firefox originate
         },
         sandbox: {
           effectiveContentProcessLevel: <integer>,
@@ -125,6 +126,8 @@ Structure:
             count: <number>,  // desktop only, e.g. 8, or null on failure - logical cpus
             cores: <number>, // desktop only, e.g., 4, or null on failure - physical cores
             vendor: <string>, // desktop only, e.g. "GenuineIntel", or null on failure
+            name: <string>, // desktop only, e.g. "Intel(R) Core(TM) i9-8950HK CPU @ 2.90GHz",
+                            // or null on failure
             family: <number>, // desktop only, null on failure
             model: <number, // desktop only, null on failure
             stepping: <number>, // desktop only, null on failure
@@ -181,6 +184,7 @@ Structure:
             DWriteEnabled: <bool>, // null on failure
             ContentBackend: <string> // One of "Cairo", "Skia", or "Direct2D 1.1"
             Headless: <bool>, // null on failure
+            TargetFrameRate: <number>, // frame rate in Hz, typically 60 or more
             //DWriteVersion: <string>, // temporarily removed, pending bug 1154500
             adapters: [
               {
@@ -381,6 +385,16 @@ The following is a partial list of `collected preferences <https://searchfox.org
 
 - ``browser.fixup.alternate.enabled``: Whether the browser should try to modify unknown hosts by adding a prefix (e.g. www) and a suffix (.com). Defaults to false.
 
+- ``browser.migrate.interactions.bookmarks``: True if the user has imported bookmarks from another browser before. This preference gets transferred during profile resets.
+
+- ``browser.migrate.interactions.csvpasswords``: True if the user has imported passwords through the migration wizard from a CSV file. This preference gets transferred during profile resets.
+
+- ``browser.migrate.interactions.history``: True if the user has imported history from another browser before. This preference gets transferred during profile resets.
+
+- ``browser.migrate.interactions.passwords``: True if the user has imported passwords from another browser before. This preference gets transferred during profile resets.
+
+- ``browser.privatebrowsing.autostart``: True if the user has enabled the permanent private browsing mode. Defaults to false.
+
 - ``browser.search.suggest.enabled``: The "master switch" for search suggestions everywhere in Firefox (search bar, urlbar, etc.). Defaults to true.
 
 - ``browser.urlbar.autoFill``: The global preference for whether autofill in the urlbar is enabled. When false, all types of autofill are disabled.
@@ -392,6 +406,8 @@ The following is a partial list of `collected preferences <https://searchfox.org
 - ``browser.urlbar.quicksuggest.onboardingDialogChoice``: The user's choice in the Firefox Suggest onboarding dialog. If the dialog was shown multiple times, this records the user's most recent choice. Values are the following. Empty string: The user has not made a choice (e.g., because the dialog hasn't been shown). ``accept_2`` is recorded when the user accepts the dialog and opts in, ``reject_2`` is recorded when the user rejects the dialog and opts out, ``learn_more_1`` is recorded when the user clicks "Learn more" on the introduction section (the user remains opted out), ``learn_more_2`` is recorded when the user clicks "Learn more" on the main section (the user remains opted out), ``close_1`` is recorded when the user clicks close button on the introduction section (the user remains opted out), ``not_now_2`` is recorded when the user clicks "Not now" link on main section (the user remains opted out), ``dismiss_1`` recorded when the user dismisses the dialog on the introduction section (the user remains opted out), ``dismiss_2`` recorded when the user dismisses the dialog on main (the user remains opted out).
 
 - ``browser.urlbar.quicksuggest.dataCollection.enabled``: Whether the user has opted in to data collection for Firefox Suggest. This pref is set to true when the user opts in to the Firefox Suggest onboarding dialog modal. The user can also toggle the pref using a toggle switch in the Firefox Suggest preferences UI.
+
+- ``browser.urlbar.showSearchTerms.enabled``: True if to show the search term in the urlbar while on a default search engine results page.
 
 - ``browser.urlbar.suggest.bestmatch``: True if to show best match result is enabled in the urlbar.
 
@@ -427,6 +443,8 @@ The following is a partial list of `collected preferences <https://searchfox.org
 
 - ``extensions.eventPages.enabled``: Whether non-persistent background pages (also known as Event pages) should be enabled for `"manifest_version": 2` extensions.
 
+- ``extensions.quarantinedDomains.enabled``: Whether "Quarantined Domains" is enabled.
+
 - ``extensions.manifestV3.enabled``: Whether `"manifest_version": 3` extensions should be allowed to install successfully.
 
 - ``media.gmp-gmpopenh264.enabled``: Whether OpenH264 is enabled.
@@ -448,6 +466,12 @@ The following is a partial list of `collected preferences <https://searchfox.org
 - ``media.gmp-manager.lastCheck``: When the gmp-manager last checked for updates as seconds since Jan 1, 1970.
 
 - ``media.gmp-manager.lastEmptyCheck``: When the gmp-manager last checked for updates and there was nothing to install as seconds since Jan 1, 1970.
+
+- ``nimbus.qa.pref-1``: Used to monitor the results of pref-setting test experiments.
+
+- ``nimbus.qa.pref-2``: Used to monitor the results of pref-setting test experiments.
+
+- ``signon.firefoxRelay.feature``: User choice regarding Firefox Relay integration with Firefox Password Manager. Can be one of undefined, "available", "offered", "enabled" or "disabled".
 
 attribution
 ~~~~~~~~~~~

@@ -3,7 +3,7 @@ import {
   actionCreators as ac,
   actionTypes as at,
   actionUtils as au,
-} from "common/Actions.jsm";
+} from "common/Actions.sys.mjs";
 import {
   ASRouterEventPing,
   BasePing,
@@ -11,10 +11,10 @@ import {
   SessionPing,
   UserEventPing,
 } from "test/schemas/pings";
-import { FakePrefs, GlobalOverrider } from "test/unit/utils";
+import { FAKE_GLOBAL_PREFS, GlobalOverrider } from "test/unit/utils";
 import { ASRouterPreferences } from "lib/ASRouterPreferences.jsm";
 import injector from "inject!lib/TelemetryFeed.jsm";
-import { MESSAGE_TYPE_HASH as msg } from "common/ActorConstants.jsm";
+import { MESSAGE_TYPE_HASH as msg } from "common/ActorConstants.sys.mjs";
 
 const FAKE_UUID = "{foo-123-foo}";
 const FAKE_ROUTER_MESSAGE_PROVIDER = [{ id: "cfr", enabled: true }];
@@ -47,6 +47,28 @@ describe("TelemetryFeed", () => {
     uninit() {}
   }
 
+  // Reset the global prefs before importing the `TelemetryFeed` module, to
+  // avoid a coverage miss caused by preference pollution when this test and
+  // `ActivityStream.test.js` are run together.
+  //
+  // The `TelemetryFeed` module defines a lazy `contextId` getter, which the
+  // `XPCOMUtils.defineLazyGetter` mock (defined in `unit-entry.js`) executes
+  // immediately, as soon as the module is imported.
+  //
+  // If this test runs first, there's no coverage miss: this test will load
+  // the `TelemetryFeed` module and run the lazy `contextId` getter, which will
+  // generate a fake context ID and store it in `FAKE_GLOBAL_PREFS`, covering
+  // all branches in the module. When `ActivityStream.test.js` runs, it'll load
+  // `TelemetryFeed` and run the lazy getter a second time, which will use the
+  // existing fake context ID from `FAKE_GLOBAL_PREFS` instead of generating a
+  // new one.
+  //
+  // But, if `ActivityStream.test.js` runs first, then loading `TelemetryFeed` a
+  // second time as part of this test will use the existing fake context ID from
+  // `FAKE_GLOBAL_PREFS`, missing coverage for the branch to generate a new
+  // context ID.
+  FAKE_GLOBAL_PREFS.clear();
+
   const {
     TelemetryFeed,
     USER_PREFS_ENCODING,
@@ -55,7 +77,7 @@ describe("TelemetryFeed", () => {
     EVENTS_TELEMETRY_PREF,
     STRUCTURED_INGESTION_ENDPOINT_PREF,
   } = injector({
-    "lib/UTEventReporting.jsm": { UTEventReporting },
+    "lib/UTEventReporting.sys.mjs": { UTEventReporting },
   });
 
   beforeEach(() => {
@@ -74,7 +96,7 @@ describe("TelemetryFeed", () => {
       },
       getSetting() {},
     };
-    sandbox.spy(global.Cu, "reportError");
+    sandbox.spy(global.console, "error");
     globals.set("AboutNewTab", {
       newTabURLOverridden: false,
       newTabURL: "",
@@ -99,7 +121,7 @@ describe("TelemetryFeed", () => {
   afterEach(() => {
     clock.restore();
     globals.restore();
-    FakePrefs.prototype.prefs = {};
+    FAKE_GLOBAL_PREFS.clear();
     ASRouterPreferences.uninit();
   });
   describe("#init", () => {
@@ -162,8 +184,7 @@ describe("TelemetryFeed", () => {
       assert.equal(instance._impressionId, FAKE_UUID);
     });
     it("should set impression id if it exists", () => {
-      FakePrefs.prototype.prefs = {};
-      FakePrefs.prototype.prefs[PREF_IMPRESSION_ID] = "fakeImpressionId";
+      FAKE_GLOBAL_PREFS.set(PREF_IMPRESSION_ID, "fakeImpressionId");
       assert.equal(new TelemetryFeed()._impressionId, "fakeImpressionId");
     });
     it("should register listeners on existing windows", () => {
@@ -183,8 +204,7 @@ describe("TelemetryFeed", () => {
     });
     describe("telemetry pref changes from false to true", () => {
       beforeEach(() => {
-        FakePrefs.prototype.prefs = {};
-        FakePrefs.prototype.prefs[TELEMETRY_PREF] = false;
+        FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, false);
         instance = new TelemetryFeed();
 
         assert.propertyVal(instance, "telemetryEnabled", false);
@@ -198,8 +218,7 @@ describe("TelemetryFeed", () => {
     });
     describe("events telemetry pref changes from false to true", () => {
       beforeEach(() => {
-        FakePrefs.prototype.prefs = {};
-        FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = false;
+        FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, false);
         instance = new TelemetryFeed();
 
         assert.propertyVal(instance, "eventTelemetryEnabled", false);
@@ -227,6 +246,94 @@ describe("TelemetryFeed", () => {
       [type, value] = Services.telemetry.scalarSet.secondCall.args;
       assert.equal(type, "deletion.request.context_id");
       assert.equal(value, FAKE_UUID);
+    });
+    describe("#_beginObservingNewtabPingPrefs", () => {
+      it("should record initial metrics from newtab prefs", () => {
+        FAKE_GLOBAL_PREFS.set(
+          "browser.newtabpage.activity-stream.feeds.topsites",
+          true
+        );
+        FAKE_GLOBAL_PREFS.set(
+          "browser.newtabpage.activity-stream.topSitesRows",
+          3
+        );
+        FAKE_GLOBAL_PREFS.set(
+          "browser.topsites.blockedSponsors",
+          '["mozilla"]'
+        );
+
+        sandbox.spy(Glean.topsites.enabled, "set");
+        sandbox.spy(Glean.topsites.rows, "set");
+        sandbox.spy(Glean.newtab.blockedSponsors, "set");
+
+        instance = new TelemetryFeed();
+        instance.init();
+
+        assert.calledOnce(Glean.topsites.enabled.set);
+        assert.calledWith(Glean.topsites.enabled.set, true);
+        assert.calledOnce(Glean.topsites.rows.set);
+        assert.calledWith(Glean.topsites.rows.set, 3);
+        assert.calledOnce(Glean.newtab.blockedSponsors.set);
+        assert.calledWith(Glean.newtab.blockedSponsors.set, ["mozilla"]);
+      });
+
+      it("should not record blocked sponsor metrics when bad json string is passed", () => {
+        FAKE_GLOBAL_PREFS.set("browser.topsites.blockedSponsors", "BAD[JSON]");
+
+        sandbox.spy(Glean.newtab.blockedSponsors, "set");
+
+        instance = new TelemetryFeed();
+        instance.init();
+
+        assert.notCalled(Glean.newtab.blockedSponsors.set);
+      });
+
+      it("should record new metrics for newtab pref changes", () => {
+        FAKE_GLOBAL_PREFS.set(
+          "browser.newtabpage.activity-stream.topSitesRows",
+          3
+        );
+        FAKE_GLOBAL_PREFS.set("browser.topsites.blockedSponsors", "[]");
+        sandbox.spy(Glean.topsites.rows, "set");
+        sandbox.spy(Glean.newtab.blockedSponsors, "set");
+
+        instance = new TelemetryFeed();
+        instance.init();
+
+        Services.prefs.setIntPref(
+          "browser.newtabpage.activity-stream.topSitesRows",
+          2
+        );
+
+        Services.prefs.setStringPref(
+          "browser.topsites.blockedSponsors",
+          '["mozilla"]'
+        );
+
+        assert.calledTwice(Glean.topsites.rows.set);
+        assert.calledWith(Glean.topsites.rows.set.firstCall, 3);
+        assert.calledWith(Glean.topsites.rows.set.secondCall, 2);
+        assert.calledWith(Glean.newtab.blockedSponsors.set.firstCall, []);
+        assert.calledWith(Glean.newtab.blockedSponsors.set.secondCall, [
+          "mozilla",
+        ]);
+      });
+      it("should ignore changes to other prefs", () => {
+        FAKE_GLOBAL_PREFS.set("some.other.pref", 123);
+        FAKE_GLOBAL_PREFS.set(
+          "browser.newtabpage.activity-stream.impressionId",
+          "{foo-123-foo}"
+        );
+
+        instance = new TelemetryFeed();
+        instance.init();
+
+        Services.prefs.setIntPref("some.other.pref", 456);
+        Services.prefs.setCharPref(
+          "browser.newtabpage.activity-stream.impressionId",
+          "{foo-456-foo}"
+        );
+      });
     });
   });
   describe("#handleEvent", () => {
@@ -505,8 +612,8 @@ describe("TelemetryFeed", () => {
       assert.isFalse(instance.sessions.has("foo"));
     });
     it("should call createSessionSendEvent and sendEvent with the sesssion", () => {
-      FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
-      FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
+      FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, true);
       instance = new TelemetryFeed();
 
       sandbox.stub(instance, "sendEvent");
@@ -528,9 +635,8 @@ describe("TelemetryFeed", () => {
   });
   describe("ping creators", () => {
     beforeEach(() => {
-      FakePrefs.prototype.prefs = {};
       for (const pref of Object.keys(USER_PREFS_ENCODING)) {
-        FakePrefs.prototype.prefs[pref] = true;
+        FAKE_GLOBAL_PREFS.set(pref, true);
         expectedUserPrefs |= USER_PREFS_ENCODING[pref];
       }
       instance.init();
@@ -766,6 +872,51 @@ describe("TelemetryFeed", () => {
       assert.propertyVal(ping, "bucket_id", "cfr_bucket_01");
       assert.propertyVal(ping, "message_id", "cfr_message_01");
     });
+    it("should use impression_id and bucket_id in Private Browsing", async () => {
+      globals.set("UpdateUtils", {
+        getUpdateChannel() {
+          return "release";
+        },
+      });
+      const data = {
+        action: "cfr_user_event",
+        event: "IMPRESSION",
+        is_private: true,
+        message_id: "cfr_message_01",
+        bucket_id: "cfr_bucket_01",
+      };
+      const { ping, pingType } = await instance.applyCFRPolicy(data);
+
+      assert.equal(pingType, "cfr");
+      assert.isUndefined(ping.client_id);
+      assert.propertyVal(ping, "impression_id", FAKE_UUID);
+      assert.propertyVal(ping, "message_id", "n/a");
+      assert.propertyVal(ping, "bucket_id", "cfr_bucket_01");
+    });
+    it("should use client_id and message_id in the experiment cohort in Private Browsing", async () => {
+      globals.set("UpdateUtils", {
+        getUpdateChannel() {
+          return "release";
+        },
+      });
+      sandbox.stub(ExperimentAPI, "getExperimentMetaData").returns({
+        slug: "SOME-CFR-EXP",
+      });
+      const data = {
+        action: "cfr_user_event",
+        event: "IMPRESSION",
+        is_private: true,
+        message_id: "cfr_message_01",
+        bucket_id: "cfr_bucket_01",
+      };
+      const { ping, pingType } = await instance.applyCFRPolicy(data);
+
+      assert.equal(pingType, "cfr");
+      assert.isUndefined(ping.impression_id);
+      assert.propertyVal(ping, "client_id", FAKE_TELEMETRY_ID);
+      assert.propertyVal(ping, "bucket_id", "cfr_bucket_01");
+      assert.propertyVal(ping, "message_id", "cfr_message_01");
+    });
   });
   describe("#applyWhatsNewPolicy", () => {
     it("should set client_id and set pingType", async () => {
@@ -928,7 +1079,7 @@ describe("TelemetryFeed", () => {
         session
       );
 
-      assert.calledOnce(global.Cu.reportError);
+      assert.calledOnce(global.console.error);
       assert.equal(pingType, "onboarding");
       assert.propertyVal(ping, "event_context", JSON.stringify({}));
       assert.propertyVal(ping, "message_id", "onboarding_message_01");
@@ -1192,7 +1343,7 @@ describe("TelemetryFeed", () => {
   });
   describe("#sendEvent", () => {
     it("should call sendEventPing on activity_stream_user_event", () => {
-      FakePrefs.prototype.prefs.telemetry = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
       const event = { action: "activity_stream_user_event" };
       instance = new TelemetryFeed();
       sandbox.spy(instance, "sendEventPing");
@@ -1202,7 +1353,7 @@ describe("TelemetryFeed", () => {
       assert.calledOnce(instance.sendEventPing);
     });
     it("should call sendSessionPing on activity_stream_session", () => {
-      FakePrefs.prototype.prefs.telemetry = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
       const event = { action: "activity_stream_session" };
       instance = new TelemetryFeed();
       sandbox.spy(instance, "sendSessionPing");
@@ -1214,8 +1365,8 @@ describe("TelemetryFeed", () => {
   });
   describe("#sendUTEvent", () => {
     it("should call the UT event function passed in", async () => {
-      FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
-      FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
+      FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, true);
       const event = {};
       instance = new TelemetryFeed();
       sandbox.stub(instance.utEvents, "sendUserEvent");
@@ -1227,7 +1378,7 @@ describe("TelemetryFeed", () => {
   });
   describe("#sendStructuredIngestionEvent", () => {
     it("should call PingCentre sendStructuredIngestionPing", async () => {
-      FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
       const event = {};
       instance = new TelemetryFeed();
       sandbox.stub(instance.pingCentre, "sendStructuredIngestionPing");
@@ -1382,7 +1533,7 @@ describe("TelemetryFeed", () => {
   });
   describe("#onAction", () => {
     beforeEach(() => {
-      FakePrefs.prototype.prefs = {};
+      FAKE_GLOBAL_PREFS.clear();
     });
     it("should call .init() on an INIT action", () => {
       const init = sandbox.stub(instance, "init");
@@ -1449,8 +1600,8 @@ describe("TelemetryFeed", () => {
       assert.calledWith(stub, "port123", data);
     });
     it("should send an event on a TELEMETRY_USER_EVENT action", () => {
-      FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
-      FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
+      FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, true);
       instance = new TelemetryFeed();
 
       const sendEvent = sandbox.stub(instance, "sendEvent");
@@ -1465,8 +1616,8 @@ describe("TelemetryFeed", () => {
       assert.calledWith(utSendUserEvent, eventCreator.returnValue);
     });
     it("should send an event on a DISCOVERY_STREAM_USER_EVENT action", () => {
-      FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
-      FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = true;
+      FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
+      FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, true);
       instance = new TelemetryFeed();
 
       const sendEvent = sandbox.stub(instance, "sendEvent");
@@ -1497,8 +1648,8 @@ describe("TelemetryFeed", () => {
       ];
       actions.forEach(type => {
         it(`${type} action`, () => {
-          FakePrefs.prototype.prefs[TELEMETRY_PREF] = true;
-          FakePrefs.prototype.prefs[EVENTS_TELEMETRY_PREF] = true;
+          FAKE_GLOBAL_PREFS.set(TELEMETRY_PREF, true);
+          FAKE_GLOBAL_PREFS.set(EVENTS_TELEMETRY_PREF, true);
           instance = new TelemetryFeed();
 
           const eventHandler = sandbox.spy(instance, "handleASRouterUserEvent");
@@ -1558,21 +1709,36 @@ describe("TelemetryFeed", () => {
         data
       );
     });
-    it("should call .handleTopSitesImpressionStats on a TOP_SITES_IMPRESSION_STATS action", () => {
+    it("should call .handleTopSitesSponsoredImpressionStats on a TOP_SITES_SPONSORED_IMPRESSION_STATS action", () => {
       const session = {};
       sandbox.stub(instance.sessions, "get").returns(session);
       const data = { type: "impression", tile_id: 42, position: 1 };
-      const action = { type: at.TOP_SITES_IMPRESSION_STATS, data };
-      sandbox.spy(instance, "handleTopSitesImpressionStats");
+      const action = { type: at.TOP_SITES_SPONSORED_IMPRESSION_STATS, data };
+      sandbox.spy(instance, "handleTopSitesSponsoredImpressionStats");
 
       instance.onAction(ac.AlsoToMain(action));
 
-      assert.calledOnce(instance.handleTopSitesImpressionStats);
+      assert.calledOnce(instance.handleTopSitesSponsoredImpressionStats);
       assert.deepEqual(
-        instance.handleTopSitesImpressionStats.firstCall.args[0].data,
+        instance.handleTopSitesSponsoredImpressionStats.firstCall.args[0].data,
         data
       );
     });
+  });
+  it("should call .handleTopSitesOrganicImpressionStats on a TOP_SITES_ORGANIC_IMPRESSION_STATS action", () => {
+    const session = {};
+    sandbox.stub(instance.sessions, "get").returns(session);
+    const data = { type: "impression", position: 1 };
+    const action = { type: at.TOP_SITES_ORGANIC_IMPRESSION_STATS, data };
+    sandbox.spy(instance, "handleTopSitesOrganicImpressionStats");
+
+    instance.onAction(ac.AlsoToMain(action));
+
+    assert.calledOnce(instance.handleTopSitesOrganicImpressionStats);
+    assert.deepEqual(
+      instance.handleTopSitesOrganicImpressionStats.firstCall.args[0].data,
+      data
+    );
   });
   describe("#handleNewTabInit", () => {
     it("should set the session as preloaded if the browser is preloaded", () => {
@@ -1635,6 +1801,8 @@ describe("TelemetryFeed", () => {
         })
       );
       // Services.prefs = {getBoolPref: key => fakePrefs[key]};
+      sandbox.spy(Glean.newtab.newtabCategory, "set");
+      sandbox.spy(Glean.newtab.homepageCategory, "set");
     });
     it("should send correct event data for about:home set to custom URL", async () => {
       fakeHomePageUrl = "https://searchprovider.com";
@@ -1649,6 +1817,8 @@ describe("TelemetryFeed", () => {
         home_url_category: "other",
       });
       assert.validate(sendEvent.firstCall.args[0], UserEventPing);
+      assert.calledOnce(Glean.newtab.homepageCategory.set);
+      assert.calledWith(Glean.newtab.homepageCategory.set, "other");
     });
     it("should send correct event data for about:newtab set to custom URL", async () => {
       globals.set("AboutNewTab", {
@@ -1666,6 +1836,8 @@ describe("TelemetryFeed", () => {
         newtab_url_category: "other",
       });
       assert.validate(sendEvent.firstCall.args[0], UserEventPing);
+      assert.calledOnce(Glean.newtab.newtabCategory.set);
+      assert.calledWith(Glean.newtab.newtabCategory.set, "other");
     });
     it("should not send an event if neither about:{home,newtab} are set to custom URL", async () => {
       instance._prefs.set(TELEMETRY_PREF, true);
@@ -1673,6 +1845,10 @@ describe("TelemetryFeed", () => {
 
       await instance.sendPageTakeoverData();
       assert.notCalled(sendEvent);
+      assert.calledOnce(Glean.newtab.newtabCategory.set);
+      assert.calledOnce(Glean.newtab.homepageCategory.set);
+      assert.calledWith(Glean.newtab.newtabCategory.set, "enabled");
+      assert.calledWith(Glean.newtab.homepageCategory.set, "enabled");
     });
     it("should send home_extension_id and newtab_extension_id when appropriate", async () => {
       const ID = "{abc-foo-bar}";
@@ -1689,6 +1865,31 @@ describe("TelemetryFeed", () => {
         newtab_extension_id: ID,
       });
       assert.validate(sendEvent.firstCall.args[0], UserEventPing);
+      assert.calledOnce(Glean.newtab.newtabCategory.set);
+      assert.calledOnce(Glean.newtab.homepageCategory.set);
+      assert.equal(Glean.newtab.newtabCategory.set.args[0], "extension");
+      assert.equal(Glean.newtab.homepageCategory.set.args[0], "extension");
+    });
+    it("instruments when newtab is disabled", async () => {
+      instance._prefs.set(TELEMETRY_PREF, true);
+      fakePrefs["browser.newtabpage.enabled"] = false;
+      await instance.sendPageTakeoverData();
+      assert.calledOnce(Glean.newtab.newtabCategory.set);
+      assert.calledWith(Glean.newtab.newtabCategory.set, "disabled");
+    });
+    it("instruments when homepage is disabled", async () => {
+      instance._prefs.set(TELEMETRY_PREF, true);
+      fakeHomePage.overridden = true;
+      await instance.sendPageTakeoverData();
+      assert.calledOnce(Glean.newtab.homepageCategory.set);
+      assert.calledWith(Glean.newtab.homepageCategory.set, "disabled");
+    });
+    it("should send a 'newtab' ping", async () => {
+      instance._prefs.set(TELEMETRY_PREF, true);
+      sandbox.spy(GleanPings.newtab, "submit");
+      await instance.sendPageTakeoverData();
+      assert.calledOnce(GleanPings.newtab.submit);
+      assert.calledWithExactly(GleanPings.newtab.submit, "component_init");
     });
   });
   describe("#sendDiscoveryStreamImpressions", () => {
@@ -1826,6 +2027,35 @@ describe("TelemetryFeed", () => {
         window_inner_height: 900,
       });
     });
+    it("should instrument pocket impressions", () => {
+      const session_id = "1337cafe";
+      const pos1 = 1;
+      const pos2 = 4;
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.impression, "record");
+
+      instance.handleDiscoveryStreamImpressionStats("_", {
+        source: "foo",
+        tiles: [
+          { id: 1, pos: pos1, type: "organic" },
+          { id: 2, pos: pos2, type: "spoc" },
+        ],
+        window_inner_width: 1000,
+        window_inner_height: 900,
+      });
+
+      assert.calledTwice(Glean.pocket.impression.record);
+      assert.deepEqual(Glean.pocket.impression.record.firstCall.args[0], {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: pos1,
+      });
+      assert.deepEqual(Glean.pocket.impression.record.secondCall.args[0], {
+        newtab_visit_id: session_id,
+        is_sponsored: true,
+        position: pos2,
+      });
+    });
   });
   describe("#handleDiscoveryStreamLoadedContent", () => {
     it("should throw for a missing session", () => {
@@ -1873,10 +2103,7 @@ describe("TelemetryFeed", () => {
       const fakeEndpoint = "http://fakeendpoint.com/base/";
       const fakeUUID = "{34f24486-f01a-9749-9c5b-21476af1fa77}";
       const fakeUUIDWithoutBraces = fakeUUID.substring(1, fakeUUID.length - 1);
-      FakePrefs.prototype.prefs = {};
-      FakePrefs.prototype.prefs[
-        STRUCTURED_INGESTION_ENDPOINT_PREF
-      ] = fakeEndpoint;
+      FAKE_GLOBAL_PREFS.set(STRUCTURED_INGESTION_ENDPOINT_PREF, fakeEndpoint);
       sandbox.stub(Services.uuid, "generateUUID").returns(fakeUUID);
       const feed = new TelemetryFeed();
       const url = feed._generateStructuredIngestionEndpoint(
@@ -1905,7 +2132,26 @@ describe("TelemetryFeed", () => {
 
       assert.calledOnce(instance.sendStructuredIngestionEvent);
     });
-    it("should reportError on unknown pingTypes", async () => {
+    it("should call submitGleanPingForPing on known pingTypes when telemetry is enabled", async () => {
+      const data = {
+        action: "onboarding_user_event",
+        event: "IMPRESSION",
+        message_id: "12345",
+      };
+      instance = new TelemetryFeed();
+      instance._prefs.set(TELEMETRY_PREF, true);
+      sandbox.spy(
+        global.AboutWelcomeTelemetry.prototype,
+        "submitGleanPingForPing"
+      );
+
+      await instance.handleASRouterUserEvent({ data });
+
+      assert.calledOnce(
+        global.AboutWelcomeTelemetry.prototype.submitGleanPingForPing
+      );
+    });
+    it("should console.error and not submit pings on unknown pingTypes", async () => {
       const data = {
         action: "unknown_event",
         event: "IMPRESSION",
@@ -1916,7 +2162,7 @@ describe("TelemetryFeed", () => {
 
       await instance.handleASRouterUserEvent({ data });
 
-      assert.calledOnce(global.Cu.reportError);
+      assert.calledOnce(global.console.error);
       assert.notCalled(instance.sendStructuredIngestionEvent);
     });
   });
@@ -1937,20 +2183,20 @@ describe("TelemetryFeed", () => {
       );
     });
   });
-  describe("#handleTopSitesImpressionStats", () => {
+  describe("#handleTopSitesSponsoredImpressionStats", () => {
     it("should call sendStructuredIngestionEvent on an impression event", async () => {
       const data = {
         type: "impression",
         tile_id: 42,
         source: "newtab",
-        position: 1,
+        position: 0,
         reporting_url: "https://test.reporting.net/",
       };
       instance = new TelemetryFeed();
       sandbox.spy(instance, "sendStructuredIngestionEvent");
       sandbox.spy(Services.telemetry, "keyedScalarAdd");
 
-      await instance.handleTopSitesImpressionStats({ data });
+      await instance.handleTopSitesSponsoredImpressionStats({ data });
 
       // Scalar should be added
       assert.calledOnce(Services.telemetry.keyedScalarAdd);
@@ -1984,14 +2230,14 @@ describe("TelemetryFeed", () => {
         type: "click",
         tile_id: 42,
         source: "newtab",
-        position: 1,
+        position: 0,
         reporting_url: "https://test.reporting.net/",
       };
       instance = new TelemetryFeed();
       sandbox.spy(instance, "sendStructuredIngestionEvent");
       sandbox.spy(Services.telemetry, "keyedScalarAdd");
 
-      await instance.handleTopSitesImpressionStats({ data });
+      await instance.handleTopSitesSponsoredImpressionStats({ data });
 
       // Scalar should be added
       assert.calledOnce(Services.telemetry.keyedScalarAdd);
@@ -2034,21 +2280,25 @@ describe("TelemetryFeed", () => {
       sandbox.stub(instance.sessions, "get").returns({ session_id });
       sandbox.spy(Glean.topsites.impression, "record");
 
-      await instance.handleTopSitesImpressionStats({ data });
+      await instance.handleTopSitesSponsoredImpressionStats({ data });
 
       // Event should be recorded
       assert.calledOnce(Glean.topsites.impression.record);
       assert.calledWith(Glean.topsites.impression.record, {
+        advertiser_name: "adnoid ads",
+        tile_id: "42",
         newtab_visit_id: session_id,
         is_sponsored: true,
+        position: 1,
       });
     });
     it("should record a Glean topsites.click event on a click event", async () => {
       const data = {
         type: "click",
+        advertiser: "test advertiser",
         tile_id: 42,
         source: "newtab",
-        position: 1,
+        position: 0,
         reporting_url: "https://test.reporting.net/",
       };
       instance = new TelemetryFeed();
@@ -2056,24 +2306,301 @@ describe("TelemetryFeed", () => {
       sandbox.stub(instance.sessions, "get").returns({ session_id });
       sandbox.spy(Glean.topsites.click, "record");
 
-      await instance.handleTopSitesImpressionStats({ data });
+      await instance.handleTopSitesSponsoredImpressionStats({ data });
 
       // Event should be recorded
       assert.calledOnce(Glean.topsites.click.record);
       assert.calledWith(Glean.topsites.click.record, {
+        advertiser_name: "test advertiser",
+        tile_id: "42",
         newtab_visit_id: session_id,
-        is_sponsored: false,
+        is_sponsored: true,
+        position: 0,
       });
     });
-    it("should reportError on unknown pingTypes", async () => {
+    it("should console.error on unknown pingTypes", async () => {
       const data = { type: "unknown_type" };
       instance = new TelemetryFeed();
       sandbox.spy(instance, "sendStructuredIngestionEvent");
 
-      await instance.handleTopSitesImpressionStats({ data });
+      await instance.handleTopSitesSponsoredImpressionStats({ data });
 
-      assert.calledOnce(global.Cu.reportError);
+      assert.calledOnce(global.console.error);
       assert.notCalled(instance.sendStructuredIngestionEvent);
+    });
+  });
+  describe("#handleTopSitesOrganicImpressionStats", () => {
+    it("should record a Glean topsites.impression event on an impression event", async () => {
+      const data = {
+        type: "impression",
+        source: "newtab",
+        position: 0,
+      };
+      instance = new TelemetryFeed();
+      const session_id = "decafc0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.topsites.impression, "record");
+
+      await instance.handleTopSitesOrganicImpressionStats({ data });
+
+      assert.calledOnce(Glean.topsites.impression.record);
+      assert.calledWith(Glean.topsites.impression.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: 0,
+      });
+    });
+    it("should record a Glean topsites.click event on a click event", async () => {
+      const data = {
+        type: "click",
+        source: "newtab",
+        position: 0,
+      };
+      instance = new TelemetryFeed();
+      const session_id = "decafc0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.topsites.click, "record");
+
+      await instance.handleTopSitesOrganicImpressionStats({ data });
+
+      assert.calledOnce(Glean.topsites.click.record);
+      assert.calledWith(Glean.topsites.click.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: 0,
+      });
+    });
+  });
+  describe("#handleDiscoveryStreamUserEvent", () => {
+    it("correctly handles action with no `data`", () => {
+      const action = ac.DiscoveryStreamUserEvent();
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+      sandbox.spy(Glean.pocket.click, "record");
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.notCalled(Glean.pocket.topicClick.record);
+      assert.notCalled(Glean.pocket.click.record);
+      assert.notCalled(Glean.pocket.save.record);
+    });
+    it("correctly handles CLICK data with no value", () => {
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: "POPULAR_TOPICS",
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.topicClick.record);
+      assert.calledWith(Glean.pocket.topicClick.record, {
+        newtab_visit_id: session_id,
+        topic: undefined,
+      });
+    });
+    it("correctly handles non-POPULAR_TOPICS CLICK data with no value", () => {
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: "not-POPULAR_TOPICS",
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+      sandbox.spy(Glean.pocket.click, "record");
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.notCalled(Glean.pocket.topicClick.record);
+      assert.notCalled(Glean.pocket.click.record);
+      assert.notCalled(Glean.pocket.save.record);
+    });
+    it("correctly handles CLICK data with non-POPULAR_TOPICS source", () => {
+      const topic = "atopic";
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: "not-POPULAR_TOPICS",
+        value: {
+          card_type: "topics_widget",
+          topic,
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.topicClick.record);
+      assert.calledWith(Glean.pocket.topicClick.record, {
+        newtab_visit_id: session_id,
+        topic,
+      });
+    });
+    it("doesn't instrument a CLICK without a card_type", () => {
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: "not-POPULAR_TOPICS",
+        value: {
+          card_type: "not spoc, organic, or topics_widget",
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+      sandbox.spy(Glean.pocket.click, "record");
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.notCalled(Glean.pocket.topicClick.record);
+      assert.notCalled(Glean.pocket.click.record);
+      assert.notCalled(Glean.pocket.save.record);
+    });
+    it("instruments a popular topic click", () => {
+      const topic = "entertainment";
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        source: "POPULAR_TOPICS",
+        value: {
+          card_type: "topics_widget",
+          topic,
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.topicClick, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.topicClick.record);
+      assert.calledWith(Glean.pocket.topicClick.record, {
+        newtab_visit_id: session_id,
+        topic,
+      });
+    });
+    it("instruments an organic top stories click", () => {
+      const action_position = 42;
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        action_position,
+        value: {
+          card_type: "organic",
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.click, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.click.record);
+      assert.calledWith(Glean.pocket.click.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: action_position,
+      });
+    });
+    it("instruments a sponsored top stories click", () => {
+      const action_position = 42;
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "CLICK",
+        action_position,
+        value: {
+          card_type: "spoc",
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.click, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.click.record);
+      assert.calledWith(Glean.pocket.click.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: true,
+        position: action_position,
+      });
+    });
+    it("instruments a save of an organic top story", () => {
+      const action_position = 42;
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "SAVE_TO_POCKET",
+        action_position,
+        value: {
+          card_type: "organic",
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.save.record);
+      assert.calledWith(Glean.pocket.save.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: action_position,
+      });
+    });
+    it("instruments a save of a sponsored top story", () => {
+      const action_position = 42;
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "SAVE_TO_POCKET",
+        action_position,
+        value: {
+          card_type: "spoc",
+        },
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.save.record);
+      assert.calledWith(Glean.pocket.save.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: true,
+        position: action_position,
+      });
+    });
+    it("instruments a save of a sponsored top story, without `value`", () => {
+      const action_position = 42;
+      const action = ac.DiscoveryStreamUserEvent({
+        event: "SAVE_TO_POCKET",
+        action_position,
+      });
+      instance = new TelemetryFeed();
+      const session_id = "c0ffee";
+      sandbox.stub(instance.sessions, "get").returns({ session_id });
+      sandbox.spy(Glean.pocket.save, "record");
+
+      instance.handleDiscoveryStreamUserEvent(action);
+
+      assert.calledOnce(Glean.pocket.save.record);
+      assert.calledWith(Glean.pocket.save.record, {
+        newtab_visit_id: session_id,
+        is_sponsored: false,
+        position: action_position,
+      });
     });
   });
 });

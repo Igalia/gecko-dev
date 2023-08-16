@@ -1785,7 +1785,7 @@ void MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(
   ma_move(a0, StackPointer);  // Use a0 since it is a first function argument
 
   // Call the handler.
-  using Fn = void (*)(ResumeFromException * rfe);
+  using Fn = void (*)(ResumeFromException* rfe);
   asMasm().setupUnalignedABICall(a1);
   asMasm().passABIArg(a0);
   asMasm().callWithABI<Fn, HandleException>(
@@ -1918,6 +1918,7 @@ void MacroAssemblerMIPS64Compat::handleFailureWithHandlerTail(
           FramePointer);
   loadPtr(Address(StackPointer, ResumeFromException::offsetOfStackPointer()),
           StackPointer);
+  ma_li(InstanceReg, ImmWord(wasm::FailInstanceReg));
   ret();
 
   // Found a wasm catch handler, restore state and jump to it.
@@ -2237,9 +2238,8 @@ void MacroAssembler::branchValueIsNurseryCellImpl(Condition cond,
   // temp may be InvalidReg, use scratch2 instead.
   SecondScratchRegisterScope scratch2(*this);
 
-  unboxGCThingForGCBarrier(value, scratch2);
-  orPtr(Imm32(gc::ChunkMask), scratch2);
-  loadPtr(Address(scratch2, gc::ChunkStoreBufferOffsetFromLastByte), scratch2);
+  getGCThingValueChunk(value, scratch2);
+  loadPtr(Address(scratch2, gc::ChunkStoreBufferOffset), scratch2);
   branchPtr(InvertCondition(cond), scratch2, ImmWord(0), label);
 
   bind(&done);
@@ -2258,27 +2258,11 @@ void MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
 // Memory access primitives.
 template <typename T>
 void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
-                                       MIRType valueType, const T& dest,
-                                       MIRType slotType) {
+                                       MIRType valueType, const T& dest) {
+  MOZ_ASSERT(valueType < MIRType::Value);
+
   if (valueType == MIRType::Double) {
     boxDouble(value.reg().typedReg().fpu(), dest);
-    return;
-  }
-
-  // For known integers and booleans, we can just store the unboxed value if
-  // the slot has the same type.
-  if ((valueType == MIRType::Int32 || valueType == MIRType::Boolean) &&
-      slotType == valueType) {
-    if (value.constant()) {
-      Value val = value.value();
-      if (valueType == MIRType::Int32) {
-        store32(Imm32(val.toInt32()), dest);
-      } else {
-        store32(Imm32(val.toBoolean() ? 1 : 0), dest);
-      }
-    } else {
-      store32(value.reg().typedReg().gpr(), dest);
-    }
     return;
   }
 
@@ -2292,11 +2276,10 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
 
 template void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                                 MIRType valueType,
-                                                const Address& dest,
-                                                MIRType slotType);
+                                                const Address& dest);
 template void MacroAssembler::storeUnboxedValue(
     const ConstantOrRegister& value, MIRType valueType,
-    const BaseObjectElementIndex& dest, MIRType slotType);
+    const BaseObjectElementIndex& dest);
 
 void MacroAssembler::PushBoxed(FloatRegister reg) {
   subFromStackPtr(Imm32(sizeof(double)));
@@ -2494,8 +2477,8 @@ void MacroAssembler::wasmTruncateFloat32ToUInt64(
 void MacroAssemblerMIPS64Compat::wasmLoadI64Impl(
     const wasm::MemoryAccessDesc& access, Register memoryBase, Register ptr,
     Register ptrScratch, Register64 output, Register tmp) {
+  access.assertOffsetInGuardPages();
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   MOZ_ASSERT(!access.isZeroExtendSimd128Load());
@@ -2557,8 +2540,8 @@ void MacroAssemblerMIPS64Compat::wasmLoadI64Impl(
 void MacroAssemblerMIPS64Compat::wasmStoreI64Impl(
     const wasm::MemoryAccessDesc& access, Register64 value, Register memoryBase,
     Register ptr, Register ptrScratch, Register tmp) {
+  access.assertOffsetInGuardPages();
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
   MOZ_ASSERT_IF(offset, ptrScratch != InvalidReg);
 
   // Maybe add the offset.

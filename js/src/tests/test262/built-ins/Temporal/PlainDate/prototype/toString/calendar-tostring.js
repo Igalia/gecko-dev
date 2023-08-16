@@ -1,31 +1,56 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-temporal.plaindate.protoype.tostring
-description: Should always call 'toString' on the calendar once.
+description: Number of observable 'toString' calls on the calendar for each value of calendarName
+includes: [temporalHelpers.js]
 features: [Temporal]
 ---*/
 
 let calls;
 const customCalendar = {
-  toString() {
+  get id() {
     ++calls;
     return "custom";
-  }
+  },
+  toString() {
+    TemporalHelpers.assertUnreachable('toString should not be called');
+  },
+  dateAdd() {},
+  dateFromFields() {},
+  dateUntil() {},
+  day() {},
+  dayOfWeek() {},
+  dayOfYear() {},
+  daysInMonth() {},
+  daysInWeek() {},
+  daysInYear() {},
+  fields() {},
+  inLeapYear() {},
+  mergeFields() {},
+  month() {},
+  monthCode() {},
+  monthDayFromFields() {},
+  monthsInYear() {},
+  weekOfYear() {},
+  year() {},
+  yearMonthFromFields() {},
+  yearOfWeek() {},
 };
 const date = new Temporal.PlainDate(2000, 5, 2, customCalendar);
 [
-  ["always", "2000-05-02[u-ca=custom]"],
-  ["auto", "2000-05-02[u-ca=custom]"],
-  ["never", "2000-05-02"],
-  [undefined, "2000-05-02[u-ca=custom]"],
-].forEach(([calendarName, expected]) => {
+  ["always", "2000-05-02[u-ca=custom]", 1],
+  ["auto", "2000-05-02[u-ca=custom]", 1],
+  ["critical", "2000-05-02[!u-ca=custom]", 1],
+  ["never", "2000-05-02", 0],
+  [undefined, "2000-05-02[u-ca=custom]", 1],
+].forEach(([calendarName, expectedResult, expectedCalls]) => {
   calls = 0;
   const result = date.toString({ calendarName });
-  assert.sameValue(result, expected, `calendarName = ${calendarName}: expected ${expected}`);
-  assert.sameValue(calls, 1, `calendarName = ${calendarName}: expected one call to 'toString'`);
+  assert.sameValue(result, expectedResult, `id for calendarName = ${calendarName}`);
+  assert.sameValue(calls, expectedCalls, `calls to id getter for calendarName = ${calendarName}`);
 });
 
 reportCompare(0, 0);

@@ -11,20 +11,18 @@ const TEST_ROOT = getRootDirectory(gTestPath).replace(
 var MockFilePicker = SpecialPowers.MockFilePicker;
 MockFilePicker.init(window);
 
-/* import-globals-from ../../../../../toolkit/content/tests/browser/common/mockTransfer.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/toolkit/content/tests/browser/common/mockTransfer.js",
   this
 );
 
-add_setup(async function() {
+add_setup(async function () {
   // head.js has helpers that write to a nice unique file we can use.
   await createDownloadedFile(gTestTargetFile.path, "Hello.\n");
   ok(gTestTargetFile.exists(), "We created a test file.");
 
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["browser.download.improvements_to_download_panel", true],
       ["browser.download.always_ask_before_handling_new_types", false],
       ["browser.download.useDownloadDir", false],
     ],
@@ -33,11 +31,11 @@ add_setup(async function() {
   let destDir = gTestTargetFile.parent;
 
   MockFilePicker.displayDirectory = destDir;
-  MockFilePicker.showCallback = function(fp) {
+  MockFilePicker.showCallback = function (fp) {
     MockFilePicker.setFiles([gTestTargetFile]);
     return MockFilePicker.returnOK;
   };
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     MockFilePicker.cleanup();
     if (gTestTargetFile.exists()) {
       gTestTargetFile.remove(false);
@@ -55,7 +53,7 @@ add_task(async function test_overwrite_does_not_delete_first() {
   });
   mockTransferRegisterer.register();
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     if (!unregisteredTransfer) {
       mockTransferRegisterer.unregister();
     }
@@ -69,7 +67,7 @@ add_task(async function test_overwrite_does_not_delete_first() {
       waitForLoad: false,
       waitForStateStop: true,
     },
-    async function() {
+    async function () {
       ok(await transferCompletePromise, "download should succeed");
       ok(
         gTestTargetFile.exists(),
@@ -110,7 +108,7 @@ add_task(async function test_overwrite_works() {
       waitForLoad: false,
       waitForStateStop: true,
     },
-    async function() {
+    async function () {
       info("wait for download to finish");
       let download = await downloadFinishedPromise;
       ok(download.succeeded, "Download should succeed");

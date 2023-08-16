@@ -9,9 +9,7 @@
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
 #include "DocAccessible.h"
-#include "nsEventShell.h"
-#include "nsTextEquivUtils.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "nsCOMPtr.h"
@@ -40,7 +38,7 @@ HTMLSelectListAccessible::HTMLSelectListAccessible(nsIContent* aContent,
 
 uint64_t HTMLSelectListAccessible::NativeState() const {
   uint64_t state = AccessibleWrap::NativeState();
-  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)) {
+  if (mContent->AsElement()->HasAttr(nsGkAtoms::multiple)) {
     state |= states::MULTISELECTABLE | states::EXTSELECTABLE;
   }
 
@@ -53,13 +51,13 @@ role HTMLSelectListAccessible::NativeRole() const { return roles::LISTBOX; }
 // HTMLSelectListAccessible: SelectAccessible
 
 bool HTMLSelectListAccessible::SelectAll() {
-  return mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)
+  return mContent->AsElement()->HasAttr(nsGkAtoms::multiple)
              ? AccessibleWrap::SelectAll()
              : false;
 }
 
 bool HTMLSelectListAccessible::UnselectAll() {
-  return mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)
+  return mContent->AsElement()->HasAttr(nsGkAtoms::multiple)
              ? AccessibleWrap::UnselectAll()
              : false;
 }
@@ -146,8 +144,8 @@ void HTMLSelectOptionAccessible::DOMAttributeChanged(
 
   if (aAttribute == nsGkAtoms::label) {
     dom::Element* elm = Elm();
-    if (!elm->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_labelledby) &&
-        !elm->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_label)) {
+    if (!nsAccUtils::HasARIAAttr(elm, nsGkAtoms::aria_labelledby) &&
+        !nsAccUtils::HasARIAAttr(elm, nsGkAtoms::aria_label)) {
       mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, this);
     }
   }
@@ -219,23 +217,6 @@ nsRect HTMLSelectOptionAccessible::RelativeBounds(
   }
 
   return HyperTextAccessibleWrap::RelativeBounds(aBoundingFrame);
-}
-
-nsresult HTMLSelectOptionAccessible::HandleAccEvent(AccEvent* aEvent) {
-  nsresult rv = HyperTextAccessibleWrap::HandleAccEvent(aEvent);
-  NS_ENSURE_SUCCESS(rv, rv);
-
-  AccStateChangeEvent* event = downcast_accEvent(aEvent);
-  if (event && (event->GetState() == states::SELECTED)) {
-    LocalAccessible* widget = ContainerWidget();
-    if (widget && !widget->AreItemsOperable()) {
-      // Collapsed options' ACTIVE state reflects their SELECT state.
-      nsEventShell::FireEvent(this, states::ACTIVE, event->IsStateEnabled(),
-                              true);
-    }
-  }
-
-  return NS_OK;
 }
 
 void HTMLSelectOptionAccessible::ActionNameAt(uint8_t aIndex,

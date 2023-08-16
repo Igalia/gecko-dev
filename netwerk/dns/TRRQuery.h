@@ -22,7 +22,7 @@ class TRRQuery : public AHostResolver {
         mRecord(aHostRecord),
         mTrrLock("TRRQuery.mTrrLock") {}
 
-  nsresult DispatchLookup(TRR* pushedTRR = nullptr, bool aUseODoHProxy = false);
+  nsresult DispatchLookup(TRR* pushedTRR = nullptr);
 
   void Cancel(nsresult aStatus);
 
@@ -43,8 +43,8 @@ class TRRQuery : public AHostResolver {
       uint32_t aTtl, bool pb) override;
   virtual nsresult GetHostRecord(const nsACString& host,
                                  const nsACString& aTrrServer, uint16_t type,
-                                 uint16_t flags, uint16_t af, bool pb,
-                                 const nsCString& originSuffix,
+                                 nsIDNSService::DNSFlags flags, uint16_t af,
+                                 bool pb, const nsCString& originSuffix,
                                  nsHostRecord** result) override {
     if (!mHostResolver) {
       return NS_ERROR_FAILURE;
@@ -69,15 +69,13 @@ class TRRQuery : public AHostResolver {
   mozilla::TimeDuration Duration() { return mTrrDuration; }
 
  private:
-  nsresult DispatchByTypeLookup(TRR* pushedTRR = nullptr,
-                                bool aUseODoHProxy = false);
+  nsresult DispatchByTypeLookup(TRR* pushedTRR = nullptr);
 
  private:
   ~TRRQuery() = default;
 
   void MarkSendingTRR(TRR* trr, TrrType rectype, MutexAutoLock&);
-  void PrepareQuery(bool aUseODoH, TrrType aRecType,
-                    nsTArray<RefPtr<TRR>>& aRequestsToSend);
+  void PrepareQuery(TrrType aRecType, nsTArray<RefPtr<TRR>>& aRequestsToSend);
   bool SendQueries(nsTArray<RefPtr<TRR>>& aRequestsToSend);
 
   RefPtr<nsHostResolver> mHostResolver;
@@ -96,7 +94,6 @@ class TRRQuery : public AHostResolver {
   Atomic<uint32_t> mTRRRequestCounter{0};
 
   uint8_t mTRRSuccess = 0;  // number of successful TRR responses
-  bool mUsingODoH = false;
   bool mCalledCompleteLookup = false;
 
   mozilla::TimeDuration mTrrDuration;

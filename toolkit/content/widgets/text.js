@@ -312,9 +312,8 @@
       var uri = null;
       try {
         const nsISSM = Ci.nsIScriptSecurityManager;
-        const secMan = Cc["@mozilla.org/scriptsecuritymanager;1"].getService(
-          nsISSM
-        );
+        const secMan =
+          Cc["@mozilla.org/scriptsecuritymanager;1"].getService(nsISSM);
 
         uri = Services.io.newURI(href);
 
@@ -336,7 +335,7 @@
             uri.scheme +
             ": link using \
                          the text-link binding.";
-          Cu.reportError(msg);
+          console.error(msg);
           return;
         }
 
@@ -352,7 +351,7 @@
           return;
         }
       } catch (ex) {
-        Cu.reportError(ex);
+        console.error(ex);
       }
 
       aEvent.preventDefault();

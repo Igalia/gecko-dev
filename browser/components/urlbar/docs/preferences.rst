@@ -24,6 +24,17 @@ browser.urlbar.showSearchSuggestionsFirst (boolean, default: true)
   Whether to show search suggestions before general results.
   Can be controlled from Search Preferences.
 
+browser.urlbar.showSearchTerms.enabled (boolean, default: true)
+  Whether to show the search term in the urlbar
+  on a default search engine results page.
+  Can be controlled from Search Preferences.
+
+browser.urlbar.suggest.bestmatch (boolean, default: true)
+  When ``browser.urlbar.bestMatch.enabled`` is true, a "Top pick" checkbox
+  corresponding to this pref is shown in Firefox settings. It controls whether
+  results can be shown using the "Top pick" UI treatment. Otherwise the checkbox
+  is hidden and the "Top pick" UI treatment is disabled.
+
 browser.urlbar.suggest.bookmark (boolean, default: true)
   Whether results will include the user's bookmarks.
   Can be controlled from Privacy Preferences.
@@ -35,6 +46,16 @@ browser.urlbar.suggest.history (boolean, default: true)
 browser.urlbar.suggest.openpage (boolean, default: true)
   Whether results will include switch-to-tab results.
   Can be controlled from Privacy Preferences.
+
+browser.urlbar.suggest.quicksuggest.nonsponsored (boolean, default: false)
+  If ``browser.urlbar.quicksuggest.enabled`` is true, this controls whether
+  results will include non-sponsored quick suggest suggestions. Otherwise
+  non-sponsored suggestions will not be shown.
+
+browser.urlbar.suggest.quicksuggest.sponsored (boolean, default: false)
+ If ``browser.urlbar.quicksuggest.enabled`` is true, this controls whether
+  results will include sponsored quick suggest suggestions. Otherwise sponsored
+  suggestions will not be shown.
 
 browser.urlbar.suggest.searches (boolean, default: true)
   Whether results will include search suggestions.
@@ -66,6 +87,9 @@ know what you are doing.
 
 browser.urlbar.accessibility.tabToSearch.announceResults (boolean: default: true)
   Whether we announce to screen readers when tab-to-search results are inserted.
+
+browser.urlbar.addons.featureGate (boolean, default: false)
+  Feature gate pref for add-on suggestions in the urlbar.
 
 browser.urlbar.autoFill (boolean, default: true)
   Autofill is the the feature that automatically completes domains and URLs that
@@ -144,13 +168,15 @@ browser.urlbar.merino.enabled (boolean, default: false)
   Whether Merino is enabled as a quick suggest source.
 
 browser.urlbar.merino.providers (string, default: "")
-  Comma separated list of client variants to send to send to Merino. See
-  `Merino API docs <https://mozilla-services.github.io/merino/api.html#suggest>`_
-  for more details. This is currently intended for development and QA, but may
-  be exposed to users in the future.
+  Comma-separated list of providers to request from the Merino server. Merino
+  will return suggestions only for these providers. See `Merino API docs`_ for
+  more details.
 
 browser.urlbar.openintab (boolean, default: false)
   Whether address bar results should be opened in new tabs by default.
+
+browser.urlbar.pocket.featureGate (boolean, default: false)
+  Feature gate pref for Pocket suggestions in the urlbar.
 
 browser.urlbar.quicksuggest.enabled (boolean, default: false)
   Whether the quick suggest feature is enabled, i.e., sponsored and recommended
@@ -159,9 +185,6 @@ browser.urlbar.quicksuggest.enabled (boolean, default: false)
   non-sponsored quick suggest results will be shown. If true, then we look at
   the individual prefs ``browser.urlbar.suggest.quicksuggest.nonsponsored`` and
   ``browser.urlbar.suggest.quicksuggest.sponsored``.
-
-browser.urlbar.quicksuggest.log (boolean, default: false)
-  Whether to show QuickSuggest related logs, by default only logs Warnings.
 
 browser.urlbar.quicksuggest.remoteSettings.enabled (boolean, default: true)
   Whether remote settings is enabled as a quick suggest source.
@@ -188,15 +211,13 @@ browser.urlbar.speculativeConnect.enabled (boolean, default: true)
 browser.urlbar.sponsoredTopSites (boolean, default: false)
   Whether top sites may include sponsored ones.
 
-browser.urlbar.suggest.bestmatch (boolean, default: true)
-  Whether to show the best match result is enabled. This pref is ignored if
-  browser.urlbar.bestMatch.enabled is false.
+browser.urlbar.suggest.addons (boolean, default: true)
+  If ``browser.urlbar.addons.featureGate`` is true, this controls whether add-on
+  suggestions are turned on. Otherwise they won't be shown.
 
-browser.urlbar.suggest.quicksuggest.nonsponsored (boolean, default: false)
-  Whether results will include non-sponsored quick suggest suggestions.
-
-browser.urlbar.suggest.quicksuggest.sponsored (boolean, default: false)
-  Whether results will include sponsored quick suggest suggestions.
+browser.urlbar.suggest.pocket (boolean, default: true)
+  If ``browser.urlbar.pocket.featureGate`` is true, this controls whether Pocket
+  suggestions are turned on. Otherwise they won't be shown.
 
 browser.urlbar.switchTabs.adoptIntoActiveWindow (boolean, default: false)
   When using switch to tabs, if set to true this will move the tab into the
@@ -246,18 +267,3 @@ browser.urlbar.restyleSearches (boolean, default: false)
 browser.urlbar.update2.emptySearchBehavior (integer, default: 0)
   Controls the empty search behavior in Search Mode: 0. Show nothing, 1. Show
   search history, 2. Show search and browsing history
-
-Deprecated
-----------
-These preferences should not be used and may be removed at any time.
-
-browser.urlbar.autoFill.searchEngines (boolean, default: false)
-  If true, the domains of the user's installed search engines will be
-  autofilled even if the user hasn't actually visited them.
-
-browser.urlbar.usepreloadedtopurls.enabled (boolean, default: false)
-  Results will include a built-in set of popular domains when this is true.
-
-browser.urlbar.usepreloadedtopurls.expire_days (integer, default: 14)
-  After this many days from the profile creation date, the built-in set of
-  popular domains will no longer be included in the results.

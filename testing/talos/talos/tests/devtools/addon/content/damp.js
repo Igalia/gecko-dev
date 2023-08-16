@@ -6,26 +6,19 @@
 
 /* globals dampWindow */
 
-const { Ci, Cc, Cu } = require("chrome");
 const { gBrowser, MozillaFileLogger, requestIdleCallback } = dampWindow;
 
-const ChromeUtils = require("ChromeUtils");
-const Services = require("Services");
 const { AddonManager } = require("resource://gre/modules/AddonManager.jsm");
 
 const DampLoadParentModule = require("damp-test/actors/DampLoadParent.jsm");
 const DAMP_TESTS = require("damp-test/damp-tests.js");
 
-const env = Cc["@mozilla.org/process/environment;1"].getService(
-  Ci.nsIEnvironment
-);
-
 // Record allocation count in new subtests if DEBUG_DEVTOOLS_ALLOCATIONS is set to
 // "normal". Print allocation sites to stdout if DEBUG_DEVTOOLS_ALLOCATIONS is set to
 // "verbose".
-const DEBUG_ALLOCATIONS = env.get("DEBUG_DEVTOOLS_ALLOCATIONS");
+const DEBUG_ALLOCATIONS = Services.env.get("DEBUG_DEVTOOLS_ALLOCATIONS");
 
-const DEBUG_SCREENSHOTS = env.get("DEBUG_DEVTOOLS_SCREENSHOTS");
+const DEBUG_SCREENSHOTS = Services.env.get("DEBUG_DEVTOOLS_SCREENSHOTS");
 
 // Maximum time spent in one test, in milliseconds
 const TEST_TIMEOUT = 5 * 60000;
@@ -39,7 +32,7 @@ function Damp() {}
 Damp.prototype = {
   async garbageCollect() {
     dump("Garbage collect\n");
-    let start = Cu.now();
+    let startTime = Cu.now();
 
     // Minimize memory usage
     // mimic miminizeMemoryUsage, by only flushing JS objects via GC.
@@ -56,7 +49,11 @@ Damp.prototype = {
       Cu.forceGC();
       await new Promise(done => setTimeout(done, 0));
     }
-    ChromeUtils.addProfilerMarker("DAMP", start, "GC");
+    ChromeUtils.addProfilerMarker(
+      "DAMP",
+      { startTime, category: "Test" },
+      "GC"
+    );
   },
 
   async ensureTalosParentProfiler() {
@@ -134,7 +131,11 @@ Damp.prototype = {
       done: () => {
         let end = Cu.now();
         let duration = end - start;
-        ChromeUtils.addProfilerMarker("DAMP", start, label);
+        ChromeUtils.addProfilerMarker(
+          "DAMP",
+          { startTime: start, category: "Test" },
+          label
+        );
         if (record) {
           this._results.push({
             name: label,
@@ -162,10 +163,8 @@ Damp.prototype = {
   async addTab(url) {
     // Disable opening animation to avoid intermittents and prevent having to wait for
     // animation's end. (See bug 1480953)
-    let tab = (this._win.gBrowser.selectedTab = this._win.gBrowser.addTrustedTab(
-      url,
-      { skipAnimation: true }
-    ));
+    let tab = (this._win.gBrowser.selectedTab =
+      this._win.gBrowser.addTrustedTab(url, { skipAnimation: true }));
     let browser = tab.linkedBrowser;
     await this._awaitBrowserLoaded(browser);
     return tab;
@@ -179,14 +178,22 @@ Damp.prototype = {
         window.addEventListener(
           "MozAfterPaint",
           function listener() {
-            ChromeUtils.addProfilerMarker("DAMP", undefined, "pending paint");
+            ChromeUtils.addProfilerMarker(
+              "DAMP",
+              { category: "Test" },
+              "pending paint"
+            );
             done();
           },
           { once: true }
         );
       });
     }
-    ChromeUtils.addProfilerMarker("DAMP", startTime, "pending paints");
+    ChromeUtils.addProfilerMarker(
+      "DAMP",
+      { startTime, category: "Test" },
+      "pending paints"
+    );
   },
 
   reloadPage(onReload) {
@@ -299,7 +306,7 @@ Damp.prototype = {
       const res = this._results[i];
       const disp = []
         .concat(res.value)
-        .map(function(a) {
+        .map(function (a) {
           return isNaN(a) ? -1 : a.toFixed(1);
         })
         .join(" ");
@@ -348,7 +355,10 @@ Damp.prototype = {
       this._reportAllResults();
     }
 
-    ChromeUtils.addProfilerMarker("DAMP", this._startTimestamp);
+    ChromeUtils.addProfilerMarker("DAMP", {
+      startTime: this._startTimestamp,
+      category: "Test",
+    });
     this.TalosParentProfiler.pause();
 
     this._unregisterDampLoadActors();
@@ -380,8 +390,9 @@ Damp.prototype = {
   },
 
   exception(e) {
-    this.error(e);
-    dump(e.stack + "\n");
+    const str =
+      "Exception: " + (e?.message || e) + "\n" + (e?.stack || "No stack");
+    this.error(str);
   },
 
   // Waits for any pending operations that may execute on Firefox startup and that
@@ -520,10 +531,12 @@ Damp.prototype = {
     ChromeUtils.registerWindowActor("DampLoad", {
       kind: "JSWindowActor",
       parent: {
-        moduleURI: "resource://damp-test/content/actors/DampLoadParent.jsm",
+        esModuleURI:
+          "resource://damp-test/content/actors/DampLoadParent.sys.mjs",
       },
       child: {
-        moduleURI: "resource://damp-test/content/actors/DampLoadChild.jsm",
+        esModuleURI:
+          "resource://damp-test/content/actors/DampLoadChild.sys.mjs",
         events: {
           pageshow: { mozSystemGroup: true },
         },

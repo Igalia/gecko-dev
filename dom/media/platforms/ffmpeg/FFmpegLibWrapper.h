@@ -11,12 +11,13 @@
 
 struct AVCodec;
 struct AVCodecContext;
+struct AVCodecDescriptor;
 struct AVFrame;
 struct AVPacket;
 struct AVDictionary;
 struct AVCodecParserContext;
 struct PRLibrary;
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 struct AVCodecHWConfig;
 struct AVVAAPIHWConfig;
 struct AVHWFramesConstraints;
@@ -55,7 +56,7 @@ struct MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FFmpegLibWrapper {
   // Reset the wrapper and unlink all attached libraries.
   void Unlink();
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   // Check if mVALib are available and we can use HW decode.
   bool IsVAAPIAvailable();
   void LinkVAAPILibs();
@@ -75,6 +76,7 @@ struct MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FFmpegLibWrapper {
   int (*avcodec_decode_video2)(AVCodecContext* avctx, AVFrame* picture,
                                int* got_picture_ptr, const AVPacket* avpkt);
   AVCodec* (*avcodec_find_decoder)(int id);
+  AVCodec* (*avcodec_find_decoder_by_name)(const char* name);
   void (*avcodec_flush_buffers)(AVCodecContext* avctx);
   int (*avcodec_open2)(AVCodecContext* avctx, const AVCodec* codec,
                        AVDictionary** options);
@@ -90,6 +92,7 @@ struct MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FFmpegLibWrapper {
   int (*av_codec_is_decoder)(const AVCodec* codec);
   void (*avcodec_align_dimensions)(AVCodecContext* s, int* width, int* height);
   int (*av_strerror)(int errnum, char* errbuf, size_t errbuf_size);
+  AVCodecDescriptor* (*avcodec_descriptor_get)(int id);
 
   // only used in libavcodec <= 54
   AVFrame* (*avcodec_alloc_frame)();
@@ -135,7 +138,7 @@ struct MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FFmpegLibWrapper {
   int (*av_frame_get_colorspace)(const AVFrame* frame);
   int (*av_frame_get_color_range)(const AVFrame* frame);
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   const AVCodecHWConfig* (*avcodec_get_hw_config)(const AVCodec* codec,
                                                   int index);
   AVBufferRef* (*av_hwdevice_ctx_alloc)(int);
@@ -167,12 +170,10 @@ struct MOZ_ONLY_USED_TO_AVOID_STATIC_CONSTRUCTORS FFmpegLibWrapper {
 
   PRLibrary* mAVCodecLib;
   PRLibrary* mAVUtilLib;
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   PRLibrary* mVALib;
   PRLibrary* mVALibDrm;
 #endif
-
- private:
 };
 
 }  // namespace mozilla

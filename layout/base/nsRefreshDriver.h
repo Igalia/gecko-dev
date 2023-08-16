@@ -346,6 +346,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
 
   bool IsWaitingForPaint(mozilla::TimeStamp aTime);
 
+  void ScheduleAutoFocusFlush(Document* aDocument);
+
   // nsARefreshObserver
   NS_IMETHOD_(MozExternalRefCountType) AddRef(void) override {
     return TransactionIdAllocator::AddRef();
@@ -417,6 +419,11 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     mNeedToUpdateIntersectionObservations = true;
   }
 
+  void EnsureContentRelevancyUpdateHappens() {
+    EnsureTimerStarted();
+    mNeedToUpdateContentRelevancy = true;
+  }
+
   // Register a composition payload that will be forwarded to the layer manager
   // if the current or upcoming refresh tick does a paint.
   // If no paint happens, the payload is discarded.
@@ -429,9 +436,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     eHasObservers = 1 << 0,
     eHasImageRequests = 1 << 1,
     eNeedsToUpdateIntersectionObservations = 1 << 2,
-    eHasVisualViewportResizeEvents = 1 << 3,
-    eHasScrollEvents = 1 << 4,
-    eHasVisualViewportScrollEvents = 1 << 5,
+    eNeedsToUpdateContentRelevancy = 1 << 3,
+    eHasVisualViewportResizeEvents = 1 << 4,
+    eHasScrollEvents = 1 << 5,
+    eHasVisualViewportScrollEvents = 1 << 6,
   };
 
   void AddForceNotifyContentfulPaintPresContext(nsPresContext* aPresContext);
@@ -440,6 +448,8 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // Mark that we've just run a tick from vsync, used to throttle 'extra'
   // paints to one per vsync (see CanDoExtraTick).
   void FinishedVsyncTick() { mAttemptedExtraTickSinceLastVsync = false; }
+
+  void CancelFlushAutoFocus(Document* aDocument);
 
  private:
   typedef nsTArray<RefPtr<VVPResizeEvent>> VisualViewportResizeEventArray;
@@ -468,11 +478,14 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
     operator RefPtr<nsARefreshObserver>() { return mObserver; }
   };
   typedef nsTObserverArray<ObserverData> ObserverArray;
+  MOZ_CAN_RUN_SCRIPT
+  void FlushAutoFocusDocuments();
   void RunFullscreenSteps();
   void DispatchAnimationEvents();
   MOZ_CAN_RUN_SCRIPT
   void RunFrameRequestCallbacks(mozilla::TimeStamp aNowTime);
   void UpdateIntersectionObservations(mozilla::TimeStamp aNowTime);
+  void UpdateRelevancyOfContentVisibilityAutoFrames();
 
   enum class IsExtraTick {
     No,
@@ -505,6 +518,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   ObserverArray& ArrayFor(mozilla::FlushType aFlushType);
   // Trigger a refresh immediately, if haven't been disconnected or frozen.
   void DoRefresh();
+
+  // Starts pending image animations, and refreshes ongoing animations.
+  void UpdateAnimatedImages(mozilla::TimeStamp aPreviousRefresh,
+                            mozilla::TimeStamp aNowTime);
 
   TickReasons GetReasonsToTick() const;
   void AppendTickReasonsToString(TickReasons aReasons, nsACString& aStr) const;
@@ -611,6 +628,10 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // all our documents.
   bool mNeedToUpdateIntersectionObservations : 1;
 
+  // True if we need to update the relevancy of `content-visibility: auto`
+  // elements in our documents.
+  bool mNeedToUpdateContentRelevancy : 1;
+
   // True if we're currently within the scope of Tick() handling a normal
   // (timer-driven) tick.
   bool mInNormalTick : 1;
@@ -658,6 +679,7 @@ class nsRefreshDriver final : public mozilla::layers::TransactionIdAllocator,
   // nsTArray on purpose, because we want to be able to swap.
   nsTArray<Document*> mFrameRequestCallbackDocs;
   nsTArray<Document*> mThrottledFrameRequestCallbackDocs;
+  nsTArray<RefPtr<Document>> mAutoFocusFlushDocuments;
   nsTObserverArray<nsAPostRefreshObserver*> mPostRefreshObservers;
   nsTArray<mozilla::UniquePtr<mozilla::PendingFullscreenEvent>>
       mPendingFullscreenEvents;

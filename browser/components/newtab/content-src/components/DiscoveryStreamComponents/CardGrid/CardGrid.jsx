@@ -4,12 +4,21 @@
 
 import { DSCard, PlaceholderDSCard } from "../DSCard/DSCard.jsx";
 import { DSEmptyState } from "../DSEmptyState/DSEmptyState.jsx";
+import { DSDismiss } from "content-src/components/DiscoveryStreamComponents/DSDismiss/DSDismiss";
 import { TopicsWidget } from "../TopicsWidget/TopicsWidget.jsx";
 import { SafeAnchor } from "../SafeAnchor/SafeAnchor";
 import { FluentOrText } from "../../FluentOrText/FluentOrText.jsx";
-import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
+import {
+  actionCreators as ac,
+  actionTypes as at,
+} from "common/Actions.sys.mjs";
 import React, { useEffect, useState, useRef, useCallback } from "react";
 import { connect, useSelector } from "react-redux";
+const PREF_ONBOARDING_EXPERIENCE_DISMISSED =
+  "discoverystream.onboardingExperience.dismissed";
+const INTERSECTION_RATIO = 0.5;
+const VISIBLE = "visible";
+const VISIBILITY_CHANGE_EVENT = "visibilitychange";
 const WIDGET_IDS = {
   TOPICS: 1,
 };
@@ -18,6 +27,123 @@ export function DSSubHeader({ children }) {
   return (
     <div className="section-top-bar ds-sub-header">
       <h3 className="section-title-container">{children}</h3>
+    </div>
+  );
+}
+
+export function OnboardingExperience({
+  children,
+  dispatch,
+  windowObj = global,
+}) {
+  const [dismissed, setDismissed] = useState(false);
+  const [maxHeight, setMaxHeight] = useState(null);
+  const heightElement = useRef(null);
+
+  const onDismissClick = useCallback(() => {
+    // We update this as state and redux.
+    // The state update is for this newtab,
+    // and the redux update is for other tabs, offscreen tabs, and future tabs.
+    // We need the state update for this tab to support the transition.
+    setDismissed(true);
+    dispatch(ac.SetPref(PREF_ONBOARDING_EXPERIENCE_DISMISSED, true));
+    dispatch(
+      ac.DiscoveryStreamUserEvent({
+        event: "BLOCK",
+        source: "POCKET_ONBOARDING",
+      })
+    );
+  }, [dispatch]);
+
+  useEffect(() => {
+    const resizeObserver = new windowObj.ResizeObserver(() => {
+      if (heightElement.current) {
+        setMaxHeight(heightElement.current.offsetHeight);
+      }
+    });
+
+    const options = { threshold: INTERSECTION_RATIO };
+    const intersectionObserver = new windowObj.IntersectionObserver(entries => {
+      if (
+        entries.some(
+          entry =>
+            entry.isIntersecting &&
+            entry.intersectionRatio >= INTERSECTION_RATIO
+        )
+      ) {
+        dispatch(
+          ac.DiscoveryStreamUserEvent({
+            event: "IMPRESSION",
+            source: "POCKET_ONBOARDING",
+          })
+        );
+        // Once we have observed an impression, we can stop for this instance of newtab.
+        intersectionObserver.unobserve(heightElement.current);
+      }
+    }, options);
+
+    const onVisibilityChange = () => {
+      intersectionObserver.observe(heightElement.current);
+      windowObj.document.removeEventListener(
+        VISIBILITY_CHANGE_EVENT,
+        onVisibilityChange
+      );
+    };
+
+    if (heightElement.current) {
+      resizeObserver.observe(heightElement.current);
+      // Check visibility or setup a visibility event to make
+      // sure we don't fire this for off screen pre loaded tabs.
+      if (windowObj.document.visibilityState === VISIBLE) {
+        intersectionObserver.observe(heightElement.current);
+      } else {
+        windowObj.document.addEventListener(
+          VISIBILITY_CHANGE_EVENT,
+          onVisibilityChange
+        );
+      }
+      setMaxHeight(heightElement.current.offsetHeight);
+    }
+
+    // Return unmount callback to clean up observers.
+    return () => {
+      resizeObserver?.disconnect();
+      intersectionObserver?.disconnect();
+      windowObj.document.removeEventListener(
+        VISIBILITY_CHANGE_EVENT,
+        onVisibilityChange
+      );
+    };
+  }, [dispatch, windowObj]);
+
+  const style = {};
+  if (dismissed) {
+    style.maxHeight = "0";
+    style.opacity = "0";
+    style.transition = "max-height 0.26s ease, opacity 0.26s ease";
+  } else if (maxHeight) {
+    style.maxHeight = `${maxHeight}px`;
+  }
+
+  return (
+    <div style={style}>
+      <div className="ds-onboarding-ref" ref={heightElement}>
+        <div className="ds-onboarding-container">
+          <DSDismiss
+            onDismissClick={onDismissClick}
+            extraClasses={`ds-onboarding`}
+          >
+            <div>
+              <header>
+                <span className="icon icon-pocket" />
+                <span data-l10n-id="newtab-pocket-onboarding-discover" />
+              </header>
+              <p data-l10n-id="newtab-pocket-onboarding-cta" />
+            </div>
+            <div className="ds-onboarding-graphic" />
+          </DSDismiss>
+        </div>
+      </div>
     </div>
   );
 }
@@ -95,7 +221,23 @@ export function RecentSavesContainer({
     return null;
   }
 
+  let queryParams = `?utm_source=${utmSource}`;
+  // We really only need to add these params to urls we own.
+  if (utmCampaign && utmContent) {
+    queryParams += `&utm_content=${utmContent}&utm_campaign=${utmCampaign}`;
+  }
+
   function renderCard(rec, index) {
+    const url = new URL(rec.url);
+    const urlSearchParams = new URLSearchParams(queryParams);
+    if (rec?.id && !url.href.match(/getpocket\.com\/read/)) {
+      url.href = `https://getpocket.com/read/${rec.id}`;
+    }
+
+    for (let [key, val] of urlSearchParams.entries()) {
+      url.searchParams.set(key, val);
+    }
+
     return (
       <DSCard
         key={`dscard-${rec?.id || index}`}
@@ -108,7 +250,7 @@ export function RecentSavesContainer({
         time_to_read={rec.time_to_read}
         title={rec.title}
         excerpt={rec.excerpt}
-        url={rec.url}
+        url={url.href}
         source={rec.domain}
         isRecentSave={true}
         dispatch={dispatch}
@@ -125,10 +267,6 @@ export function RecentSavesContainer({
     );
   }
 
-  let queryParams = `?utm_source=${utmSource}`;
-  if (utmCampaign && utmContent) {
-    queryParams += `&utm_content=${utmContent}&utm_campaign=${utmCampaign}`;
-  }
   const recentSavesCards = [];
   // We fill the cards with a for loop over an inline map because
   // we want empty placeholders if there are not enough cards.
@@ -140,7 +278,7 @@ export function RecentSavesContainer({
       recentSavesCards.push(
         renderCard(
           {
-            id: recentSave.item_id || recentSave.resolved_id,
+            id: recentSave.id,
             image_src: recentSave.top_image_url,
             raw_image_src: recentSave.top_image_url,
             word_count: recentSave.word_count,
@@ -189,6 +327,7 @@ export class _CardGrid extends React.PureComponent {
       compactGrid,
       essentialReadsHeader,
       editorsPicksHeader,
+      onboardingExperience,
       widgets,
       recentSavesEnabled,
       hideDescriptions,
@@ -196,6 +335,8 @@ export class _CardGrid extends React.PureComponent {
     } = this.props;
     const { saveToPocketCard } = DiscoveryStream;
     const showRecentSaves = prefs.showRecentSaves && recentSavesEnabled;
+    const isOnboardingExperienceDismissed =
+      prefs[PREF_ONBOARDING_EXPERIENCE_DISMISSED];
 
     const recs = this.props.data.recommendations.slice(0, items);
     const cards = [];
@@ -227,6 +368,7 @@ export class _CardGrid extends React.PureComponent {
             sponsored_by_override={rec.sponsored_by_override}
             dispatch={this.props.dispatch}
             source={rec.domain}
+            publisher={rec.publisher}
             pocket_id={rec.pocket_id}
             context_type={rec.context_type}
             bookmarkGuid={rec.bookmarkGuid}
@@ -304,10 +446,13 @@ export class _CardGrid extends React.PureComponent {
       ? `ds-card-grid-hybrid-layout`
       : ``;
 
-    const gridClassName = `ds-card-grid ds-card-grid-border ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`;
+    const gridClassName = `ds-card-grid ${hybridLayoutClassName} ${hideCardBackgroundClass} ${fourCardLayoutClass} ${hideDescriptionsClassName} ${compactGridClassName}`;
 
     return (
       <>
+        {!isOnboardingExperienceDismissed && onboardingExperience && (
+          <OnboardingExperience dispatch={this.props.dispatch} />
+        )}
         {essentialReadsCards?.length > 0 && (
           <div className={gridClassName}>{essentialReadsCards}</div>
         )}

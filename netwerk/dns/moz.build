@@ -18,13 +18,14 @@ XPIDL_SOURCES += [
     "nsIEffectiveTLDService.idl",
     "nsIIDNService.idl",
     "nsINativeDNSResolverOverride.idl",
+    "nsITRRSkipReason.idl",
     "nsPIDNSService.idl",
 ]
 
 XPIDL_MODULE = "necko_dns"
 
 EXTRA_JS_MODULES["netwerk-dns"] += [
-    "PublicSuffixList.jsm",
+    "PublicSuffixList.sys.mjs",
 ]
 
 XPCSHELL_TESTS_MANIFESTS += ["tests/unit/xpcshell.ini"]
@@ -42,6 +43,7 @@ EXPORTS.mozilla.net += [
     "DNSRequestBase.h",
     "DNSRequestChild.h",
     "DNSRequestParent.h",
+    "DNSServiceBase.h",
     "HTTPSSVC.h",
     "IDNBlocklistUtils.h",
     "NativeDNSResolverOverrideChild.h",
@@ -76,8 +78,6 @@ UNIFIED_SOURCES += [
     "nsHostRecord.cpp",
     "nsHostResolver.cpp",
     "nsIDNService.cpp",
-    "ODoH.cpp",
-    "ODoHService.cpp",
     "punycode.c",
     "TRR.cpp",
     "TRRQuery.cpp",

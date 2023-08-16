@@ -3,9 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 """ Script that launches profiles creation.
 """
-from __future__ import absolute_import
-import os
 import argparse
+import os
 import sys
 
 # easier than setting PYTHONPATH in various platforms
@@ -29,7 +28,10 @@ def main(args=sys.argv[1:]):
         "--profile", help="Existing profile Dir", type=str, default=None
     )
     parser.add_argument(
-        "--customization", help="Profile customization to use", type=str, default="all"
+        "--customization",
+        help="Profile customization to use",
+        type=str,
+        default="default",
     )
     parser.add_argument(
         "--visible", help="Don't use headless mode", action="store_true", default=False

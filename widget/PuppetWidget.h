@@ -57,8 +57,6 @@ class PuppetWidget : public nsBaseWidget,
   typedef nsBaseWidget Base;
 
   // The width and height of the "widget" are clamped to this.
-  static const size_t kMaxDimension;
-
  public:
   explicit PuppetWidget(BrowserChild* aBrowserChild);
 
@@ -73,15 +71,15 @@ class PuppetWidget : public nsBaseWidget,
   using nsBaseWidget::Create;  // for Create signature not overridden here
   virtual nsresult Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                           const LayoutDeviceIntRect& aRect,
-                          nsWidgetInitData* aInitData = nullptr) override;
+                          widget::InitData* aInitData = nullptr) override;
   void InfallibleCreate(nsIWidget* aParent, nsNativeWidget aNativeParent,
                         const LayoutDeviceIntRect& aRect,
-                        nsWidgetInitData* aInitData = nullptr);
+                        widget::InitData* aInitData = nullptr);
 
   void InitIMEState();
 
   virtual already_AddRefed<nsIWidget> CreateChild(
-      const LayoutDeviceIntRect& aRect, nsWidgetInitData* aInitData = nullptr,
+      const LayoutDeviceIntRect& aRect, widget::InitData* aInitData = nullptr,
       bool aForceUseIWidgetParent = false) override;
 
   virtual void Destroy() override;
@@ -89,12 +87,6 @@ class PuppetWidget : public nsBaseWidget,
   virtual void Show(bool aState) override;
 
   virtual bool IsVisible() const override { return mVisible; }
-
-  virtual void ConstrainPosition(bool /*ignored aAllowSlop*/, int32_t* aX,
-                                 int32_t* aY) override {
-    *aX = kMaxDimension;
-    *aY = kMaxDimension;
-  }
 
   // Widget position is controlled by the parent process via BrowserChild.
   virtual void Move(double aX, double aY) override {}
@@ -171,8 +163,8 @@ class PuppetWidget : public nsBaseWidget,
   // same-process subdocuments, we force the widget here to be
   // transparent, which in turn will cause layout to use a transparent
   // backstop background color.
-  virtual nsTransparencyMode GetTransparencyMode() override {
-    return eTransparencyTransparent;
+  virtual TransparencyMode GetTransparencyMode() override {
+    return TransparencyMode::Transparent;
   }
 
   virtual WindowRenderer* GetWindowRenderer() override;
@@ -382,9 +374,9 @@ class PuppetWidget : public nsBaseWidget,
   ContentCacheInChild mContentCache;
 
   // The DPI of the parent widget containing this widget.
-  float mDPI = 96;
+  float mDPI = GetFallbackDPI();
   int32_t mRounding = 1;
-  double mDefaultScale = 1.0f;
+  double mDefaultScale = GetFallbackDefaultScale().scale;
 
   ScreenIntMargin mSafeAreaInsets;
 

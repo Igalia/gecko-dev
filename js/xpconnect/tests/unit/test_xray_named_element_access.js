@@ -1,7 +1,5 @@
 // See https://bugzilla.mozilla.org/show_bug.cgi?id=1273251
-"use strict"
-
-ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+"use strict";
 
 add_task(async function() {
   let webnav = Services.appShell.createWindowlessBrowser(false);

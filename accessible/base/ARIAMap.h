@@ -14,6 +14,7 @@
 
 #include "nsAtom.h"
 #include "nsIContent.h"
+#include "nsTHashSet.h"
 
 class nsINode;
 
@@ -266,6 +267,11 @@ const nsRoleMapEntry* GetRoleMapFromIndex(uint8_t aRoleMapIndex);
 uint8_t GetIndexFromRoleMap(const nsRoleMapEntry* aRoleMap);
 
 /**
+ * Determine whether a role map entry index is valid.
+ */
+bool IsRoleMapIndexValid(uint8_t aRoleMapIndex);
+
+/**
  * Return accessible state from ARIA universal states applied to the given
  * element.
  */
@@ -311,6 +317,11 @@ class AttrIterator {
   AttrIterator& operator=(const AttrIterator&) = delete;
 
   dom::Element* mElement;
+
+  bool mIteratingDefaults;
+  nsTHashSet<nsRefPtrHashKey<nsAtom>> mOverriddenAttrs;
+
+  const AttrArray* mAttrs;
   uint32_t mAttrIdx;
   uint32_t mAttrCount;
   RefPtr<nsAtom> mAttrAtom;

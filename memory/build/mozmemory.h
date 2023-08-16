@@ -50,6 +50,8 @@ static inline size_t _malloc_good_size(size_t size) {
 #  define MALLOC_FUNCS MALLOC_FUNCS_JEMALLOC
 #  include "malloc_decls.h"
 
+// jemalloc_stats may only be called on the main thread so that it can access
+// main thread only arenas.
 #  ifdef __cplusplus
 static inline void jemalloc_stats(jemalloc_stats_t* aStats,
                                   jemalloc_bin_stats_t* aBinStats = nullptr) {
@@ -59,13 +61,6 @@ static inline void jemalloc_stats(jemalloc_stats_t* aStats,
 static inline void jemalloc_stats(jemalloc_stats_t* aStats) {
   jemalloc_stats_internal(aStats, NULL);
 }
-#  endif
-
-// Temporary configurator for experiment associated with bug 1716727.
-#  if defined(XP_WIN)
-MOZ_JEMALLOC_API void mozjemalloc_experiment_set_always_stall(bool);
-#  else
-static inline void mozjemalloc_experiment_set_always_stall(bool){};
 #  endif
 
 #endif  // MOZ_MEMORY

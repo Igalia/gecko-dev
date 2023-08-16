@@ -2,18 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-from __future__ import unicode_literals
-
 from pathlib import Path
 
 from buildconfig import topsrcdir
+from mozunit import main
+
 from mach.base import MachError
+from mach.command_util import load_commands_from_file
 from mach.main import Mach
 from mach.registrar import Registrar
-from mach.test.conftest import TestBase, PROVIDER_DIR
-
-from mozunit import main
+from mach.test.conftest import PROVIDER_DIR, TestBase
 
 
 def _make_populate_context(include_extra_attributes):
@@ -84,7 +82,7 @@ class TestConditions(TestBase):
         m.define_category("testing", "Mach unittest", "Testing for mach core", 10)
         self.assertRaises(
             MachError,
-            m.load_commands_from_file,
+            load_commands_from_file,
             PROVIDER_DIR / "conditions_invalid.py",
         )
 

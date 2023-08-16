@@ -13,13 +13,13 @@ var helpers = require("../helpers");
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-top-level-await.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-top-level-await.html",
     },
     messages: {
       rejectTopLevelAwait:
         "Top-level await is not currently supported in component files.",
     },
+    schema: [],
     type: "problem",
   },
 

@@ -5,7 +5,7 @@
 
 loadTestSubscript("head_abuse_report.js");
 
-add_setup(async function() {
+add_setup(async function () {
   await AbuseReportTestUtils.setup();
 });
 
@@ -104,9 +104,8 @@ add_task(async function test_abusereport_submitpanel() {
   await AbuseReportTestUtils.clickPanelButton(abuseReportEl._btnGoBack);
   await onceUpdated;
 
-  const onceReportClosed = AbuseReportTestUtils.promiseReportClosed(
-    abuseReportEl
-  );
+  const onceReportClosed =
+    AbuseReportTestUtils.promiseReportClosed(abuseReportEl);
   await AbuseReportTestUtils.clickPanelButton(abuseReportEl._btnCancel);
   await onceReportClosed;
 
@@ -175,9 +174,8 @@ add_task(async function test_abusereport_submit() {
     }
   );
 
-  const onceReportClosed = AbuseReportTestUtils.promiseReportClosed(
-    abuseReportEl
-  );
+  const onceReportClosed =
+    AbuseReportTestUtils.promiseReportClosed(abuseReportEl);
 
   const onMessageBarsCreated = AbuseReportTestUtils.promiseMessageBars(2);
 
@@ -272,7 +270,14 @@ async function test_abusereport_suggestions(addonId) {
       reason
     );
 
-    if (reasonInfo.isReasonHidden(addon.type)) {
+    // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based
+    // implementation is also removed.
+    const addonType =
+      addon.type === "sitepermission-deprecated"
+        ? "sitepermission"
+        : addon.type;
+
+    if (reasonInfo.isReasonHidden(addonType)) {
       continue;
     }
 
@@ -341,11 +346,20 @@ async function test_abusereport_suggestions(addonId) {
     }
 
     const learnMoreLinks = [];
-    for (const linkClass of _suggestions.LEARNMORE_LINKS) {
-      learnMoreLinks.push(..._suggestions.querySelectorAll(linkClass));
-    }
+    learnMoreLinks.push(
+      ..._suggestions.querySelectorAll(
+        'a[is="moz-support-link"], .abuse-policy-learnmore'
+      )
+    );
 
     if (learnMoreLinks.length) {
+      is(
+        _suggestions.querySelectorAll(
+          'a[is="moz-support-link"]:not([support-page])'
+        ).length,
+        0,
+        "Every SUMO link should point to a specific page"
+      );
       ok(
         learnMoreLinks.every(el => el.getAttribute("target") === "_blank"),
         "All the learn more links have target _blank"
@@ -383,11 +397,12 @@ add_task(async function test_abusereport_suggestions_theme() {
   await theme.unload();
 });
 
+// TODO(Bug 1789718): adapt to SitePermAddonProvider implementation.
 add_task(async function test_abusereport_suggestions_sitepermission() {
   const SITEPERM_ADDON_ID = "webmidi@mochi.test";
   const sitePermAddon = await installTestExtension(
     SITEPERM_ADDON_ID,
-    "sitepermission"
+    "sitepermission-deprecated"
   );
   await test_abusereport_suggestions(SITEPERM_ADDON_ID);
   await sitePermAddon.unload();
@@ -395,6 +410,8 @@ add_task(async function test_abusereport_suggestions_sitepermission() {
 
 // This test case verifies the message bars created on other
 // scenarios (e.g. report creation and submissions errors).
+//
+// TODO(Bug 1789718): adapt to SitePermAddonProvider implementation.
 add_task(async function test_abusereport_messagebars() {
   const EXT_ID = "test-extension-report@mochi.test";
   const EXT_ID2 = "test-extension-report-2@mochi.test";
@@ -405,7 +422,7 @@ add_task(async function test_abusereport_messagebars() {
   const theme = await installTestExtension(THEME_ID, "theme");
   const sitePermAddon = await installTestExtension(
     SITEPERM_ADDON_ID,
-    "sitepermission"
+    "sitepermission-deprecated"
   );
 
   async function assertMessageBars(
@@ -415,9 +432,8 @@ add_task(async function test_abusereport_messagebars() {
   ) {
     await openAboutAddons();
     const expectedLength = expectedMessageBarIds.length;
-    const onMessageBarsCreated = AbuseReportTestUtils.promiseMessageBars(
-      expectedLength
-    );
+    const onMessageBarsCreated =
+      AbuseReportTestUtils.promiseMessageBars(expectedLength);
     // Reset the timestamp of the last report between tests.
     AbuseReporter._lastReportTimestamp = null;
     await testSetup();
@@ -673,8 +689,10 @@ add_task(async function test_abusereport_from_browserAction_remove() {
   const xpiFile = AddonTestUtils.createTempWebExtensionFile({
     manifest: {
       ...BASE_TEST_MANIFEST,
-      browser_action: {},
-      applications: { gecko: { id: EXT_ID } },
+      browser_action: {
+        default_area: "navbar",
+      },
+      browser_specific_settings: { gecko: { id: EXT_ID } },
     },
   });
   const addon = await AddonManager.installTemporaryAddon(xpiFile);
@@ -719,7 +737,7 @@ add_task(async function test_abusereport_from_browserAction_remove() {
     report: true,
   });
 
-  await BrowserTestUtils.withNewTab("about:blank", async function() {
+  await BrowserTestUtils.withNewTab("about:blank", async function () {
     info(`Open browserAction context menu in toolbar context menu`);
     let promiseMenu = reportFromContextMenuRemove();
 
@@ -889,8 +907,9 @@ add_task(async function test_abusereport_open_author_url() {
   let waitForConsole = new Promise(resolve => {
     SimpleTest.monitorConsole(resolve, [
       {
-        // eslint-disable-next-line max-len
-        message: /Security Error: Content at moz-nullprincipal:{.*} may not load or link to about:config/,
+        message:
+          // eslint-disable-next-line max-len
+          /Security Error: Content at moz-nullprincipal:{.*} may not load or link to about:config/,
       },
     ]);
   });
@@ -988,11 +1007,13 @@ add_task(async function test_author_hidden_when_missing() {
 
 // Verify addon.siteOrigin is used as a fallback when homepage_url/developer.url
 // or support url are missing.
+//
+// TODO(Bug 1789718): adapt to SitePermAddonProvider implementation.
 add_task(async function test_siteperm_siteorigin_fallback() {
   const SITEPERM_ADDON_ID = "webmidi-site-origin@mochi.test";
   const sitePermAddon = await installTestExtension(
     SITEPERM_ADDON_ID,
-    "sitepermission",
+    "sitepermission-deprecated",
     {
       homepage_url: undefined,
     }

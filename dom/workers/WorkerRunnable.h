@@ -15,7 +15,6 @@
 #include "mozilla/dom/WorkerRef.h"
 #include "mozilla/dom/WorkerStatus.h"
 #include "nsCOMPtr.h"
-#include "nsICancelableRunnable.h"
 #include "nsIRunnable.h"
 #include "nsISupports.h"
 #include "nsStringFwd.h"
@@ -37,7 +36,7 @@ class WorkerPrivate;
 // Use this runnable to communicate from the worker to its parent or vice-versa.
 // The busy count must be taken into consideration and declared at construction
 // time.
-class WorkerRunnable : public nsIRunnable, public nsICancelableRunnable {
+class WorkerRunnable : public nsIRunnable {
  public:
   enum TargetAndBusyBehavior {
     // Target the main thread for top-level workers, otherwise target the
@@ -62,10 +61,6 @@ class WorkerRunnable : public nsIRunnable, public nsICancelableRunnable {
   // See above.
   TargetAndBusyBehavior mBehavior;
 
-  // It's unclear whether or not Cancel() is supposed to work when called on any
-  // thread. To be safe we're using an atomic but it's likely overkill.
-  Atomic<uint32_t> mCanceled;
-
  private:
   // Whether or not Cancel() is currently being called from inside the Run()
   // method. Avoids infinite recursion when a subclass calls Run() from inside
@@ -75,22 +70,11 @@ class WorkerRunnable : public nsIRunnable, public nsICancelableRunnable {
  public:
   NS_DECL_THREADSAFE_ISUPPORTS
 
-  // If you override Cancel() then you'll need to either call the base class
-  // Cancel() method or override IsCanceled() so that the Run() method bails out
-  // appropriately.
-  // Cancel() should not be called more than once and we throw
-  // NS_ERROR_UNEXPECTED if it is. If you override it, ensure to call the base
-  // class method first and bail out on failure to avoid unexpected side
-  // effects.
-  nsresult Cancel() override;
+  virtual nsresult Cancel();
 
   // The return value is true if and only if both PreDispatch and
   // DispatchInternal return true.
   bool Dispatch();
-
-  // See above note about Cancel().
-  // TODO: Check if we can remove the possibility to override IsCanceled.
-  virtual bool IsCanceled() const { return mCanceled != 0; }
 
   // True if this runnable is handled by running JavaScript in some global that
   // could possibly be a debuggee, and thus needs to be deferred when the target
@@ -113,7 +97,6 @@ class WorkerRunnable : public nsIRunnable, public nsICancelableRunnable {
 #else
       : mWorkerPrivate(aWorkerPrivate),
         mBehavior(aBehavior),
-        mCanceled(0),
         mCallingCancelWithinRun(false) {
   }
 #endif
@@ -361,7 +344,7 @@ class WorkerSameThreadRunnable : public WorkerRunnable {
 class WorkerMainThreadRunnable : public Runnable {
  protected:
   WorkerPrivate* mWorkerPrivate;
-  nsCOMPtr<nsIEventTarget> mSyncLoopTarget;
+  nsCOMPtr<nsISerialEventTarget> mSyncLoopTarget;
   const nsCString mTelemetryKey;
 
   explicit WorkerMainThreadRunnable(WorkerPrivate* aWorkerPrivate,
@@ -425,13 +408,13 @@ class WorkerProxyToMainThreadRunnable : public Runnable {
 // they run this runnable does not modify the busy count
 // in any way.
 class MainThreadStopSyncLoopRunnable : public WorkerSyncRunnable {
-  bool mResult;
+  nsresult mResult;
 
  public:
   // Passing null for aSyncLoopTarget is not allowed.
   MainThreadStopSyncLoopRunnable(WorkerPrivate* aWorkerPrivate,
                                  nsCOMPtr<nsIEventTarget>&& aSyncLoopTarget,
-                                 bool aResult);
+                                 nsresult aResult);
 
   // By default StopSyncLoopRunnables cannot be canceled since they could leave
   // a sync loop spinning forever.

@@ -11,7 +11,6 @@
 #include "GLContextProvider.h"  // for GLContextProvider
 #include "GLContext.h"          // for GLContext
 #include "GLUploadHelpers.h"
-#include "Layers.h"                 // for WriteSnapshotToDumpFile
 #include "gfxCrashReporterUtils.h"  // for ScopedGfxFeatureReporter
 #include "gfxEnv.h"                 // for gfxEnv
 #include "gfxPlatform.h"            // for gfxPlatform
@@ -51,7 +50,7 @@
 #include "HeapCopyOfStackArray.h"
 #include "GLBlitHelper.h"
 #include "mozilla/gfx/Swizzle.h"
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 #  include "mozilla/widget/GtkCompositorWidget.h"
 #endif
 #if MOZ_WIDGET_ANDROID
@@ -71,6 +70,28 @@ using namespace mozilla::gl;
 
 static const GLuint kCoordinateAttributeIndex = 0;
 static const GLuint kTexCoordinateAttributeIndex = 1;
+
+class DummyTextureSourceOGL : public TextureSource, public TextureSourceOGL {
+ public:
+  const char* Name() const override { return "DummyTextureSourceOGL"; }
+
+  TextureSourceOGL* AsSourceOGL() override { return this; }
+
+  void BindTexture(GLenum activetex,
+                   gfx::SamplingFilter aSamplingFilter) override {}
+
+  bool IsValid() const override { return false; }
+
+  gfx::IntSize GetSize() const override { return gfx::IntSize(); }
+
+  gfx::SurfaceFormat GetFormat() const override {
+    return gfx::SurfaceFormat::B8G8R8A8;
+  }
+
+  GLenum GetWrapMode() const override { return LOCAL_GL_CLAMP_TO_EDGE; }
+
+ protected:
+};
 
 class AsyncReadbackBufferOGL final : public AsyncReadbackBuffer {
  public:
@@ -373,9 +394,9 @@ bool CompositorOGL::Initialize(nsCString* const out_failureReason) {
   mGLContext->fEnable(LOCAL_GL_BLEND);
 
   // initialise a common shader to check that we can actually compile a shader
-  RefPtr<EffectNV12> effect =
-      new EffectNV12(nullptr, YUVColorSpace::BT601, ColorRange::LIMITED,
-                     ColorDepth::COLOR_8, SamplingFilter::GOOD);
+  RefPtr<DummyTextureSourceOGL> source = new DummyTextureSourceOGL;
+  RefPtr<EffectRGB> effect =
+      new EffectRGB(source, /* aPremultiplied */ true, SamplingFilter::GOOD);
   ShaderConfigOGL config = GetShaderConfigFor(effect);
   if (!GetShaderProgramFor(config)) {
     *out_failureReason = "FEATURE_FAILURE_OPENGL_COMPILE_SHADER";
@@ -724,7 +745,7 @@ Maybe<IntRect> CompositorOGL::BeginFrame(const nsIntRegion& aInvalidRegion,
     MakeCurrent(ForceMakeCurrent);
 
     mWidgetSize = LayoutDeviceIntSize::FromUnknownSize(rect.Size());
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
     if (mWidget && mWidget->AsGTK()) {
       mWidget->AsGTK()->SetEGLNativeWindowSize(mWidgetSize);
     }
@@ -1080,7 +1101,8 @@ gfx::Point3D CompositorOGL::GetLineCoefficients(const gfx::Point& aPoint1,
   gfx::Point3D coeffecients;
   coeffecients.x = aPoint1.y - aPoint2.y;
   coeffecients.y = aPoint2.x - aPoint1.x;
-  coeffecients.z = aPoint1.x * aPoint2.y - aPoint2.x * aPoint1.y;
+  coeffecients.z =
+      aPoint1.x.value * aPoint2.y.value - aPoint2.x.value * aPoint1.y.value;
 
   coeffecients *= 1.0f / sqrtf(coeffecients.x * coeffecients.x +
                                coeffecients.y * coeffecients.y);
@@ -1203,10 +1225,12 @@ void CompositorOGL::DrawGeometry(const Geometry& aGeometry,
       while (winding == 0.0f && wp < pointCount) {
         int wp1 = (wp + 1) % pointCount;
         int wp2 = (wp + 2) % pointCount;
-        winding =
-            (points[wp1].x - points[wp].x) * (points[wp1].y + points[wp].y) +
-            (points[wp2].x - points[wp1].x) * (points[wp2].y + points[wp1].y) +
-            (points[wp].x - points[wp2].x) * (points[wp].y + points[wp2].y);
+        winding = (points[wp1].x - points[wp].x).value *
+                      (points[wp1].y + points[wp].y).value +
+                  (points[wp2].x - points[wp1].x).value *
+                      (points[wp2].y + points[wp1].y).value +
+                  (points[wp].x - points[wp2].x).value *
+                      (points[wp].y + points[wp2].y).value;
         wp++;
       }
       bool frontFacing = winding >= 0.0f;
@@ -1434,6 +1458,29 @@ void CompositorOGL::InitializeVAO(const GLuint aAttrib, const GLint aComponents,
   mGLContext->fEnableVertexAttribArray(aAttrib);
 }
 
+#ifdef MOZ_DUMP_PAINTING
+template <typename T>
+void WriteSnapshotToDumpFile_internal(T* aObj, DataSourceSurface* aSurf) {
+  nsCString string(aObj->Name());
+  string.Append('-');
+  string.AppendInt((uint64_t)aObj);
+  if (gfxUtils::sDumpPaintFile != stderr) {
+    fprintf_stderr(gfxUtils::sDumpPaintFile, R"(array["%s"]=")",
+                   string.BeginReading());
+  }
+  gfxUtils::DumpAsDataURI(aSurf, gfxUtils::sDumpPaintFile);
+  if (gfxUtils::sDumpPaintFile != stderr) {
+    fprintf_stderr(gfxUtils::sDumpPaintFile, R"(";)");
+  }
+}
+
+void WriteSnapshotToDumpFile(Compositor* aCompositor, DrawTarget* aTarget) {
+  RefPtr<SourceSurface> surf = aTarget->Snapshot();
+  RefPtr<DataSourceSurface> dSurf = surf->GetDataSurface();
+  WriteSnapshotToDumpFile_internal(aCompositor, dSurf);
+}
+#endif
+
 void CompositorOGL::EndFrame() {
   AUTO_PROFILER_LABEL("CompositorOGL::EndFrame", GRAPHICS);
 
@@ -1589,7 +1636,7 @@ void CompositorOGL::Pause() {
   if (!gl() || gl()->IsDestroyed()) return;
   // ReleaseSurface internally calls MakeCurrent
   gl()->ReleaseSurface();
-#elif defined(MOZ_WAYLAND)
+#elif defined(MOZ_WIDGET_GTK)
   // ReleaseSurface internally calls MakeCurrent
   gl()->ReleaseSurface();
 #endif
@@ -1597,7 +1644,7 @@ void CompositorOGL::Pause() {
 
 bool CompositorOGL::Resume() {
 #if defined(MOZ_WIDGET_ANDROID) || defined(MOZ_WIDGET_UIKIT) || \
-    defined(MOZ_WAYLAND)
+    defined(MOZ_WIDGET_GTK)
   if (!gl() || gl()->IsDestroyed()) return false;
 
   // RenewSurface internally calls MakeCurrent.

@@ -1,6 +1,7 @@
 use super::CORE_INSTANCE_SORT;
 use crate::{
-    encode_section, ComponentExportKind, ComponentSection, ComponentSectionId, Encode, ExportKind,
+    encode_section, ComponentExportKind, ComponentExternName, ComponentSection, ComponentSectionId,
+    Encode, ExportKind,
 };
 
 /// Represents an argument to a module instantiation.
@@ -59,17 +60,18 @@ impl InstanceSection {
     }
 
     /// Define an instance by instantiating a core module.
-    pub fn instantiate<'a, A>(&mut self, module_index: u32, args: A) -> &mut Self
+    pub fn instantiate<A, S>(&mut self, module_index: u32, args: A) -> &mut Self
     where
-        A: IntoIterator<Item = (&'a str, ModuleArg)>,
+        A: IntoIterator<Item = (S, ModuleArg)>,
         A::IntoIter: ExactSizeIterator,
+        S: AsRef<str>,
     {
         let args = args.into_iter();
         self.bytes.push(0x00);
         module_index.encode(&mut self.bytes);
         args.len().encode(&mut self.bytes);
         for (name, arg) in args {
-            name.encode(&mut self.bytes);
+            name.as_ref().encode(&mut self.bytes);
             arg.encode(&mut self.bytes);
         }
         self.num_added += 1;
@@ -77,16 +79,17 @@ impl InstanceSection {
     }
 
     /// Define an instance by exporting core WebAssembly items.
-    pub fn export_items<'a, E>(&mut self, exports: E) -> &mut Self
+    pub fn export_items<E, S>(&mut self, exports: E) -> &mut Self
     where
-        E: IntoIterator<Item = (&'a str, ExportKind, u32)>,
+        E: IntoIterator<Item = (S, ExportKind, u32)>,
         E::IntoIter: ExactSizeIterator,
+        S: AsRef<str>,
     {
         let exports = exports.into_iter();
         self.bytes.push(0x01);
         exports.len().encode(&mut self.bytes);
         for (name, kind, index) in exports {
-            name.encode(&mut self.bytes);
+            name.as_ref().encode(&mut self.bytes);
             kind.encode(&mut self.bytes);
             index.encode(&mut self.bytes);
         }
@@ -112,10 +115,10 @@ impl ComponentSection for InstanceSection {
 /// # Example
 ///
 /// ```rust
-/// use wasm_encoder::{Component, ComponentInstanceSection, ComponentExportKind};
+/// use wasm_encoder::{Component, ComponentInstanceSection, ComponentExportKind, ComponentExternName};
 ///
 /// let mut instances = ComponentInstanceSection::new();
-/// instances.export_items([("foo", ComponentExportKind::Func, 0)]);
+/// instances.export_items([(ComponentExternName::Kebab("foo"), ComponentExportKind::Func, 0)]);
 /// instances.instantiate(1, [("foo", ComponentExportKind::Instance, 0)]);
 ///
 /// let mut component = Component::new();
@@ -146,17 +149,18 @@ impl ComponentInstanceSection {
     }
 
     /// Define an instance by instantiating a component.
-    pub fn instantiate<'a, A>(&mut self, component_index: u32, args: A) -> &mut Self
+    pub fn instantiate<A, S>(&mut self, component_index: u32, args: A) -> &mut Self
     where
-        A: IntoIterator<Item = (&'a str, ComponentExportKind, u32)>,
+        A: IntoIterator<Item = (S, ComponentExportKind, u32)>,
         A::IntoIter: ExactSizeIterator,
+        S: AsRef<str>,
     {
         let args = args.into_iter();
         self.bytes.push(0x00);
         component_index.encode(&mut self.bytes);
         args.len().encode(&mut self.bytes);
         for (name, kind, index) in args {
-            name.encode(&mut self.bytes);
+            name.as_ref().encode(&mut self.bytes);
             kind.encode(&mut self.bytes);
             index.encode(&mut self.bytes);
         }
@@ -167,7 +171,7 @@ impl ComponentInstanceSection {
     /// Define an instance by exporting items.
     pub fn export_items<'a, E>(&mut self, exports: E) -> &mut Self
     where
-        E: IntoIterator<Item = (&'a str, ComponentExportKind, u32)>,
+        E: IntoIterator<Item = (ComponentExternName<'a>, ComponentExportKind, u32)>,
         E::IntoIter: ExactSizeIterator,
     {
         let exports = exports.into_iter();

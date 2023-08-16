@@ -4,11 +4,13 @@
 _("Making sure a failing sync reports a useful error");
 // `Service` is used as a global in head_helpers.js.
 // eslint-disable-next-line no-unused-vars
-const { Service } = ChromeUtils.import("resource://services-sync/service.js");
+const { Service } = ChromeUtils.importESModule(
+  "resource://services-sync/service.sys.mjs"
+);
 
 add_bookmark_test(async function run_test(engine) {
   await engine.initialize();
-  engine._syncStartup = async function() {
+  engine._syncStartup = async function () {
     throw new Error("FAIL!");
   };
 

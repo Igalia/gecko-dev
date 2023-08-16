@@ -24,16 +24,16 @@ const startupPhases = {
   // Anything loaded during app-startup must have a compelling reason
   // to run before we have even selected the user profile.
   // Consider loading your code after first paint instead,
-  // eg. from BrowserGlue.jsm' _onFirstWindowLoaded method).
+  // eg. from BrowserGlue.sys.mjs' _onFirstWindowLoaded method).
   "before profile selection": {
     allowlist: {
       modules: new Set([
-        "resource:///modules/BrowserGlue.jsm",
-        "resource:///modules/StartupRecorder.jsm",
-        "resource://gre/modules/AppConstants.jsm",
-        "resource://gre/modules/ActorManagerParent.jsm",
-        "resource://gre/modules/CustomElementsListener.jsm",
-        "resource://gre/modules/MainProcessSingleton.jsm",
+        "resource:///modules/BrowserGlue.sys.mjs",
+        "resource:///modules/StartupRecorder.sys.mjs",
+        "resource://gre/modules/AppConstants.sys.mjs",
+        "resource://gre/modules/ActorManagerParent.sys.mjs",
+        "resource://gre/modules/CustomElementsListener.sys.mjs",
+        "resource://gre/modules/MainProcessSingleton.sys.mjs",
         "resource://gre/modules/XPCOMUtils.sys.mjs",
       ]),
     },
@@ -56,16 +56,16 @@ const startupPhases = {
   "before first paint": {
     denylist: {
       modules: new Set([
-        "resource:///modules/AboutNewTab.jsm",
-        "resource:///modules/BrowserUsageTelemetry.jsm",
-        "resource:///modules/ContentCrashHandlers.jsm",
-        "resource:///modules/ShellService.jsm",
-        "resource://gre/modules/NewTabUtils.jsm",
-        "resource://gre/modules/PageThumbs.jsm",
+        "resource:///modules/AboutNewTab.sys.mjs",
+        "resource:///modules/BrowserUsageTelemetry.sys.mjs",
+        "resource:///modules/ContentCrashHandlers.sys.mjs",
+        "resource:///modules/ShellService.sys.mjs",
+        "resource://gre/modules/NewTabUtils.sys.mjs",
+        "resource://gre/modules/PageThumbs.sys.mjs",
         "resource://gre/modules/PlacesUtils.sys.mjs",
-        "resource://gre/modules/Preferences.jsm",
+        "resource://gre/modules/Preferences.sys.mjs",
         "resource://gre/modules/SearchService.sys.mjs",
-        "resource://gre/modules/Sqlite.jsm",
+        "resource://gre/modules/Sqlite.sys.mjs",
       ]),
       services: new Set(["@mozilla.org/browser/search-service;1"]),
     },
@@ -77,18 +77,18 @@ const startupPhases = {
   "before handling user events": {
     denylist: {
       modules: new Set([
-        "resource://gre/modules/Blocklist.jsm",
-        // Bug 1391495 - BrowserWindowTracker.jsm is intermittently used.
-        // "resource:///modules/BrowserWindowTracker.jsm",
+        "resource://gre/modules/Blocklist.sys.mjs",
+        // Bug 1391495 - BrowserWindowTracker.sys.mjs is intermittently used.
+        // "resource:///modules/BrowserWindowTracker.sys.mjs",
         "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
         "resource://gre/modules/Bookmarks.sys.mjs",
-        "resource://gre/modules/ContextualIdentityService.jsm",
-        "resource://gre/modules/FxAccounts.jsm",
-        "resource://gre/modules/FxAccountsStorage.jsm",
+        "resource://gre/modules/ContextualIdentityService.sys.mjs",
+        "resource://gre/modules/FxAccounts.sys.mjs",
+        "resource://gre/modules/FxAccountsStorage.sys.mjs",
         "resource://gre/modules/PlacesBackups.sys.mjs",
         "resource://gre/modules/PlacesExpiration.sys.mjs",
         "resource://gre/modules/PlacesSyncUtils.sys.mjs",
-        "resource://gre/modules/PushComponents.jsm",
+        "resource://gre/modules/PushComponents.sys.mjs",
       ]),
       services: new Set(["@mozilla.org/browser/nav-bookmarks-service;1"]),
     },
@@ -100,10 +100,9 @@ const startupPhases = {
   "before becoming idle": {
     denylist: {
       modules: new Set([
-        "resource://gre/modules/AsyncPrefs.jsm",
-        "resource://gre/modules/LoginManagerContextMenu.jsm",
-        "resource://gre/modules/osfile.jsm",
-        "resource://pdf.js/PdfStreamConverter.jsm",
+        "resource://gre/modules/AsyncPrefs.sys.mjs",
+        "resource://gre/modules/LoginManagerContextMenu.sys.mjs",
+        "resource://pdf.js/PdfStreamConverter.sys.mjs",
       ]),
     },
   },
@@ -117,17 +116,17 @@ if (
   ) == "default-theme@mozilla.org"
 ) {
   startupPhases["before profile selection"].allowlist.modules.add(
-    "resource://gre/modules/XULStore.jsm"
+    "resource://gre/modules/XULStore.sys.mjs"
   );
 }
 
 if (AppConstants.MOZ_CRASHREPORTER) {
   startupPhases["before handling user events"].denylist.modules.add(
-    "resource://gre/modules/CrashSubmit.jsm"
+    "resource://gre/modules/CrashSubmit.sys.mjs"
   );
 }
 
-add_task(async function() {
+add_task(async function () {
   if (
     !AppConstants.NIGHTLY_BUILD &&
     !AppConstants.MOZ_DEV_EDITION &&
@@ -141,8 +140,8 @@ add_task(async function() {
     return;
   }
 
-  let startupRecorder = Cc["@mozilla.org/test/startuprecorder;1"].getService()
-    .wrappedJSObject;
+  let startupRecorder =
+    Cc["@mozilla.org/test/startuprecorder;1"].getService().wrappedJSObject;
   await startupRecorder.done;
 
   let data = Cu.cloneInto(startupRecorder.data.code, {});

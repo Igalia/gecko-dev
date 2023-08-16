@@ -36,141 +36,9 @@ const MENU_ITEMS = {
   clearDownloads: '[command="downloadsCmd_clearDownloads"]',
 };
 
-const TestCasesDefaultMimetypes = [
+const TestCasesNewMimetypes = [
   {
-    name: "Completed PDF download with improvements pref disabled",
-    prefEnabled: false,
-    downloads: [
-      {
-        state: DownloadsCommon.DOWNLOAD_FINISHED,
-        contentType: "application/pdf",
-        target: {},
-        source: {
-          referrerInfo: exampleRefInfo,
-        },
-      },
-    ],
-    expected: {
-      menu: [
-        MENU_ITEMS.openInSystemViewer,
-        MENU_ITEMS.alwaysOpenInSystemViewer,
-        MENU_ITEMS.show,
-        MENU_ITEMS.commandsSeparator,
-        MENU_ITEMS.openReferrer,
-        MENU_ITEMS.copyLocation,
-        MENU_ITEMS.separator,
-        MENU_ITEMS.deleteFile,
-        MENU_ITEMS.delete,
-        MENU_ITEMS.clearList,
-      ],
-    },
-  },
-  {
-    name:
-      "Completed PDF download with improvements pref disabled and referrer info missing",
-    prefEnabled: false,
-    downloads: [
-      {
-        state: DownloadsCommon.DOWNLOAD_FINISHED,
-        contentType: "application/pdf",
-        target: {},
-      },
-    ],
-    expected: {
-      menu: [
-        MENU_ITEMS.openInSystemViewer,
-        MENU_ITEMS.alwaysOpenInSystemViewer,
-        MENU_ITEMS.show,
-        MENU_ITEMS.commandsSeparator,
-        MENU_ITEMS.copyLocation,
-        MENU_ITEMS.separator,
-        MENU_ITEMS.deleteFile,
-        MENU_ITEMS.delete,
-        MENU_ITEMS.clearList,
-      ],
-    },
-  },
-  {
-    name: "Canceled PDF download with improvements pref disabled",
-    prefEnabled: false,
-    downloads: [
-      {
-        state: DownloadsCommon.DOWNLOAD_CANCELED,
-        contentType: "application/pdf",
-        target: {},
-        source: {
-          referrerInfo: exampleRefInfo,
-        },
-      },
-    ],
-    expected: {
-      menu: [
-        MENU_ITEMS.openReferrer,
-        MENU_ITEMS.copyLocation,
-        MENU_ITEMS.separator,
-        MENU_ITEMS.delete,
-        MENU_ITEMS.clearList,
-      ],
-    },
-  },
-];
-
-const TestCasesNewMimetypesPrefDisabled = [
-  {
-    name: "Completed txt download with improvements pref disabled",
-    prefEnabled: false,
-    downloads: [
-      {
-        state: DownloadsCommon.DOWNLOAD_FINISHED,
-        contentType: "text/plain",
-        target: {},
-        source: {
-          referrerInfo: exampleRefInfo,
-        },
-      },
-    ],
-    expected: {
-      menu: [
-        MENU_ITEMS.show,
-        MENU_ITEMS.commandsSeparator,
-        MENU_ITEMS.openReferrer,
-        MENU_ITEMS.copyLocation,
-        MENU_ITEMS.separator,
-        MENU_ITEMS.deleteFile,
-        MENU_ITEMS.delete,
-        MENU_ITEMS.clearList,
-      ],
-    },
-  },
-  {
-    name: "Canceled txt download with improvements pref disabled",
-    prefEnabled: false,
-    downloads: [
-      {
-        state: DownloadsCommon.DOWNLOAD_CANCELED,
-        contentType: "text/plain",
-        target: {},
-        source: {
-          referrerInfo: exampleRefInfo,
-        },
-      },
-    ],
-    expected: {
-      menu: [
-        MENU_ITEMS.openReferrer,
-        MENU_ITEMS.copyLocation,
-        MENU_ITEMS.separator,
-        MENU_ITEMS.delete,
-        MENU_ITEMS.clearList,
-      ],
-    },
-  },
-];
-
-const TestCasesNewMimetypesPrefEnabled = [
-  {
-    name: "Completed txt download with improvements pref enabled",
-    prefEnabled: true,
+    name: "Completed txt download",
     downloads: [
       {
         state: DownloadsCommon.DOWNLOAD_FINISHED,
@@ -196,8 +64,7 @@ const TestCasesNewMimetypesPrefEnabled = [
     },
   },
   {
-    name: "Canceled txt download with improvements pref enabled",
-    prefEnabled: true,
+    name: "Canceled txt download",
     downloads: [
       {
         state: DownloadsCommon.DOWNLOAD_CANCELED,
@@ -219,9 +86,7 @@ const TestCasesNewMimetypesPrefEnabled = [
     },
   },
   {
-    name:
-      "Completed unknown ext download with application/octet-stream and improvements pref enabled",
-    prefEnabled: true,
+    name: "Completed unknown ext download with application/octet-stream",
     overrideExtension: "unknownExtension",
     downloads: [
       {
@@ -247,9 +112,7 @@ const TestCasesNewMimetypesPrefEnabled = [
     },
   },
   {
-    name:
-      "Completed txt download with application/octet-stream and improvements pref enabled",
-    prefEnabled: true,
+    name: "Completed txt download with application/octet-stream",
     overrideExtension: "txt",
     downloads: [
       {
@@ -282,8 +145,7 @@ const TestCasesNewMimetypesPrefEnabled = [
 
 const TestCasesDeletedFile = [
   {
-    name: "Download with file deleted and improvements pref enabled",
-    prefEnabled: true,
+    name: "Download with file deleted",
     downloads: [
       {
         state: DownloadsCommon.DOWNLOAD_FINISHED,
@@ -311,7 +173,6 @@ const TestCasesDeletedFile = [
 const TestCasesMultipleFiles = [
   {
     name: "Multiple files",
-    prefEnabled: true,
     downloads: [
       {
         state: DownloadsCommon.DOWNLOAD_FINISHED,
@@ -345,7 +206,7 @@ const TestCasesMultipleFiles = [
   },
 ];
 
-add_task(async function test_setUp() {
+add_setup(async function () {
   // remove download files, empty out collections
   let downloadList = await Downloads.getList(Downloads.ALL);
   let downloadCount = (await downloadList.getAll()).length;
@@ -384,40 +245,8 @@ add_task(async function test_setUp() {
   );
 });
 
-// register the tests
-for (let testData of TestCasesDefaultMimetypes) {
-  if (testData.skip) {
-    info("Skipping test:" + testData.name);
-    continue;
-  }
-  // use the 'name' property of each test case as the test function name
-  // so we get useful logs
-  let tmp = {
-    async [testData.name]() {
-      await testDownloadContextMenu(testData);
-    },
-  };
-  add_task(tmp[testData.name]);
-}
-
-// non default mimetypes with browser.download.improvements_to_download_panel disabled
-for (let testData of TestCasesNewMimetypesPrefDisabled) {
-  if (testData.skip) {
-    info("Skipping test:" + testData.name);
-    continue;
-  }
-  // use the 'name' property of each test case as the test function name
-  // so we get useful logs
-  let tmp = {
-    async [testData.name]() {
-      await testDownloadContextMenu(testData);
-    },
-  };
-  add_task(tmp[testData.name]);
-}
-
-// non default mimetypes with browser.download.improvements_to_download_panel enabled
-for (let testData of TestCasesNewMimetypesPrefEnabled) {
+// non default mimetypes
+for (let testData of TestCasesNewMimetypes) {
   if (testData.skip) {
     info("Skipping test:" + testData.name);
     continue;
@@ -466,16 +295,8 @@ async function testDownloadContextMenu({
   overrideExtension = null,
   downloads = [],
   expected,
-  prefEnabled,
   itemIndex = 0,
 }) {
-  info(
-    `Setting browser.download.improvements_to_download_panel to ${prefEnabled}`
-  );
-  SpecialPowers.setBoolPref(
-    "browser.download.improvements_to_download_panel",
-    prefEnabled
-  );
   // prepare downloads
   await prepareDownloads(downloads, overrideExtension);
   let downloadList = await Downloads.getList(Downloads.PUBLIC);
@@ -591,5 +412,10 @@ async function prepareDownloads(downloads, overrideExtension = null) {
     }
     ok(props.target instanceof Ci.nsIFile, "download target is a nsIFile");
   }
-  await task_addDownloads(downloads);
+  // If we'd just insert downloads as defined in the test case, they would
+  // appear reversed in the panel, because they will be in descending insertion
+  // order (newest at the top). The problem is we define an itemIndex based on
+  // the downloads array, and it would be weird to define it based on a
+  // reversed order. Short, we just reverse the array to preserve the order.
+  await task_addDownloads(downloads.reverse());
 }

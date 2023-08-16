@@ -3,14 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { EventEmitter } = ChromeUtils.import(
-  "resource://gre/modules/EventEmitter.jsm"
+const { EventEmitter } = ChromeUtils.importESModule(
+  "resource://gre/modules/EventEmitter.sys.mjs"
 );
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-const { actionCreators: ac, actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionCreators: ac, actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 const { getDefaultOptions } = ChromeUtils.import(
   "resource://activity-stream/lib/ActivityStreamStorage.jsm"
@@ -19,11 +16,8 @@ const { getDefaultOptions } = ChromeUtils.import(
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
 });
 
 /*
@@ -265,17 +259,16 @@ const SectionsManager = {
       options = JSON.parse(optionsPrefValue);
     } catch (e) {
       options = {};
-      Cu.reportError(`Problem parsing options pref for ${feedPrefName}`);
+      console.error(`Problem parsing options pref for ${feedPrefName}`);
     }
     try {
       storedPrefs = (await this._storage.get(feedPrefName)) || {};
     } catch (e) {
       storedPrefs = {};
-      Cu.reportError(`Problem getting stored prefs for ${feedPrefName}`);
+      console.error(`Problem getting stored prefs for ${feedPrefName}`);
     }
-    const defaultSection = BUILT_IN_SECTIONS(featureConfig)[feedPrefName](
-      options
-    );
+    const defaultSection =
+      BUILT_IN_SECTIONS(featureConfig)[feedPrefName](options);
     const section = Object.assign({}, defaultSection, {
       pref: Object.assign(
         {},
@@ -398,13 +391,12 @@ const SectionsManager = {
   _addCardTypeLinkMenuOptions(rows) {
     for (let card of rows) {
       if (!this.CONTEXT_MENU_OPTIONS_FOR_HIGHLIGHT_TYPES[card.type]) {
-        Cu.reportError(
+        console.error(
           `No context menu for highlight type ${card.type} is configured`
         );
       } else {
-        card.contextMenuOptions = this.CONTEXT_MENU_OPTIONS_FOR_HIGHLIGHT_TYPES[
-          card.type
-        ];
+        card.contextMenuOptions =
+          this.CONTEXT_MENU_OPTIONS_FOR_HIGHLIGHT_TYPES[card.type];
 
         // Remove any options that shouldn't be there based on CONTEXT_MENU_PREFS.
         // For example: If the Pocket extension is disabled, we should remove the CheckSavedToPocket option

@@ -22,7 +22,6 @@ const SUGGEST_PREF = "browser.search.suggest.enabled";
 ChromeUtils.defineESModuleGetters(this, {
   UrlbarProviderTabToSearch:
     "resource:///modules/UrlbarProviderTabToSearch.sys.mjs",
-  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -35,6 +34,7 @@ XPCOMUtils.defineLazyServiceGetter(
 /**
  * Asserts that search mode telemetry was recorded correctly. Checks both the
  * urlbar.searchmode.* and urlbar.searchmode_picked.* probes.
+ *
  * @param {string} entry
  *   A search mode entry point.
  * @param {string} engineOrSource
@@ -81,7 +81,7 @@ function assertSearchModeScalars(entry, engineOrSource, resultIndex = -1) {
   Services.telemetry.clearEvents();
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       // Disable tab-to-search onboarding results for general tests. They are
@@ -92,16 +92,13 @@ add_setup(async function() {
 
   // Create an engine to generate search suggestions and add it as default
   // for this test.
-  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml"
-  );
+  let suggestionEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "urlbarTelemetrySearchSuggestions.xml",
+    setAsDefault: true,
+  });
   suggestionEngine.alias = ENGINE_ALIAS;
-  engineDomain = suggestionEngine.getResultDomain();
+  engineDomain = suggestionEngine.searchUrlDomain;
   engineName = suggestionEngine.name;
-
-  // Make it the default search engine.
-  let originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(suggestionEngine);
 
   // And the first one-off engine.
   await Services.search.moveEngine(suggestionEngine, 0);
@@ -123,16 +120,11 @@ add_setup(async function() {
     set: [["browser.urlbar.maxHistoricalSearchSuggestions", 0]],
   });
 
-  // Allows UrlbarTestUtils to access this scope's test helpers, like Assert.
-  UrlbarTestUtils.init(this);
-
   // Make sure to restore the engine once we're done.
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     Services.telemetry.canRecordExtended = oldCanRecord;
-    await Services.search.setDefault(originalEngine);
     await PlacesUtils.history.clear();
     Services.telemetry.setEventRecordingEnabled("navigation", false);
-    UrlbarTestUtils.uninit();
   });
 });
 
@@ -377,6 +369,20 @@ add_task(async function test_bookmarkmenu() {
   BrowserTestUtils.removeTab(tab);
 });
 
+// Enters search mode by calling the same function called from a History
+// menu.
+add_task(async function test_historymenu() {
+  let searchPromise = UrlbarTestUtils.promiseSearchComplete(window);
+  PlacesCommandHook.searchHistory();
+  await searchPromise;
+
+  await UrlbarTestUtils.assertSearchMode(window, {
+    source: UrlbarUtils.RESULT_SOURCE.HISTORY,
+    entry: "historymenu",
+  });
+  assertSearchModeScalars("historymenu", "history");
+});
+
 // Enters search mode by calling the same function called by the Search Tabs
 // menu item in the tab overflow menu.
 add_task(async function test_tabmenu() {
@@ -409,7 +415,7 @@ add_task(async function test_handoff_pbm() {
   });
   let tab = win.gBrowser.selectedBrowser;
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     let btn = content.document.getElementById("search-handoff-button");
     btn.click();
   });

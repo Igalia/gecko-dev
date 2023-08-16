@@ -27,6 +27,9 @@ class FontFaceSetDocumentImpl final : public FontFaceSetImpl,
   void Destroy() override;
 
   bool IsOnOwningThread() override;
+#ifdef DEBUG
+  void AssertIsOnOwningThread() override;
+#endif
   void DispatchToOwningThread(const char* aName,
                               std::function<void()>&& aFunc) override;
 
@@ -47,7 +50,7 @@ class FontFaceSetDocumentImpl final : public FontFaceSetImpl,
 
   bool UpdateRules(const nsTArray<nsFontFaceRuleContainer>& aRules) override;
 
-  RawServoFontFaceRule* FindRuleForEntry(gfxFontEntry* aFontEntry) override;
+  StyleLockedFontFaceRule* FindRuleForEntry(gfxFontEntry* aFontEntry) override;
 
   /**
    * Notification method called by the nsPresContext to indicate that the
@@ -82,7 +85,7 @@ class FontFaceSetDocumentImpl final : public FontFaceSetImpl,
       const gfxFontFaceSrc* aFontFaceSrc) override;
 
   // search for @font-face rule that matches a userfont font entry
-  RawServoFontFaceRule* FindRuleForUserFontEntry(
+  StyleLockedFontFaceRule* FindRuleForUserFontEntry(
       gfxUserFontEntry* aUserFontEntry) override;
 
   void FindMatchingFontFaces(const nsTHashSet<FontFace*>& aMatchingFaces,

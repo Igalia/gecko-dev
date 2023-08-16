@@ -18,6 +18,7 @@
 #  include "WMFUtils.h"
 
 #  include "mozilla/sandboxTarget.h"
+#  include "mozilla/ipc/UtilityProcessImpl.h"
 #endif  // defined(XP_WIN) && defined(MOZ_SANDBOX)
 
 #ifdef MOZ_WIDGET_ANDROID
@@ -25,35 +26,70 @@
 #  include "AndroidDecoderModule.h"
 #endif
 
+#include "mozilla/ipc/UtilityProcessChild.h"
+#include "mozilla/RemoteDecodeUtils.h"
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+#  include "mozilla/gfx/DeviceManagerDx.h"
+#  include "mozilla/gfx/gfxVars.h"
+#  include "gfxConfig.h"
+#endif
+
 namespace mozilla::ipc {
 
-UtilityAudioDecoderParent::UtilityAudioDecoderParent() {
-  nsDebugImpl::SetMultiprocessMode("Utility AudioDecoder");
-  profiler_set_process_name(nsCString("Utility AudioDecoder"));
+UtilityAudioDecoderParent::UtilityAudioDecoderParent()
+    : mKind(GetCurrentSandboxingKind()),
+      mAudioDecoderParentStart(TimeStamp::Now()) {
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (mKind == SandboxingKind::MF_MEDIA_ENGINE_CDM) {
+    nsDebugImpl::SetMultiprocessMode("MF Media Engine CDM");
+    profiler_set_process_name(nsCString("MF Media Engine CDM"));
+    gfx::gfxConfig::Init();
+    gfx::gfxVars::Initialize();
+    gfx::DeviceManagerDx::Init();
+    return;
+  }
+#endif
+  if (GetCurrentSandboxingKind() != SandboxingKind::GENERIC_UTILITY) {
+    nsDebugImpl::SetMultiprocessMode("Utility AudioDecoder");
+    profiler_set_process_name(nsCString("Utility AudioDecoder"));
+  }
+}
+
+UtilityAudioDecoderParent::~UtilityAudioDecoderParent() {
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (mKind == SandboxingKind::MF_MEDIA_ENGINE_CDM) {
+    gfx::gfxConfig::Shutdown();
+    gfx::gfxVars::Shutdown();
+    gfx::DeviceManagerDx::Shutdown();
+  }
+#endif
 }
 
 /* static */
-void UtilityAudioDecoderParent::PreloadForSandbox() {
-#if defined(MOZ_SANDBOX) && defined(OS_WIN)
+void UtilityAudioDecoderParent::GenericPreloadForSandbox() {
+#if defined(MOZ_SANDBOX) && defined(XP_WIN) && defined(MOZ_FFVPX)
   // Preload AV dlls so we can enable Binary Signature Policy
   // to restrict further dll loads.
-  ::LoadLibraryW(L"mozavcodec.dll");
-  ::LoadLibraryW(L"mozavutil.dll");
+  UtilityProcessImpl::LoadLibraryOrCrash(L"mozavcodec.dll");
+  UtilityProcessImpl::LoadLibraryOrCrash(L"mozavutil.dll");
+#endif  // defined(MOZ_SANDBOX) && defined(XP_WIN) && defined(MOZ_FFVPX)
+}
 
-  // WMF
-  ::LoadLibraryW(L"mfplat.dll");
-  ::LoadLibraryW(L"mf.dll");
-
-#  if defined(DEBUG)
-  // WMF Shutdown on debug build somehow requires this
-  ::LoadLibraryW(L"ole32.dll");
-#  endif  // defined(DEBUG)
+/* static */
+void UtilityAudioDecoderParent::WMFPreloadForSandbox() {
+#if defined(MOZ_SANDBOX) && defined(XP_WIN)
+  // mfplat.dll and mf.dll will be preloaded by
+  // wmf::MediaFoundationInitializer::HasInitialized()
+  // WMF Shutdown requires this or it will badly crash
+  UtilityProcessImpl::LoadLibraryOrCrash(L"ole32.dll");
 
   auto rv = wmf::MediaFoundationInitializer::HasInitialized();
   if (!rv) {
     NS_WARNING("Failed to init Media Foundation in the Utility process");
+    return;
   }
-#endif  // defined(MOZ_SANDBOX) && defined(OS_WIN)
+#endif  // defined(MOZ_SANDBOX) && defined(XP_WIN)
 }
 
 void UtilityAudioDecoderParent::Start(
@@ -71,7 +107,11 @@ void UtilityAudioDecoderParent::Start(
 #endif
 
   auto supported = PDMFactory::Supported();
-  Unused << SendUpdateMediaCodecsSupported(std::move(supported));
+  Unused << SendUpdateMediaCodecsSupported(GetRemoteDecodeInFromKind(mKind),
+                                           supported);
+  PROFILER_MARKER_UNTYPED("UtilityAudioDecoderParent::Start", IPC,
+                          MarkerOptions(MarkerTiming::IntervalUntilNowFrom(
+                              mAudioDecoderParentStart)));
 }
 
 mozilla::ipc::IPCResult
@@ -83,5 +123,47 @@ UtilityAudioDecoderParent::RecvNewContentRemoteDecoderManager(
   }
   return IPC_OK();
 }
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+mozilla::ipc::IPCResult UtilityAudioDecoderParent::RecvInitVideoBridge(
+    Endpoint<PVideoBridgeChild>&& aEndpoint,
+    nsTArray<gfx::GfxVarUpdate>&& aUpdates,
+    const ContentDeviceData& aContentDeviceData) {
+  MOZ_ASSERT(mKind == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+  if (!RemoteDecoderManagerParent::CreateVideoBridgeToOtherProcess(
+          std::move(aEndpoint))) {
+    return IPC_FAIL_NO_REASON(this);
+  }
+
+  for (const auto& update : aUpdates) {
+    gfx::gfxVars::ApplyUpdate(update);
+  }
+
+  gfx::gfxConfig::Inherit(
+      {
+          gfx::Feature::HW_COMPOSITING,
+          gfx::Feature::D3D11_COMPOSITING,
+          gfx::Feature::OPENGL_COMPOSITING,
+          gfx::Feature::DIRECT2D,
+      },
+      aContentDeviceData.prefs());
+
+  if (gfx::gfxConfig::IsEnabled(gfx::Feature::D3D11_COMPOSITING)) {
+    if (auto* devmgr = gfx::DeviceManagerDx::Get()) {
+      devmgr->ImportDeviceInfo(aContentDeviceData.d3d11());
+    }
+  }
+
+  Unused << SendCompleteCreatedVideoBridge();
+  return IPC_OK();
+}
+
+IPCResult UtilityAudioDecoderParent::RecvUpdateVar(
+    const GfxVarUpdate& aUpdate) {
+  MOZ_ASSERT(mKind == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+  gfx::gfxVars::ApplyUpdate(aUpdate);
+  return IPC_OK();
+}
+#endif
 
 }  // namespace mozilla::ipc

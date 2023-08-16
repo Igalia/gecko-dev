@@ -39,7 +39,6 @@ class Http2StreamBase : public nsAHttpSegmentReader,
                         public SupportsWeakPtr {
  public:
   NS_DECL_NSAHTTPSEGMENTREADER
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(Http2StreamBase, override)
 
   enum stateType {
     IDLE,
@@ -146,7 +145,7 @@ class Http2StreamBase : public nsAHttpSegmentReader,
   void SetPriorityDependency(uint32_t, uint32_t);
   void UpdatePriorityDependency();
 
-  uint64_t TransactionTabId() { return mTransactionTabId; }
+  uint64_t TransactionBrowserId() { return mTransactionBrowserId; }
 
   // A pull stream has an implicit sink, a pushed stream has a sink
   // once it is matched to a pull stream.
@@ -160,8 +159,8 @@ class Http2StreamBase : public nsAHttpSegmentReader,
 
   nsresult GetOriginAttributes(mozilla::OriginAttributes* oa);
 
-  virtual void TopBrowsingContextIdChanged(uint64_t id);
-  void TopBrowsingContextIdChangedInternal(
+  virtual void CurrentBrowserIdChanged(uint64_t id);
+  void CurrentBrowserIdChangedInternal(
       uint64_t id);  // For use by pushed streams only
 
   virtual bool IsTunnel() { return false; }
@@ -178,6 +177,22 @@ class Http2StreamBase : public nsAHttpSegmentReader,
   bool DataBuffered() { return mSimpleBuffer.Available(); }
 
   virtual nsresult Condition() { return NS_OK; }
+
+  virtual void DisableSpdy() {
+    if (Transaction()) {
+      Transaction()->DisableSpdy();
+    }
+  }
+  virtual void ReuseConnectionOnRestartOK(bool aReuse) {
+    if (Transaction()) {
+      Transaction()->ReuseConnectionOnRestartOK(aReuse);
+    }
+  }
+  virtual void MakeNonSticky() {
+    if (Transaction()) {
+      Transaction()->MakeNonSticky();
+    }
+  }
 
  protected:
   virtual ~Http2StreamBase();
@@ -245,8 +260,8 @@ class Http2StreamBase : public nsAHttpSegmentReader,
 
   uint8_t mPriorityWeight = 0;       // h2 weight
   uint32_t mPriorityDependency = 0;  // h2 stream id this one depends on
-  uint64_t mCurrentTopBrowsingContextId;
-  uint64_t mTransactionTabId{0};
+  uint64_t mCurrentBrowserId;
+  uint64_t mTransactionBrowserId{0};
 
   // The InlineFrame and associated data is used for composing control
   // frames and data frame headers.

@@ -7,6 +7,7 @@
 
 #include "js/RegExp.h"
 #include "mozilla/BinarySearch.h"
+#include "mozilla/gtest/MozAssertions.h"
 #include "mozilla/SpinEventLoopUntil.h"
 #include "mozilla/UntrustedModulesProcessor.h"
 #include "mozilla/WinDllServices.h"
@@ -80,66 +81,63 @@ class ModuleLoadCounter final {
 };
 
 class UntrustedModulesCollector {
-  static constexpr int kMaximumPendingQueries = 500;
+  static constexpr int kMaximumAttempts = 500;
   Vector<UntrustedModulesData> mData;
+  ModuleLoadCounter* mChecker = nullptr;
+  Maybe<nsresult> mRv;
+  int mAttempts = 0;
+
+  void PollUntrustedModulesData() {
+    RefPtr<DllServices> dllSvc(DllServices::Get());
+    dllSvc->GetUntrustedModulesData()->Then(
+        GetMainThreadSerialEventTarget(), __func__,
+        [this](Maybe<UntrustedModulesData>&& aResult) {
+          // Some of expected loaded modules are still missing after
+          // kMaximumAttempts queries were submitted.
+          // Giving up here to avoid an infinite loop.
+          if (++mAttempts > kMaximumAttempts) {
+            mRv = Some(NS_ERROR_ABORT);
+            return;
+          }
+
+          if (aResult.isSome()) {
+            wprintf(L"Received data. (attempts=%d)\n", mAttempts);
+            for (auto item : aResult.ref().mEvents) {
+              mChecker->Decrement(item->mEvent.mRequestedDllName);
+            }
+            EXPECT_TRUE(mData.emplaceBack(std::move(aResult.ref())));
+          }
+
+          if (mChecker->IsDone()) {
+            mRv = Some(NS_OK);
+            return;
+          }
+
+          PollUntrustedModulesData();
+        },
+        [this](nsresult aReason) {
+          wprintf(L"GetUntrustedModulesData() failed - %08x\n", aReason);
+          EXPECT_TRUE(false);
+          mRv = Some(aReason);
+        });
+  }
 
  public:
   Vector<UntrustedModulesData>& Data() { return mData; }
 
   nsresult Collect(ModuleLoadCounter& aChecker) {
-    nsresult rv = NS_OK;
-
+    mRv = Nothing();
+    mChecker = &aChecker;
+    mAttempts = 0;
     mData.clear();
-    int pendingQueries = 0;
 
-    EXPECT_TRUE(SpinEventLoopUntil(
-        "xre:UntrustedModulesCollector"_ns,
-        [this, &pendingQueries, &aChecker, &rv]() {
-          // Some of expected loaded modules are still missing
-          // after kMaximumPendingQueries queries were submitted.
-          // Giving up here to avoid an infinite loop.
-          if (pendingQueries >= kMaximumPendingQueries) {
-            rv = NS_ERROR_ABORT;
-            return true;
-          }
+    PollUntrustedModulesData();
 
-          ++pendingQueries;
+    EXPECT_TRUE(SpinEventLoopUntil("xre:UntrustedModulesCollector"_ns,
+                                   [this]() { return mRv.isSome(); }));
 
-          RefPtr<DllServices> dllSvc(DllServices::Get());
-          dllSvc->GetUntrustedModulesData()->Then(
-              GetMainThreadSerialEventTarget(), __func__,
-              [this, &pendingQueries,
-               &aChecker](Maybe<UntrustedModulesData>&& aResult) {
-                EXPECT_GT(pendingQueries, 0);
-                --pendingQueries;
-
-                if (aResult.isSome()) {
-                  wprintf(L"Received data. (pendingQueries=%d)\n",
-                          pendingQueries);
-                  for (auto item : aResult.ref().mEvents) {
-                    aChecker.Decrement(item->mEvent.mRequestedDllName);
-                  }
-                  EXPECT_TRUE(mData.emplaceBack(std::move(aResult.ref())));
-                }
-              },
-              [&pendingQueries, &rv](nsresult aReason) {
-                EXPECT_GT(pendingQueries, 0);
-                --pendingQueries;
-
-                wprintf(L"GetUntrustedModulesData() failed - %08x\n", aReason);
-                EXPECT_TRUE(false);
-                rv = aReason;
-              });
-
-          // Keep calling GetUntrustedModulesData() until we meet the condition.
-          return aChecker.IsDone();
-        }));
-
-    EXPECT_TRUE(SpinEventLoopUntil(
-        "xre:UntrustedModulesCollector(pendingQueries)"_ns,
-        [&pendingQueries]() { return pendingQueries <= 0; }));
-
-    return rv;
+    mChecker = nullptr;
+    return *mRv;
   }
 };
 
@@ -164,11 +162,11 @@ class UntrustedModulesFixture : public TelemetryTestFixture {
     nsCOMPtr<nsIFile> file;
     EXPECT_TRUE(NS_SUCCEEDED(NS_GetSpecialDirectory(NS_OS_CURRENT_WORKING_DIR,
                                                     getter_AddRefs(file))));
-    EXPECT_TRUE(NS_SUCCEEDED(file->Append(aLeaf)));
+    EXPECT_NS_SUCCEEDED(file->Append(aLeaf));
     bool exists;
     EXPECT_TRUE(NS_SUCCEEDED(file->Exists(&exists)) && exists);
     nsString fullPath;
-    EXPECT_TRUE(NS_SUCCEEDED(file->GetPath(fullPath)));
+    EXPECT_NS_SUCCEEDED(file->GetPath(fullPath));
     return fullPath;
   }
 
@@ -208,7 +206,7 @@ class UntrustedModulesFixture : public TelemetryTestFixture {
 
     UntrustedModulesCollector collector;
     ModuleLoadCounter waitForOne({kTestModules[0]}, {1});
-    EXPECT_TRUE(NS_SUCCEEDED(collector.Collect(waitForOne)));
+    EXPECT_NS_SUCCEEDED(collector.Collect(waitForOne));
     EXPECT_TRUE(waitForOne.Remains({kTestModules[0]}, {0}));
     EXPECT_EQ(collector.Data().length(), 1U);
 
@@ -229,7 +227,8 @@ class UntrustedModulesFixture : public TelemetryTestFixture {
     serializer.GetObject(&jsval);
 
     nsAutoString json;
-    EXPECT_TRUE(nsContentUtils::StringifyJSON(cx.GetJSContext(), &jsval, json));
+    EXPECT_TRUE(nsContentUtils::StringifyJSON(
+        cx.GetJSContext(), jsval, json, dom::UndefinedIsNullStringLiteral));
 
     JS::Rooted<JSObject*> re(
         cx.GetJSContext(),
@@ -273,11 +272,17 @@ void UntrustedModulesFixture::ValidateUntrustedModules(
     const wchar_t* mName;
     ModuleLoadInfo::Status mStatus;
   } kKnownModules[] = {
-      // Sorted by mName for binary-search
-      {L"TestDllBlocklist_MatchByName.dll", ModuleLoadInfo::Status::Blocked},
-      {L"TestDllBlocklist_MatchByVersion.dll", ModuleLoadInfo::Status::Blocked},
-      {L"TestDllBlocklist_NoOpEntryPoint.dll",
-       ModuleLoadInfo::Status::Redirected},
+    // Sorted by mName for binary-search
+    {L"TestDllBlocklist_MatchByName.dll", ModuleLoadInfo::Status::Blocked},
+    {L"TestDllBlocklist_MatchByVersion.dll", ModuleLoadInfo::Status::Blocked},
+    {L"TestDllBlocklist_NoOpEntryPoint.dll",
+     ModuleLoadInfo::Status::Redirected},
+#if !defined(MOZ_ASAN)
+    // With ASAN, the test uses mozglue's blocklist where
+    // the user blocklist is not used. So only check for this
+    // DLL in the non-ASAN case.
+    {L"TestDllBlocklist_UserBlocked.dll", ModuleLoadInfo::Status::Blocked},
+#endif  // !defined(MOZ_ASAN)
   };
 
   EXPECT_EQ(aData.mProcessType, GeckoProcessType_Default);
@@ -401,7 +406,11 @@ TEST_F(UntrustedModulesFixture, Serialize) {
     u"\"modules\":\\[{"
       u"\"resolvedDllName\":\"TestUntrustedModules_Dll1\\.dll\","
       u"\"fileVersion\":\"1\\.2\\.3\\.4\","
+      // It would be nice to hard-code this, but this might change with
+      // compiler versions, etc.
+      u"\"debugID\":\"[0-9A-F]{33}\","
       u"\"companyName\":\"Mozilla Corporation\",\"trustFlags\":0}\\],"
+    u"\"blockedModules\":\\[.*?\\]," // allow for the case where there are some blocked modules
     u"\"processes\":{"
       PROCESS_OBJ(u"browser", u"0xabc") u","
       PROCESS_OBJ(u"browser", u"0x4") u","
@@ -428,8 +437,8 @@ TEST_F(UntrustedModulesFixture, Serialize) {
   ValidateJSValue(kPattern, ArrayLength(kPattern) - 1,
                   [&backup1, &backup2](
                       Telemetry::UntrustedModulesDataSerializer& aSerializer) {
-                    EXPECT_TRUE(NS_SUCCEEDED(aSerializer.Add(backup1)));
-                    EXPECT_TRUE(NS_SUCCEEDED(aSerializer.Add(backup2)));
+                    EXPECT_NS_SUCCEEDED(aSerializer.Add(backup1));
+                    EXPECT_NS_SUCCEEDED(aSerializer.Add(backup2));
                   });
 }
 

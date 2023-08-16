@@ -280,6 +280,7 @@ trigger_user_callback(pa_stream * s, void const * input_data, size_t nbytes,
     if (got < 0) {
       WRAP(pa_stream_cancel_write)(s);
       stm->shutdown = 1;
+      stm->state_callback(stm, stm->user_ptr, CUBEB_STATE_ERROR);
       return;
     }
     // If more iterations move offset of read buffer
@@ -392,6 +393,9 @@ stream_read_callback(pa_stream * s, size_t nbytes, void * u)
         if (got < 0 || (size_t)got != read_frames) {
           WRAP(pa_stream_cancel_write)(s);
           stm->shutdown = 1;
+          if (got < 0) {
+            stm->state_callback(stm, stm->user_ptr, CUBEB_STATE_ERROR);
+          }
           break;
         }
       }
@@ -800,10 +804,11 @@ pulse_destroy(cubeb * ctx)
   if (ctx->device_ids) {
     cubeb_strings_destroy(ctx->device_ids);
   }
-
+#ifndef DISABLE_LIBPULSE_DLOPEN
   if (ctx->libpulse) {
     dlclose(ctx->libpulse);
   }
+#endif
   free(ctx->default_sink_info);
   free(ctx);
 }
@@ -1020,7 +1025,7 @@ pulse_stream_init(cubeb * context, cubeb_stream ** stream,
     return CUBEB_ERROR;
   }
 
-  if (g_cubeb_log_level) {
+  if (cubeb_log_get_level()) {
     if (output_stream_params) {
       const pa_buffer_attr * output_att;
       output_att = WRAP(pa_stream_get_buffer_attr)(stm->output_stream);
@@ -1573,7 +1578,7 @@ pulse_subscribe_callback(pa_context * ctx, pa_subscription_event_type_t t,
   case PA_SUBSCRIPTION_EVENT_SOURCE:
   case PA_SUBSCRIPTION_EVENT_SINK:
 
-    if (g_cubeb_log_level) {
+    if (cubeb_log_get_level()) {
       if ((t & PA_SUBSCRIPTION_EVENT_FACILITY_MASK) ==
               PA_SUBSCRIPTION_EVENT_SOURCE &&
           (t & PA_SUBSCRIPTION_EVENT_TYPE_MASK) ==

@@ -25,10 +25,16 @@ class FramingChecker {
   // Determine if X-Frame-Options allows content to be framed
   // as a subdocument
   static bool CheckFrameOptions(nsIChannel* aChannel,
-                                nsIContentSecurityPolicy* aCSP);
+                                nsIContentSecurityPolicy* aCSP,
+                                bool& outIsFrameCheckingSkipped);
 
  protected:
-  enum XFOHeader { eDENY, eSAMEORIGIN };
+  struct XFOHeader {
+    bool ALLOWALL = false;
+    bool SAMEORIGIN = false;
+    bool DENY = false;
+    bool INVALID = false;
+  };
 
   /**
    * Logs to the window about a X-Frame-Options error.
@@ -40,9 +46,6 @@ class FramingChecker {
    */
   static void ReportError(const char* aMessageTag, nsIHttpChannel* aChannel,
                           nsIURI* aURI, const nsAString& aPolicy);
-
-  static bool CheckOneFrameOptionsPolicy(nsIHttpChannel* aHttpChannel,
-                                         const nsAString& aPolicy);
 };
 
 #endif /* mozilla_dom_FramingChecker_h */

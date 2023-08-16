@@ -3,7 +3,9 @@
  */
 "use strict";
 
-const { Weave } = ChromeUtils.import("resource://services-sync/main.js");
+const { Weave } = ChromeUtils.importESModule(
+  "resource://services-sync/main.sys.mjs"
+);
 
 // A mock "Tabs" engine which autocomplete will use instead of the real
 // engine. We pass a constructor that Sync creates.
@@ -44,6 +46,8 @@ function configureEngine(clients) {
   Services.obs.notifyObservers(null, "weave:engine:sync:finish", "tabs");
 }
 
+testEngine_setup();
+
 add_task(async function setup() {
   // Tell Sync about the mocks.
   Weave.Service.engineManager.register(MockTabsEngine);
@@ -54,12 +58,7 @@ add_task(async function setup() {
   ).wrappedJSObject;
   weaveXPCService.ready = true;
 
-  // Install a test engine.
-  let engine = await addTestSuggestionsEngine();
-  let oldDefaultEngine = await Services.search.getDefault();
-
   registerCleanupFunction(async () => {
-    Services.search.setDefault(oldDefaultEngine);
     Services.prefs.clearUserPref("services.sync.username");
     Services.prefs.clearUserPref("services.sync.registerEngines");
     Services.prefs.clearUserPref("browser.urlbar.suggest.searches");
@@ -67,7 +66,6 @@ add_task(async function setup() {
     await cleanupPlaces();
   });
 
-  Services.search.setDefault(engine);
   Services.prefs.setCharPref("services.sync.username", "someone@somewhere.com");
   Services.prefs.setCharPref("services.sync.registerEngines", "");
   // Avoid hitting the network.
@@ -77,8 +75,8 @@ add_task(async function setup() {
 
 add_task(async function test_minimal() {
   // The minimal client and tabs info we can get away with.
-  configureEngine({
-    guid_desktop: {
+  configureEngine([
+    {
       id: "desktop",
       tabs: [
         {
@@ -86,7 +84,7 @@ add_task(async function test_minimal() {
         },
       ],
     },
-  });
+  ]);
 
   let query = "ex";
   let context = createContext(query, { isPrivate: false });
@@ -107,8 +105,8 @@ add_task(async function test_minimal() {
 
 add_task(async function test_maximal() {
   // Every field that could possibly exist on a remote record.
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -118,7 +116,7 @@ add_task(async function test_maximal() {
         },
       ],
     },
-  });
+  ]);
 
   let query = "ex";
   let context = createContext(query, { isPrivate: false });
@@ -141,8 +139,8 @@ add_task(async function test_maximal() {
 
 add_task(async function test_noShowIcons() {
   Services.prefs.setBoolPref("services.sync.syncedTabs.showRemoteIcons", false);
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -152,7 +150,7 @@ add_task(async function test_noShowIcons() {
         },
       ],
     },
-  });
+  ]);
 
   let query = "ex";
   let context = createContext(query, { isPrivate: false });
@@ -177,8 +175,8 @@ add_task(async function test_noShowIcons() {
 
 add_task(async function test_dontMatchSyncedTabs() {
   Services.prefs.setBoolPref("services.sync.syncedTabs.showRemoteTabs", false);
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -188,7 +186,7 @@ add_task(async function test_dontMatchSyncedTabs() {
         },
       ],
     },
-  });
+  ]);
 
   let context = createContext("ex", { isPrivate: false });
   await check_results({
@@ -206,8 +204,8 @@ add_task(async function test_dontMatchSyncedTabs() {
 
 add_task(async function test_tabsDisabledInUrlbar() {
   Services.prefs.setBoolPref("browser.urlbar.suggest.remotetab", false);
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -217,7 +215,7 @@ add_task(async function test_tabsDisabledInUrlbar() {
         },
       ],
     },
-  });
+  ]);
 
   let context = createContext("ex", { isPrivate: false });
   await check_results({
@@ -235,8 +233,8 @@ add_task(async function test_tabsDisabledInUrlbar() {
 
 add_task(async function test_matches_title() {
   // URL doesn't match search expression, should still match the title.
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -245,7 +243,7 @@ add_task(async function test_matches_title() {
         },
       ],
     },
-  });
+  ]);
 
   let query = "ex";
   let context = createContext(query, { isPrivate: false });
@@ -270,8 +268,8 @@ add_task(async function test_localtab_matches_override() {
   // tab" should appear as duplicate detection removed the remote one.
 
   // First set up Sync to have the page as a remote tab.
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -280,7 +278,7 @@ add_task(async function test_localtab_matches_override() {
         },
       ],
     },
-  });
+  ]);
 
   // Set up Places to think the tab is open locally.
   let uri = Services.io.newURI("http://foo.com/");
@@ -312,8 +310,8 @@ add_task(async function test_remotetab_matches_override() {
   // remote tab match.
   let url = "http://foo.remote.com/";
   // First set up Sync to have the page as a remote tab.
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: [
         {
@@ -322,7 +320,7 @@ add_task(async function test_remotetab_matches_override() {
         },
       ],
     },
-  });
+  ]);
 
   // Set up Places to think the tab is in history.
   await PlacesTestUtils.addVisits(url);
@@ -358,12 +356,7 @@ add_task(async function test_mixed_result_types() {
       lastUsed: Math.floor(Date.now() / 1000) - i * 86400, // i days ago.
     }));
   // First set up Sync to have the page as a remote tab.
-  configureEngine({
-    guid_mobile: {
-      id: "mobile",
-      tabs,
-    },
-  });
+  configureEngine([{ id: "mobile", tabs }]);
 
   // Register the page as an open tab.
   let openTabUrl = url + "openpage/";
@@ -445,12 +438,12 @@ add_task(async function test_many_remotetab_results() {
     }));
 
   // First set up Sync to have the page as a remote tab.
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs,
     },
-  });
+  ]);
 
   let query = "rem";
   let context = createContext(query, { isPrivate: false });
@@ -537,16 +530,16 @@ add_task(async function multiple_clients() {
     lastUsed: Date.now() / 1000,
   });
 
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs: mobileTabs,
     },
-    guid_desktop: {
+    {
       id: "desktop",
       tabs: desktopTabs,
     },
-  });
+  ]);
 
   // We expect that we will show the recent tab from mobileTabs, then all the
   // tabs from desktopTabs, then the remaining tabs from mobileTabs.
@@ -602,12 +595,12 @@ add_task(async function test_restrictionCharacter() {
       title: "A title",
       lastUsed: Math.floor(Date.now() / 1000) - i,
     }));
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs,
     },
-  });
+  ]);
 
   // Also add an open page.
   let openTabUrl = url + "openpage/";
@@ -674,12 +667,12 @@ add_task(async function test_duplicate_remote_tabs() {
       title: "A title",
       lastUsed: Math.floor(Date.now() / 1000),
     }));
-  configureEngine({
-    guid_mobile: {
+  configureEngine([
+    {
       id: "mobile",
       tabs,
     },
-  });
+  ]);
 
   // We expect the duplicate tabs to be deduped.
   let query = UrlbarTokenizer.RESTRICT.OPENPAGE;

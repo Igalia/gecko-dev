@@ -3,7 +3,6 @@
 
 "use strict";
 
-/* import-globals-from inspector-helpers.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/server/tests/browser/inspector-helpers.js",
   this
@@ -38,7 +37,7 @@ add_task(async function testInnerHTML() {
   const actualInnerHTML = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
-    function() {
+    function () {
       return content.document.documentElement.innerHTML;
     }
   );
@@ -56,7 +55,7 @@ add_task(async function testOuterHTML() {
   const actualOuterHTML = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
-    function() {
+    function () {
       return content.document.documentElement.outerHTML;
     }
   );
@@ -267,12 +266,12 @@ add_task(async function testLongValue() {
     MAIN_DOMAIN + "inspector-traversal-data.html"
   );
 
-  SimpleTest.registerCleanupFunction(async function() {
-    await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
-      const { require } = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+  SimpleTest.registerCleanupFunction(async function () {
+    await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
+      const { require } = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/Loader.sys.mjs"
       );
-      const WalkerActor = require("devtools/server/actors/inspector/walker");
+      const WalkerActor = require("resource://devtools/server/actors/inspector/walker.js");
       WalkerActor.setValueSummaryLength(
         WalkerActor.DEFAULT_VALUE_SUMMARY_LENGTH
       );
@@ -282,12 +281,12 @@ add_task(async function testLongValue() {
   const longstringText = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
-    function() {
-      const { require } = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+    function () {
+      const { require } = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/Loader.sys.mjs"
       );
       const testSummaryLength = 10;
-      const WalkerActor = require("devtools/server/actors/inspector/walker");
+      const WalkerActor = require("resource://devtools/server/actors/inspector/walker.js");
 
       WalkerActor.setValueSummaryLength(testSummaryLength);
       return content.document.getElementById("longstring").firstChild.nodeValue;
@@ -316,7 +315,7 @@ add_task(async function testShortValue() {
   const shortstringText = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
-    function() {
+    function () {
       return content.document.getElementById("shortstring").firstChild
         .nodeValue;
     }

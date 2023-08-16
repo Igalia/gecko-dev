@@ -8,7 +8,7 @@ const TEST_URL = TEST_ROOT + "file_favicon_change_not_in_document.html";
  * This test tests a link element won't fire DOMLinkChanged/DOMLinkAdded unless
  * it is added to the DOM. See more details in bug 1083895.
  *
- * Note that there is debounce logic in ContentLinkHandler.jsm, adding a new
+ * Note that there is debounce logic in FaviconLoader.sys.mjs, adding a new
  * icon link after the icon parsing timeout will trigger a new icon extraction
  * cycle. Hence, there should be two favicons loads in this test as it appends
  * a new link to the DOM in the timeout callback defined in the test HTML page.
@@ -16,7 +16,7 @@ const TEST_URL = TEST_ROOT + "file_favicon_change_not_in_document.html";
  * should not fire the DOMLinkAdded event, nor should it fire the DOMLinkChanged
  * event after its href gets updated later.
  */
-add_task(async function() {
+add_task(async function () {
   let extraTab = (gBrowser.selectedTab = BrowserTestUtils.addTab(
     gBrowser,
     TEST_ROOT
@@ -39,7 +39,7 @@ add_task(async function() {
   let expectedFavicon = TEST_ROOT + "file_generic_favicon.ico";
   let faviconPromise = waitForFavicon(extraTab.linkedBrowser, expectedFavicon);
 
-  BrowserTestUtils.loadURI(extraTab.linkedBrowser, TEST_URL);
+  BrowserTestUtils.loadURIString(extraTab.linkedBrowser, TEST_URL);
   await BrowserTestUtils.browserLoaded(extraTab.linkedBrowser);
 
   await faviconPromise;

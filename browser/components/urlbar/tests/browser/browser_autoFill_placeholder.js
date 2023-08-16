@@ -16,7 +16,7 @@
 // Allow more time for verify mode.
 requestLongerTimeout(5);
 
-add_task(async function init() {
+add_setup(async function () {
   await cleanUp();
 });
 
@@ -457,8 +457,7 @@ add_task(async function noURIFragmentMatch1() {
       ],
     },
     {
-      desc:
-        "Autofill https://example.com/#TEST then search for https://example.com/#Te",
+      desc: "Autofill https://example.com/#TEST then search for https://example.com/#Te",
       searches: [
         {
           searchString: "https://example.com/#T",
@@ -538,8 +537,7 @@ add_task(async function noURIFragmentMatch2() {
       ],
     },
     {
-      desc:
-        "Autofill https://example.com/foo#TEST then search for https://example.com/foo#Te",
+      desc: "Autofill https://example.com/foo#TEST then search for https://example.com/foo#Te",
       searches: [
         {
           searchString: "https://example.com/foo#T",
@@ -687,8 +685,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/ then search for example.com/shallow/",
+      desc: "Autofill example.com/shallow/deep/ then search for example.com/shallow/",
       searches: [
         {
           searchString: "example.com/shallow/d",
@@ -722,8 +719,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/file then search for example.com/",
+      desc: "Autofill example.com/shallow/deep/file then search for example.com/",
       searches: [
         {
           searchString: "example.com/shallow/deep/f",
@@ -740,8 +736,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/file then search for example.com/s",
+      desc: "Autofill example.com/shallow/deep/file then search for example.com/s",
       searches: [
         {
           searchString: "example.com/shallow/deep/f",
@@ -758,8 +753,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/file then search for example.com/shallow/",
+      desc: "Autofill example.com/shallow/deep/file then search for example.com/shallow/",
       searches: [
         {
           searchString: "example.com/shallow/deep/f",
@@ -776,8 +770,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/file then search for example.com/shallow/d",
+      desc: "Autofill example.com/shallow/deep/file then search for example.com/shallow/d",
       searches: [
         {
           searchString: "example.com/shallow/deep/f",
@@ -794,8 +787,7 @@ add_task(async function noPathMatch() {
       ],
     },
     {
-      desc:
-        "Autofill example.com/shallow/deep/file then search for example.com/shallow/deep/",
+      desc: "Autofill example.com/shallow/deep/file then search for example.com/shallow/deep/",
       searches: [
         {
           searchString: "example.com/shallow/deep/f",
@@ -882,129 +874,9 @@ add_task(async function noAdaptiveHistoryMatch() {
 });
 
 /**
- * This function does the following:
- *
- * 1. Starts a search with `searchString` but doesn't wait for it to complete.
- * 2. Compares the input value to `valueBefore`. If anything is autofilled at
- *    this point, it will be due to the placeholder.
- * 3. Waits for the search to complete.
- * 4. Compares the input value to `valueAfter`. If anything is autofilled at
- *    this point, it will be due to the autofill result fetched by the search.
- * 5. Compares the placeholder to `placeholderAfter`.
- *
- * @param {string} searchString
- * @param {string} valueBefore
- *   The expected input value before the search completes.
- * @param {string} valueAfter
- *   The expected input value after the search completes.
- * @param {string} placeholderAfter
- *   The expected placeholder value after the search completes.
- */
-async function search({
-  searchString,
-  valueBefore,
-  valueAfter,
-  placeholderAfter,
-}) {
-  info(
-    "Searching: " +
-      JSON.stringify({
-        searchString,
-        valueBefore,
-        valueAfter,
-        placeholderAfter,
-      })
-  );
-
-  await SimpleTest.promiseFocus(window);
-  gURLBar.inputField.focus();
-
-  // Set the input value and move the caret to the end to simulate the user
-  // typing. It's important the caret is at the end because otherwise autofill
-  // won't happen.
-  gURLBar.value = searchString;
-  gURLBar.inputField.setSelectionRange(
-    searchString.length,
-    searchString.length
-  );
-
-  // Placeholder autofill is done on input, so fire an input event. We can't use
-  // `promiseAutocompleteResultPopup()` or other helpers that wait for the
-  // search to complete because we are specifically checking placeholder
-  // autofill before the search completes.
-  UrlbarTestUtils.fireInputEvent(window);
-
-  // Check the input value and selection immediately, before waiting on the
-  // search to complete.
-  Assert.equal(
-    gURLBar.value,
-    valueBefore,
-    "gURLBar.value before the search completes"
-  );
-  Assert.equal(
-    gURLBar.selectionStart,
-    searchString.length,
-    "gURLBar.selectionStart before the search completes"
-  );
-  Assert.equal(
-    gURLBar.selectionEnd,
-    valueBefore.length,
-    "gURLBar.selectionEnd before the search completes"
-  );
-
-  // Wait for the search to complete.
-  info("Waiting for the search to complete");
-  await UrlbarTestUtils.promiseSearchComplete(window);
-
-  // Check the final value after the results arrived.
-  Assert.equal(
-    gURLBar.value,
-    valueAfter,
-    "gURLBar.value after the search completes"
-  );
-  Assert.equal(
-    gURLBar.selectionStart,
-    searchString.length,
-    "gURLBar.selectionStart after the search completes"
-  );
-  Assert.equal(
-    gURLBar.selectionEnd,
-    valueAfter.length,
-    "gURLBar.selectionEnd after the search completes"
-  );
-
-  // Check the placeholder.
-  if (placeholderAfter) {
-    Assert.ok(
-      gURLBar._autofillPlaceholder,
-      "gURLBar._autofillPlaceholder exists after the search completes"
-    );
-    Assert.strictEqual(
-      gURLBar._autofillPlaceholder.value,
-      placeholderAfter,
-      "gURLBar._autofillPlaceholder.value after the search completes"
-    );
-  } else {
-    Assert.strictEqual(
-      gURLBar._autofillPlaceholder,
-      null,
-      "gURLBar._autofillPlaceholder does not exist after the search completes"
-    );
-  }
-
-  // Check the first result.
-  let details = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-  Assert.equal(
-    !!details.autofill,
-    !!placeholderAfter,
-    "First result is an autofill result iff a placeholder is expected"
-  );
-}
-
-/**
  * Adds enough visits to URLs so their origins start autofilling.
  *
- * @param {...string} urls
+ * @param {...string} urls The URLs to add visits to.
  */
 async function addVisits(...urls) {
   for (let url of urls) {

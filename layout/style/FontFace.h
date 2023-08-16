@@ -17,11 +17,13 @@
 #include "nsWrapperCache.h"
 
 class gfxFontFaceBufferSource;
-struct RawServoFontFaceRule;
+class nsIGlobalObject;
 
 namespace mozilla {
 struct CSSFontFaceDescriptors;
 class PostTraversalTask;
+struct StyleLockedFontFaceRule;
+
 namespace dom {
 class CSSFontFaceRule;
 class FontFaceBufferSource;
@@ -44,12 +46,11 @@ class FontFace final : public nsISupports, public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(FontFace)
 
   nsIGlobalObject* GetParentObject() const { return mParent; }
-  virtual JSObject* WrapObject(JSContext* aCx,
-                               JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapObject(JSContext*, JS::Handle<JSObject*> aGivenProto) override;
 
-  static already_AddRefed<FontFace> CreateForRule(nsIGlobalObject* aGlobal,
-                                                  FontFaceSet* aFontFaceSet,
-                                                  RawServoFontFaceRule* aRule);
+  static already_AddRefed<FontFace> CreateForRule(
+      nsIGlobalObject* aGlobal, FontFaceSet* aFontFaceSet,
+      StyleLockedFontFaceRule* aRule);
 
   // Web IDL
   static already_AddRefed<FontFace> Constructor(

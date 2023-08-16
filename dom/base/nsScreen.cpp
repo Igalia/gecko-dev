@@ -52,7 +52,7 @@ NS_IMPL_CYCLE_COLLECTION_INHERITED(nsScreen, DOMEventTargetHelper,
 
 int32_t nsScreen::GetPixelDepth(ErrorResult& aRv) {
   // Return 24 to prevent fingerprinting.
-  if (ShouldResistFingerprinting()) {
+  if (ShouldResistFingerprinting(RFPTarget::ScreenPixelDepth)) {
     return 24;
   }
 
@@ -74,13 +74,13 @@ nsPIDOMWindowOuter* nsScreen::GetOuter() const {
   return nullptr;
 }
 
-nsDeviceContext* nsScreen::GetDeviceContext() {
+nsDeviceContext* nsScreen::GetDeviceContext() const {
   return nsLayoutUtils::GetDeviceContextForScreenInfo(GetOuter());
 }
 
 nsresult nsScreen::GetRect(CSSIntRect& aRect) {
   // Return window inner rect to prevent fingerprinting.
-  if (ShouldResistFingerprinting()) {
+  if (ShouldResistFingerprinting(RFPTarget::ScreenRect)) {
     return GetWindowInnerRect(aRect);
   }
 
@@ -112,7 +112,7 @@ nsresult nsScreen::GetRect(CSSIntRect& aRect) {
 
 nsresult nsScreen::GetAvailRect(CSSIntRect& aRect) {
   // Return window inner rect to prevent fingerprinting.
-  if (ShouldResistFingerprinting()) {
+  if (ShouldResistFingerprinting(RFPTarget::ScreenAvailRect)) {
     return GetWindowInnerRect(aRect);
   }
 
@@ -142,18 +142,20 @@ nsresult nsScreen::GetAvailRect(CSSIntRect& aRect) {
 }
 
 uint16_t nsScreen::GetOrientationAngle() const {
-  // NOTE(emilio): This could be made screen-dependent with some minor effort /
-  // plumbing, but this will only ever differ on Android (where there's just one
-  // screen anyways).
+  nsDeviceContext* context = GetDeviceContext();
+  if (context) {
+    return context->GetScreenOrientationAngle();
+  }
   RefPtr<widget::Screen> s =
       widget::ScreenManager::GetSingleton().GetPrimaryScreen();
   return s->GetOrientationAngle();
 }
 
 hal::ScreenOrientation nsScreen::GetOrientationType() const {
-  // NOTE(emilio): This could be made screen-dependent with some minor effort /
-  // plumbing, but this will only ever differ on android where there's just one
-  // screen anyways.
+  nsDeviceContext* context = GetDeviceContext();
+  if (context) {
+    return context->GetScreenOrientationType();
+  }
   RefPtr<widget::Screen> s =
       widget::ScreenManager::GetSingleton().GetPrimaryScreen();
   return s->GetOrientationType();
@@ -223,11 +225,8 @@ nsresult nsScreen::GetWindowInnerRect(CSSIntRect& aRect) {
   return NS_OK;
 }
 
-bool nsScreen::ShouldResistFingerprinting() const {
-  bool resist = false;
+bool nsScreen::ShouldResistFingerprinting(RFPTarget aTarget) const {
   nsCOMPtr<nsPIDOMWindowInner> owner = GetOwner();
-  if (owner) {
-    resist = nsContentUtils::ShouldResistFingerprinting(owner->GetDocShell());
-  }
-  return resist;
+  return owner &&
+         nsGlobalWindowInner::Cast(owner)->ShouldResistFingerprinting(aTarget);
 }

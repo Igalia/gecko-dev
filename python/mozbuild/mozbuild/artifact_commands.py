@@ -3,22 +3,26 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 from __future__ import absolute_import
+
 import argparse
 import hashlib
 import json
 import logging
 import os
 import shutil
-import six
-
 from collections import OrderedDict
 
-from mach.decorators import CommandArgument, Command, SubCommand
+# As a result of the selective module loading changes, this import has to be
+# done here. It is not explicitly used, but it has an implicit side-effect
+# (bringing in TASKCLUSTER_ROOT_URL) which is necessary.
+import gecko_taskgraph.main  # noqa: F401
+import mozversioncontrol
+import six
+from mach.decorators import Command, CommandArgument, SubCommand
+
 from mozbuild.artifact_builds import JOB_CHOICES
 from mozbuild.base import MachCommandConditions as conditions
 from mozbuild.util import ensureParentDir
-import mozversioncontrol
-
 
 _COULD_NOT_FIND_ARTIFACTS_TEMPLATE = (
     "ERROR!!!!!! Could not find artifacts for a toolchain build named "
@@ -66,10 +70,10 @@ class ArtifactSubCommand(SubCommand):
 def artifact(command_context):
     """Download, cache, and install pre-built binary artifacts to build Firefox.
 
-    Use |mach build| as normal to freshen your installed binary libraries:
+    Use ``mach build`` as normal to freshen your installed binary libraries:
     artifact builds automatically download, cache, and install binary
     artifacts from Mozilla automation, replacing whatever may be in your
-    object directory.  Use |mach artifact last| to see what binary artifacts
+    object directory.  Use ``mach artifact last`` to see what binary artifacts
     were last used.
 
     Never build libxul again!
@@ -132,7 +136,11 @@ def _make_artifacts(
     return artifacts
 
 
-@ArtifactSubCommand("artifact", "install", "Install a good pre-built artifact.")
+@ArtifactSubCommand(
+    "artifact",
+    "install",
+    "Install a good pre-built artifact.",
+)
 @CommandArgument(
     "source",
     metavar="SRC",
@@ -200,7 +208,10 @@ def artifact_clear_cache(command_context, tree=None, job=None, verbose=False):
     return 0
 
 
-@SubCommand("artifact", "toolchain")
+@SubCommand(
+    "artifact",
+    "toolchain",
+)
 @CommandArgument("--verbose", "-v", action="store_true", help="Print verbose output.")
 @CommandArgument(
     "--cache-dir",
@@ -262,14 +273,16 @@ def artifact_toolchain(
     artifact_manifest=None,
 ):
     """Download, cache and install pre-built toolchains."""
-    from mozbuild.artifacts import ArtifactCache
-    from mozbuild.action.tooltool import FileRecord, open_manifest, unpack_file
-    from taskgraph.util.taskcluster import get_artifact_url
-    import redo
-    import requests
     import time
 
-    start = time.time()
+    import redo
+    import requests
+    from taskgraph.util.taskcluster import get_artifact_url
+
+    from mozbuild.action.tooltool import FileRecord, open_manifest, unpack_file
+    from mozbuild.artifacts import ArtifactCache
+
+    start = time.monotonic()
     command_context._set_log_level(verbose)
     # Normally, we'd use command_context.log_manager.enable_unstructured(),
     # but that enables all logging, while we only really want tooltool's
@@ -374,6 +387,7 @@ def artifact_toolchain(
             )
             return 1
         from gecko_taskgraph.optimize.strategies import IndexSearch
+
         from mozbuild.toolchains import toolchain_task_definitions
 
         tasks = toolchain_task_definitions()
@@ -432,17 +446,18 @@ def artifact_toolchain(
                 repo = mozversioncontrol.get_repository_object(
                     command_context.topsrcdir
                 )
-                changed_files = set(repo.get_outgoing_files()) | set(
-                    repo.get_changed_files()
-                )
-                if changed_files:
-                    command_context.log(
-                        logging.ERROR,
-                        "artifact",
-                        {},
-                        "Hint: consider reverting your local changes "
-                        "to the following files: %s" % sorted(changed_files),
+                if not isinstance(repo, mozversioncontrol.SrcRepository):
+                    changed_files = set(repo.get_outgoing_files()) | set(
+                        repo.get_changed_files()
                     )
+                    if changed_files:
+                        command_context.log(
+                            logging.ERROR,
+                            "artifact",
+                            {},
+                            "Hint: consider reverting your local changes "
+                            "to the following files: %s" % sorted(changed_files),
+                        )
                 if "TASKCLUSTER_ROOT_URL" in os.environ:
                     command_context.log(
                         logging.ERROR,
@@ -587,7 +602,7 @@ def artifact_toolchain(
             json.dump(artifacts, fh, indent=4, sort_keys=True)
 
     if "MOZ_AUTOMATION" in os.environ:
-        end = time.time()
+        end = time.monotonic()
 
         perfherder_data = {
             "framework": {"name": "build_metrics"},

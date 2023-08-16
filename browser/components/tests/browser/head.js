@@ -3,9 +3,9 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  sinon: "resource://testing-common/Sinon.jsm",
-  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 // Helpers for testing telemetry events.
@@ -21,8 +21,8 @@ function AssertEvents(message, ...events) {
   );
 }
 
-const BROWSER_GLUE = Cc["@mozilla.org/browser/browserglue;1"].getService()
-  .wrappedJSObject;
+const BROWSER_GLUE =
+  Cc["@mozilla.org/browser/browserglue;1"].getService().wrappedJSObject;
 
 // Helpers for mocking various shell states.
 

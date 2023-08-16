@@ -3,15 +3,17 @@
 
 "use strict";
 
+const asyncStorage = require("resource://devtools/shared/async-storage.js");
+
 /**
  * Test if the New Request panel shows up as a expected when opened from the toolbar
  */
 
-add_task(async function() {
+add_task(async function () {
   // Turn on the pref
   await pushPref("devtools.netmonitor.features.newEditAndResend", true);
-  // Resetting the pref
-  await pushPref("devtools.netmonitor.customRequest", "");
+  // Reset the storage for the persisted custom request
+  await asyncStorage.removeItem("devtools.netmonitor.customRequest");
 
   const { monitor } = await initNetMonitor(HTTPS_CUSTOM_GET_URL, {
     requestCount: 1,

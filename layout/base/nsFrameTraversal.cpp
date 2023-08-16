@@ -18,8 +18,6 @@ using namespace mozilla;
 
 class nsFrameIterator : public nsIFrameEnumerator {
  public:
-  typedef nsIFrame::ChildListID ChildListID;
-
   NS_DECL_ISUPPORTS
 
   virtual void First() override;
@@ -204,9 +202,7 @@ bool nsFrameIterator::IsDone() { return mOffEdge != 0; }
 
 void nsFrameIterator::First() { mCurrent = mStart; }
 
-static bool IsRootFrame(nsIFrame* aFrame) {
-  return aFrame->IsCanvasFrame() || aFrame->IsXULRootFrame();
-}
+static bool IsRootFrame(nsIFrame* aFrame) { return aFrame->IsCanvasFrame(); }
 
 void nsFrameIterator::Last() {
   nsIFrame* result;
@@ -424,8 +420,7 @@ bool nsFrameIterator::IsPopupFrame(nsIFrame* aFrame) {
   if (mSkipPopupChecks) {
     return false;
   }
-
-  return (aFrame && aFrame->StyleDisplay()->mDisplay == StyleDisplay::MozPopup);
+  return aFrame && aFrame->IsMenuPopupFrame();
 }
 
 // nsVisualIterator implementation

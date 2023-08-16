@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,71 +13,94 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <stdint.h>
+#include <stdio.h>
+
+#include <vector>
+
 // clang-format off
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "hwy/contrib/sort/bench_sort.cc"
-#include "hwy/foreach_target.h"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
 
 // After foreach_target
 #include "hwy/contrib/sort/algo-inl.h"
-#include "hwy/contrib/sort/result-inl.h"
 #include "hwy/contrib/sort/vqsort.h"
+#include "hwy/contrib/sort/result-inl.h"
 #include "hwy/contrib/sort/sorting_networks-inl.h"  // SharedTraits
 #include "hwy/contrib/sort/traits-inl.h"
 #include "hwy/contrib/sort/traits128-inl.h"
 #include "hwy/tests/test_util-inl.h"
 // clang-format on
 
-#include <stdint.h>
-#include <stdio.h>
-#include <string.h>  // memcpy
+// Mode for larger sorts because M1 is able to access more than the per-core
+// share of L2, so 1M elements might still be in cache.
+#define SORT_100M 0
 
-#include <vector>
+#define SORT_BENCH_BASE_AND_PARTITION 0
 
 HWY_BEFORE_NAMESPACE();
 namespace hwy {
+// Defined within HWY_ONCE, used by BenchAllSort.
+extern int64_t first_sort_target;
+
 namespace HWY_NAMESPACE {
 namespace {
-using detail::LaneTraits;
+using detail::TraitsLane;
 using detail::OrderAscending;
 using detail::OrderDescending;
 using detail::SharedTraits;
 
-#if HWY_TARGET != HWY_SCALAR
+#if VQSORT_ENABLED
 using detail::OrderAscending128;
-using detail::OrderDescending128;
+using detail::OrderAscendingKV128;
 using detail::Traits128;
+#endif
 
-template <class Traits, typename T>
+#if (VQSORT_ENABLED && SORT_BENCH_BASE_AND_PARTITION) || HWY_IDE
+
+template <class Traits>
 HWY_NOINLINE void BenchPartition() {
-  const SortTag<T> d;
+  using LaneType = typename Traits::LaneType;
+  using KeyType = typename Traits::KeyType;
+  const SortTag<LaneType> d;
   detail::SharedTraits<Traits> st;
   const Dist dist = Dist::kUniform8;
   double sum = 0.0;
 
+  constexpr size_t kLPK = st.LanesPerKey();
+  HWY_ALIGN LaneType
+      buf[SortConstants::BufBytes<LaneType>(HWY_MAX_BYTES, kLPK) /
+          sizeof(LaneType)];
+  uint64_t* HWY_RESTRICT state = GetGeneratorState();
+
   const size_t max_log2 = AdjustedLog2Reps(20);
   for (size_t log2 = max_log2; log2 < max_log2 + 1; ++log2) {
-    const size_t num = 1ull << log2;
-    auto aligned = hwy::AllocateAligned<T>(num);
-    auto buf =
-        hwy::AllocateAligned<T>(hwy::SortConstants::PartitionBufNum(Lanes(d)));
+    const size_t num_lanes = 1ull << log2;
+    const size_t num_keys = num_lanes / kLPK;
+    auto aligned = hwy::AllocateAligned<LaneType>(num_lanes);
 
     std::vector<double> seconds;
-    const size_t num_reps = (1ull << (14 - log2 / 2)) * kReps;
+    const size_t num_reps = (1ull << (14 - log2 / 2)) * 30;
     for (size_t rep = 0; rep < num_reps; ++rep) {
-      (void)GenerateInput(dist, aligned.get(), num);
+      (void)GenerateInput(dist, aligned.get(), num_lanes);
+
+      // The pivot value can influence performance. Do exactly what vqsort will
+      // do so that the performance (influenced by prefetching and branch
+      // prediction) is likely to predict the actual performance inside vqsort.
+      detail::DrawSamples(d, st, aligned.get(), num_lanes, buf, state);
+      detail::SortSamples(d, st, buf);
+      auto pivot = detail::ChoosePivotByRank(d, st, buf);
 
       const Timestamp t0;
-
-      detail::Partition(d, st, aligned.get(), 0, num - 1, Set(d, T(128)),
-                        buf.get());
+      detail::Partition(d, st, aligned.get(), num_lanes - 1, pivot, buf);
       seconds.push_back(SecondsSince(t0));
       // 'Use' the result to prevent optimizing out the partition.
-      sum += static_cast<double>(aligned.get()[num / 2]);
+      sum += static_cast<double>(aligned.get()[num_lanes / 2]);
     }
 
-    MakeResult<T>(Algo::kVQSort, dist, st, num, 1,
-                  SummarizeMeasurements(seconds))
+    Result(Algo::kVQSort, dist, num_keys, 1, SummarizeMeasurements(seconds),
+           sizeof(KeyType), st.KeyString())
         .Print();
   }
   HWY_ASSERT(sum != 999999);  // Prevent optimizing out
@@ -84,52 +108,61 @@ HWY_NOINLINE void BenchPartition() {
 
 HWY_NOINLINE void BenchAllPartition() {
   // Not interested in benchmark results for these targets
-  if (HWY_TARGET == HWY_SSSE3 || HWY_TARGET == HWY_SSE4 ||
-      HWY_TARGET == HWY_AVX2) {
+  if (HWY_TARGET == HWY_SSSE3) {
     return;
   }
 
-  BenchPartition<LaneTraits<OrderDescending>, float>();
-  BenchPartition<LaneTraits<OrderAscending>, int64_t>();
-  BenchPartition<Traits128<OrderDescending128>, uint64_t>();
+  BenchPartition<TraitsLane<OrderDescending<float>>>();
+  BenchPartition<TraitsLane<OrderDescending<int32_t>>>();
+  BenchPartition<TraitsLane<OrderDescending<int64_t>>>();
+  BenchPartition<Traits128<OrderAscending128>>();
+  // BenchPartition<Traits128<OrderDescending128>>();
+  BenchPartition<Traits128<OrderAscendingKV128>>();
 }
 
-template <class Traits, typename T>
+template <class Traits>
 HWY_NOINLINE void BenchBase(std::vector<Result>& results) {
   // Not interested in benchmark results for these targets
   if (HWY_TARGET == HWY_SSSE3 || HWY_TARGET == HWY_SSE4) {
     return;
   }
 
-  const SortTag<T> d;
+  using LaneType = typename Traits::LaneType;
+  using KeyType = typename Traits::KeyType;
+  const SortTag<LaneType> d;
   detail::SharedTraits<Traits> st;
   const Dist dist = Dist::kUniform32;
 
   const size_t N = Lanes(d);
-  const size_t num = SortConstants::BaseCaseNum(N);
-  auto keys = hwy::AllocateAligned<T>(num);
-  auto buf = hwy::AllocateAligned<T>(num + N);
+  constexpr size_t kLPK = st.LanesPerKey();
+  const size_t num_lanes = SortConstants::BaseCaseNumLanes<kLPK>(N);
+  const size_t num_keys = num_lanes / kLPK;
+  auto keys = hwy::AllocateAligned<LaneType>(num_lanes);
+  auto buf = hwy::AllocateAligned<LaneType>(num_lanes + N);
 
   std::vector<double> seconds;
   double sum = 0;                             // prevents elision
   constexpr size_t kMul = AdjustedReps(600);  // ensures long enough to measure
 
-  for (size_t rep = 0; rep < kReps; ++rep) {
-    InputStats<T> input_stats = GenerateInput(dist, keys.get(), num);
+  for (size_t rep = 0; rep < 30; ++rep) {
+    InputStats<LaneType> input_stats =
+        GenerateInput(dist, keys.get(), num_lanes);
 
     const Timestamp t0;
     for (size_t i = 0; i < kMul; ++i) {
-      detail::BaseCase(d, st, keys.get(), num, buf.get());
+      detail::BaseCase(d, st, keys.get(), keys.get() + num_lanes, num_lanes,
+                       buf.get());
       sum += static_cast<double>(keys[0]);
     }
     seconds.push_back(SecondsSince(t0));
     // printf("%f\n", seconds.back());
 
-    HWY_ASSERT(VerifySort(st, input_stats, keys.get(), num, "BenchBase"));
+    HWY_ASSERT(VerifySort(st, input_stats, keys.get(), num_lanes, "BenchBase"));
   }
   HWY_ASSERT(sum < 1E99);
-  results.push_back(MakeResult<T>(Algo::kVQSort, dist, st, num * kMul, 1,
-                                  SummarizeMeasurements(seconds)));
+  results.emplace_back(Algo::kVQSort, dist, num_keys * kMul, 1,
+                       SummarizeMeasurements(seconds), sizeof(KeyType),
+                       st.KeyString());
 }
 
 HWY_NOINLINE void BenchAllBase() {
@@ -139,13 +172,15 @@ HWY_NOINLINE void BenchAllBase() {
   }
 
   std::vector<Result> results;
-  BenchBase<LaneTraits<OrderAscending>, float>(results);
-  BenchBase<LaneTraits<OrderDescending>, int64_t>(results);
-  BenchBase<Traits128<OrderAscending128>, uint64_t>(results);
+  BenchBase<TraitsLane<OrderAscending<float>>>(results);
+  BenchBase<TraitsLane<OrderDescending<int64_t>>>(results);
+  BenchBase<Traits128<OrderAscending128>>(results);
   for (const Result& r : results) {
     r.Print();
   }
 }
+
+#endif  // VQSORT_ENABLED && SORT_BENCH_BASE_AND_PARTITION
 
 std::vector<Algo> AlgoForBench() {
   return {
@@ -154,8 +189,7 @@ std::vector<Algo> AlgoForBench() {
 #endif
 #if HAVE_PARALLEL_IPS4O
         Algo::kParallelIPS4O,
-#endif
-#if HAVE_IPS4O
+#elif HAVE_IPS4O
         Algo::kIPS4O,
 #endif
 #if HAVE_PDQSORT
@@ -164,74 +198,151 @@ std::vector<Algo> AlgoForBench() {
 #if HAVE_SORT512
         Algo::kSort512,
 #endif
-        // Algo::kStd,  // too slow to always benchmark
-        // Algo::kHeap,  // too slow to always benchmark
-        Algo::kVQSort,
+// Only include if we're compiling for the target it supports.
+#if HAVE_VXSORT && ((VXSORT_AVX3 && HWY_TARGET == HWY_AVX3) || \
+                    (!VXSORT_AVX3 && HWY_TARGET == HWY_AVX2))
+        Algo::kVXSort,
+#endif
+// Only include if we're compiling for the target it supports.
+#if HAVE_INTEL && HWY_TARGET <= HWY_AVX3
+        Algo::kIntel,
+#endif
+
+#if !HAVE_PARALLEL_IPS4O
+#if !SORT_100M
+        // 10-20x slower, but that's OK for the default size when we are not
+        // testing the parallel nor 100M modes.
+        Algo::kStd,
+#endif
+
+        Algo::kVQSort,  // only ~4x slower, but not required for Table 1a
+#endif                  // !HAVE_PARALLEL_IPS4O
   };
 }
 
-template <class Traits, typename T>
-HWY_NOINLINE void BenchSort(size_t num) {
+template <class Traits>
+HWY_NOINLINE void BenchSort(size_t num_keys) {
+  if (first_sort_target == 0) first_sort_target = HWY_TARGET;
+
   SharedState shared;
   detail::SharedTraits<Traits> st;
-  auto aligned = hwy::AllocateAligned<T>(num);
+  using Order = typename Traits::Order;
+  using LaneType = typename Traits::LaneType;
+  using KeyType = typename Traits::KeyType;
+  const size_t num_lanes = num_keys * st.LanesPerKey();
+  auto aligned = hwy::AllocateAligned<LaneType>(num_lanes);
+
+  const size_t reps = num_keys > 1000 * 1000 ? 10 : 30;
+
   for (Algo algo : AlgoForBench()) {
+    // Other algorithms don't depend on the vector instructions, so only run
+    // them for the first target.
+#if !HAVE_VXSORT
+    if (algo != Algo::kVQSort && HWY_TARGET != first_sort_target) {
+      continue;
+    }
+#endif
+
     for (Dist dist : AllDist()) {
       std::vector<double> seconds;
-      for (size_t rep = 0; rep < kReps; ++rep) {
-        InputStats<T> input_stats = GenerateInput(dist, aligned.get(), num);
+      for (size_t rep = 0; rep < reps; ++rep) {
+        InputStats<LaneType> input_stats =
+            GenerateInput(dist, aligned.get(), num_lanes);
 
         const Timestamp t0;
-        Run<typename Traits::Order>(algo, aligned.get(), num, shared,
-                                    /*thread=*/0);
+        Run<Order>(algo, reinterpret_cast<KeyType*>(aligned.get()), num_keys,
+                   shared, /*thread=*/0);
         seconds.push_back(SecondsSince(t0));
         // printf("%f\n", seconds.back());
 
         HWY_ASSERT(
-            VerifySort(st, input_stats, aligned.get(), num, "BenchSort"));
+            VerifySort(st, input_stats, aligned.get(), num_lanes, "BenchSort"));
       }
-      MakeResult<T>(algo, dist, st, num, 1, SummarizeMeasurements(seconds))
+      Result(algo, dist, num_keys, 1, SummarizeMeasurements(seconds),
+             sizeof(KeyType), st.KeyString())
           .Print();
     }  // dist
   }    // algo
 }
 
-HWY_NOINLINE void BenchAllSort() {
-  // Not interested in benchmark results for these targets
-  if (HWY_TARGET == HWY_SSSE3 || HWY_TARGET == HWY_SSE4) {
-    return;
-  }
+enum class BenchmarkModes {
+  kDefault,
+  k1M,
+  kAllSmall,
+  kSmallPow2,
+  kPow4,
+  kPow10
+};
 
-  constexpr size_t K = 1000;
-  constexpr size_t M = K * K;
-  (void)K;
-  (void)M;
-  for (size_t num : {
-#if HAVE_PARALLEL_IPS4O
-         100 * M,
+std::vector<size_t> SizesToBenchmark(BenchmarkModes mode) {
+  std::vector<size_t> sizes;
+  switch (mode) {
+    default:
+    case BenchmarkModes::kDefault:
+#if HAVE_PARALLEL_IPS4O || SORT_100M
+      sizes.push_back(100 * 1000 * size_t{1000});
 #else
-         AdjustedReps(1 * M),
+      sizes.push_back(100);
+      sizes.push_back(100 * 1000);
 #endif
-       }) {
-    // BenchSort<LaneTraits<OrderAscending>, float>(num);
-    // BenchSort<LaneTraits<OrderDescending>, double>(num);
-    // BenchSort<LaneTraits<OrderAscending>, int16_t>(num);
-    BenchSort<LaneTraits<OrderDescending>, int32_t>(num);
-    BenchSort<LaneTraits<OrderAscending>, int64_t>(num);
-    // BenchSort<LaneTraits<OrderDescending>, uint16_t>(num);
-    // BenchSort<LaneTraits<OrderDescending>, uint32_t>(num);
-    // BenchSort<LaneTraits<OrderAscending>, uint64_t>(num);
+      break;
+    case BenchmarkModes::k1M:
+      sizes.push_back(1000 * 1000);
+      break;
 
-    BenchSort<Traits128<OrderAscending128>, uint64_t>(num);
-    // BenchSort<Traits128<OrderAscending128>, uint64_t>(num);
+    case BenchmarkModes::kAllSmall:
+      sizes.reserve(128);
+      for (size_t i = 1; i <= 128; ++i) {
+        sizes.push_back(i);
+      }
+      break;
+    case BenchmarkModes::kSmallPow2:
+      for (size_t size = 2; size <= 128; size *= 2) {
+        sizes.push_back(size);
+      }
+      break;
+    case BenchmarkModes::kPow4:
+      for (size_t size = 4; size <= 256 * 1024; size *= 4) {
+        sizes.push_back(size);
+      }
+      break;
+    case BenchmarkModes::kPow10:
+      for (size_t size = 10; size <= 100 * 1000; size *= 10) {
+        sizes.push_back(size);
+      }
+      break;
   }
+  return sizes;
 }
 
-#else
-void BenchAllPartition() {}
-void BenchAllBase() {}
-void BenchAllSort() {}
+HWY_NOINLINE void BenchAllSort() {
+  // Not interested in benchmark results for these targets. Note that SSE4 is
+  // numerically less than SSE2, hence it is the lower bound.
+  if (HWY_SSE4 <= HWY_TARGET && HWY_TARGET <= HWY_SSE2) {
+    return;
+  }
+#if HAVE_INTEL
+  if (HWY_TARGET > HWY_AVX3) return;
 #endif
+
+  for (size_t num_keys : SizesToBenchmark(BenchmarkModes::kSmallPow2)) {
+#if !HAVE_INTEL
+    BenchSort<TraitsLane<OrderAscending<float>>>(num_keys);
+#endif
+    // BenchSort<TraitsLane<OtherOrder<double>>>(num_keys);
+    // BenchSort<TraitsLane<OrderAscending<int16_t>>>(num_keys);
+    BenchSort<TraitsLane<OtherOrder<int32_t>>>(num_keys);
+    BenchSort<TraitsLane<OrderAscending<int64_t>>>(num_keys);
+    // BenchSort<TraitsLane<OtherOrder<uint16_t>>>(num_keys);
+    // BenchSort<TraitsLane<OtherOrder<uint32_t>>>(num_keys);
+    // BenchSort<TraitsLane<OrderAscending<uint64_t>>>(num_keys);
+
+#if !HAVE_VXSORT && !HAVE_INTEL && VQSORT_ENABLED
+    BenchSort<Traits128<OrderAscending128>>(num_keys);
+    BenchSort<Traits128<OrderAscendingKV128>>(num_keys);
+#endif
+  }
+}
 
 }  // namespace
 // NOLINTNEXTLINE(google-readability-namespace-comments)
@@ -242,18 +353,15 @@ HWY_AFTER_NAMESPACE();
 #if HWY_ONCE
 
 namespace hwy {
+int64_t first_sort_target = 0;  // none run yet
 namespace {
 HWY_BEFORE_TEST(BenchSort);
+#if SORT_BENCH_BASE_AND_PARTITION
 HWY_EXPORT_AND_TEST_P(BenchSort, BenchAllPartition);
 HWY_EXPORT_AND_TEST_P(BenchSort, BenchAllBase);
+#endif
 HWY_EXPORT_AND_TEST_P(BenchSort, BenchAllSort);
 }  // namespace
 }  // namespace hwy
-
-// Ought not to be necessary, but without this, no tests run on RVV.
-int main(int argc, char** argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
 
 #endif  // HWY_ONCE

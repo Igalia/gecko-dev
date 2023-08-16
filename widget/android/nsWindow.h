@@ -129,6 +129,8 @@ class nsWindow final : public nsBaseWidget {
 
   void DetachNatives();
 
+  mozilla::Mutex& GetDestroyMutex() { return mDestroyMutex; }
+
   //
   // nsIWidget
   //
@@ -137,7 +139,7 @@ class nsWindow final : public nsBaseWidget {
   [[nodiscard]] virtual nsresult Create(nsIWidget* aParent,
                                         nsNativeWidget aNativeParent,
                                         const LayoutDeviceIntRect& aRect,
-                                        nsWidgetInitData* aInitData) override;
+                                        InitData* aInitData) override;
   virtual void Destroy() override;
   virtual void SetParent(nsIWidget* aNewParent) override;
   virtual nsIWidget* GetParent(void) override;
@@ -145,8 +147,7 @@ class nsWindow final : public nsBaseWidget {
   virtual double GetDefaultScaleInternal() override;
   virtual void Show(bool aState) override;
   virtual bool IsVisible() const override;
-  virtual void ConstrainPosition(bool aAllowSlop, int32_t* aX,
-                                 int32_t* aY) override;
+  virtual void ConstrainPosition(DesktopIntPoint&) override;
   virtual void Move(double aX, double aY) override;
   virtual void Resize(double aWidth, double aHeight, bool aRepaint) override;
   virtual void Resize(double aX, double aY, double aWidth, double aHeight,
@@ -166,7 +167,6 @@ class nsWindow final : public nsBaseWidget {
   virtual nsresult MakeFullScreen(bool aFullScreen) override;
   void SetCursor(const Cursor& aDefaultCursor) override;
   void* GetNativeData(uint32_t aDataType) override;
-  void SetNativeData(uint32_t aDataType, uintptr_t aVal) override;
   virtual nsresult SetTitle(const nsAString& aTitle) override { return NS_OK; }
   [[nodiscard]] virtual nsresult GetAttention(int32_t aCycleCount) override {
     return NS_ERROR_NOT_IMPLEMENTED;
@@ -239,6 +239,9 @@ class nsWindow final : public nsBaseWidget {
   virtual mozilla::ScreenIntMargin GetSafeAreaInsets() const override;
   void UpdateSafeAreaInsets(const mozilla::ScreenIntMargin& aSafeAreaInsets);
 
+  mozilla::jni::NativeWeakPtr<mozilla::widget::NPZCSupport>
+  GetNPZCSupportWeakPtr();
+
  protected:
   void BringToFront();
   nsWindow* FindTopLevel();
@@ -278,6 +281,8 @@ class nsWindow final : public nsBaseWidget {
   GetUiCompositorControllerChild();
 
   mozilla::widget::PlatformCompositorWidgetDelegate* mCompositorWidgetDelegate;
+
+  mozilla::Mutex mDestroyMutex;
 
   friend class mozilla::widget::GeckoViewSupport;
   friend class mozilla::widget::LayerViewSupport;

@@ -62,9 +62,10 @@ class Element;
  *        the script does not need to be fetched first.
  *    * mIsXSLT
  *        Set if we are in an XSLT request.
- *    * TODO: mIsPreload (will be moved from ScriptFetchOptions)
+ *    * mIsPreload
  *        Set for scripts that are preloaded in a
- *        <link rel="preload" as="script"> element.
+ *        <link rel="preload" as="script"> or <link rel="modulepreload">
+ *        element.
  *
  * In addition to describing how the ScriptLoadRequest will be loaded by the
  * DOM ScriptLoader, the ScriptLoadContext contains fields that facilitate
@@ -113,7 +114,7 @@ class ScriptLoadContext : public JS::loader::LoadContextBase,
     eDeferred,
     eAsync,
     eLinkPreload  // this is a load initiated by <link rel="preload"
-                  // as="script"> tag
+                  // as="script"> or <link rel="modulepreload"> tag
   };
 
   void SetScriptMode(bool aDeferAttr, bool aAsyncAttr, bool aLinkPreload);
@@ -153,9 +154,6 @@ class ScriptLoadContext : public JS::loader::LoadContextBase,
 
   void MaybeCancelOffThreadScript();
 
-  TimeStamp mOffThreadParseStartTime;
-  TimeStamp mOffThreadParseStopTime;
-
   ScriptMode mScriptMode;  // Whether this is a blocking, defer or async script.
   bool mScriptFromHead;    // Synchronous head script block loading of other non
                            // js/css content.
@@ -172,13 +170,16 @@ class ScriptLoadContext : public JS::loader::LoadContextBase,
   bool mWasCompiledOMT;   // True if the script has been compiled off main
                           // thread.
 
-  JS::OffThreadToken* mOffThreadToken;  // Off-thread parsing token.
+  // Off-thread parsing token. Set at the start of off-thread parsing and
+  // cleared when the result of the parse is used.
+  JS::OffThreadToken* mOffThreadToken;
 
-  Atomic<Runnable*> mRunnable;  // Runnable created when dispatching off thread
-                                // compile. Tracked here so that it can be
-                                // properly released during cancellation.
+  // Runnable that is dispatched to the main thread when off-thread compilation
+  // completes.
+  RefPtr<Runnable> mRunnable;
 
-  int32_t mLineNo;
+  uint32_t mLineNo;
+  uint32_t mColumnNo;
 
   // Set on scripts and top level modules.
   bool mIsPreload;

@@ -4,9 +4,6 @@
 
 "use strict";
 
-const { Ci } = require("chrome");
-const ChromeUtils = require("ChromeUtils");
-
 /**
  * A WebProgressListener that listens for file loads.
  *

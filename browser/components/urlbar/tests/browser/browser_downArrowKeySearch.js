@@ -6,7 +6,7 @@
 
 "use strict";
 
-add_task(async function init() {
+add_setup(async function () {
   await PlacesUtils.history.clear();
   // Enough vists to get this site into Top Sites.
   for (let i = 0; i < 5; i++) {
@@ -16,7 +16,7 @@ add_task(async function init() {
   await updateTopSites(
     sites => sites && sites[0] && sites[0].url == "http://example.com/"
   );
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
   });
 });

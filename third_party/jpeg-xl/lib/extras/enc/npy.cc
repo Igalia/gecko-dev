@@ -5,13 +5,13 @@
 
 #include "lib/extras/enc/npy.h"
 
+#include <jxl/types.h>
 #include <stdio.h>
 
 #include <sstream>
 #include <string>
 #include <vector>
 
-#include "jxl/types.h"
 #include "lib/extras/packed_image.h"
 
 namespace jxl {
@@ -284,6 +284,7 @@ class NumPyEncoder : public Encoder {
  public:
   Status Encode(const PackedPixelFile& ppf, EncodedImage* encoded_image,
                 ThreadPool* pool = nullptr) const override {
+    JXL_RETURN_IF_ERROR(VerifyBasicInfo(ppf.info));
     GenerateMetadata(ppf, &encoded_image->metadata);
     encoded_image->bitstreams.emplace_back();
     if (!WriteNPYArray(ppf, &encoded_image->bitstreams.back())) {

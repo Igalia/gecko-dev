@@ -156,7 +156,8 @@ where
             self.header.e_machine(self.endian),
             self.header.is_class_64(),
         ) {
-            (elf::EM_AARCH64, _) => Architecture::Aarch64,
+            (elf::EM_AARCH64, true) => Architecture::Aarch64,
+            (elf::EM_AARCH64, false) => Architecture::Aarch64_Ilp32,
             (elf::EM_ARM, _) => Architecture::Arm,
             (elf::EM_AVR, _) => Architecture::Avr,
             (elf::EM_BPF, _) => Architecture::Bpf,
@@ -175,7 +176,9 @@ where
             // This is either s390 or s390x, depending on the ELF class.
             // We only support the 64-bit variant s390x here.
             (elf::EM_S390, true) => Architecture::S390x,
+            (elf::EM_SBF, _) => Architecture::Sbf,
             (elf::EM_SPARCV9, true) => Architecture::Sparc64,
+            (elf::EM_XTENSA, false) => Architecture::Xtensa,
             _ => Architecture::Unknown,
         }
     }
@@ -264,6 +267,9 @@ where
     }
 
     fn symbol_table(&'file self) -> Option<ElfSymbolTable<'data, 'file, Elf, R>> {
+        if self.symbols.is_empty() {
+            return None;
+        }
         Some(ElfSymbolTable {
             endian: self.endian,
             symbols: &self.symbols,
@@ -279,6 +285,9 @@ where
     }
 
     fn dynamic_symbol_table(&'file self) -> Option<ElfSymbolTable<'data, 'file, Elf, R>> {
+        if self.dynamic_symbols.is_empty() {
+            return None;
+        }
         Some(ElfSymbolTable {
             endian: self.endian,
             symbols: &self.dynamic_symbols,
@@ -419,6 +428,8 @@ where
 
     fn flags(&self) -> FileFlags {
         FileFlags::Elf {
+            os_abi: self.header.e_ident().os_abi,
+            abi_version: self.header.e_ident().abi_version,
             e_flags: self.header.e_flags(self.endian),
         }
     }

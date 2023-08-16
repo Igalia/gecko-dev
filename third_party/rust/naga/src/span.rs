@@ -18,6 +18,14 @@ impl Span {
         Span { start, end }
     }
 
+    /// Returns a new `Span` starting at `self` and ending at `other`
+    pub const fn until(&self, other: &Self) -> Self {
+        Span {
+            start: self.start,
+            end: other.end,
+        }
+    }
+
     /// Modifies `self` to contain the smallest `Span` possible that
     /// contains both `self` and `other`
     pub fn subsume(&mut self, other: Self) {
@@ -82,6 +90,15 @@ impl From<Range<usize>> for Span {
             start: range.start as u32,
             end: range.end as u32,
         }
+    }
+}
+
+impl std::ops::Index<Span> for str {
+    type Output = str;
+
+    #[inline]
+    fn index(&self, span: Span) -> &str {
+        &self[span.start as usize..span.end as usize]
     }
 }
 
@@ -235,6 +252,83 @@ impl<E> WithSpan<E> {
     /// Return a [`SourceLocation`] for our first span, if we have one.
     pub fn location(&self, _source: &str) -> Option<SourceLocation> {
         None
+    }
+
+    #[cfg(feature = "span")]
+    fn diagnostic(&self) -> codespan_reporting::diagnostic::Diagnostic<()>
+    where
+        E: Error,
+    {
+        use codespan_reporting::diagnostic::{Diagnostic, Label};
+        let diagnostic = Diagnostic::error()
+            .with_message(self.inner.to_string())
+            .with_labels(
+                self.spans()
+                    .map(|&(span, ref desc)| {
+                        Label::primary((), span.to_range().unwrap()).with_message(desc.to_owned())
+                    })
+                    .collect(),
+            )
+            .with_notes({
+                let mut notes = Vec::new();
+                let mut source: &dyn Error = &self.inner;
+                while let Some(next) = Error::source(source) {
+                    notes.push(next.to_string());
+                    source = next;
+                }
+                notes
+            });
+        diagnostic
+    }
+
+    /// Emits a summary of the error to standard error stream.
+    #[cfg(feature = "span")]
+    pub fn emit_to_stderr(&self, source: &str)
+    where
+        E: Error,
+    {
+        self.emit_to_stderr_with_path(source, "wgsl")
+    }
+
+    /// Emits a summary of the error to standard error stream.
+    #[cfg(feature = "span")]
+    pub fn emit_to_stderr_with_path(&self, source: &str, path: &str)
+    where
+        E: Error,
+    {
+        use codespan_reporting::{files, term};
+        use term::termcolor::{ColorChoice, StandardStream};
+
+        let files = files::SimpleFile::new(path, source);
+        let config = term::Config::default();
+        let writer = StandardStream::stderr(ColorChoice::Auto);
+        term::emit(&mut writer.lock(), &config, &files, &self.diagnostic())
+            .expect("cannot write error");
+    }
+
+    /// Emits a summary of the error to a string.
+    #[cfg(feature = "span")]
+    pub fn emit_to_string(&self, source: &str) -> String
+    where
+        E: Error,
+    {
+        self.emit_to_string_with_path(source, "wgsl")
+    }
+
+    /// Emits a summary of the error to a string.
+    #[cfg(feature = "span")]
+    pub fn emit_to_string_with_path(&self, source: &str, path: &str) -> String
+    where
+        E: Error,
+    {
+        use codespan_reporting::{files, term};
+        use term::termcolor::NoColor;
+
+        let files = files::SimpleFile::new(path, source);
+        let config = codespan_reporting::term::Config::default();
+        let mut writer = NoColor::new(Vec::new());
+        term::emit(&mut writer, &config, &files, &self.diagnostic()).expect("cannot write error");
+        String::from_utf8(writer.into_inner()).unwrap()
     }
 }
 

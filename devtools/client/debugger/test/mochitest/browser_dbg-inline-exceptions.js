@@ -7,15 +7,15 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-exceptions.html");
   await selectSource(dbg, "exceptions.js");
 
   info("Hovers over the inline exception mark text.");
-  await assertPreviewTextValue(dbg, 81, 10, {
+  await assertPreviewTextValue(dbg, 85, 10, {
     text: 'TypeError: "abc".push is not a function',
+    expression: "push",
   });
-  await closePreviewAtPos(dbg, 81, 10);
 
   const excLineEls = findAllElementsWithSelector(dbg, ".line-exception");
   const excTextMarkEls = findAllElementsWithSelector(

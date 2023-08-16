@@ -259,6 +259,8 @@ class MOZ_STACK_CLASS ContentEventHandler {
   static uint32_t GetNativeTextLength(const dom::Text& aTextNode,
                                       uint32_t aMaxLength = UINT32_MAX);
 
+  static uint32_t GetNativeTextLength(const nsAString& aText);
+
  protected:
   // Get the text length of aTextNode.
   static uint32_t GetTextLength(const dom::Text& aTextNode,
@@ -422,6 +424,19 @@ class MOZ_STACK_CLASS ContentEventHandler {
   // to 2 pixels because x and y may not be aligned to device pixels.
   void EnsureNonEmptyRect(nsRect& aRect) const;
   void EnsureNonEmptyRect(LayoutDeviceIntRect& aRect) const;
+
+  /**
+   * Compute caret rect before or after a character rect.
+   */
+  static LayoutDeviceIntRect GetCaretRectBefore(
+      const LayoutDeviceIntRect& aCharRect, const WritingMode& aWritingMode);
+  static LayoutDeviceIntRect GetCaretRectAfter(
+      const LayoutDeviceIntRect& aCharRect, const WritingMode& aWritingMode);
+  static nsRect GetCaretRectBefore(const nsRect& aCharRect,
+                                   const WritingMode& aWritingMode);
+  static nsRect GetCaretRectAfter(nsPresContext& aPresContext,
+                                  const nsRect& aCharRect,
+                                  const WritingMode& aWritingMode);
 };
 
 }  // namespace mozilla

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Arc, Mutex};
 
 use chrono::{DateTime, FixedOffset};
 use once_cell::sync::OnceCell;
@@ -10,14 +11,16 @@ use crate::debug::DebugOptions;
 use crate::event_database::EventDatabase;
 use crate::internal_metrics::{AdditionalMetrics, CoreMetrics, DatabaseMetrics};
 use crate::internal_pings::InternalPings;
-use crate::metrics::{self, ExperimentMetric, Metric, MetricType, PingType, RecordedExperiment};
+use crate::metrics::{
+    self, ExperimentMetric, Metric, MetricType, MetricsEnabledConfig, PingType, RecordedExperiment,
+};
 use crate::ping::PingMaker;
 use crate::storage::{StorageManager, INTERNAL_STORAGE};
-use crate::upload::{PingUploadManager, PingUploadTask, UploadResult};
+use crate::upload::{PingUploadManager, PingUploadTask, UploadResult, UploadTaskAction};
 use crate::util::{local_now_with_offset, sanitize_application_id};
 use crate::{
-    scheduler, system, CommonMetricData, ErrorKind, InternalConfiguration, Lifetime, Result,
-    DEFAULT_MAX_EVENTS, GLEAN_SCHEMA_VERSION, GLEAN_VERSION, KNOWN_CLIENT_ID,
+    scheduler, system, CommonMetricData, ErrorKind, InternalConfiguration, Lifetime, PingRateLimit,
+    Result, DEFAULT_MAX_EVENTS, GLEAN_SCHEMA_VERSION, GLEAN_VERSION, KNOWN_CLIENT_ID,
 };
 
 static GLEAN: OnceCell<Mutex<Glean>> = OnceCell::new();
@@ -108,6 +111,9 @@ where
 ///     delay_ping_lifetime_io: false,
 ///     app_build: "".into(),
 ///     use_core_mps: false,
+///     trim_data_to_registered_pings: false,
+///     log_level: None,
+///     rate_limit: None,
 /// };
 /// let mut glean = Glean::new(cfg).unwrap();
 /// let ping = PingType::new("sample", true, false, vec![]);
@@ -148,6 +154,8 @@ pub struct Glean {
     debug: DebugOptions,
     pub(crate) app_build: String,
     pub(crate) schedule_metrics_pings: bool,
+    pub(crate) remote_settings_epoch: AtomicU8,
+    pub(crate) remote_settings_metrics_config: Arc<Mutex<MetricsEnabledConfig>>,
 }
 
 impl Glean {
@@ -168,8 +176,13 @@ impl Glean {
 
         // Create an upload manager with rate limiting of 15 pings every 60 seconds.
         let mut upload_manager = PingUploadManager::new(&cfg.data_path, &cfg.language_binding_name);
+        let rate_limit = cfg.rate_limit.as_ref().unwrap_or(&PingRateLimit {
+            seconds_per_interval: 60,
+            pings_per_interval: 15,
+        });
         upload_manager.set_rate_limiter(
-            /* seconds per interval */ 60, /* max pings per interval */ 15,
+            rate_limit.seconds_per_interval,
+            rate_limit.pings_per_interval,
         );
 
         // We only scan the pending ping directories when calling this from a subprocess,
@@ -200,6 +213,8 @@ impl Glean {
             app_build: cfg.app_build.to_string(),
             // Subprocess doesn't use "metrics" pings so has no need for a scheduler.
             schedule_metrics_pings: false,
+            remote_settings_epoch: AtomicU8::new(0),
+            remote_settings_metrics_config: Arc::new(Mutex::new(MetricsEnabledConfig::new())),
         };
 
         // Ensuring these pings are registered.
@@ -284,6 +299,9 @@ impl Glean {
             delay_ping_lifetime_io: false,
             app_build: "Unknown".into(),
             use_core_mps: false,
+            trim_data_to_registered_pings: false,
+            log_level: None,
+            rate_limit: None,
         };
 
         let mut glean = Self::new(cfg).unwrap();
@@ -322,7 +340,6 @@ impl Glean {
             .is_none()
         {
             self.core_metrics.first_run_date.set_sync(self, None);
-            self.core_metrics.first_run_hour.set_sync(self, None);
             // The `first_run_date` field is generated on the very first run
             // and persisted across upload toggling. We can assume that, the only
             // time it is set, that's indeed our "first run".
@@ -354,11 +371,17 @@ impl Glean {
     /// Usually called from the language binding after all of the core metrics have been set
     /// and the ping types have been registered.
     ///
+    /// # Arguments
+    ///
+    /// * `trim_data_to_registered_pings` - Whether we should limit to storing data only for
+    ///   data belonging to pings previously registered via `register_ping_type`.
+    ///
     /// # Returns
     ///
-    /// Whether at least one ping was generated.
-    pub fn on_ready_to_submit_pings(&self) -> bool {
-        self.event_data_store.flush_pending_events_on_startup(self)
+    /// Whether the "events" ping was submitted.
+    pub fn on_ready_to_submit_pings(&self, trim_data_to_registered_pings: bool) -> bool {
+        self.event_data_store
+            .flush_pending_events_on_startup(self, trim_data_to_registered_pings)
     }
 
     /// Sets whether upload is enabled or not.
@@ -446,15 +469,13 @@ impl Glean {
         // so that it can't be accessed until this function is done.
         let _lock = self.upload_manager.clear_ping_queue();
 
-        // There are only two metrics that we want to survive after clearing all
-        // metrics: first_run_date and first_run_hour. Here, we store their values
-        // so we can restore them after clearing the metrics.
+        // There is only one metric that we want to survive after clearing all
+        // metrics: first_run_date. Here, we store its value so we can restore
+        // it after clearing the metrics.
         let existing_first_run_date = self
             .core_metrics
             .first_run_date
             .get_value(self, "glean_client_info");
-
-        let existing_first_run_hour = self.core_metrics.first_run_hour.get_value(self, "metrics");
 
         // Clear any pending pings.
         let ping_maker = PingMaker::new();
@@ -500,13 +521,6 @@ impl Glean {
                     .set_sync_chrono(self, existing_first_run_date);
             }
 
-            // Restore the first_run_hour.
-            if let Some(existing_first_run_hour) = existing_first_run_hour {
-                self.core_metrics
-                    .first_run_hour
-                    .set_sync_chrono(self, existing_first_run_hour);
-            }
-
             self.upload_enabled = false;
         }
     }
@@ -522,6 +536,7 @@ impl Glean {
     }
 
     /// Gets a handle to the database.
+    #[track_caller] // If this fails we're interested in the caller.
     pub fn storage(&self) -> &Database {
         self.data_store.as_ref().expect("No database found")
     }
@@ -565,9 +580,13 @@ impl Glean {
     ///
     /// * `uuid` - The UUID of the ping in question.
     /// * `status` - The upload result.
-    pub fn process_ping_upload_response(&self, uuid: &str, status: UploadResult) {
+    pub fn process_ping_upload_response(
+        &self,
+        uuid: &str,
+        status: UploadResult,
+    ) -> UploadTaskAction {
         self.upload_manager
-            .process_ping_upload_response(self, uuid, status);
+            .process_ping_upload_response(self, uuid, status)
     }
 
     /// Takes a snapshot for the given store and optionally clear it.
@@ -691,6 +710,24 @@ impl Glean {
     pub fn test_get_experiment_data(&self, experiment_id: String) -> Option<RecordedExperiment> {
         let metric = ExperimentMetric::new(self, experiment_id);
         metric.test_get_value(self)
+    }
+
+    /// Set configuration to override the default metric enabled/disabled state, typically from a
+    /// remote_settings experiment or rollout
+    ///
+    /// # Arguments
+    ///
+    /// * `json` - The stringified JSON representation of a `MetricsEnabledConfig` object
+    pub fn set_metrics_enabled_config(&self, cfg: MetricsEnabledConfig) {
+        // Set the current MetricsEnabledConfig, keeping the lock until the epoch is
+        // updated to prevent against reading a "new" config but an "old" epoch
+        let mut metric_config = self.remote_settings_metrics_config.lock().unwrap();
+
+        // Merge the exising configuration with the supplied one
+        metric_config.metrics_enabled.extend(cfg.metrics_enabled);
+
+        // Update remote_settings epoch
+        self.remote_settings_epoch.fetch_add(1, Ordering::SeqCst);
     }
 
     /// Persists [`Lifetime::Ping`] data that might be in memory in case
@@ -835,7 +872,7 @@ impl Glean {
             self.storage(),
             INTERNAL_STORAGE,
             &dirty_bit_metric.meta().identifier(self),
-            dirty_bit_metric.meta().lifetime,
+            dirty_bit_metric.meta().inner.lifetime,
         ) {
             Some(Metric::Boolean(b)) => b,
             _ => false,

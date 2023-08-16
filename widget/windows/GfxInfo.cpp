@@ -155,11 +155,6 @@ GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
 }
 
 NS_IMETHODIMP
-GfxInfo::GetDesktopEnvironment(nsAString& aDesktopEnvironment) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
 GfxInfo::GetTestType(nsAString& aTestType) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 static nsresult GetKeyValue(const WCHAR* keyLocation, const WCHAR* keyName,
@@ -1188,6 +1183,9 @@ static bool OnlyAllowFeatureOnWhitelistedVendor(int32_t aFeature) {
     // Remote WebGL is needed for Win32k Lockdown, so it should be enabled
     // regardless of HW support or not
     case nsIGfxInfo::FEATURE_ALLOW_WEBGL_OUT_OF_PROCESS:
+    // Backdrop filter should generally work, especially if we fall back to
+    // Software WebRender because of an unknown vendor.
+    case nsIGfxInfo::FEATURE_BACKDROP_FILTER:
       return false;
     default:
       return true;
@@ -1297,6 +1295,16 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         OperatingSystem::Windows10, DeviceFamily::AtiAll,
         GfxDriverInfo::allFeatures, nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION,
         DRIVER_EQUAL, V(22, 19, 162, 4), "FEATURE_FAILURE_BUG_1587155");
+
+    // Bug 1829487 - Work around a gen6 driver bug that miscompiles shaders
+    // resulting
+    //               in black squares. Disabling shader optimization pass
+    //               appears to work around this for now.
+    APPEND_TO_DRIVER_BLOCKLIST2(
+        OperatingSystem::Windows, DeviceFamily::IntelSandyBridge,
+        nsIGfxInfo::FEATURE_WEBRENDER_OPTIMIZED_SHADERS,
+        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_LESS_THAN,
+        GfxDriverInfo::allDriverVersions, "FEATURE_FAILURE_BUG_1829487");
 
     // Bug 1198815
     APPEND_TO_DRIVER_BLOCKLIST_RANGE(
@@ -1742,7 +1750,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
 
     ////////////////////////////////////
     // FEATURE_VIDEO_OVERLAY - ALLOWLIST
-#ifdef NIGHTLY_BUILD
+#ifdef EARLY_BETA_OR_EARLIER
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows, DeviceFamily::All,
         nsIGfxInfo::FEATURE_VIDEO_OVERLAY, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
@@ -1761,7 +1769,7 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         OperatingSystem::Windows10, DeviceFamily::IntelSkylake,
         nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
-        V(20, 19, 15, 4285), V(20, 19, 15, 4380), "FEATURE_FAILURE_BUG_1763280",
+        V(20, 19, 15, 4285), V(20, 19, 15, 4390), "FEATURE_FAILURE_BUG_1763280",
         "Intel driver 20.19.15.*");
 
     APPEND_TO_DRIVER_BLOCKLIST_RANGE(
@@ -1770,6 +1778,12 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
         V(10, 18, 15, 4256), V(10, 18, 15, 4293), "FEATURE_FAILURE_BUG_1763280",
         "Intel driver 10.18.15.*");
+
+    APPEND_TO_DRIVER_BLOCKLIST2(
+        OperatingSystem::Windows10, DeviceFamily::IntelKabyLake,
+        nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
+        GfxDriverInfo::allDriverVersions, "FEATURE_FAILURE_BUG_1802357");
 
     APPEND_TO_DRIVER_BLOCKLIST2(
         OperatingSystem::Windows, DeviceFamily::NvidiaAll,
@@ -1788,6 +1802,34 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY,
         nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_LESS_THAN,
         V(26, 20, 15000, 37), "FEATURE_FAILURE_BUG_1767212");
+
+    ////////////////////////////////////
+    // FEATURE_HW_DECODED_VIDEO_ZERO_COPY - ALLOWLIST
+
+    // XXX ZeroCopyNV12Texture is disabled with non-intel GPUs for now.
+    // See Bug 1798242
+    APPEND_TO_DRIVER_BLOCKLIST2(
+        OperatingSystem::Windows, DeviceFamily::IntelAll,
+        nsIGfxInfo::FEATURE_HW_DECODED_VIDEO_ZERO_COPY,
+        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
+        V(0, 0, 0, 0), "FEATURE_ROLLOUT_ALL");
+
+    ////////////////////////////////////
+    // FEATURE_REUSE_DECODER_DEVICE
+
+    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
+        OperatingSystem::Windows10, DeviceFamily::IntelSkylake,
+        nsIGfxInfo::FEATURE_REUSE_DECODER_DEVICE,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
+        V(20, 19, 15, 4285), V(20, 19, 15, 4390), "FEATURE_FAILURE_BUG_1833809",
+        "Intel driver 20.19.15.*");
+
+    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
+        OperatingSystem::Windows10, DeviceFamily::IntelSkylake,
+        nsIGfxInfo::FEATURE_REUSE_DECODER_DEVICE,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_INCLUSIVE,
+        V(10, 18, 15, 4256), V(10, 18, 15, 4293), "FEATURE_FAILURE_BUG_1833809",
+        "Intel driver 10.18.15.*");
 
     ////////////////////////////////////
     // FEATURE_WEBRENDER
@@ -1818,36 +1860,6 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         DRIVER_LESS_THAN, GfxDriverInfo::allDriverVersions, "EARLY_NVIDIA");
 
     ////////////////////////////////////
-    // FEATURE_WEBRENDER - ALLOWLIST
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::AtiAll, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_AMD");
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::NvidiaAll, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_NV");
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::IntelAll, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_INTEL");
-
-    APPEND_TO_DRIVER_BLOCKLIST2_EXT(
-        OperatingSystem::Windows, ScreenSizeStatus::All, BatteryStatus::All,
-        DesktopEnvironment::All, WindowProtocol::All, DriverVendor::All,
-        DeviceFamily::QualcommAll, nsIGfxInfo::FEATURE_WEBRENDER,
-        nsIGfxInfo::FEATURE_ALLOW_ALWAYS, DRIVER_COMPARISON_IGNORED,
-        V(0, 0, 0, 0), "FEATURE_ROLLOUT_QUALCOMM");
-
-    ////////////////////////////////////
     // FEATURE_WEBRENDER_COMPOSITOR
 
 #ifndef EARLY_BETA_OR_EARLIER
@@ -1871,8 +1883,23 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         nsIGfxInfo::FEATURE_WEBRENDER_SCISSORED_CACHE_CLEARS,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, DRIVER_COMPARISON_IGNORED,
         V(0, 0, 0, 0), "FEATURE_FAILURE_BUG_1603515");
+
+    ////////////////////////////////////
+    // FEATURE_BACKDROP_FILTER
+
+    // Backdrop filter crashes the driver. See bug 1785366 and bug 1784093.
+    APPEND_TO_DRIVER_BLOCKLIST_RANGE(
+        OperatingSystem::Windows, DeviceFamily::IntelHDGraphicsToIvyBridge,
+        nsIGfxInfo::FEATURE_BACKDROP_FILTER,
+        nsIGfxInfo::FEATURE_BLOCKED_DRIVER_VERSION, DRIVER_BETWEEN_EXCLUSIVE,
+        V(8, 15, 10, 2879), V(10, 18, 10, 4425), "FEATURE_FAILURE_BUG_1785366",
+        "Intel driver >= 10.18.10.4425");
   }
   return *sDriverInfo;
+}
+
+OperatingSystem GfxInfo::GetOperatingSystem() {
+  return WindowsVersionToOperatingSystem(mWindowsVersion);
 }
 
 nsresult GfxInfo::GetFeatureStatusImpl(
@@ -1959,12 +1986,6 @@ nsresult GfxInfo::GetFeatureStatusImpl(
       *aStatus = FEATURE_BLOCKED_DRIVER_VERSION;
       return NS_OK;
     }
-
-    if (mHasDriverVersionMismatch) {
-      aFailureId = "FEATURE_FAILURE_MISMATCHED_VERSION";
-      *aStatus = nsIGfxInfo::FEATURE_BLOCKED_MISMATCHED_VERSION;
-      return NS_OK;
-    }
   }
 
   return GfxInfoBase::GetFeatureStatusImpl(
@@ -2043,7 +2064,5 @@ NS_IMETHODIMP GfxInfo::SpoofOSVersion(uint32_t aVersion) {
   mWindowsVersion = aVersion;
   return NS_OK;
 }
-
-NS_IMETHODIMP GfxInfo::FireTestProcess() { return NS_OK; }
 
 #endif

@@ -22,7 +22,6 @@
 #include "mozilla/Logging.h"
 #include "nsIClassInfoImpl.h"
 #include "nsAlgorithm.h"
-#include "nsMemory.h"
 #include "nsPipe.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIAsyncOutputStream.h"
@@ -337,8 +336,8 @@ class nsPipe final {
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(nsPipe)
 
   // public constructor
-  friend nsresult NS_NewPipe2(nsIAsyncInputStream**, nsIAsyncOutputStream**,
-                              bool, bool, uint32_t, uint32_t);
+  friend void NS_NewPipe2(nsIAsyncInputStream**, nsIAsyncOutputStream**, bool,
+                          bool, uint32_t, uint32_t);
 
  private:
   nsPipe(uint32_t aSegmentSize, uint32_t aSegmentCount);
@@ -575,7 +574,7 @@ nsPipe::nsPipe(uint32_t aSegmentSize, uint32_t aSegmentCount)
   // the size to expand when cloned streams are read at different
   // rates.  We enforce a limit on how much data can be buffered
   // ahead of the fastest reader in GetWriteSegment().
-  MOZ_ALWAYS_SUCCEEDS(mBuffer.Init(aSegmentSize, UINT32_MAX));
+  MOZ_ALWAYS_SUCCEEDS(mBuffer.Init(aSegmentSize));
 }
 
 nsPipe::~nsPipe() = default;
@@ -1318,6 +1317,12 @@ nsPipeInputStream::Available(uint64_t* aResult) {
 }
 
 NS_IMETHODIMP
+nsPipeInputStream::StreamStatus() {
+  ReentrantMonitorAutoEnter mon(mPipe->mReentrantMonitor);
+  return mReadState.mAvailable ? NS_OK : Status(mon);
+}
+
+NS_IMETHODIMP
 nsPipeInputStream::ReadSegments(nsWriteSegmentFun aWriter, void* aClosure,
                                 uint32_t aCount, uint32_t* aReadCount) {
   LOG(("III ReadSegments [this=%p count=%u]\n", this, aCount));
@@ -1720,9 +1725,15 @@ nsPipeOutputStream::Write(const char* aFromBuf, uint32_t aBufLen,
 }
 
 NS_IMETHODIMP
-nsPipeOutputStream::Flush(void) {
+nsPipeOutputStream::Flush() {
   // nothing to do
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsPipeOutputStream::StreamStatus() {
+  ReentrantMonitorAutoEnter mon(mPipe->mReentrantMonitor);
+  return mPipe->mStatus;
 }
 
 NS_IMETHODIMP
@@ -1771,9 +1782,9 @@ nsPipeOutputStream::AsyncWait(nsIOutputStreamCallback* aCallback,
 
 ////////////////////////////////////////////////////////////////////////////////
 
-nsresult NS_NewPipe(nsIInputStream** aPipeIn, nsIOutputStream** aPipeOut,
-                    uint32_t aSegmentSize, uint32_t aMaxSize,
-                    bool aNonBlockingInput, bool aNonBlockingOutput) {
+void NS_NewPipe(nsIInputStream** aPipeIn, nsIOutputStream** aPipeOut,
+                uint32_t aSegmentSize, uint32_t aMaxSize,
+                bool aNonBlockingInput, bool aNonBlockingOutput) {
   if (aSegmentSize == 0) {
     aSegmentSize = DEFAULT_SEGMENT_SIZE;
   }
@@ -1788,23 +1799,19 @@ nsresult NS_NewPipe(nsIInputStream** aPipeIn, nsIOutputStream** aPipeOut,
 
   nsIAsyncInputStream* in;
   nsIAsyncOutputStream* out;
-  nsresult rv = NS_NewPipe2(&in, &out, aNonBlockingInput, aNonBlockingOutput,
-                            aSegmentSize, segmentCount);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
+  NS_NewPipe2(&in, &out, aNonBlockingInput, aNonBlockingOutput, aSegmentSize,
+              segmentCount);
 
   *aPipeIn = in;
   *aPipeOut = out;
-  return NS_OK;
 }
 
 // Disable thread safety analysis as this is logically a constructor, and no
 // additional threads can observe these objects yet.
-nsresult NS_NewPipe2(nsIAsyncInputStream** aPipeIn,
-                     nsIAsyncOutputStream** aPipeOut, bool aNonBlockingInput,
-                     bool aNonBlockingOutput, uint32_t aSegmentSize,
-                     uint32_t aSegmentCount) MOZ_NO_THREAD_SAFETY_ANALYSIS {
+void NS_NewPipe2(nsIAsyncInputStream** aPipeIn, nsIAsyncOutputStream** aPipeOut,
+                 bool aNonBlockingInput, bool aNonBlockingOutput,
+                 uint32_t aSegmentSize,
+                 uint32_t aSegmentCount) MOZ_NO_THREAD_SAFETY_ANALYSIS {
   RefPtr<nsPipe> pipe =
       new nsPipe(aSegmentSize ? aSegmentSize : DEFAULT_SEGMENT_SIZE,
                  aSegmentCount ? aSegmentCount : DEFAULT_SEGMENT_COUNT);
@@ -1818,7 +1825,6 @@ nsresult NS_NewPipe2(nsIAsyncInputStream** aPipeIn,
 
   pipeIn.forget(aPipeIn);
   pipeOut.forget(aPipeOut);
-  return NS_OK;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1845,9 +1851,10 @@ nsPipeHolder::Init(bool aNonBlockingInput, bool aNonBlockingOutput,
   if (mInput || mOutput) {
     return NS_ERROR_ALREADY_INITIALIZED;
   }
-  return NS_NewPipe2(getter_AddRefs(mInput), getter_AddRefs(mOutput),
-                     aNonBlockingInput, aNonBlockingOutput, aSegmentSize,
-                     aSegmentCount);
+  NS_NewPipe2(getter_AddRefs(mInput), getter_AddRefs(mOutput),
+              aNonBlockingInput, aNonBlockingOutput, aSegmentSize,
+              aSegmentCount);
+  return NS_OK;
 }
 
 NS_IMETHODIMP

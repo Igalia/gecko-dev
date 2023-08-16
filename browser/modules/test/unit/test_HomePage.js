@@ -4,15 +4,10 @@
 
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  HomePage: "resource:///modules/HomePage.jsm",
-  RemoteSettings: "resource://services-settings/remote-settings.js",
-  // RemoteSettingsClient: "resource://services-settings/RemoteSettingsClient.jsm",
-  sinon: "resource://testing-common/Sinon.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 const HOMEPAGE_IGNORELIST = "homepage-urls";

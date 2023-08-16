@@ -6,7 +6,7 @@
 
 const {
   ObjectProvider,
-} = require("devtools/client/shared/components/tree/ObjectProvider");
+} = require("resource://devtools/client/shared/components/tree/ObjectProvider.js");
 
 /**
  * Custom tree provider.
@@ -31,7 +31,7 @@ var HeadersProvider = {
 
   hasChildren(object) {
     if (object.value instanceof HeaderList) {
-      return object.value.headers.length > 0;
+      return !!object.value.headers.length;
     } else if (object instanceof Header) {
       return false;
     }

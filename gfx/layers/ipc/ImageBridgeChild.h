@@ -251,8 +251,10 @@ class ImageBridgeChild final : public PImageBridgeChild,
                         const gfx::IntSize aSize,
                         const TextureFlags aFlags) override;
 
-  void EnableAsyncCompositable(CompositableClient* aCompositable,
-                               bool aEnable) override;
+  void EnableRemoteTexturePushCallback(CompositableClient* aCompositable,
+                                       const RemoteTextureOwnerId aOwnerId,
+                                       const gfx::IntSize aSize,
+                                       const TextureFlags aFlags) override;
 
   void ReleaseCompositable(const CompositableHandle& aHandle) override;
 
@@ -310,7 +312,7 @@ class ImageBridgeChild final : public PImageBridgeChild,
 
   bool InForwarderThread() override { return InImageBridgeChildThread(); }
 
-  void HandleFatalError(const char* aMsg) const override;
+  void HandleFatalError(const char* aMsg) override;
 
   wr::MaybeExternalImageId GetNextExternalImageId() override;
 
@@ -329,7 +331,6 @@ class ImageBridgeChild final : public PImageBridgeChild,
   void MarkShutDown();
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
-  void ActorDealloc() override;
 
   bool CanSend() const;
   bool CanPostTask() const;

@@ -16,7 +16,7 @@
     _PREFS_FILE */
 
 /* defined by XPCShellImpl.cpp */
-/* globals load, sendCommand */
+/* globals load, sendCommand, changeTestShellDir */
 
 /* must be defined by tests using do_await_remote_message/do_send_remote_message */
 /* globals Cc, Ci */
@@ -34,7 +34,6 @@ var _tests_pending = 0;
 var _cleanupFunctions = [];
 var _pendingTimers = [];
 var _profileInitialized = false;
-var _fastShutdownDisabled = false;
 
 // Assigned in do_load_child_test_harness.
 var _XPCSHELL_PROCESS;
@@ -44,31 +43,29 @@ var _XPCSHELL_PROCESS;
 let _Services = Services;
 _register_modules_protocol_handler();
 
-let { AppConstants: _AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+let { AppConstants: _AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-let { PromiseTestUtils: _PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+let { PromiseTestUtils: _PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 
-let { NetUtil: _NetUtil } = ChromeUtils.import(
-  "resource://gre/modules/NetUtil.jsm"
+let { NetUtil: _NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
 
 let { XPCOMUtils: _XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
-let { OS: _OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
-
-// Support a common assertion library, Assert.jsm.
-var { Assert: AssertCls } = ChromeUtils.import(
-  "resource://testing-common/Assert.jsm"
+// Support a common assertion library, Assert.sys.mjs.
+var { Assert: AssertCls } = ChromeUtils.importESModule(
+  "resource://testing-common/Assert.sys.mjs"
 );
 
 // Pass a custom report function for xpcshell-test style reporting.
-var Assert = new AssertCls(function(err, message, stack) {
+var Assert = new AssertCls(function (err, message, stack) {
   if (err) {
     do_report_result(false, err.message, err.stack);
   } else {
@@ -76,24 +73,24 @@ var Assert = new AssertCls(function(err, message, stack) {
   }
 }, true);
 
-// Bug 1506134 for followup.  Some xpcshell tests use ContentTask.jsm, which
+// Bug 1506134 for followup.  Some xpcshell tests use ContentTask.sys.mjs, which
 // expects browser-test.js to have set a testScope that includes record.
 function record(condition, name, diag, stack) {
   do_report_result(condition, name, stack);
 }
 
-var _add_params = function(params) {
+var _add_params = function (params) {
   if (typeof _XPCSHELL_PROCESS != "undefined") {
     params.xpcshell_process = _XPCSHELL_PROCESS;
   }
 };
 
-var _dumpLog = function(raw_msg) {
+var _dumpLog = function (raw_msg) {
   dump("\n" + JSON.stringify(raw_msg) + "\n");
 };
 
-var { StructuredLogger: _LoggerClass } = ChromeUtils.import(
-  "resource://testing-common/StructuredLog.jsm"
+var { StructuredLogger: _LoggerClass } = ChromeUtils.importESModule(
+  "resource://testing-common/StructuredLog.sys.mjs"
 );
 var _testLogger = new _LoggerClass("xpcshell/head.js", _dumpLog, [_add_params]);
 
@@ -127,11 +124,21 @@ if (runningInParent && "mozIAsyncHistory" in Ci) {
 // crashreporter component.
 try {
   if (runningInParent && "@mozilla.org/toolkit/crash-reporter;1" in Cc) {
+    // Intentially access the crash reporter service directly for this.
+    // eslint-disable-next-line mozilla/use-services
     let crashReporter = Cc["@mozilla.org/toolkit/crash-reporter;1"].getService(
       Ci.nsICrashReporter
     );
     crashReporter.UpdateCrashEventsDir();
     crashReporter.minidumpPath = do_get_minidumpdir();
+
+    // Tell the test harness that the crash reporter is set up, and any crash
+    // after this point is supposed to be caught by the crash reporter.
+    //
+    // Due to the limitation on the remote xpcshell test, the process return
+    // code does not represent the process crash. Any crash before this point
+    // can be caught by the absence of this log.
+    _testLogger.logData("crash_reporter_init");
   }
 } catch (e) {}
 
@@ -388,20 +395,17 @@ function _setupDevToolsServer(breakpointFiles, callback) {
   _Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
 
   // for debugging-the-debugging, let an env var cause log spew.
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  if (env.get("DEVTOOLS_DEBUGGER_LOG")) {
+  if (_Services.env.get("DEVTOOLS_DEBUGGER_LOG")) {
     _Services.prefs.setBoolPref("devtools.debugger.log", true);
   }
-  if (env.get("DEVTOOLS_DEBUGGER_LOG_VERBOSE")) {
+  if (_Services.env.get("DEVTOOLS_DEBUGGER_LOG_VERBOSE")) {
     _Services.prefs.setBoolPref("devtools.debugger.log.verbose", true);
   }
 
   let require;
   try {
-    ({ require } = ChromeUtils.import(
-      "resource://devtools/shared/loader/Loader.jsm"
+    ({ require } = ChromeUtils.importESModule(
+      "resource://devtools/shared/loader/Loader.sys.mjs"
     ));
   } catch (e) {
     throw new Error(
@@ -430,7 +434,7 @@ function _setupDevToolsServer(breakpointFiles, callback) {
     // Or when devtools are destroyed and we should stop observing.
     "xpcshell-test-devtools-shutdown",
   ];
-  let observe = function(subject, topic, data) {
+  let observe = function (subject, topic, data) {
     if (topic === "devtools-thread-ready") {
       const threadActor = subject.wrappedJSObject;
       threadActor.setBreakpointOnLoad(breakpointFiles);
@@ -499,19 +503,12 @@ function _initDebugging(port) {
 
 function _execute_test() {
   if (typeof _TEST_CWD != "undefined") {
-    let cwd_complete = false;
-    _OS.File.setCurrentDirectory(_TEST_CWD)
-      .then(_ => (cwd_complete = true))
-      .catch(e => {
-        _testLogger.error(_exception_message(e));
-        cwd_complete = true;
-      });
-    _Services.tm.spinEventLoopUntil(
-      "Test(xpcshell/head.js:setCurrentDirectory)",
-      () => cwd_complete
-    );
+    try {
+      changeTestShellDir(_TEST_CWD);
+    } catch (e) {
+      _testLogger.error(_exception_message(e));
+    }
   }
-
   if (runningInParent && _AppConstants.platform == "android") {
     try {
       // GeckoView initialization needs the profile
@@ -553,8 +550,8 @@ function _execute_test() {
 
   let coverageCollector = null;
   if (typeof _JSCOV_DIR === "string") {
-    let _CoverageCollector = ChromeUtils.import(
-      "resource://testing-common/CoverageUtils.jsm"
+    let _CoverageCollector = ChromeUtils.importESModule(
+      "resource://testing-common/CoverageUtils.sys.mjs"
     ).CoverageCollector;
     coverageCollector = new _CoverageCollector(_JSCOV_DIR);
   }
@@ -566,14 +563,14 @@ function _execute_test() {
   // _TEST_FILE is dynamically defined by <runxpcshelltests.py>.
   _load_files(_TEST_FILE);
 
-  // Tack Assert.jsm methods to the current scope.
+  // Tack Assert.sys.mjs methods to the current scope.
   this.Assert = Assert;
   for (let func in Assert) {
     this[func] = Assert[func].bind(Assert);
   }
 
-  const { PerTestCoverageUtils } = ChromeUtils.import(
-    "resource://testing-common/PerTestCoverageUtils.jsm"
+  const { PerTestCoverageUtils } = ChromeUtils.importESModule(
+    "resource://testing-common/PerTestCoverageUtils.sys.mjs"
   );
 
   if (runningInParent) {
@@ -633,7 +630,7 @@ function _execute_test() {
   }
 
   // Execute all of our cleanup functions.
-  let reportCleanupError = function(ex) {
+  let reportCleanupError = function (ex) {
     let stack, filename;
     if (ex && typeof ex == "object" && "stack" in ex) {
       stack = ex.stack;
@@ -651,7 +648,7 @@ function _execute_test() {
     });
   };
 
-  let complete = _cleanupFunctions.length == 0;
+  let complete = !_cleanupFunctions.length;
   let cleanupStartTime = complete ? 0 : Cu.now();
   (async () => {
     for (let func of _cleanupFunctions.reverse()) {
@@ -690,6 +687,13 @@ function _execute_test() {
   // Restore idle service to avoid leaks.
   _fakeIdleService.deactivate();
 
+  if (
+    globalThis.hasOwnProperty("storage") &&
+    StorageManager.isInstance(globalThis.storage)
+  ) {
+    globalThis.storage.shutdown();
+  }
+
   if (_profileInitialized) {
     // Since we have a profile, we will notify profile shutdown topics at
     // the end of the current test, to ensure correct cleanup on shutdown.
@@ -727,16 +731,6 @@ function _execute_test() {
     !_AppConstants.ASAN &&
     !_AppConstants.TSAN
   ) {
-    if (_fastShutdownDisabled) {
-      _testLogger.info("fast shutdown disabled by the test.");
-      return;
-    }
-
-    // Setting this pref is required for Cu.isInAutomation to return true.
-    _Services.prefs.setBoolPref(
-      "security.turn_off_all_security_so_that_viruses_can_take_over_this_computer",
-      true
-    );
     Cu.exitIfInAutomation();
   }
 }
@@ -856,6 +850,11 @@ function do_throw(error, stack) {
     source_file: filename,
     stack: _format_stack(stack),
   });
+  ChromeUtils.addProfilerMarker(
+    "ERROR",
+    { category: "Test", captureStack: true },
+    _exception_message(error)
+  );
   _abort_failed_test();
 }
 
@@ -949,12 +948,19 @@ function do_report_result(passed, text, stack, todo) {
         message,
         _format_stack(stack)
       );
+      ChromeUtils.addProfilerMarker(
+        "UNEXPECTED-PASS",
+        { category: "Test" },
+        message
+      );
       _abort_failed_test();
     } else {
       _testLogger.testStatus(_TEST_NAME, name, "PASS", "PASS", message);
+      ChromeUtils.addProfilerMarker("PASS", { category: "Test" }, message);
     }
   } else if (todo) {
     _testLogger.testStatus(_TEST_NAME, name, "FAIL", "FAIL", message);
+    ChromeUtils.addProfilerMarker("TODO", { category: "Test" }, message);
   } else {
     _testLogger.testStatus(
       _TEST_NAME,
@@ -964,6 +970,7 @@ function do_report_result(passed, text, stack, todo) {
       message,
       _format_stack(stack)
     );
+    ChromeUtils.addProfilerMarker("FAIL", { category: "Test" }, message);
     _abort_failed_test();
   }
 }
@@ -1225,25 +1232,14 @@ function registerCleanupFunction(aFunction) {
 }
 
 /**
- * Ensure the test finishes with a normal shutdown even when it could have
- * otherwise used the fast Cu.exitIfInAutomation shutdown.
- */
-function do_disable_fast_shutdown() {
-  _fastShutdownDisabled = true;
-}
-
-/**
  * Returns the directory for a temp dir, which is created by the
  * test harness. Every test gets its own temp dir.
  *
  * @return nsIFile of the temporary directory
  */
 function do_get_tempdir() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
   // the python harness sets this in the environment for us
-  let path = env.get("XPCSHELL_TEST_TEMP_DIR");
+  let path = _Services.env.get("XPCSHELL_TEST_TEMP_DIR");
   let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   file.initWithPath(path);
   return file;
@@ -1255,11 +1251,8 @@ function do_get_tempdir() {
  * @return nsIFile of the minidump directory
  */
 function do_get_minidumpdir() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
   // the python harness may set this in the environment for us
-  let path = env.get("XPCSHELL_MINIDUMP_DIR");
+  let path = _Services.env.get("XPCSHELL_MINIDUMP_DIR");
   if (path) {
     let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
     file.initWithPath(path);
@@ -1281,11 +1274,8 @@ function do_get_profile(notifyProfileAfterChange = false) {
     return null;
   }
 
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
   // the python harness sets this in the environment for us
-  let profd = env.get("XPCSHELL_TEST_PROFILE_DIR");
+  let profd = Services.env.get("XPCSHELL_TEST_PROFILE_DIR");
   let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
   file.initWithPath(profd);
 
@@ -1321,6 +1311,8 @@ function do_get_profile(notifyProfileAfterChange = false) {
 
   // We need to update the crash events directory when the profile changes.
   if (runningInParent && "@mozilla.org/toolkit/crash-reporter;1" in Cc) {
+    // Intentially access the crash reporter service directly for this.
+    // eslint-disable-next-line mozilla/use-services
     let crashReporter = Cc["@mozilla.org/toolkit/crash-reporter;1"].getService(
       Ci.nsICrashReporter
     );
@@ -1345,7 +1337,6 @@ function do_get_profile(notifyProfileAfterChange = false) {
 
   // The methods of 'provider' will retain this scope so null out everything
   // to avoid spurious leak reports.
-  env = null;
   profd = null;
   provider = null;
   return file.clone();
@@ -1858,9 +1849,10 @@ try {
   // We only want to run this for local developer builds (which should have a "default" update channel).
   if (runningInParent && _AppConstants.MOZ_UPDATE_CHANNEL == "default") {
     let startTime = Cu.now();
-    let { TelemetryController: _TelemetryController } = ChromeUtils.import(
-      "resource://gre/modules/TelemetryController.jsm"
-    );
+    let { TelemetryController: _TelemetryController } =
+      ChromeUtils.importESModule(
+        "resource://gre/modules/TelemetryController.sys.mjs"
+      );
 
     let complete = false;
     _TelemetryController.testRegisterJsProbes().finally(() => {

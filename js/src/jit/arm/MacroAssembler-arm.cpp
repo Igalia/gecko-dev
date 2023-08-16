@@ -3167,6 +3167,12 @@ void MacroAssemblerARMCompat::pushValue(const Address& addr) {
   ma_push(scratch);
 }
 
+void MacroAssemblerARMCompat::pushValue(const BaseIndex& addr,
+                                        Register scratch) {
+  computeEffectiveAddress(addr, scratch);
+  pushValue(Address(scratch, 0));
+}
+
 void MacroAssemblerARMCompat::popValue(ValueOperand val) {
   ma_pop(val.payloadReg());
   ma_pop(val.typeReg());
@@ -3322,7 +3328,7 @@ void MacroAssemblerARMCompat::handleFailureWithHandlerTail(
   ma_mov(sp, r0);
 
   // Call the handler.
-  using Fn = void (*)(ResumeFromException * rfe);
+  using Fn = void (*)(ResumeFromException* rfe);
   asMasm().setupUnalignedABICall(r1);
   asMasm().passABIArg(r0);
   asMasm().callWithABI<Fn, HandleException>(
@@ -3478,6 +3484,7 @@ void MacroAssemblerARMCompat::handleFailureWithHandlerTail(
            scratch);
     ma_ldr(Address(sp, ResumeFromException::offsetOfStackPointer()), sp,
            scratch);
+    ma_mov(Imm32(int32_t(wasm::FailInstanceReg)), InstanceReg);
   }
   as_dtr(IsLoad, 32, PostIndex, pc, DTRAddr(sp, DtrOffImm(4)));
 
@@ -4718,17 +4725,16 @@ void MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
 // Memory access primitives.
 template <typename T>
 void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
-                                       MIRType valueType, const T& dest,
-                                       MIRType slotType) {
+                                       MIRType valueType, const T& dest) {
+  MOZ_ASSERT(valueType < MIRType::Value);
+
   if (valueType == MIRType::Double) {
     storeDouble(value.reg().typedReg().fpu(), dest);
     return;
   }
 
-  // Store the type tag if needed.
-  if (valueType != slotType) {
-    storeTypeTag(ImmType(ValueTypeFromMIRType(valueType)), dest);
-  }
+  // Store the type tag.
+  storeTypeTag(ImmType(ValueTypeFromMIRType(valueType)), dest);
 
   // Store the payload.
   if (value.constant()) {
@@ -4740,11 +4746,10 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
 
 template void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                                 MIRType valueType,
-                                                const Address& dest,
-                                                MIRType slotType);
+                                                const Address& dest);
 template void MacroAssembler::storeUnboxedValue(
     const ConstantOrRegister& value, MIRType valueType,
-    const BaseObjectElementIndex& dest, MIRType slotType);
+    const BaseObjectElementIndex& dest);
 
 CodeOffset MacroAssembler::wasmTrapInstruction() {
   return CodeOffset(as_illegal_trap().getOffset());
@@ -6168,13 +6173,16 @@ void MacroAssemblerARM::wasmLoadImpl(const wasm::MemoryAccessDesc& access,
                                      Register memoryBase, Register ptr,
                                      Register ptrScratch, AnyRegister output,
                                      Register64 out64) {
+  MOZ_ASSERT(memoryBase != ptr);
+  MOZ_ASSERT_IF(out64 != Register64::Invalid(), memoryBase != out64.high);
+  MOZ_ASSERT_IF(out64 != Register64::Invalid(), memoryBase != out64.low);
   MOZ_ASSERT(ptr == ptrScratch);
   MOZ_ASSERT(!access.isZeroExtendSimd128Load());
   MOZ_ASSERT(!access.isSplatSimd128Load());
   MOZ_ASSERT(!access.isWidenSimd128Load());
 
+  access.assertOffsetInGuardPages();
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
 
   Scalar::Type type = access.type();
 
@@ -6285,9 +6293,8 @@ void MacroAssemblerARM::wasmStoreImpl(const wasm::MemoryAccessDesc& access,
 
   MOZ_ASSERT(ptr == ptrScratch);
 
+  access.assertOffsetInGuardPages();
   uint32_t offset = access.offset();
-  MOZ_ASSERT(offset < asMasm().wasmMaxOffsetGuardLimit());
-
   unsigned byteSize = access.byteSize();
   Scalar::Type type = access.type();
 

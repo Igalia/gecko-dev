@@ -14,14 +14,14 @@
 namespace mozilla {
 namespace layers {
 
-static const int32_t kCheckpointEventType = -1;
+static const uint8_t kCheckpointEventType = -1;
 static const uint32_t kMaxSpinCount = 200;
 
 static const TimeDuration kTimeout = TimeDuration::FromMilliseconds(100);
 static const int32_t kTimeoutRetryCount = 50;
 
 static const uint32_t kCacheLineSize = 64;
-static const uint32_t kStreamSize = 64 * 1024;
+static const uint32_t kStreamSize = 512 * 1024;
 static const uint32_t kShmemSize = kStreamSize + (2 * kCacheLineSize);
 
 static_assert((static_cast<uint64_t>(UINT32_MAX) + 1) % kStreamSize == 0,
@@ -335,8 +335,8 @@ bool CanvasEventRingBuffer::WaitForDataToRead(TimeDuration aTimeout,
   return false;
 }
 
-int32_t CanvasEventRingBuffer::ReadNextEvent() {
-  int32_t nextEvent;
+uint8_t CanvasEventRingBuffer::ReadNextEvent() {
+  uint8_t nextEvent;
   ReadElement(*this, nextEvent);
   while (nextEvent == kCheckpointEventType && good()) {
     ReadElement(*this, nextEvent);
@@ -512,19 +512,6 @@ void CanvasDrawEventRecorder::StoreSourceSurfaceRecording(
   }
 
   StoreExternalSurfaceRecording(aSurface, wr::AsUint64(extId));
-}
-
-void CanvasDrawEventRecorder::RecordSourceSurfaceDestruction(void* aSurface) {
-  // We must only record things on the main thread and surfaces that have been
-  // recorded can sometimes be destroyed off the main thread.
-  if (NS_IsMainThread()) {
-    DrawEventRecorderPrivate::RecordSourceSurfaceDestruction(aSurface);
-    return;
-  }
-
-  NS_DispatchToMainThread(NewRunnableMethod<void*>(
-      "DrawEventRecorderPrivate::RecordSourceSurfaceDestruction", this,
-      &DrawEventRecorderPrivate::RecordSourceSurfaceDestruction, aSurface));
 }
 
 }  // namespace layers

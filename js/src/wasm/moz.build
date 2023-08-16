@@ -14,7 +14,6 @@ include("../js-cxxflags.mozbuild")
 
 UNIFIED_SOURCES += [
     "AsmJS.cpp",
-    "TypedObject.cpp",
     "WasmBaselineCompile.cpp",
     "WasmBCFrame.cpp",
     "WasmBCMemory.cpp",
@@ -25,8 +24,10 @@ UNIFIED_SOURCES += [
     "WasmCompile.cpp",
     "WasmDebug.cpp",
     "WasmDebugFrame.cpp",
+    "WasmFeatures.cpp",
     "WasmFrameIter.cpp",
     "WasmGC.cpp",
+    "WasmGcObject.cpp",
     "WasmGenerator.cpp",
     "WasmInitExpr.cpp",
     "WasmInstance.cpp",

@@ -17,7 +17,7 @@ use crate::clip::{ClipChainInstance, ClipTree};
 use crate::frame_builder::FrameBuilderConfig;
 use crate::gpu_cache::GpuCache;
 use crate::picture::{PictureCompositeMode, ClusterFlags, SurfaceInfo, TileCacheInstance};
-use crate::picture::{SurfaceIndex, RasterConfig, TileRect, SubSliceIndex};
+use crate::picture::{SurfaceIndex, RasterConfig, SubSliceIndex};
 use crate::prim_store::{ClipTaskIndex, PictureIndex, PrimitiveInstanceKind};
 use crate::prim_store::{PrimitiveStore, PrimitiveInstance};
 use crate::render_backend::{DataStores, ScratchBuffer};
@@ -93,9 +93,6 @@ pub enum VisibilityState {
         /// A set of flags that define how this primitive should be handled
         /// during batching of visible primitives.
         vis_flags: PrimitiveVisibilityFlags,
-
-        /// Tiles that this primitive intersects with
-        tile_rect: TileRect,
 
         /// Sub-slice within the picture cache that this prim exists on
         sub_slice_index: SubSliceIndex,
@@ -232,9 +229,18 @@ pub fn update_prim_visibility(
                 };
 
                 if !is_passthrough {
-                    frame_state.clip_tree.push_clip_root_leaf(
-                        prim_instances[prim_instance_index].clip_leaf_id,
+                    let clip_root = store
+                        .pictures[pic_index.0]
+                        .clip_root
+                        .unwrap_or_else(|| {
+                            // If we couldn't find a common ancestor then just use the
+                            // clip node of the picture primitive itself
+                            let leaf_id = prim_instances[prim_instance_index].clip_leaf_id;
+                            frame_state.clip_tree.get_leaf(leaf_id).node_id
+                        }
                     );
+
+                    frame_state.clip_tree.push_clip_root_node(clip_root);
                 }
 
                 update_prim_visibility(

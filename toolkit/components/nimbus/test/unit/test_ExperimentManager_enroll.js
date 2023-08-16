@@ -1,24 +1,24 @@
 "use strict";
 
-const { NormandyTestUtils } = ChromeUtils.import(
-  "resource://testing-common/NormandyTestUtils.jsm"
+const { NormandyTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
 );
-const { Sampling } = ChromeUtils.import(
-  "resource://gre/modules/components-utils/Sampling.jsm"
+const { Sampling } = ChromeUtils.importESModule(
+  "resource://gre/modules/components-utils/Sampling.sys.mjs"
 );
-const { ClientEnvironment } = ChromeUtils.import(
-  "resource://normandy/lib/ClientEnvironment.jsm"
+const { ClientEnvironment } = ChromeUtils.importESModule(
+  "resource://normandy/lib/ClientEnvironment.sys.mjs"
 );
 const { cleanupStorePrefCache } = ExperimentFakes;
 
-const { ExperimentStore } = ChromeUtils.import(
-  "resource://nimbus/lib/ExperimentStore.jsm"
+const { ExperimentStore } = ChromeUtils.importESModule(
+  "resource://nimbus/lib/ExperimentStore.sys.mjs"
 );
-const { TelemetryEnvironment } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryEnvironment.jsm"
+const { TelemetryEnvironment } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryEnvironment.sys.mjs"
 );
-const { TelemetryEvents } = ChromeUtils.import(
-  "resource://normandy/lib/TelemetryEvents.jsm"
+const { TelemetryEvents } = ChromeUtils.importESModule(
+  "resource://normandy/lib/TelemetryEvents.sys.mjs"
 );
 
 const { SYNC_DATA_PREF_BRANCH, SYNC_DEFAULTS_PREF_BRANCH } = ExperimentStore;
@@ -69,6 +69,8 @@ add_task(async function test_add_to_store() {
   );
 
   manager.unenroll("foo", "test-cleanup");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_add_rollout_to_store() {
@@ -104,6 +106,8 @@ add_task(async function test_add_rollout_to_store() {
   Assert.equal(experiment.isRollout, true, "should have .isRollout");
 
   manager.unenroll("rollout-slug", "test-cleanup");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(
@@ -189,6 +193,8 @@ add_task(
     );
 
     manager.unenroll("foo", "test-cleanup");
+
+    await assertEmptyStore(manager.store);
   }
 );
 
@@ -312,6 +318,8 @@ add_task(async function test_setRolloutActive_sendEnrollmentTelemetry_called() {
 
   manager.unenroll("rollout", "test-cleanup");
 
+  await assertEmptyStore(manager.store);
+
   globalSandbox.restore();
 });
 
@@ -375,6 +383,8 @@ add_task(async function test_failure_name_conflict() {
   );
 
   manager.unenroll("foo", "test-cleanup");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_failure_group_conflict() {
@@ -451,6 +461,8 @@ add_task(async function test_failure_group_conflict() {
   );
 
   manager.unenroll("foo", "test-cleanup");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_rollout_failure_group_conflict() {
@@ -513,17 +525,16 @@ add_task(async function test_rollout_failure_group_conflict() {
   );
 
   manager.unenroll("rollout-enrollment", "test-cleanup");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_rollout_experiment_no_conflict() {
   const manager = ExperimentFakes.manager();
   const sandbox = sinon.createSandbox();
-  const experiment = ExperimentFakes.experiment("rollout-enrollment");
-  const recipe = {
-    ...ExperimentFakes.recipe("rollout-recipe"),
-    branches: [experiment.branch],
-    isRollout: true,
-  };
+  const experiment = ExperimentFakes.recipe("experiment");
+  const rollout = ExperimentFakes.recipe("rollout", { isRollout: true });
+
   sandbox.spy(manager, "sendFailureTelemetry");
 
   // Clear any pre-existing data in Glean
@@ -539,12 +550,21 @@ add_task(async function test_rollout_experiment_no_conflict() {
     "no Glean enroll_failed events before failure"
   );
 
-  await manager.store.addEnrollment(experiment);
+  await ExperimentFakes.enrollmentHelper(experiment, {
+    manager,
+  }).enrollmentPromise;
+  await ExperimentFakes.enrollmentHelper(rollout, {
+    manager,
+  }).enrollmentPromise;
 
-  Assert.equal(
-    (await manager.enroll(recipe, "test_rollout_failure_group_conflict"))?.slug,
-    recipe.slug,
-    "Experiment and Rollouts can exists for the same feature"
+  Assert.ok(
+    manager.store.get(experiment.slug).active,
+    "Enrolled in the experiment for the feature"
+  );
+
+  Assert.ok(
+    manager.store.get(rollout.slug).active,
+    "Enrolled in the rollout for the feature"
   );
 
   Assert.ok(
@@ -560,7 +580,11 @@ add_task(async function test_rollout_experiment_no_conflict() {
     "no Glean enroll_failed events before failure"
   );
 
-  manager.unenroll("rollout-enrollment", "test-cleanup");
+  await ExperimentFakes.cleanupAll([experiment.slug, rollout.slug], {
+    manager,
+  });
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_sampling_check() {
@@ -617,6 +641,8 @@ add_task(async function test_sampling_check() {
     "called with expected total"
   );
 
+  await assertEmptyStore(manager.store);
+
   sandbox.reset();
 });
 
@@ -663,6 +689,8 @@ add_task(async function enroll_in_reference_aw_experiment() {
 
   manager.unenroll(recipe.slug, "enroll_in_reference_aw_experiment:cleanup");
   manager.store._deleteForTests("aboutwelcome");
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_forceEnroll_cleanup() {
@@ -722,6 +750,8 @@ add_task(async function test_forceEnroll_cleanup() {
 
   manager.unenroll(`optin-${forcedRecipe.slug}`, "test-cleanup");
 
+  await assertEmptyStore(manager.store);
+
   sandbox.restore();
 });
 
@@ -744,7 +774,93 @@ add_task(async function test_rollout_unenroll_conflict() {
   );
   Assert.ok(enrollStub.calledOnce, "Should call enroll as expected");
 
+  await assertEmptyStore(manager.store);
+
   sandbox.restore();
+});
+
+add_task(async function test_forceEnroll() {
+  const experiment1 = ExperimentFakes.recipe("experiment-1");
+  const experiment2 = ExperimentFakes.recipe("experiment-2");
+  const rollout1 = ExperimentFakes.recipe("rollout-1", { isRollout: true });
+  const rollout2 = ExperimentFakes.recipe("rollout-2", { isRollout: true });
+
+  const TEST_CASES = [
+    {
+      enroll: [experiment1, rollout1],
+      expected: [experiment1, rollout1],
+    },
+    {
+      enroll: [rollout1, experiment1],
+      expected: [experiment1, rollout1],
+    },
+    {
+      enroll: [experiment1, experiment2],
+      expected: [experiment2],
+    },
+    {
+      enroll: [rollout1, rollout2],
+      expected: [rollout2],
+    },
+    {
+      enroll: [experiment1, rollout1, rollout2, experiment2],
+      expected: [experiment2, rollout2],
+    },
+  ];
+
+  async function forceEnroll(manager, recipe) {
+    const enrollmentPromise = new Promise(resolve => {
+      manager.store.on(`update:optin-${recipe.slug}`, resolve);
+    });
+
+    manager.forceEnroll(recipe, recipe.branches[0]);
+
+    return enrollmentPromise;
+  }
+
+  const loader = ExperimentFakes.rsLoader();
+  const manager = loader.manager;
+
+  sinon
+    .stub(loader.remoteSettingsClient, "get")
+    .resolves([experiment1, experiment2, rollout1, rollout2]);
+  sinon.stub(loader, "setTimer");
+
+  await loader.init();
+  await manager.onStartup();
+
+  for (const { enroll, expected } of TEST_CASES) {
+    for (const recipe of enroll) {
+      await forceEnroll(manager, recipe);
+    }
+
+    const activeSlugs = manager.store
+      .getAll()
+      .filter(enrollment => enrollment.active)
+      .map(r => r.slug);
+
+    Assert.equal(
+      activeSlugs.length,
+      expected.length,
+      `Should be enrolled in ${expected.length} experiments and rollouts`
+    );
+
+    for (const { slug, isRollout } of expected) {
+      Assert.ok(
+        activeSlugs.includes(`optin-${slug}`),
+        `Should be enrolled in ${
+          isRollout ? "rollout" : "experiment"
+        } with slug optin-${slug}`
+      );
+    }
+
+    for (const { slug } of expected) {
+      manager.unenroll(`optin-${slug}`);
+      manager.store._deleteForTests(`optin-${slug}`);
+    }
+  }
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function test_featureIds_is_stored() {
@@ -757,10 +873,8 @@ add_task(async function test_featureIds_is_stored() {
 
   await manager.onStartup();
 
-  const {
-    enrollmentPromise,
-    doExperimentCleanup,
-  } = ExperimentFakes.enrollmentHelper(recipe, { manager });
+  const { enrollmentPromise, doExperimentCleanup } =
+    ExperimentFakes.enrollmentHelper(recipe, { manager });
 
   await enrollmentPromise;
 
@@ -774,6 +888,8 @@ add_task(async function test_featureIds_is_stored() {
   );
 
   await doExperimentCleanup();
+
+  await assertEmptyStore(manager.store);
 });
 
 add_task(async function experiment_and_rollout_enroll_and_cleanup() {
@@ -837,4 +953,71 @@ add_task(async function experiment_and_rollout_enroll_and_cleanup() {
       false
     )
   );
+
+  await assertEmptyStore(manager.store);
+});
+
+add_task(async function test_reEnroll() {
+  const store = ExperimentFakes.store();
+  const manager = ExperimentFakes.manager(store);
+
+  await manager.onStartup();
+  await manager.store.ready();
+
+  const experiment = ExperimentFakes.recipe("experiment");
+  experiment.bucketConfig = {
+    ...experiment.bucketConfig,
+    start: 0,
+    count: 1000,
+    total: 1000,
+  };
+  const rollout = ExperimentFakes.recipe("rollout", { isRollout: true });
+  rollout.bucketConfig = {
+    ...rollout.bucketConfig,
+    start: 0,
+    count: 1000,
+    total: 1000,
+  };
+
+  await manager.enroll(experiment, "test");
+  Assert.equal(
+    manager.store.getExperimentForFeature("testFeature")?.slug,
+    experiment.slug,
+    "Should enroll in experiment"
+  );
+
+  await manager.enroll(rollout, "test");
+  Assert.equal(
+    manager.store.getRolloutForFeature("testFeature")?.slug,
+    rollout.slug,
+    "Should enroll in rollout"
+  );
+
+  manager.unenroll(experiment.slug);
+  Assert.ok(
+    !manager.store.getExperimentForFeature("testFeature"),
+    "Should unenroll from experiment"
+  );
+
+  manager.unenroll(rollout.slug);
+  Assert.ok(
+    !manager.store.getRolloutForFeature("testFeature"),
+    "Should unenroll from rollout"
+  );
+
+  await Assert.rejects(
+    manager.enroll(experiment, "test", { reenroll: true }),
+    /An experiment with the slug "experiment" already exists/,
+    "Should not re-enroll in experiment"
+  );
+
+  await manager.enroll(rollout, "test", { reenroll: true });
+  Assert.equal(
+    manager.store.getRolloutForFeature("testFeature")?.slug,
+    rollout.slug,
+    "Should re-enroll in rollout"
+  );
+
+  manager.unenroll(rollout.slug);
+  await assertEmptyStore(store);
 });

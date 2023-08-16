@@ -4,13 +4,14 @@
 
 //! [@supports rules](https://drafts.csswg.org/css-conditional-3/#at-supports)
 
+use crate::font_face::{FontFaceSourceFormatKeyword, FontFaceSourceTechFlags};
 use crate::parser::ParserContext;
 use crate::properties::{PropertyDeclaration, PropertyId, SourcePropertyDeclaration};
 use crate::selector_parser::{SelectorImpl, SelectorParser};
 use crate::shared_lock::{DeepCloneParams, DeepCloneWithLock, Locked};
 use crate::shared_lock::{SharedRwLock, SharedRwLockReadGuard, ToCssWithGuard};
 use crate::str::CssStringWriter;
-use crate::stylesheets::{CssRuleType, CssRules, Namespaces};
+use crate::stylesheets::{CssRuleType, CssRules};
 use cssparser::parse_important;
 use cssparser::{Delimiter, Parser, SourceLocation, Token};
 use cssparser::{ParseError as CssParseError, ParserInput};
@@ -94,6 +95,10 @@ pub enum SupportsCondition {
     /// Since we need to pass it through FFI to get the pref value,
     /// we store it as CString directly.
     MozBoolPref(CString),
+    /// `font-format(<font-format>)`
+    FontFormat(FontFaceSourceFormatKeyword),
+    /// `font-tech(<font-tech>)`
+    FontTech(FontFaceSourceTechFlags),
     /// `(any tokens)` or `func(any tokens)`
     FutureSyntax(String),
 }
@@ -165,25 +170,40 @@ impl SupportsCondition {
                     input.slice_from(pos).to_owned()
                 )))
             },
+            "font-format" if static_prefs::pref!("layout.css.font-tech.enabled") => {
+                let kw = FontFaceSourceFormatKeyword::parse(input)?;
+                Ok(SupportsCondition::FontFormat(kw))
+            },
+            "font-tech" if static_prefs::pref!("layout.css.font-tech.enabled") => {
+                let flag = FontFaceSourceTechFlags::parse_one(input)?;
+                Ok(SupportsCondition::FontTech(flag))
+            },
             _ => {
                 Err(input.new_custom_error(StyleParseErrorKind::UnspecifiedError))
             },
         }
     }
 
+    /// Parses an `@import` condition as per
+    /// https://drafts.csswg.org/css-cascade-5/#typedef-import-conditions
+    pub fn parse_for_import<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
+        input.expect_function_matching("supports")?;
+        input.parse_nested_block(parse_condition_or_declaration)
+    }
+
     /// <https://drafts.csswg.org/css-conditional-3/#supports_condition_in_parens>
     fn parse_in_parens<'i, 't>(input: &mut Parser<'i, 't>) -> Result<Self, ParseError<'i>> {
-        // Whitespace is normally taken care of in `Parser::next`,
-        // but we want to not include it in `pos` for the SupportsCondition::FutureSyntax cases.
-        while input.try_parse(Parser::expect_whitespace).is_ok() {}
+        // Whitespace is normally taken care of in `Parser::next`, but we want to not include it in
+        // `pos` for the SupportsCondition::FutureSyntax cases.
+        input.skip_whitespace();
         let pos = input.position();
         let location = input.current_source_location();
         match *input.next()? {
             Token::ParenthesisBlock => {
                 let nested = input
                     .try_parse(|input| input.parse_nested_block(parse_condition_or_declaration));
-                if nested.is_ok() {
-                    return nested;
+                if let Ok(nested) = nested {
+                    return Ok(Self::Parenthesized(Box::new(nested)));
                 }
             },
             Token::Function(ref ident) => {
@@ -206,15 +226,17 @@ impl SupportsCondition {
     }
 
     /// Evaluate a supports condition
-    pub fn eval(&self, cx: &ParserContext, namespaces: &Namespaces) -> bool {
+    pub fn eval(&self, cx: &ParserContext) -> bool {
         match *self {
-            SupportsCondition::Not(ref cond) => !cond.eval(cx, namespaces),
-            SupportsCondition::Parenthesized(ref cond) => cond.eval(cx, namespaces),
-            SupportsCondition::And(ref vec) => vec.iter().all(|c| c.eval(cx, namespaces)),
-            SupportsCondition::Or(ref vec) => vec.iter().any(|c| c.eval(cx, namespaces)),
+            SupportsCondition::Not(ref cond) => !cond.eval(cx),
+            SupportsCondition::Parenthesized(ref cond) => cond.eval(cx),
+            SupportsCondition::And(ref vec) => vec.iter().all(|c| c.eval(cx)),
+            SupportsCondition::Or(ref vec) => vec.iter().any(|c| c.eval(cx)),
             SupportsCondition::Declaration(ref decl) => decl.eval(cx),
             SupportsCondition::MozBoolPref(ref name) => eval_moz_bool_pref(name, cx),
-            SupportsCondition::Selector(ref selector) => selector.eval(cx, namespaces),
+            SupportsCondition::Selector(ref selector) => selector.eval(cx),
+            SupportsCondition::FontFormat(ref format) => eval_font_format(format),
+            SupportsCondition::FontTech(ref tech) => eval_font_tech(tech),
             SupportsCondition::FutureSyntax(_) => false,
         }
     }
@@ -229,6 +251,16 @@ fn eval_moz_bool_pref(name: &CStr, cx: &ParserContext) -> bool {
     unsafe { bindings::Gecko_GetBoolPrefValue(name.as_ptr()) }
 }
 
+fn eval_font_format(kw: &FontFaceSourceFormatKeyword) -> bool {
+    use crate::gecko_bindings::bindings;
+    unsafe { bindings::Gecko_IsFontFormatSupported(*kw) }
+}
+
+fn eval_font_tech(flag: &FontFaceSourceTechFlags) -> bool {
+    use crate::gecko_bindings::bindings;
+    unsafe { bindings::Gecko_IsFontTechSupported(*flag) }
+}
+
 #[cfg(feature = "servo")]
 fn eval_moz_bool_pref(_: &CStr, _: &ParserContext) -> bool {
     false
@@ -240,7 +272,7 @@ pub fn parse_condition_or_declaration<'i, 't>(
     input: &mut Parser<'i, 't>,
 ) -> Result<SupportsCondition, ParseError<'i>> {
     if let Ok(condition) = input.try_parse(SupportsCondition::parse) {
-        Ok(SupportsCondition::Parenthesized(Box::new(condition)))
+        Ok(condition)
     } else {
         Declaration::parse(input).map(SupportsCondition::Declaration)
     }
@@ -257,9 +289,9 @@ impl ToCss for SupportsCondition {
                 cond.to_css(dest)
             },
             SupportsCondition::Parenthesized(ref cond) => {
-                dest.write_str("(")?;
+                dest.write_char('(')?;
                 cond.to_css(dest)?;
-                dest.write_str(")")
+                dest.write_char(')')
             },
             SupportsCondition::And(ref vec) => {
                 let mut first = true;
@@ -283,22 +315,28 @@ impl ToCss for SupportsCondition {
                 }
                 Ok(())
             },
-            SupportsCondition::Declaration(ref decl) => {
-                dest.write_str("(")?;
-                decl.to_css(dest)?;
-                dest.write_str(")")
-            },
+            SupportsCondition::Declaration(ref decl) => decl.to_css(dest),
             SupportsCondition::Selector(ref selector) => {
                 dest.write_str("selector(")?;
                 selector.to_css(dest)?;
-                dest.write_str(")")
+                dest.write_char(')')
             },
             SupportsCondition::MozBoolPref(ref name) => {
                 dest.write_str("-moz-bool-pref(")?;
                 let name =
                     str::from_utf8(name.as_bytes()).expect("Should be parsed from valid UTF-8");
                 name.to_css(dest)?;
-                dest.write_str(")")
+                dest.write_char(')')
+            },
+            SupportsCondition::FontFormat(ref kw) => {
+                dest.write_str("font-format(")?;
+                kw.to_css(dest)?;
+                dest.write_char(')')
+            },
+            SupportsCondition::FontTech(ref flag) => {
+                dest.write_str("font-tech(")?;
+                flag.to_css(dest)?;
+                dest.write_char(')')
             },
             SupportsCondition::FutureSyntax(ref s) => dest.write_str(&s),
         }
@@ -320,44 +358,20 @@ impl ToCss for RawSelector {
 
 impl RawSelector {
     /// Tries to evaluate a `selector()` function.
-    pub fn eval(&self, context: &ParserContext, namespaces: &Namespaces) -> bool {
-        #[cfg(feature = "gecko")]
-        {
-            if !static_prefs::pref!("layout.css.supports-selector.enabled") {
-                return false;
-            }
-        }
-
+    pub fn eval(&self, context: &ParserContext) -> bool {
         let mut input = ParserInput::new(&self.0);
         let mut input = Parser::new(&mut input);
         input
             .parse_entirely(|input| -> Result<(), CssParseError<()>> {
                 let parser = SelectorParser {
-                    namespaces,
+                    namespaces: &context.namespaces,
                     stylesheet_origin: context.stylesheet_origin,
                     url_data: context.url_data,
+                    for_supports_rule: true,
                 };
 
-                #[allow(unused_variables)]
-                let selector = Selector::<SelectorImpl>::parse(&parser, input)
+                Selector::<SelectorImpl>::parse(&parser, input)
                     .map_err(|_| input.new_custom_error(()))?;
-
-                #[cfg(feature = "gecko")]
-                {
-                    use crate::selector_parser::PseudoElement;
-                    use selectors::parser::Component;
-
-                    let has_any_unknown_webkit_pseudo = selector.has_pseudo_element() &&
-                        selector.iter_raw_match_order().any(|component| {
-                            matches!(
-                                *component,
-                                Component::PseudoElement(PseudoElement::UnknownWebkit(..))
-                            )
-                        });
-                    if has_any_unknown_webkit_pseudo {
-                        return Err(input.new_custom_error(()));
-                    }
-                }
 
                 Ok(())
             })
@@ -397,7 +411,7 @@ impl Declaration {
     ///
     /// <https://drafts.csswg.org/css-conditional-3/#support-definition>
     pub fn eval(&self, context: &ParserContext) -> bool {
-        debug_assert_eq!(context.rule_type(), CssRuleType::Style);
+        debug_assert!(context.rule_types().contains(CssRuleType::Style));
 
         let mut input = ParserInput::new(&self.0);
         let mut input = Parser::new(&mut input);
@@ -409,7 +423,7 @@ impl Declaration {
                 let id =
                     PropertyId::parse(&prop, context).map_err(|_| input.new_custom_error(()))?;
 
-                let mut declarations = SourcePropertyDeclaration::new();
+                let mut declarations = SourcePropertyDeclaration::default();
                 input.parse_until_before(Delimiter::Bang, |input| {
                     PropertyDeclaration::parse_into(&mut declarations, id, &context, input)
                         .map_err(|_| input.new_custom_error(()))

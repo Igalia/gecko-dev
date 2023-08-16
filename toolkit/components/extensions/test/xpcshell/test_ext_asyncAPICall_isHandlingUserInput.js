@@ -63,7 +63,7 @@ const MODULE_INFO = {
   },
 };
 
-add_setup(async function() {
+add_setup(async function () {
   // The blob:-URL registered above in MODULE_INFO gets loaded at
   // https://searchfox.org/mozilla-central/rev/0fec57c05d3996cc00c55a66f20dd5793a9bfb5d/toolkit/components/extensions/ExtensionCommon.jsm#1649
   Services.prefs.setBoolPref(
@@ -81,7 +81,7 @@ add_task(
   async function test_propagated_isHandlingUserInput_on_async_api_methods_calls() {
     const extension = ExtensionTestUtils.loadExtension({
       manifest: {
-        applications: { gecko: { id: "@test-ext" } },
+        browser_specific_settings: { gecko: { id: "@test-ext" } },
       },
       background() {
         browser.test.onMessage.addListener(async (msg, args) => {

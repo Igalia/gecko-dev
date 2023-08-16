@@ -7,7 +7,7 @@
 use crate::values::animated::ToAnimatedValue;
 use crate::values::generics::NonNegative;
 use crate::values::specified::percentage::ToPercentage;
-use crate::values::{serialize_percentage, CSSFloat};
+use crate::values::{serialize_normalized_percentage, CSSFloat};
 use crate::Zero;
 use std::fmt;
 use style_traits::{CssWriter, ToCss};
@@ -77,12 +77,36 @@ impl std::ops::AddAssign for Percentage {
     }
 }
 
+impl std::ops::Add for Percentage {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Percentage(self.0 + other.0)
+    }
+}
+
+impl std::ops::Sub for Percentage {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Percentage(self.0 - other.0)
+    }
+}
+
+impl std::ops::Rem for Percentage {
+    type Output = Self;
+
+    fn rem(self, other: Self) -> Self {
+        Percentage(self.0 % other.0)
+    }
+}
+
 impl ToCss for Percentage {
     fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result
     where
         W: fmt::Write,
     {
-        serialize_percentage(self.0, dest)
+        serialize_normalized_percentage(self.0, dest)
     }
 }
 

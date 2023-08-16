@@ -12,7 +12,7 @@ const SUPPORT_URL = Services.urlFormatter.formatURL(
   Services.prefs.getStringPref("app.support.baseURL")
 );
 
-add_setup(async function() {
+add_setup(async function () {
   gProvider = new MockProvider();
 });
 
@@ -82,7 +82,7 @@ async function checkMessageState(id, addonType, expected) {
 add_task(async function testNoMessageExtension() {
   let id = "no-message@mochi.test";
   let extension = ExtensionTestUtils.loadExtension({
-    manifest: { applications: { gecko: { id } } },
+    manifest: { browser_specific_settings: { gecko: { id } } },
     useAddonManager: "temporary",
   });
   await extension.startup();

@@ -3,24 +3,21 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use crate::{
-    cow_label, wgpu_string, AdapterInformation, ByteBuf, CommandEncoderAction, DeviceAction,
-    DropAction, ImplicitLayout, QueueWriteAction, RawString, TextureAction,
+    cow_label, error::HasErrorBufferType, wgpu_string, AdapterInformation, ByteBuf,
+    CommandEncoderAction, DeviceAction, DropAction, ImageDataLayout, ImplicitLayout,
+    QueueWriteAction, RawString, TextureAction,
 };
 
-use wgc::{hub::IdentityManager, id};
-use wgt::Backend;
+use wgc::{id, identity::IdentityManager};
+use wgt::{Backend, TextureFormat};
 
 pub use wgc::command::{compute_ffi::*, render_ffi::*};
 
 use parking_lot::Mutex;
 
-use nsstring::nsACString;
+use nsstring::{nsACString, nsString};
 
-use std::{
-    borrow::Cow,
-    num::{NonZeroU32, NonZeroU8},
-    ptr,
-};
+use std::{borrow::Cow, ptr};
 
 // we can't call `from_raw_parts` unconditionally because the caller
 // may not even have a valid pointer (e.g. NULL) if the `length` is zero.
@@ -53,8 +50,8 @@ impl ProgrammableStageDescriptor {
 }
 
 #[repr(C)]
-pub struct ComputePipelineDescriptor {
-    label: RawString,
+pub struct ComputePipelineDescriptor<'a> {
+    label: Option<&'a nsACString>,
     layout: Option<id::PipelineLayoutId>,
     stage: ProgrammableStageDescriptor,
 }
@@ -237,7 +234,7 @@ pub struct SamplerDescriptor<'a> {
     lod_min_clamp: f32,
     lod_max_clamp: f32,
     compare: Option<&'a wgt::CompareFunction>,
-    anisotropy_clamp: Option<NonZeroU8>,
+    anisotropy_clamp: Option<&'a u16>,
 }
 
 #[repr(C)]
@@ -247,9 +244,9 @@ pub struct TextureViewDescriptor<'a> {
     dimension: Option<&'a wgt::TextureViewDimension>,
     aspect: wgt::TextureAspect,
     base_mip_level: u32,
-    mip_level_count: Option<NonZeroU32>,
+    mip_level_count: Option<&'a u32>,
     base_array_layer: u32,
-    array_layer_count: Option<NonZeroU32>,
+    array_layer_count: Option<&'a u32>,
 }
 
 #[repr(C)]
@@ -431,9 +428,38 @@ pub extern "C" fn wgpu_client_fill_default_limits(limits: &mut wgt::Limits) {
 #[no_mangle]
 pub extern "C" fn wgpu_client_adapter_extract_info(
     byte_buf: &ByteBuf,
-    info: &mut AdapterInformation,
+    info: &mut AdapterInformation<nsString>,
 ) {
-    *info = bincode::deserialize(unsafe { byte_buf.as_slice() }).unwrap();
+    let AdapterInformation {
+        backend,
+        device_type,
+        device,
+        driver_info,
+        driver,
+        features,
+        id,
+        limits,
+        name,
+        vendor,
+    } = bincode::deserialize::<AdapterInformation<String>>(unsafe { byte_buf.as_slice() }).unwrap();
+
+    let nss = |s: &str| {
+        let mut ns_string = nsString::new();
+        ns_string.assign_str(s);
+        ns_string
+    };
+    *info = AdapterInformation {
+        backend,
+        device_type,
+        device,
+        driver_info: nss(&driver_info),
+        driver: nss(&driver),
+        features,
+        id,
+        limits,
+        name: nss(&name),
+        vendor,
+    };
 }
 
 #[no_mangle]
@@ -477,7 +503,7 @@ pub extern "C" fn wgpu_client_make_buffer_id(
 pub extern "C" fn wgpu_client_create_texture(
     client: &Client,
     device_id: id::DeviceId,
-    desc: &wgt::TextureDescriptor<Option<&nsACString>>,
+    desc: &wgt::TextureDescriptor<Option<&nsACString>, crate::FfiSlice<TextureFormat>>,
     bb: &mut ByteBuf,
 ) -> id::TextureId {
     let label = wgpu_string(desc.label);
@@ -490,8 +516,14 @@ pub extern "C" fn wgpu_client_create_texture(
         .textures
         .alloc(backend);
 
-    let action = DeviceAction::CreateTexture(id, desc.map_label(|_| label));
+    let view_formats = unsafe { desc.view_formats.as_slice() }.to_vec();
+
+    let action = DeviceAction::CreateTexture(
+        id,
+        desc.map_label_and_view_formats(|_| label, |_| view_formats),
+    );
     *bb = make_byte_buf(&action);
+
     id
 }
 
@@ -519,9 +551,9 @@ pub extern "C" fn wgpu_client_create_texture_view(
         range: wgt::ImageSubresourceRange {
             aspect: desc.aspect,
             base_mip_level: desc.base_mip_level,
-            mip_level_count: desc.mip_level_count,
+            mip_level_count: desc.mip_level_count.map(|ptr| *ptr),
             base_array_layer: desc.base_array_layer,
-            array_layer_count: desc.array_layer_count,
+            array_layer_count: desc.array_layer_count.map(|ptr| *ptr),
         },
     };
 
@@ -556,7 +588,7 @@ pub extern "C" fn wgpu_client_create_sampler(
         lod_min_clamp: desc.lod_min_clamp,
         lod_max_clamp: desc.lod_max_clamp,
         compare: desc.compare.cloned(),
-        anisotropy_clamp: desc.anisotropy_clamp,
+        anisotropy_clamp: *desc.anisotropy_clamp.unwrap_or(&1),
         border_color: None,
     };
     let action = DeviceAction::CreateSampler(id, wgpu_desc);
@@ -628,8 +660,11 @@ pub extern "C" fn wgpu_device_create_render_bundle_encoder(
     match wgc::command::RenderBundleEncoder::new(&descriptor, device_id, None) {
         Ok(encoder) => Box::into_raw(Box::new(encoder)),
         Err(e) => {
-            let message = format!("Error in Device::create_render_bundle_encoder: {}", e);
-            let action = DeviceAction::Error(message);
+            let message = format!("Error in `Device::create_render_bundle_encoder`: {}", e);
+            let action = DeviceAction::Error {
+                message,
+                r#type: e.error_type(),
+            };
             *bb = make_byte_buf(&action);
             ptr::null_mut()
         }
@@ -665,6 +700,28 @@ pub unsafe extern "C" fn wgpu_client_create_render_bundle(
 
     let action =
         DeviceAction::CreateRenderBundle(id, *Box::from_raw(encoder), desc.map_label(|_| label));
+    *bb = make_byte_buf(&action);
+    id
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn wgpu_client_create_render_bundle_error(
+    client: &Client,
+    device_id: id::DeviceId,
+    label: Option<&nsACString>,
+    bb: &mut ByteBuf,
+) -> id::RenderBundleId {
+    let label = wgpu_string(label);
+
+    let backend = device_id.backend();
+    let id = client
+        .identities
+        .lock()
+        .select(backend)
+        .render_bundles
+        .alloc(backend);
+
+    let action = DeviceAction::CreateRenderBundleError(id, label);
     *bb = make_byte_buf(&action);
     id
 }
@@ -935,12 +992,14 @@ pub unsafe extern "C" fn wgpu_client_create_compute_pipeline(
     implicit_pipeline_layout_id: *mut Option<id::PipelineLayoutId>,
     implicit_bind_group_layout_ids: *mut Option<id::BindGroupLayoutId>,
 ) -> id::ComputePipelineId {
+    let label = wgpu_string(desc.label);
+
     let backend = device_id.backend();
     let mut identities = client.identities.lock();
     let id = identities.select(backend).compute_pipelines.alloc(backend);
 
     let wgpu_desc = wgc::pipeline::ComputePipelineDescriptor {
-        label: cow_label(&desc.label),
+        label,
         layout: desc.layout,
         stage: desc.stage.to_wgpu(),
     };
@@ -978,7 +1037,7 @@ pub unsafe extern "C" fn wgpu_client_create_render_pipeline(
     let id = identities.select(backend).render_pipelines.alloc(backend);
 
     let wgpu_desc = wgc::pipeline::RenderPipelineDescriptor {
-        label: label,
+        label,
         layout: desc.layout,
         vertex: desc.vertex.to_wgpu(),
         fragment: desc.fragment.map(FragmentState::to_wgpu),
@@ -1027,22 +1086,38 @@ pub unsafe extern "C" fn wgpu_command_encoder_copy_buffer_to_buffer(
 #[no_mangle]
 pub unsafe extern "C" fn wgpu_command_encoder_copy_texture_to_buffer(
     src: wgc::command::ImageCopyTexture,
-    dst: wgc::command::ImageCopyBuffer,
+    dst_buffer: wgc::id::BufferId,
+    dst_layout: &ImageDataLayout,
     size: wgt::Extent3d,
     bb: &mut ByteBuf,
 ) {
-    let action = CommandEncoderAction::CopyTextureToBuffer { src, dst, size };
+    let action = CommandEncoderAction::CopyTextureToBuffer {
+        src,
+        dst: wgc::command::ImageCopyBuffer {
+            buffer: dst_buffer,
+            layout: dst_layout.into_wgt(),
+        },
+        size,
+    };
     *bb = make_byte_buf(&action);
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn wgpu_command_encoder_copy_buffer_to_texture(
-    src: wgc::command::ImageCopyBuffer,
+    src_buffer: wgc::id::BufferId,
+    src_layout: &ImageDataLayout,
     dst: wgc::command::ImageCopyTexture,
     size: wgt::Extent3d,
     bb: &mut ByteBuf,
 ) {
-    let action = CommandEncoderAction::CopyBufferToTexture { src, dst, size };
+    let action = CommandEncoderAction::CopyBufferToTexture {
+        src: wgc::command::ImageCopyBuffer {
+            buffer: src_buffer,
+            layout: src_layout.into_wgt(),
+        },
+        dst,
+        size,
+    };
     *bb = make_byte_buf(&action);
 }
 
@@ -1093,10 +1168,17 @@ pub unsafe extern "C" fn wgpu_queue_write_buffer(
 #[no_mangle]
 pub unsafe extern "C" fn wgpu_queue_write_texture(
     dst: wgt::ImageCopyTexture<id::TextureId>,
-    layout: wgt::ImageDataLayout,
+    layout: ImageDataLayout,
     size: wgt::Extent3d,
     bb: &mut ByteBuf,
 ) {
+    let layout = layout.into_wgt();
     let action = QueueWriteAction::Texture { dst, layout, size };
     *bb = make_byte_buf(&action);
+}
+
+/// Returns the block size or zero if the format has multiple aspects (for example depth+stencil).
+#[no_mangle]
+pub extern "C" fn wgpu_texture_format_block_size_single_aspect(format: wgt::TextureFormat) -> u32 {
+    format.block_size(None).unwrap_or(0)
 }

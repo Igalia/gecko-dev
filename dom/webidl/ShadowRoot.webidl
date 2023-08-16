@@ -24,7 +24,6 @@ interface ShadowRoot : DocumentFragment
 {
   // Shadow DOM v1
   readonly attribute ShadowRootMode mode;
-  [Pref="dom.shadowdom.delegatesFocus.enabled"]
   readonly attribute boolean delegatesFocus;
   [Pref="dom.shadowdom.slot.assign.enabled"]
   readonly attribute SlotAssignmentMode slotAssignment;
@@ -52,7 +51,7 @@ interface ShadowRoot : DocumentFragment
 
   // For triggering UA Widget scope in tests.
   [ChromeOnly]
-  void setIsUAWidget();
+  undefined setIsUAWidget();
   [ChromeOnly]
   boolean isUAWidget();
 };

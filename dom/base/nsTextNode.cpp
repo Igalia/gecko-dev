@@ -90,8 +90,6 @@ JSObject* nsTextNode::WrapNode(JSContext* aCx,
   return Text_Binding::Wrap(aCx, this, aGivenProto);
 }
 
-bool nsTextNode::IsNodeOfType(uint32_t aFlags) const { return false; }
-
 already_AddRefed<CharacterData> nsTextNode::CloneDataNode(
     mozilla::dom::NodeInfo* aNodeInfo, bool aCloneText) const {
   RefPtr<nsTextNode> it =
@@ -135,15 +133,9 @@ void nsTextNode::List(FILE* out, int32_t aIndent) const {
   fprintf(out, "Text@%p", static_cast<const void*>(this));
   fprintf(out, " flags=[%08x]", static_cast<unsigned int>(GetFlags()));
   if (IsClosestCommonInclusiveAncestorForRangeInSelection()) {
-    const LinkedList<nsRange>* ranges =
+    const LinkedList<AbstractRange>* ranges =
         GetExistingClosestCommonInclusiveAncestorRanges();
-    int32_t count = 0;
-    if (ranges) {
-      // Can't use range-based iteration on a const LinkedList, unfortunately.
-      for (const nsRange* r = ranges->getFirst(); r; r = r->getNext()) {
-        ++count;
-      }
-    }
+    uint32_t count = ranges ? ranges->length() : 0;
     fprintf(out, " ranges:%d", count);
   }
   fprintf(out, " primaryframe=%p", static_cast<void*>(GetPrimaryFrame()));
@@ -240,7 +232,7 @@ void nsAttributeTextNode::AttributeChanged(Element* aElement,
   }
 }
 
-void nsAttributeTextNode::NodeWillBeDestroyed(const nsINode* aNode) {
+void nsAttributeTextNode::NodeWillBeDestroyed(nsINode* aNode) {
   NS_ASSERTION(aNode == static_cast<nsINode*>(mGrandparent), "Wrong node!");
   mGrandparent = nullptr;
 }

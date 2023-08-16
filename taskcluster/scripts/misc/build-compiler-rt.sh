@@ -11,6 +11,7 @@ case "$target" in
   EXTRA_CMAKE_FLAGS="
     -DCOMPILER_RT_BUILD_LIBFUZZER=OFF
     -DCOMPILER_RT_BUILD_ORC=OFF
+    -DCOMPILER_RT_BUILTINS_HIDE_SYMBOLS=OFF
   "
   ;;
 *-apple-darwin)
@@ -18,6 +19,11 @@ case "$target" in
     -DCOMPILER_RT_ENABLE_IOS=OFF
     -DCOMPILER_RT_ENABLE_WATCHOS=OFF
     -DCOMPILER_RT_ENABLE_TVOS=OFF
+  "
+  ;;
+*-windows-msvc)
+  EXTRA_CMAKE_FLAGS="
+    -DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded
   "
   ;;
 esac

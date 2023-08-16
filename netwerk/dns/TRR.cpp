@@ -9,12 +9,14 @@
 #include "nsCharSeparatedTokenizer.h"
 #include "nsContentUtils.h"
 #include "nsHttpHandler.h"
+#include "nsHttpChannel.h"
 #include "nsHostResolver.h"
 #include "nsIHttpChannel.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsIIOService.h"
 #include "nsIInputStream.h"
-#include "nsISupportsBase.h"
+#include "nsIObliviousHttp.h"
+#include "nsISupports.h"
 #include "nsISupportsUtils.h"
 #include "nsITimedChannel.h"
 #include "nsIUploadChannel2.h"
@@ -24,7 +26,7 @@
 #include "nsStringStream.h"
 #include "nsThreadUtils.h"
 #include "nsURLHelper.h"
-#include "ODoH.h"
+#include "ObliviousHttpChannel.h"
 #include "TRR.h"
 #include "TRRService.h"
 #include "TRRServiceChannel.h"
@@ -261,7 +263,27 @@ nsresult TRR::SendHTTPRequest() {
   }
 
   nsCOMPtr<nsIChannel> channel;
-  rv = DNSUtils::CreateChannelHelper(dnsURI, getter_AddRefs(channel));
+  bool useOHTTP = StaticPrefs::network_trr_use_ohttp();
+  if (useOHTTP) {
+    nsCOMPtr<nsIObliviousHttpService> ohttpService(
+        do_GetService("@mozilla.org/network/oblivious-http-service;1"));
+    if (!ohttpService) {
+      return NS_ERROR_FAILURE;
+    }
+    nsCOMPtr<nsIURI> relayURI;
+    nsTArray<uint8_t> encodedConfig;
+    rv = ohttpService->GetTRRSettings(getter_AddRefs(relayURI), encodedConfig);
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+    if (!relayURI) {
+      return NS_ERROR_FAILURE;
+    }
+    rv = ohttpService->NewChannel(relayURI, dnsURI, encodedConfig,
+                                  getter_AddRefs(channel));
+  } else {
+    rv = DNSUtils::CreateChannelHelper(dnsURI, getter_AddRefs(channel));
+  }
   if (NS_FAILED(rv) || !channel) {
     LOG(("TRR:SendHTTPRequest: NewChannel failed!\n"));
     return rv;
@@ -559,7 +581,8 @@ nsresult TRR::ReceivePush(nsIHttpChannel* pushed, nsHostRecord* pushedRec) {
   // Since we don't ever call nsHostResolver::NameLookup for this record,
   // we need to copy the trr mode from the previous record
   if (hostRecord->mEffectiveTRRMode == nsIRequest::TRR_DEFAULT_MODE) {
-    hostRecord->mEffectiveTRRMode = pushedRec->mEffectiveTRRMode;
+    hostRecord->mEffectiveTRRMode =
+        static_cast<nsIRequest::TRRMode>(pushedRec->mEffectiveTRRMode);
   }
 
   rv = mHostResolver->TrrLookup_unlocked(hostRecord, this);
@@ -644,8 +667,16 @@ void TRR::SaveAdditionalRecords(
   }
   nsresult rv;
   for (const auto& recordEntry : aRecords) {
-    if (recordEntry.GetData() && recordEntry.GetData()->mAddresses.IsEmpty()) {
+    if (!recordEntry.GetData() || recordEntry.GetData()->mAddresses.IsEmpty()) {
       // no point in adding empty records.
+      continue;
+    }
+    // If IPv6 is disabled don't add anything else than IPv4.
+    if (StaticPrefs::network_dns_disableIPv6() &&
+        std::find_if(recordEntry.GetData()->mAddresses.begin(),
+                     recordEntry.GetData()->mAddresses.end(),
+                     [](const NetAddr& addr) { return !addr.IsIPAddrV4(); }) !=
+            recordEntry.GetData()->mAddresses.end()) {
       continue;
     }
     RefPtr<nsHostRecord> hostRecord;
@@ -667,8 +698,10 @@ void TRR::SaveAdditionalRecords(
     // Since we're not actually calling NameLookup for this record, we need
     // to set these fields to avoid assertions in CompleteLookup.
     // This is quite hacky, and should be fixed.
+    hostRecord->Reset();
     hostRecord->mResolving++;
-    hostRecord->mEffectiveTRRMode = mRec->mEffectiveTRRMode;
+    hostRecord->mEffectiveTRRMode =
+        static_cast<nsIRequest::TRRMode>(mRec->mEffectiveTRRMode);
     LOG(("Completing lookup for additional: %s",
          nsCString(recordEntry.GetKey()).get()));
     (void)mHostResolver->CompleteLookup(hostRecord, NS_OK, ai, mPB,
@@ -682,6 +715,12 @@ void TRR::StoreIPHintAsDNSRecord(const struct SVCB& aSVCBRecord) {
        aSVCBRecord.mSvcDomainName.get()));
   CopyableTArray<NetAddr> addresses;
   aSVCBRecord.GetIPHints(addresses);
+
+  if (StaticPrefs::network_dns_disableIPv6()) {
+    addresses.RemoveElementsBy(
+        [](const NetAddr& addr) { return !addr.IsIPAddrV4(); });
+  }
+
   if (addresses.IsEmpty()) {
     return;
   }
@@ -699,15 +738,15 @@ void TRR::StoreIPHintAsDNSRecord(const struct SVCB& aSVCBRecord) {
 
   mHostResolver->MaybeRenewHostRecord(hostRecord);
 
-  uint32_t ttl = AddrInfo::NO_TTL_DATA;
   RefPtr<AddrInfo> ai(new AddrInfo(aSVCBRecord.mSvcDomainName, ResolverType(),
-                                   TRRTYPE_A, std::move(addresses), ttl));
+                                   TRRTYPE_A, std::move(addresses), mTTL));
 
   // Since we're not actually calling NameLookup for this record, we need
   // to set these fields to avoid assertions in CompleteLookup.
   // This is quite hacky, and should be fixed.
   hostRecord->mResolving++;
-  hostRecord->mEffectiveTRRMode = mRec->mEffectiveTRRMode;
+  hostRecord->mEffectiveTRRMode =
+      static_cast<nsIRequest::TRRMode>(mRec->mEffectiveTRRMode);
   (void)mHostResolver->CompleteLookup(hostRecord, NS_OK, ai, mPB, mOriginSuffix,
                                       TRRSkippedReason::TRR_OK, this);
 }
@@ -855,9 +894,7 @@ nsresult TRR::FollowCname(nsIChannel* aChannel) {
   LOG(("TRR::On200Response CNAME %s => %s (%u)\n", mHost.get(), mCname.get(),
        mCnameLoop));
   RefPtr<TRR> trr =
-      ResolverType() == DNSResolverType::ODoH
-          ? new ODoH(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB)
-          : new TRR(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB);
+      new TRR(mHostResolver, mRec, mCname, mType, mCnameLoop, mPB);
   if (!TRRService::Get()) {
     return NS_ERROR_FAILURE;
   }
@@ -879,7 +916,9 @@ nsresult TRR::On200Response(nsIChannel* aChannel) {
     HandleDecodeError(rv);
     return rv;
   }
-  SaveAdditionalRecords(additionalRecords);
+  if (StaticPrefs::network_trr_add_additional_records()) {
+    SaveAdditionalRecords(additionalRecords);
+  }
 
   if (mResult.is<TypeRecordHTTPSSVC>()) {
     auto& results = mResult.as<TypeRecordHTTPSSVC>();
@@ -925,7 +964,7 @@ void TRR::ReportStatus(nsresult aStatusCode) {
   // it as failed; otherwise it can cause the confirmation to fail.
   if (UseDefaultServer() && aStatusCode != NS_ERROR_ABORT) {
     // Bad content is still considered "okay" if the HTTP response is okay
-    TRRService::Get()->RecordTRRStatus(aStatusCode);
+    TRRService::Get()->RecordTRRStatus(this);
   }
 }
 
@@ -974,7 +1013,7 @@ TRR::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
     }
   }
 
-  ReportStatus(aStatusCode);
+  auto scopeExit = MakeScopeExit([&] { ReportStatus(aStatusCode); });
 
   nsresult rv = NS_OK;
   // if status was "fine", parse the response and pass on the answer
@@ -1037,8 +1076,19 @@ TRR::OnDataAvailable(nsIRequest* aRequest, nsIInputStream* aInputStream,
 }
 
 void TRR::Cancel(nsresult aStatus) {
-  RefPtr<TRRServiceChannel> trrServiceChannel = do_QueryObject(mChannel);
-  if (trrServiceChannel && !XRE_IsSocketProcess()) {
+  bool isTRRServiceChannel = false;
+  nsCOMPtr<nsIHttpChannelInternal> httpChannelInternal(
+      do_QueryInterface(mChannel));
+  if (httpChannelInternal) {
+    nsresult rv =
+        httpChannelInternal->GetIsTRRServiceChannel(&isTRRServiceChannel);
+    if (NS_FAILED(rv)) {
+      isTRRServiceChannel = false;
+    }
+  }
+  // nsHttpChannel can be only canceled on the main thread.
+  RefPtr<nsHttpChannel> httpChannel = do_QueryObject(mChannel);
+  if (isTRRServiceChannel && !XRE_IsSocketProcess() && !httpChannel) {
     if (TRRService::Get()) {
       nsCOMPtr<nsIThread> thread = TRRService::Get()->TRRThread();
       if (thread && !thread->IsOnCurrentThread()) {

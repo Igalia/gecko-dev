@@ -4,9 +4,6 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 const DUMMY = "browser/browser/base/content/test/siteIdentity/dummy_page.html";
 const INSECURE_ICON_PREF = "security.insecure_connection_icon.enabled";
 const INSECURE_TEXT_PREF = "security.insecure_connection_text.enabled";
@@ -35,7 +32,7 @@ function getSecurityConnectionBG() {
         .getElementById("identity-popup-mainView")
         .getElementsByClassName("identity-popup-security-connection")[0]
     )
-    .getPropertyValue("background-image");
+    .getPropertyValue("list-style-image");
 }
 
 async function getReaderModeURL() {
@@ -113,6 +110,7 @@ add_task(async function chromeUITest() {
     "about:url-classifier",
     "about:webrtc",
     "about:welcome",
+    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
     "http://example.com/" + DUMMY,
   ];
 
@@ -134,6 +132,7 @@ async function webpageTest(secureCheck) {
   await SpecialPowers.pushPrefEnv({ set: [[INSECURE_ICON_PREF, secureCheck]] });
   let oldTab = await loadNewTab("about:robots");
 
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let newTab = await loadNewTab("http://example.com/" + DUMMY);
   if (secureCheck) {
     is(getIdentityMode(), "notSecure", "Identity should be not secure");
@@ -165,6 +164,7 @@ async function webpageTestTextWarning(secureCheck) {
   await SpecialPowers.pushPrefEnv({ set: [[INSECURE_TEXT_PREF, secureCheck]] });
   let oldTab = await loadNewTab("about:robots");
 
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let newTab = await loadNewTab("http://example.com/" + DUMMY);
   if (secureCheck) {
     is(
@@ -209,6 +209,7 @@ async function webpageTestTextWarningCombined(secureCheck) {
   });
   let oldTab = await loadNewTab("about:robots");
 
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let newTab = await loadNewTab("http://example.com/" + DUMMY);
   if (secureCheck) {
     is(
@@ -325,6 +326,7 @@ async function insecureTest(secureCheck) {
   let oldTab = await loadNewTab("about:robots");
   await SpecialPowers.pushPrefEnv({ set: [[INSECURE_ICON_PREF, secureCheck]] });
 
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let newTab = await loadNewTab("http://example.com/" + DUMMY);
   if (secureCheck) {
     is(getIdentityMode(), "notSecure", "Identity should be not secure");
@@ -449,7 +451,7 @@ async function noCertErrorTest(secureCheck) {
   gBrowser.selectedTab = newTab;
 
   let promise = BrowserTestUtils.waitForErrorPage(gBrowser.selectedBrowser);
-  BrowserTestUtils.loadURI(gBrowser, "https://nocert.example.com/");
+  BrowserTestUtils.loadURIString(gBrowser, "https://nocert.example.com/");
   await promise;
   is(
     getIdentityMode(),
@@ -497,7 +499,8 @@ add_task(async function httpsOnlyErrorTest() {
   gBrowser.selectedTab = newTab;
 
   let promise = BrowserTestUtils.waitForErrorPage(gBrowser.selectedBrowser);
-  BrowserTestUtils.loadURI(gBrowser, "http://nocert.example.com/");
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
+  BrowserTestUtils.loadURIString(gBrowser, "http://nocert.example.com/");
   await promise;
   is(
     getIdentityMode(),
@@ -533,14 +536,15 @@ add_task(async function httpsOnlyErrorTest() {
 
 async function noCertErrorFromNavigationTest(secureCheck) {
   await SpecialPowers.pushPrefEnv({ set: [[INSECURE_ICON_PREF, secureCheck]] });
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let newTab = await loadNewTab("http://example.com/" + DUMMY);
 
   let promise = BrowserTestUtils.waitForErrorPage(gBrowser.selectedBrowser);
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     content.document.getElementById("no-cert").click();
   });
   await promise;
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     is(
       content.window.location.href,
       "https://nocert.example.com/",
@@ -598,7 +602,7 @@ add_task(async function tlsErrorPageTest() {
   info("Loading and waiting for the net error");
   await pageLoaded;
 
-  await SpecialPowers.spawn(browser, [], function() {
+  await SpecialPowers.spawn(browser, [], function () {
     const doc = content.document;
     ok(
       doc.documentURI.startsWith("about:neterror"),
@@ -619,7 +623,9 @@ add_task(async function tlsErrorPageTest() {
 
 add_task(async function netErrorPageTest() {
   // Connect to a server that rejects all requests, to test network error pages:
-  let { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+  let { HttpServer } = ChromeUtils.importESModule(
+    "resource://testing-common/httpd.sys.mjs"
+  );
   let server = new HttpServer();
   server.registerPrefixHandler("/", (req, res) =>
     res.abort(new Error("Noooope."))
@@ -643,7 +649,7 @@ add_task(async function netErrorPageTest() {
   info("Loading and waiting for the net error");
   await pageLoaded;
 
-  await SpecialPowers.spawn(browser, [], function() {
+  await SpecialPowers.spawn(browser, [], function () {
     const doc = content.document;
     ok(
       doc.documentURI.startsWith("about:neterror"),
@@ -661,6 +667,7 @@ add_task(async function netErrorPageTest() {
 });
 
 async function aboutBlockedTest(secureCheck) {
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   let url = "http://www.itisatrap.org/firefox/its-an-attack.html";
   let oldTab = await loadNewTab("about:robots");
   await SpecialPowers.pushPrefEnv({
@@ -672,7 +679,7 @@ async function aboutBlockedTest(secureCheck) {
   let newTab = BrowserTestUtils.addTab(gBrowser);
   gBrowser.selectedTab = newTab;
 
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
 
   await BrowserTestUtils.browserLoaded(
     gBrowser.selectedBrowser,
@@ -706,7 +713,7 @@ add_task(async function noCertErrorSecurityConnectionBGTest() {
   let tab = BrowserTestUtils.addTab(gBrowser);
   gBrowser.selectedTab = tab;
   let promise = BrowserTestUtils.waitForErrorPage(gBrowser.selectedBrowser);
-  BrowserTestUtils.loadURI(gBrowser, "https://nocert.example.com/");
+  BrowserTestUtils.loadURIString(gBrowser, "https://nocert.example.com/");
   await promise;
 
   is(
@@ -810,6 +817,7 @@ async function pbModeTest(prefs, secureCheck) {
   );
   let newTab = await BrowserTestUtils.openNewForegroundTab(
     privateWin.gBrowser,
+    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
     "http://example.com/" + DUMMY
   );
 

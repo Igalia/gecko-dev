@@ -5,31 +5,35 @@
 const URL_HOST = "http://localhost";
 const PR_USEC_PER_MSEC = 1000;
 
-const { GMPExtractor, GMPInstallManager } = ChromeUtils.import(
-  "resource://gre/modules/GMPInstallManager.jsm"
+const { GMPExtractor, GMPInstallManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/GMPInstallManager.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-const { FileUtils } = ChromeUtils.import(
-  "resource://gre/modules/FileUtils.jsm"
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+const { FileUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
 );
-const { UpdateUtils } = ChromeUtils.import(
-  "resource://gre/modules/UpdateUtils.jsm"
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
-const { GMPPrefs, OPEN_H264_ID } = ChromeUtils.import(
-  "resource://gre/modules/GMPUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
-const { ProductAddonCheckerTestUtils } = ChromeUtils.import(
-  "resource://gre/modules/addons/ProductAddonChecker.jsm"
+const { UpdateUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/UpdateUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { GMPPrefs, OPEN_H264_ID } = ChromeUtils.importESModule(
+  "resource://gre/modules/GMPUtils.sys.mjs"
+);
+const { ProductAddonCheckerTestUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/addons/ProductAddonChecker.sys.mjs"
+);
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 Services.prefs.setBoolPref("security.allow_eval_with_system_principal", true);
@@ -79,6 +83,7 @@ add_task(async function test_prefs() {
   GMPPrefs.setInt(GMPPrefs.KEY_PLUGIN_VERSION, 4, addon2);
   GMPPrefs.setBool(GMPPrefs.KEY_PLUGIN_AUTOUPDATE, false, addon2);
   GMPPrefs.setBool(GMPPrefs.KEY_CERT_CHECKATTRS, true);
+  GMPPrefs.setString(GMPPrefs.KEY_PLUGIN_HASHVALUE, "5", addon1);
 
   Assert.equal(GMPPrefs.getString(GMPPrefs.KEY_URL), "http://not-really-used");
   Assert.equal(
@@ -98,6 +103,10 @@ add_task(async function test_prefs() {
   );
   Assert.ok(GMPPrefs.getBool(GMPPrefs.KEY_CERT_CHECKATTRS));
   GMPPrefs.setBool(GMPPrefs.KEY_PLUGIN_AUTOUPDATE, true, addon2);
+  Assert.equal(
+    GMPPrefs.getString(GMPPrefs.KEY_PLUGIN_HASHVALUE, "", addon1),
+    "5"
+  );
 });
 
 /**
@@ -935,7 +944,7 @@ async function test_checkForAddons_installAddon(
       wantInstallReject
   );
   let httpServer = new HttpServer();
-  let dir = FileUtils.getDir("TmpD", [], true);
+  let dir = FileUtils.getDir("TmpD", []);
   httpServer.registerDirectory("/", dir);
   httpServer.start(-1);
   let testserverPort = httpServer.identity.primaryPort;
@@ -1008,6 +1017,10 @@ async function test_checkForAddons_installAddon(
       !!GMPPrefs.getInt(GMPPrefs.KEY_PLUGIN_LAST_UPDATE, "", gmpAddon.id)
     );
     Assert.equal(
+      GMPPrefs.getString(GMPPrefs.KEY_PLUGIN_HASHVALUE, "", gmpAddon.id),
+      expectedDigest
+    );
+    Assert.equal(
       GMPPrefs.getString(GMPPrefs.KEY_PLUGIN_VERSION, "", gmpAddon.id),
       "1.1"
     );
@@ -1021,7 +1034,7 @@ async function test_checkForAddons_installAddon(
     // Cleanup
     extractedFile.parent.remove(true);
     zipFile.remove(false);
-    httpServer.stop(function() {});
+    httpServer.stop(function () {});
     installManager.uninit();
   } catch (ex) {
     zipFile.remove(false);
@@ -1154,7 +1167,7 @@ add_test(function test_installAddon_noServer() {
  */
 
 add_task(async function test_GMPExtractor_paths() {
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     // Must stop holding on to the zip file using the JAR cache:
     let zipFile = new FileUtils.File(
       PathUtils.join(tempDir.path, "dummy_gmp.zip")
@@ -1173,7 +1186,8 @@ add_task(async function test_GMPExtractor_paths() {
     "dummy_gmp.zip"
   );
   let tempDirName = "TmpDir#猫";
-  let tempDir = FileUtils.getDir("TmpD", [tempDirName], true);
+  let tempDir = FileUtils.getDir("TmpD", [tempDirName]);
+  tempDir.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
   let zipPath = PathUtils.join(tempDir.path, "dummy_gmp.zip");
   await IOUtils.copy(srcPath, zipPath);
   // The path inside the profile dir we'll extract to. Make sure we handle
@@ -1403,7 +1417,7 @@ function createNewZipFile(zipName, data) {
   let zipWriter = Cc["@mozilla.org/zipwriter;1"].createInstance(
     Ci.nsIZipWriter
   );
-  let zipFile = FileUtils.getFile("TmpD", [zipName]);
+  let zipFile = new FileUtils.File(PathUtils.join(PathUtils.tempDir, zipName));
   if (zipFile.exists()) {
     zipFile.remove(false);
   }
@@ -1611,14 +1625,15 @@ function getTestServerForContentSignatureTests() {
     });
     // We expose this promise so that tests can wait until the server has
     // reverted the overridden request (to avoid double overrides).
-    promiseHolder.serverPromise = ProductAddonCheckerTestUtils.overrideServiceRequest(
-      overriddenServiceRequest,
-      () => {
-        res.setHeader("content-signature", validContentSignatureHeader);
-        res.write(goodXml);
-        return promiseHolder.installPromise;
-      }
-    );
+    promiseHolder.serverPromise =
+      ProductAddonCheckerTestUtils.overrideServiceRequest(
+        overriddenServiceRequest,
+        () => {
+          res.setHeader("content-signature", validContentSignatureHeader);
+          res.write(goodXml);
+          return promiseHolder.installPromise;
+        }
+      );
   });
 
   const x5uAbortPath = "/x5u_abort.xml";
@@ -1631,14 +1646,15 @@ function getTestServerForContentSignatureTests() {
     });
     // We expose this promise so that tests can wait until the server has
     // reverted the overridden request (to avoid double overrides).
-    promiseHolder.serverPromise = ProductAddonCheckerTestUtils.overrideServiceRequest(
-      overriddenServiceRequest,
-      () => {
-        res.setHeader("content-signature", validContentSignatureHeader);
-        res.write(goodXml);
-        return promiseHolder.installPromise;
-      }
-    );
+    promiseHolder.serverPromise =
+      ProductAddonCheckerTestUtils.overrideServiceRequest(
+        overriddenServiceRequest,
+        () => {
+          res.setHeader("content-signature", validContentSignatureHeader);
+          res.write(goodXml);
+          return promiseHolder.installPromise;
+        }
+      );
     setTimeout(() => {
       overriddenServiceRequest.abort();
     }, 100);

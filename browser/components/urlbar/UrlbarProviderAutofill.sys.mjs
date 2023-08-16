@@ -2,13 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a provider that provides an autofill result.
  */
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 import {
   UrlbarProvider,
@@ -18,15 +14,11 @@ import {
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AboutPagesUtils: "resource://gre/modules/AboutPagesUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
-  UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AboutPagesUtils: "resource://gre/modules/AboutPagesUtils.jsm",
 });
 
 // AutoComplete query type constants.
@@ -37,11 +29,35 @@ const QUERYTYPE = {
   AUTOFILL_ADAPTIVE: 3,
 };
 
+// Constants to support an alternative frecency algorithm.
+const ORIGIN_USE_ALT_FRECENCY = Services.prefs.getBoolPref(
+  "places.frecency.origins.alternative.featureGate",
+  false
+);
+const ORIGIN_FRECENCY_FIELD = ORIGIN_USE_ALT_FRECENCY
+  ? "alt_frecency"
+  : "frecency";
+
 // `WITH` clause for the autofill queries.  autofill_frecency_threshold.value is
 // the mean of all moz_origins.frecency values + stddevMultiplier * one standard
 // deviation.  This is inlined directly in the SQL (as opposed to being a custom
 // Sqlite function for example) in order to be as efficient as possible.
-const SQL_AUTOFILL_WITH = `
+// For alternative frecency, a NULL frecency will be normalized to 0.0, and when
+// it will graduate, it will likely become 1 (official frecency is NOT NULL).
+// Thus we set a minimum threshold of 2.0, otherwise if all the visits are older
+// than the cutoff, we end up checking 0.0 (frecency) >= 0.0 (threshold) and
+// autofill everything instead of nothing.
+const SQL_AUTOFILL_WITH = ORIGIN_USE_ALT_FRECENCY
+  ? `
+    WITH
+    autofill_frecency_threshold(value) AS (
+      SELECT IFNULL(
+        (SELECT value FROM moz_meta WHERE key = 'origin_alt_frecency_threshold'),
+        2.0
+      )
+    )
+    `
+  : `
     WITH
     frecency_stats(count, sum, squares) AS (
       SELECT
@@ -76,10 +92,10 @@ function originQuery(where) {
   let selectTitle;
   let joinBookmarks;
   if (where.includes("bookmarked")) {
-    selectTitle = "ifnull(b.title, h.title)";
+    selectTitle = "ifnull(b.title, iif(h.frecency <> 0, h.title, NULL))";
     joinBookmarks = "LEFT JOIN moz_bookmarks b ON b.fk = h.id";
   } else {
-    selectTitle = "h.title";
+    selectTitle = "iif(h.frecency <> 0, h.title, NULL)";
     joinBookmarks = "";
   }
   return `/* do not warn (bug no): cannot use an index to sort */
@@ -89,12 +105,14 @@ function originQuery(where) {
       id,
       prefix,
       first_value(prefix) OVER (
-        PARTITION BY host ORDER BY frecency DESC, prefix = "https://" DESC, id DESC
+        PARTITION BY host ORDER BY ${ORIGIN_FRECENCY_FIELD} DESC, prefix = "https://" DESC, id DESC
       ),
       host,
       fixup_url(host),
-      TOTAL(frecency) OVER (PARTITION BY fixup_url(host)),
-      frecency,
+      IFNULL(${
+        ORIGIN_USE_ALT_FRECENCY ? "avg(alt_frecency)" : "total(frecency)"
+      } OVER (PARTITION BY fixup_url(host)), 0.0),
+      ${ORIGIN_FRECENCY_FIELD},
       MAX(EXISTS(
         SELECT 1 FROM moz_places WHERE origin_id = o.id AND foreign_count > 0
       )) OVER (PARTITION BY fixup_url(host)),
@@ -111,14 +129,30 @@ function originQuery(where) {
       ${where}
       ORDER BY frecency DESC, prefix = "https://" DESC, id DESC
       LIMIT 1
+    ),
+    matched_place(host_fixed, url, id, title, frecency) AS (
+      SELECT o.host_fixed, o.url, h.id, h.title, h.frecency
+      FROM matched_origin o
+      LEFT JOIN moz_places h ON h.url_hash IN (
+        hash('https://' || o.host_fixed),
+        hash('https://www.' || o.host_fixed),
+        hash('http://' || o.host_fixed),
+        hash('http://www.' || o.host_fixed)
+      )
+      ORDER BY
+        h.title IS NOT NULL DESC,
+        h.title || '/' <> o.host_fixed DESC,
+        h.url = o.url DESC,
+        h.frecency DESC,
+        h.id DESC
+      LIMIT 1
     )
     SELECT :query_type AS query_type,
            :searchString AS search_string,
-           matched_origin.host_fixed AS host_fixed,
-           matched_origin.url AS url,
+           h.host_fixed AS host_fixed,
+           h.url AS url,
            ${selectTitle} AS title
-    FROM matched_origin
-    LEFT JOIN moz_places h ON h.url_hash = hash(matched_origin.url)
+    FROM matched_place h
     ${joinBookmarks}
   `;
 }
@@ -274,6 +308,7 @@ class ProviderAutofill extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -282,6 +317,7 @@ class ProviderAutofill extends UrlbarProvider {
 
   /**
    * Returns the type of this provider.
+   *
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
@@ -292,6 +328,7 @@ class ProviderAutofill extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
@@ -369,26 +406,19 @@ class ProviderAutofill extends UrlbarProvider {
 
   /**
    * Gets the provider's priority.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {number} The provider's priority for the given query.
    */
   getPriority(queryContext) {
-    // Priority search results are restricting.
-    if (
-      this._autofillData &&
-      this._autofillData.instance == this.queryInstance &&
-      this._autofillData.result.type == UrlbarUtils.RESULT_TYPE.SEARCH
-    ) {
-      return 1;
-    }
-
     return 0;
   }
 
   /**
    * Starts querying.
+   *
    * @param {object} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        result.
    * @returns {Promise} resolved when the query stops.
    */
@@ -411,6 +441,7 @@ class ProviderAutofill extends UrlbarProvider {
 
   /**
    * Cancels a running query.
+   *
    * @param {object} queryContext The query context object
    */
   cancelQuery(queryContext) {
@@ -422,16 +453,21 @@ class ProviderAutofill extends UrlbarProvider {
   /**
    * Filters hosts by retaining only the ones over the autofill threshold, then
    * sorts them by their frecency, and extracts the one with the highest value.
+   *
    * @param {UrlbarQueryContext} queryContext The current queryContext.
    * @param {Array} hosts Array of host names to examine.
-   * @returns {Promise} Resolved when the filtering is complete.
-   * @resolves {string} The top matching host, or null if not found.
+   * @returns {Promise<string?>}
+   *   Resolved when the filtering is complete. Resolves with the top matching
+   *   host, or null if not found.
    */
   async getTopHostOverThreshold(queryContext, hosts) {
     let db = await lazy.PlacesUtils.promiseLargeCacheDBConnection();
     let conditions = [];
     // Pay attention to the order of params, since they are not named.
-    let params = [lazy.UrlbarPrefs.get("autoFill.stddevMultiplier"), ...hosts];
+    let params = [...hosts];
+    if (!ORIGIN_USE_ALT_FRECENCY) {
+      params.unshift(lazy.UrlbarPrefs.get("autoFill.stddevMultiplier"));
+    }
     let sources = queryContext.sources;
     if (
       sources.includes(UrlbarUtils.RESULT_SOURCE.HISTORY) &&
@@ -452,12 +488,14 @@ class ProviderAutofill extends UrlbarProvider {
           id,
           prefix,
           first_value(prefix) OVER (
-            PARTITION BY host ORDER BY frecency DESC, prefix = "https://" DESC, id DESC
+            PARTITION BY host ORDER BY ${ORIGIN_FRECENCY_FIELD} DESC, prefix = "https://" DESC, id DESC
           ),
           host,
           fixup_url(host),
-          TOTAL(frecency) OVER (PARTITION BY fixup_url(host)),
-          frecency,
+          IFNULL(${
+            ORIGIN_USE_ALT_FRECENCY ? "avg(alt_frecency)" : "total(frecency)"
+          } OVER (PARTITION BY fixup_url(host)), 0.0),
+          ${ORIGIN_FRECENCY_FIELD},
           MAX(EXISTS(
             SELECT 1 FROM moz_places WHERE origin_id = o.id AND foreign_count > 0
           )) OVER (PARTITION BY fixup_url(host)),
@@ -485,7 +523,8 @@ class ProviderAutofill extends UrlbarProvider {
    * Obtains the query to search for autofill origin results.
    *
    * @param {UrlbarQueryContext} queryContext
-   * @returns {array} consisting of the correctly optimized query to search the
+   *   The current queryContext.
+   * @returns {Array} consisting of the correctly optimized query to search the
    *         database with and an object containing the params to bound.
    */
   _getOriginQuery(queryContext) {
@@ -500,8 +539,10 @@ class ProviderAutofill extends UrlbarProvider {
     let opts = {
       query_type: QUERYTYPE.AUTOFILL_ORIGIN,
       searchString: searchStr.toLowerCase(),
-      stddevMultiplier: lazy.UrlbarPrefs.get("autoFill.stddevMultiplier"),
     };
+    if (!ORIGIN_USE_ALT_FRECENCY) {
+      opts.stddevMultiplier = lazy.UrlbarPrefs.get("autoFill.stddevMultiplier");
+    }
     if (this._strippedPrefix) {
       opts.prefix = this._strippedPrefix;
     }
@@ -540,7 +581,8 @@ class ProviderAutofill extends UrlbarProvider {
    * Obtains the query to search for autoFill url results.
    *
    * @param {UrlbarQueryContext} queryContext
-   * @returns {array} consisting of the correctly optimized query to search the
+   *   The current queryContext.
+   * @returns {Array} consisting of the correctly optimized query to search the
    *         database with and an object containing the params to bound.
    */
   _getUrlQuery(queryContext) {
@@ -555,11 +597,7 @@ class ProviderAutofill extends UrlbarProvider {
     }
 
     let host = hostMatch[0].toLowerCase();
-    let revHost =
-      host
-        .split("")
-        .reverse()
-        .join("") + ".";
+    let revHost = host.split("").reverse().join("") + ".";
 
     // Build a string that's the URL stripped of its prefix, i.e., the host plus
     // everything after.  Use queryContext.trimmedSearchString instead of
@@ -690,9 +728,11 @@ class ProviderAutofill extends UrlbarProvider {
 
   /**
    * Processes a matched row in the Places database.
+   *
    * @param {object} row
    *   The matched row.
    * @param {UrlbarQueryContext} queryContext
+   *   The query context.
    * @returns {UrlbarResult} a result generated from the matches row.
    */
   _processRow(row, queryContext) {
@@ -823,32 +863,37 @@ class ProviderAutofill extends UrlbarProvider {
       }
     }
 
-    const hasTitle = title !== null;
-    if (!hasTitle) {
+    let payload = {
+      url: [finalCompleteValue, UrlbarUtils.HIGHLIGHT.TYPED],
+      icon: UrlbarUtils.getIconForUrl(finalCompleteValue),
+    };
+
+    if (title) {
+      payload.title = [title, UrlbarUtils.HIGHLIGHT.TYPED];
+    } else {
       let [autofilled] = UrlbarUtils.stripPrefixAndTrim(finalCompleteValue, {
         stripHttp: true,
         trimEmptyQuery: true,
         trimSlash: !this._searchString.includes("/"),
       });
-      title = [autofilled, UrlbarUtils.HIGHLIGHT.TYPED];
+      payload.fallbackTitle = [autofilled, UrlbarUtils.HIGHLIGHT.TYPED];
     }
 
     let result = new lazy.UrlbarResult(
       UrlbarUtils.RESULT_TYPE.URL,
       UrlbarUtils.RESULT_SOURCE.HISTORY,
-      ...lazy.UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
-        title,
-        url: [finalCompleteValue, UrlbarUtils.HIGHLIGHT.TYPED],
-        icon: UrlbarUtils.getIconForUrl(finalCompleteValue),
-      })
+      ...lazy.UrlbarResult.payloadAndSimpleHighlights(
+        queryContext.tokens,
+        payload
+      )
     );
+
     result.autofill = {
       adaptiveHistoryInput,
       value: autofilledValue,
       selectionStart: queryContext.searchString.length,
       selectionEnd: autofilledValue.length,
       type: autofilledType,
-      hasTitle,
     };
     return result;
   }
@@ -862,12 +907,6 @@ class ProviderAutofill extends UrlbarProvider {
 
     // It may also look like a URL we know from the database.
     result = await this._matchKnownUrl(queryContext);
-    if (result) {
-      return result;
-    }
-
-    // Or we may want to fill a search engine domain regardless of the threshold.
-    result = await this._matchSearchEngineDomain(queryContext);
     if (result) {
       return result;
     }
@@ -965,76 +1004,6 @@ class ProviderAutofill extends UrlbarProvider {
       }
     }
     return null;
-  }
-
-  async _matchSearchEngineDomain(queryContext) {
-    if (
-      !lazy.UrlbarPrefs.get("autoFill.searchEngines") ||
-      !this._searchString.length
-    ) {
-      return null;
-    }
-
-    // enginesForDomainPrefix only matches against engine domains.
-    // Remove an eventual trailing slash from the search string (without the
-    // prefix) and check if the resulting string is worth matching.
-    // Later, we'll verify that the found result matches the original
-    // searchString and eventually discard it.
-    let searchStr = this._searchString;
-    if (searchStr.indexOf("/") == searchStr.length - 1) {
-      searchStr = searchStr.slice(0, -1);
-    }
-    // If the search string looks more like a url than a domain, bail out.
-    if (
-      !lazy.UrlbarTokenizer.looksLikeOrigin(searchStr, {
-        ignoreKnownDomains: true,
-      })
-    ) {
-      return null;
-    }
-
-    // Since we are autofilling, we can only pick one matching engine. Use the
-    // first.
-    let engine = (
-      await lazy.UrlbarSearchUtils.enginesForDomainPrefix(searchStr)
-    )[0];
-    if (!engine) {
-      return null;
-    }
-    let url = engine.searchForm;
-    let domain = engine.getResultDomain();
-    // Verify that the match we got is acceptable. Autofilling "example/" to
-    // "example.com/" would not be good.
-    if (
-      (this._strippedPrefix && !url.startsWith(this._strippedPrefix)) ||
-      !(domain + "/").includes(this._searchString)
-    ) {
-      return null;
-    }
-
-    // The value that's autofilled in the input is the prefix the user typed, if
-    // any, plus the portion of the engine domain that the user typed.  Append a
-    // trailing slash too, as is usual with autofill.
-    let value =
-      this._strippedPrefix + domain.substr(domain.indexOf(searchStr)) + "/";
-
-    let result = new lazy.UrlbarResult(
-      UrlbarUtils.RESULT_TYPE.SEARCH,
-      UrlbarUtils.RESULT_SOURCE.SEARCH,
-      ...lazy.UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
-        engine: [engine.name, UrlbarUtils.HIGHLIGHT.TYPED],
-        icon: engine.iconURI?.spec,
-      })
-    );
-    let autofilledValue =
-      queryContext.searchString +
-      value.substring(queryContext.searchString.length);
-    result.autofill = {
-      value: autofilledValue,
-      selectionStart: queryContext.searchString.length,
-      selectionEnd: autofilledValue.length,
-    };
-    return result;
   }
 }
 

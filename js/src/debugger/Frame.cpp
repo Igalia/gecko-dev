@@ -26,52 +26,52 @@
 #include "builtin/Array.h"      // for NewDenseCopiedArray
 #include "debugger/Debugger.h"  // for Completion, Debugger
 #include "debugger/DebugScript.h"
-#include "debugger/Environment.h"          // for DebuggerEnvironment
-#include "debugger/NoExecute.h"            // for LeaveDebuggeeNoExecute
-#include "debugger/Object.h"               // for DebuggerObject
-#include "debugger/Script.h"               // for DebuggerScript
-#include "frontend/BytecodeCompilation.h"  // for CompileEvalScript
-#include "gc/Barrier.h"                    // for HeapPtr
-#include "gc/GC.h"                         // for MemoryUse
-#include "gc/GCContext.h"                  // for JS::GCContext
-#include "gc/Marking.h"                    // for IsAboutToBeFinalized
-#include "gc/Tracer.h"                     // for TraceCrossCompartmentEdge
-#include "gc/ZoneAllocator.h"              // for AddCellMemory
-#include "jit/JSJitFrameIter.h"            // for InlineFrameIterator
-#include "jit/RematerializedFrame.h"       // for RematerializedFrame
-#include "js/CallArgs.h"                   // for CallArgs
-#include "js/friend/ErrorMessages.h"       // for GetErrorMessage, JSMSG_*
-#include "js/Object.h"                     // for SetReservedSlot
-#include "js/Proxy.h"                      // for PrivateValue
-#include "js/RootingAPI.h"                 // for Handle
-#include "js/SourceText.h"                 // for SourceText, SourceOwnership
-#include "js/StableStringChars.h"          // for AutoStableStringChars
-#include "vm/ArgumentsObject.h"            // for ArgumentsObject
-#include "vm/ArrayObject.h"                // for ArrayObject
-#include "vm/AsyncFunction.h"              // for AsyncFunctionGeneratorObject
-#include "vm/AsyncIteration.h"             // for AsyncGeneratorObject
-#include "vm/BytecodeUtil.h"               // for JSDVG_SEARCH_STACK
-#include "vm/Compartment.h"                // for Compartment
-#include "vm/EnvironmentObject.h"          // for IsGlobalLexicalEnvironment
-#include "vm/ErrorContext.h"               // for MainThreadErrorContext
-#include "vm/GeneratorObject.h"            // for AbstractGeneratorObject
-#include "vm/GlobalObject.h"               // for GlobalObject
-#include "vm/Interpreter.h"                // for Call, ExecuteKernel
-#include "vm/JSAtom.h"                     // for Atomize
-#include "vm/JSContext.h"                  // for JSContext, ReportValueError
-#include "vm/JSFunction.h"                 // for JSFunction, NewNativeFunction
-#include "vm/JSObject.h"                   // for JSObject, RequireObject
-#include "vm/JSScript.h"                   // for JSScript
-#include "vm/NativeObject.h"               // for NativeDefineDataProperty
-#include "vm/Realm.h"                      // for AutoRealm
-#include "vm/Runtime.h"                    // for JSAtomState
-#include "vm/Scope.h"                      // for PositionalFormalParameterIter
-#include "vm/Stack.h"                      // for AbstractFramePtr, FrameIter
-#include "vm/StringType.h"                 // for PropertyName, JSString
-#include "wasm/WasmDebug.h"                // for DebugState
-#include "wasm/WasmDebugFrame.h"           // for DebugFrame
-#include "wasm/WasmInstance.h"             // for Instance
-#include "wasm/WasmJS.h"                   // for WasmInstanceObject
+#include "debugger/Environment.h"       // for DebuggerEnvironment
+#include "debugger/NoExecute.h"         // for LeaveDebuggeeNoExecute
+#include "debugger/Object.h"            // for DebuggerObject
+#include "debugger/Script.h"            // for DebuggerScript
+#include "frontend/BytecodeCompiler.h"  // for CompileGlobalScript, CompileEvalScript
+#include "frontend/FrontendContext.h"  // for AutoReportFrontendContext
+#include "gc/Barrier.h"                // for HeapPtr
+#include "gc/GC.h"                     // for MemoryUse
+#include "gc/GCContext.h"              // for JS::GCContext
+#include "gc/Marking.h"                // for IsAboutToBeFinalized
+#include "gc/Tracer.h"                 // for TraceCrossCompartmentEdge
+#include "gc/ZoneAllocator.h"          // for AddCellMemory
+#include "jit/JSJitFrameIter.h"        // for InlineFrameIterator
+#include "jit/RematerializedFrame.h"   // for RematerializedFrame
+#include "js/CallArgs.h"               // for CallArgs
+#include "js/friend/ErrorMessages.h"   // for GetErrorMessage, JSMSG_*
+#include "js/Object.h"                 // for SetReservedSlot
+#include "js/Proxy.h"                  // for PrivateValue
+#include "js/RootingAPI.h"             // for Handle
+#include "js/SourceText.h"             // for SourceText, SourceOwnership
+#include "js/StableStringChars.h"      // for AutoStableStringChars
+#include "vm/ArgumentsObject.h"        // for ArgumentsObject
+#include "vm/ArrayObject.h"            // for ArrayObject
+#include "vm/AsyncFunction.h"          // for AsyncFunctionGeneratorObject
+#include "vm/AsyncIteration.h"         // for AsyncGeneratorObject
+#include "vm/BytecodeUtil.h"           // for JSDVG_SEARCH_STACK
+#include "vm/Compartment.h"            // for Compartment
+#include "vm/EnvironmentObject.h"      // for IsGlobalLexicalEnvironment
+#include "vm/GeneratorObject.h"        // for AbstractGeneratorObject
+#include "vm/GlobalObject.h"           // for GlobalObject
+#include "vm/Interpreter.h"            // for Call, ExecuteKernel
+#include "vm/JSAtomUtils.h"            // for Atomize, AtomizeUTF8Chars
+#include "vm/JSContext.h"              // for JSContext, ReportValueError
+#include "vm/JSFunction.h"             // for JSFunction, NewNativeFunction
+#include "vm/JSObject.h"               // for JSObject, RequireObject
+#include "vm/JSScript.h"               // for JSScript
+#include "vm/NativeObject.h"           // for NativeDefineDataProperty
+#include "vm/Realm.h"                  // for AutoRealm
+#include "vm/Runtime.h"                // for JSAtomState
+#include "vm/Scope.h"                  // for PositionalFormalParameterIter
+#include "vm/Stack.h"                  // for AbstractFramePtr, FrameIter
+#include "vm/StringType.h"             // for PropertyName, JSString
+#include "wasm/WasmDebug.h"            // for DebugState
+#include "wasm/WasmDebugFrame.h"       // for DebugFrame
+#include "wasm/WasmInstance.h"         // for Instance
+#include "wasm/WasmJS.h"               // for WasmInstanceObject
 
 #include "debugger/Debugger-inl.h"    // for Debugger::fromJSObject
 #include "gc/WeakMap-inl.h"           // for WeakMap::remove
@@ -171,14 +171,7 @@ bool ScriptedOnPopHandler::onPop(JSContext* cx, Handle<DebuggerFrame*> frame,
 
 size_t ScriptedOnPopHandler::allocSize() const { return sizeof(*this); }
 
-// The Debugger.Frame.prototype object also has a class of
-// DebuggerFrame::class_ so we differentiate instances from the prototype
-// based on the presence of an owner debugger.
-bool js::DebuggerFrame::isInstance() const {
-  return !getReservedSlot(OWNER_SLOT).isUndefined();
-}
 js::Debugger* js::DebuggerFrame::owner() const {
-  MOZ_ASSERT(isInstance());
   JSObject* dbgobj = &getReservedSlot(OWNER_SLOT).toObject();
   return Debugger::fromJSObject(dbgobj);
 }
@@ -227,8 +220,8 @@ bool DebuggerFrame::hasAnyHooks() const {
 NativeObject* DebuggerFrame::initClass(JSContext* cx,
                                        Handle<GlobalObject*> global,
                                        HandleObject dbgCtor) {
-  return InitClass(cx, dbgCtor, nullptr, &class_, construct, 0, properties_,
-                   methods_, nullptr, nullptr);
+  return InitClass(cx, dbgCtor, nullptr, nullptr, "Frame", construct, 0,
+                   properties_, methods_, nullptr, nullptr);
 }
 
 /* static */
@@ -995,10 +988,8 @@ static bool EvaluateInEnv(JSContext* cx, Handle<Env*> env,
     MOZ_ASSERT(scopeKind == ScopeKind::Global ||
                scopeKind == ScopeKind::NonSyntactic);
 
-    MainThreadErrorContext ec(cx);
-    script = frontend::CompileGlobalScript(cx, &ec,
-                                           cx->stackLimitForCurrentPrincipal(),
-                                           options, srcBuf, scopeKind);
+    AutoReportFrontendContext fc(cx);
+    script = frontend::CompileGlobalScript(cx, &fc, options, srcBuf, scopeKind);
     if (!script) {
       return false;
     }
@@ -1250,18 +1241,7 @@ DebuggerFrame* DebuggerFrame::check(JSContext* cx, HandleValue thisv) {
     return nullptr;
   }
 
-  Rooted<DebuggerFrame*> frame(cx, &thisobj->as<DebuggerFrame>());
-
-  // Forbid Debugger.Frame.prototype, which is of class DebuggerFrame::class_
-  // but isn't really a working Debugger.Frame object.
-  if (!frame->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger.Frame",
-                              "method", "prototype object");
-    return nullptr;
-  }
-
-  return frame;
+  return &thisobj->as<DebuggerFrame>();
 }
 
 struct MOZ_STACK_CLASS DebuggerFrame::CallData {
@@ -1624,9 +1604,10 @@ static bool DebuggerArguments_getArg(JSContext* cx, unsigned argc, Value* vp) {
     if (unsigned(i) < frame.numFormalArgs()) {
       for (PositionalFormalParameterIter fi(script); fi; fi++) {
         if (fi.argumentSlot() == unsigned(i)) {
-          // We might've been called before the CallObject was
-          // created.
-          if (fi.closedOver() && frame.hasInitialEnvironment()) {
+          // We might've been called before the CallObject was created or
+          // initialized in the prologue.
+          if (fi.closedOver() && frame.hasInitialEnvironment() &&
+              iter.pc() >= script->main()) {
             arg = frame.callObj().aliasedBinding(fi);
           } else {
             arg = frame.unaliasedActual(i, DONT_CHECK_ALIASING);

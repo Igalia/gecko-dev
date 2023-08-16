@@ -9,15 +9,11 @@ const TEST_URI =
   "http://example.com/browser/devtools/client/webconsole/" +
   "test/browser/test_jsterm_screenshot_command.html";
 
-const { FileUtils } = ChromeUtils.import(
-  "resource://gre/modules/FileUtils.jsm"
-);
-
 // on some machines, such as macOS, dpr is set to 2. This is expected behavior, however
 // to keep tests consistant across OSs we are setting the dpr to 1
 const dpr = "--dpr 1";
 
-add_task(async function() {
+add_task(async function () {
   await pushPref("devtools.webconsole.input.context", true);
 
   const hud = await openNewTabAndConsole(TEST_URI);
@@ -30,9 +26,12 @@ add_task(async function() {
   });
 
   info("Test :screenshot --selector iframe");
-  const sameOriginIframeScreenshotFile = FileUtils.getFile("TmpD", [
-    "TestScreenshotFile-same-origin-iframe.png",
-  ]);
+  const sameOriginIframeScreenshotFile = new FileUtils.File(
+    PathUtils.join(
+      PathUtils.tempDir,
+      "TestScreenshotFile-same-origin-iframe.png"
+    )
+  );
   await executeAndWaitForMessageByType(
     hud,
     `:screenshot --selector #same-origin-iframe ${sameOriginIframeScreenshotFile.path} ${dpr}`,
@@ -95,9 +94,9 @@ add_task(async function() {
     evaluationContextSelectorButton.innerText.includes("example.org")
   );
 
-  const remoteIframeSpanScreenshot = FileUtils.getFile("TmpD", [
-    "TestScreenshotFile-remote-iframe.png",
-  ]);
+  const remoteIframeSpanScreenshot = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "TestScreenshotFile-remote-iframe.png")
+  );
   await executeAndWaitForMessageByType(
     hud,
     `:screenshot --selector span ${remoteIframeSpanScreenshot.path} ${dpr}`,

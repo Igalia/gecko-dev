@@ -7,6 +7,7 @@
 #include "mozilla/DebugOnly.h"
 
 #include "ExternalHelperAppParent.h"
+#include "nsExternalHelperAppService.h"
 #include "nsIContent.h"
 #include "nsCExternalHandlerService.h"
 #include "nsIExternalHelperAppService.h"
@@ -63,8 +64,9 @@ bool ExternalHelperAppParent::Init(
     const nsACString& aMimeContentType, const bool& aForceSave,
     nsIURI* aReferrer, BrowsingContext* aContext,
     const bool& aShouldCloseWindow) {
-  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(aLoadInfoArgs,
-                                       getter_AddRefs(mLoadInfo));
+  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(
+      aLoadInfoArgs, ContentParent::Cast(Manager())->GetRemoteType(),
+      getter_AddRefs(mLoadInfo));
   if (NS_FAILED(rv)) {
     return false;
   }
@@ -202,6 +204,20 @@ ExternalHelperAppParent::GetStatus(nsresult* aResult) {
   return NS_OK;
 }
 
+NS_IMETHODIMP ExternalHelperAppParent::SetCanceledReason(
+    const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP ExternalHelperAppParent::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP ExternalHelperAppParent::CancelWithReason(
+    nsresult aStatus, const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 ExternalHelperAppParent::Cancel(nsresult aStatus) {
   mCanceled = true;
@@ -327,7 +343,8 @@ ExternalHelperAppParent::SetNotificationCallbacks(
 }
 
 NS_IMETHODIMP
-ExternalHelperAppParent::GetSecurityInfo(nsISupports** aSecurityInfo) {
+ExternalHelperAppParent::GetSecurityInfo(
+    nsITransportSecurityInfo** aSecurityInfo) {
   *aSecurityInfo = nullptr;
   return NS_OK;
 }

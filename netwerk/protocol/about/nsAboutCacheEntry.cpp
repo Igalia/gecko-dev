@@ -3,23 +3,24 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include <algorithm>
+
 #include "nsAboutCacheEntry.h"
 
-#include "mozilla/Sprintf.h"
-
-#include "nsAboutCache.h"
-#include "nsICacheStorage.h"
+#include "CacheFileUtils.h"
 #include "CacheObserver.h"
-#include "nsNetUtil.h"
+#include "mozilla/Sprintf.h"
+#include "nsAboutCache.h"
+#include "nsAboutProtocolUtils.h"
+#include "nsContentUtils.h"
 #include "nsEscape.h"
 #include "nsIAsyncInputStream.h"
 #include "nsIAsyncOutputStream.h"
+#include "nsICacheStorage.h"
 #include "nsIPipe.h"
-#include "nsAboutProtocolUtils.h"
-#include "nsContentUtils.h"
+#include "nsITransportSecurityInfo.h"
 #include "nsInputStreamPump.h"
-#include "CacheFileUtils.h"
-#include <algorithm>
+#include "nsNetUtil.h"
 
 using namespace mozilla::net;
 
@@ -139,9 +140,8 @@ nsresult nsAboutCacheEntry::Channel::GetContentStream(nsIURI* uri,
 
   // Init: (block size, maximum length)
   nsCOMPtr<nsIAsyncInputStream> inputStream;
-  rv = NS_NewPipe2(getter_AddRefs(inputStream), getter_AddRefs(mOutputStream),
-                   true, false, 256, UINT32_MAX);
-  if (NS_FAILED(rv)) return rv;
+  NS_NewPipe2(getter_AddRefs(inputStream), getter_AddRefs(mOutputStream), true,
+              false, 256, UINT32_MAX);
 
   constexpr auto buffer =
       "<!DOCTYPE html>\n"
@@ -419,7 +419,7 @@ nsresult nsAboutCacheEntry::Channel::WriteCacheEntryDescription(
   // A new bug(s) should be filed here.
 
   // Security Info
-  nsCOMPtr<nsISupports> securityInfo;
+  nsCOMPtr<nsITransportSecurityInfo> securityInfo;
   entry->GetSecurityInfo(getter_AddRefs(securityInfo));
   if (securityInfo) {
     APPEND_ROW("Security", "This is a secure document.");

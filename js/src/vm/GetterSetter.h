@@ -55,6 +55,8 @@ namespace js {
 // accessors on the prototype chain until the first time an accessor property is
 // mutated or deleted.
 class GetterSetter : public gc::TenuredCellWithGCPointer<JSObject> {
+  friend class gc::CellAllocator;
+
  public:
   // Getter object, stored in the cell header.
   JSObject* getter() const { return headerPtr(); }
@@ -67,7 +69,7 @@ class GetterSetter : public gc::TenuredCellWithGCPointer<JSObject> {
 #endif
 
  private:
-  GetterSetter(JSObject* getter, JSObject* setter);
+  GetterSetter(HandleObject getter, HandleObject setter);
 
  public:
   static GetterSetter* create(JSContext* cx, HandleObject getter,

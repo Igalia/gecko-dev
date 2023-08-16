@@ -26,17 +26,17 @@ const TEST_DEVICE = {
 // Add the device to the list
 const {
   updatePreferredDevices,
-} = require("devtools/client/responsive/actions/devices");
+} = require("resource://devtools/client/responsive/actions/devices.js");
 updatePreferredDevices({
   added: [TEST_DEVICE.name],
   removed: [],
 });
 
-const Types = require("devtools/client/responsive/types");
+const Types = require("resource://devtools/client/responsive/types.js");
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { store } = ui.toolWindow;
 
     reloadOnUAChange(true);
@@ -78,7 +78,7 @@ addRDMTaskWithPreAndPost(
   function rdmPreTask({ browser }) {
     reloadOnUAChange(true);
   },
-  async function({ ui }) {
+  async function ({ ui }) {
     // Note: This code might be racy. Call watchForDevToolsReload as early as
     // possible to catch the reload that will happen on RDM startup.
     // We cannot easily call watchForDevToolsReload in the preTask because it
@@ -121,7 +121,7 @@ addRDMTaskWithPreAndPost(
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { store } = ui.toolWindow;
 
     reloadOnUAChange(true);

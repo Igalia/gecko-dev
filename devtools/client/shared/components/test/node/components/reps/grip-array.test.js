@@ -6,17 +6,19 @@
 
 /* global jest */
 const { shallow } = require("enzyme");
-const { getRep } = require("devtools/client/shared/components/reps/reps/rep");
-const GripArray = require("devtools/client/shared/components/reps/reps/grip-array");
+const {
+  getRep,
+} = require("resource://devtools/client/shared/components/reps/reps/rep.js");
+const GripArray = require("resource://devtools/client/shared/components/reps/reps/grip-array.js");
 const {
   MODE,
-} = require("devtools/client/shared/components/reps/reps/constants");
-const stubs = require("devtools/client/shared/components/test/node/stubs/reps/grip-array");
+} = require("resource://devtools/client/shared/components/reps/reps/constants.js");
+const stubs = require("resource://devtools/client/shared/components/test/node/stubs/reps/grip-array.js");
 const {
   expectActorAttribute,
   getSelectableInInspectorGrips,
   getGripLengthBubbleText,
-} = require("devtools/client/shared/components/test/node/components/reps/test-helpers");
+} = require("resource://devtools/client/shared/components/test/node/components/reps/test-helpers.js");
 const { maxLengthMap } = GripArray;
 
 function shallowRenderRep(object, props = {}) {
@@ -98,9 +100,7 @@ describe("GripArray - more than short mode max props", () => {
     let length = getGripLengthBubbleText(object);
 
     const shortLength = maxLengthMap.get(MODE.SHORT);
-    const shortContent = Array(shortLength)
-      .fill('"test string"')
-      .join(", ");
+    const shortContent = Array(shortLength).fill('"test string"').join(", ");
     const longContent = Array(shortLength + 1)
       .fill('"test string"')
       .join(", ");
@@ -129,13 +129,9 @@ describe("GripArray - more than long mode max props", () => {
 
     const shortLength = maxLengthMap.get(MODE.SHORT);
     const longLength = maxLengthMap.get(MODE.LONG);
-    const shortContent = Array(shortLength)
-      .fill('"test string"')
-      .join(", ");
+    const shortContent = Array(shortLength).fill('"test string"').join(", ");
     const defaultOutput = `Array${length} [ ${shortContent}, … ]`;
-    const longContent = Array(longLength)
-      .fill('"test string"')
-      .join(", ");
+    const longContent = Array(longLength).fill('"test string"').join(", ");
 
     expect(
       renderRep({ mode: undefined, shouldRenderTooltip: true }).text()

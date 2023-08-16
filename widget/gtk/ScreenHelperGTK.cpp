@@ -49,6 +49,7 @@ struct MonitorConfig {
   int height = 0;
   int scale = 0;
   int refresh = 0;
+  int transform = 0;
 
   explicit MonitorConfig(int aId) : id(aId) {}
 };
@@ -223,7 +224,7 @@ static already_AddRefed<Screen> MakeScreenGtk(GdkScreen* aScreen,
 }
 
 void ScreenGetterGtk::RefreshScreens() {
-  LOG_SCREEN("Refreshing screens");
+  LOG_SCREEN("ScreenGetterGtk::RefreshScreens()");
   AutoTArray<RefPtr<Screen>, 4> screenList;
 
   GdkScreen* defaultScreen = gdk_screen_get_default();
@@ -252,6 +253,7 @@ static void output_handle_geometry(void* data, struct wl_output* wl_output,
   monitor->y = y;
   monitor->width_mm = physical_width;
   monitor->height_mm = physical_height;
+  monitor->transform = transform;
 }
 
 static void output_handle_done(void* data, struct wl_output* wl_output) {
@@ -378,23 +380,72 @@ already_AddRefed<Screen> ScreenGetterWayland::MakeScreenWayland(gint aMonitor) {
     dpi = rect.height / (heightMM / MM_PER_INCH_FLOAT);
   }
 
+  bool defaultIsLandscape;
+  if (monitor->transform == WL_OUTPUT_TRANSFORM_90 ||
+      monitor->transform == WL_OUTPUT_TRANSFORM_270) {
+    defaultIsLandscape = rect.width < rect.height;
+  } else {
+    defaultIsLandscape = rect.width >= rect.height;
+  }
+
+  hal::ScreenOrientation orientation;
+  Screen::OrientationAngle angle;
+  // transform is counter-clockwise, but Screen Orientation API is clockwise.
+  switch (monitor->transform) {
+    case WL_OUTPUT_TRANSFORM_NORMAL:
+      orientation = defaultIsLandscape
+                        ? hal::ScreenOrientation::LandscapePrimary
+                        : hal::ScreenOrientation::PortraitPrimary;
+      angle = 0;
+      break;
+    case WL_OUTPUT_TRANSFORM_90:
+      orientation = defaultIsLandscape
+                        ? hal::ScreenOrientation::PortraitPrimary
+                        : hal::ScreenOrientation::LandscapeSecondary;
+      angle = 270;
+      break;
+    case WL_OUTPUT_TRANSFORM_180:
+      orientation = defaultIsLandscape
+                        ? hal::ScreenOrientation::LandscapeSecondary
+                        : hal::ScreenOrientation::PortraitSecondary;
+      angle = 180;
+      break;
+    case WL_OUTPUT_TRANSFORM_270:
+      orientation = defaultIsLandscape
+                        ? hal::ScreenOrientation::PortraitSecondary
+                        : hal::ScreenOrientation::LandscapePrimary;
+      angle = 90;
+      break;
+    default:
+      // WL_OUTPUT_TRANSFORM_FLIPPED_* is ignore since this is unused on normal
+      // situation.
+      orientation = hal::ScreenOrientation::None;
+      angle = 0;
+      break;
+  }
+
   LOG_SCREEN(
       "Monitor %d [%d %d -> %d x %d depth %d content scale %f css scale %f "
-      "DPI %f, refresh %d]",
+      "DPI %f, refresh %d, orientation %u, angle %u]",
       aMonitor, rect.x, rect.y, rect.width, rect.height, pixelDepth,
-      contentsScale.scale, defaultCssScale.scale, dpi, monitor->refresh);
-  return MakeAndAddRef<Screen>(rect, rect, pixelDepth, pixelDepth,
-                               monitor->refresh, contentsScale, defaultCssScale,
-                               dpi, Screen::IsPseudoDisplay::No);
+      contentsScale.scale, defaultCssScale.scale, dpi, monitor->refresh,
+      static_cast<uint32_t>(orientation), angle);
+
+  // We report zero screen shift on Wayland. All popups positions are relative
+  // to toplevel and we can't get toplevel position from Wayland compositor.
+  rect.x = rect.y = 0;
+  return MakeAndAddRef<Screen>(
+      rect, rect, pixelDepth, pixelDepth, monitor->refresh, contentsScale,
+      defaultCssScale, dpi, Screen::IsPseudoDisplay::No, orientation, angle);
 }
 
 void ScreenGetterWayland::RefreshScreens() {
-  LOG_SCREEN("Refreshing screens");
+  LOG_SCREEN("ScreenGetterWayland::RefreshScreens()");
   AutoTArray<RefPtr<Screen>, 4> managerScreenList;
 
   mScreenList.Clear();
   const gint numScreens = mMonitors.Length();
-  LOG_SCREEN("Wayland reports %d screens", numScreens);
+  LOG_SCREEN("Wayland reports %d monitors", numScreens);
   for (gint i = 0; i < numScreens; i++) {
     RefPtr<Screen> screen = MakeScreenWayland(i);
     mScreenList.AppendElement(screen);
@@ -431,6 +482,7 @@ int ScreenGetterWayland::GetMonitorForWindow(nsWindow* aWindow) {
 
   GdkRectangle workArea;
   if (!GdkMonitorGetWorkarea(monitor, &workArea)) {
+    LOG_SCREEN("  failed, can't get work area");
     return -1;
   }
 
@@ -438,8 +490,9 @@ int ScreenGetterWayland::GetMonitorForWindow(nsWindow* aWindow) {
     // Although Gtk/Mutter is very creative in reporting various screens sizes
     // we can rely on Gtk work area start position to match wl_output.
     if (mMonitors[i]->x == workArea.x && mMonitors[i]->y == workArea.y) {
-      LOG_SCREEN(" monitor %d values %d %d -> %d x %d", i, mMonitors[i]->x,
-                 mMonitors[i]->y, mMonitors[i]->width, mMonitors[i]->height);
+      LOG_SCREEN(" monitor %d work area [%d, %d] -> (%d x %d) scale %d", i,
+                 mMonitors[i]->x, mMonitors[i]->y, mMonitors[i]->width,
+                 mMonitors[i]->height, mMonitors[i]->scale);
       return i;
     }
   }
@@ -447,8 +500,9 @@ int ScreenGetterWayland::GetMonitorForWindow(nsWindow* aWindow) {
   return -1;
 }
 
-RefPtr<nsIScreen> ScreenGetterWayland::GetScreenForWindow(nsWindow* aWindow) {
-  if (mScreenList.IsEmpty()) {
+RefPtr<widget::Screen> ScreenGetterWayland::GetScreenForWindow(
+    nsWindow* aWindow) {
+  if (mMonitors.IsEmpty()) {
     return nullptr;
   }
 
@@ -456,16 +510,20 @@ RefPtr<nsIScreen> ScreenGetterWayland::GetScreenForWindow(nsWindow* aWindow) {
   if (monitor < 0) {
     return nullptr;
   }
-  return mScreenList[monitor];
-}
 
-static bool IsGNOMECompositor() {
-  const char* currentDesktop = getenv("XDG_CURRENT_DESKTOP");
-  return currentDesktop && strstr(currentDesktop, "GNOME") != nullptr;
+  if (mMonitors.Length() != mScreenList.Length()) {
+    // Gtk list of GtkScreens are out of sync with our monitor list.
+    // Try to refresh it now.
+    RefreshScreens();
+  }
+
+  MOZ_DIAGNOSTIC_ASSERT((unsigned)monitor < mScreenList.Length(),
+                        "We're missing screen?");
+  return mScreenList[monitor];
 }
 #endif
 
-RefPtr<nsIScreen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
+RefPtr<widget::Screen> ScreenHelperGTK::GetScreenForWindow(nsWindow* aWindow) {
   return gScreenGetter->GetScreenForWindow(aWindow);
 }
 
@@ -480,7 +538,7 @@ ScreenHelperGTK::ScreenHelperGTK() {
   // to track screen size changes (which are wrongly reported by mutter)
   // and causes issues on Sway (Bug 1730476).
   // https://gitlab.gnome.org/GNOME/gtk/-/merge_requests/3941
-  if (GdkIsWaylandDisplay() && IsGNOMECompositor()) {
+  if (GdkIsWaylandDisplay() && IsGnomeDesktopEnvironment()) {
     gScreenGetter = MakeUnique<ScreenGetterWayland>();
   }
 #endif

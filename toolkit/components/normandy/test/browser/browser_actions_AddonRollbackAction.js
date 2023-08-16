@@ -1,22 +1,19 @@
 "use strict";
 
-const { TelemetryEnvironment } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryEnvironment.jsm"
+const { AddonRollbackAction } = ChromeUtils.importESModule(
+  "resource://normandy/actions/AddonRollbackAction.sys.mjs"
 );
-const { AddonRollbackAction } = ChromeUtils.import(
-  "resource://normandy/actions/AddonRollbackAction.jsm"
+const { AddonRolloutAction } = ChromeUtils.importESModule(
+  "resource://normandy/actions/AddonRolloutAction.sys.mjs"
 );
-const { AddonRolloutAction } = ChromeUtils.import(
-  "resource://normandy/actions/AddonRolloutAction.jsm"
+const { BaseAction } = ChromeUtils.importESModule(
+  "resource://normandy/actions/BaseAction.sys.mjs"
 );
-const { BaseAction } = ChromeUtils.import(
-  "resource://normandy/actions/BaseAction.jsm"
+const { AddonRollouts } = ChromeUtils.importESModule(
+  "resource://normandy/lib/AddonRollouts.sys.mjs"
 );
-const { AddonRollouts } = ChromeUtils.import(
-  "resource://normandy/lib/AddonRollouts.jsm"
-);
-const { NormandyTestUtils } = ChromeUtils.import(
-  "resource://testing-common/NormandyTestUtils.jsm"
+const { NormandyTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
 );
 
 // Test that a simple recipe unenrolls as expected
@@ -44,9 +41,8 @@ decorate_task(
       }),
     };
 
-    const webExtStartupPromise = AddonTestUtils.promiseWebExtensionStartup(
-      FIXTURE_ADDON_ID
-    );
+    const webExtStartupPromise =
+      AddonTestUtils.promiseWebExtensionStartup(FIXTURE_ADDON_ID);
 
     const rolloutAction = new AddonRolloutAction();
     await rolloutAction.processRecipe(
@@ -134,9 +130,8 @@ decorate_task(
       }),
     };
 
-    const webExtStartupPromise = AddonTestUtils.promiseWebExtensionStartup(
-      FIXTURE_ADDON_ID
-    );
+    const webExtStartupPromise =
+      AddonTestUtils.promiseWebExtensionStartup(FIXTURE_ADDON_ID);
 
     const rolloutAction = new AddonRolloutAction();
     await rolloutAction.processRecipe(

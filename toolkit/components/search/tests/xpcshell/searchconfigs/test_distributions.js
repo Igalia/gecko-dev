@@ -18,38 +18,20 @@ for (let [locale, region] of [
   ["ru", "RU"],
   ["zh-CN", "CN"],
 ]) {
-  tests.push({
-    distribution: "acer-001",
-    locale,
-    region,
-    test: engines =>
-      hasParams(engines, "Bing", "searchbar", "pc=MOZD") &&
-      hasDefault(engines, "Bing") &&
-      hasEnginesFirst(engines, ["Bing"]),
-  });
-
-  tests.push({
-    distribution: "acer-002",
-    locale,
-    region,
-    test: engines =>
-      hasParams(engines, "Bing", "searchbar", "pc=MOZD") &&
-      hasDefault(engines, "Bing") &&
-      hasEnginesFirst(engines, ["Bing"]),
-  });
-
-  tests.push({
-    distribution: "acer-g-003",
-    locale,
-    region,
-    test: engines =>
-      hasParams(engines, "Bing", "searchbar", "pc=MOZE") &&
-      hasDefault(engines, "Bing") &&
-      hasEnginesFirst(engines, ["Bing"]),
-  });
+  for (let distribution of ["acer-003", "acer-004"]) {
+    tests.push({
+      distribution,
+      locale,
+      region,
+      test: engines =>
+        hasParams(engines, "Bing", "searchbar", "pc=MOZX") &&
+        hasDefault(engines, "Bing") &&
+        hasEnginesFirst(engines, ["Bing"]),
+    });
+  }
 }
 
-for (let canonicalId of ["canonical", "canonical-001", "canonical-002"]) {
+for (let canonicalId of ["canonical", "canonical-001"]) {
   tests.push({
     locale: "en-US",
     region: "US",
@@ -72,18 +54,23 @@ for (let canonicalId of ["canonical", "canonical-001", "canonical-002"]) {
 }
 
 tests.push({
-  locale: "zh-CN",
-  region: "CN",
-  distribution: "MozillaOnline",
+  locale: "en-US",
+  region: "US",
+  distribution: "canonical-002",
   test: engines =>
-    hasParams(engines, "百度", "searchbar", "tn=monline_4_dg") &&
-    hasParams(engines, "百度", "suggestions", "tn=monline_4_dg") &&
-    hasParams(engines, "百度", "homepage", "tn=monline_3_dg") &&
-    hasParams(engines, "百度", "newtab", "tn=monline_3_dg") &&
-    hasParams(engines, "百度", "contextmenu", "tn=monline_4_dg") &&
-    hasParams(engines, "百度", "keyword", "tn=monline_4_dg") &&
-    hasDefault(engines, "百度") &&
-    hasEnginesFirst(engines, ["百度", "Bing", "Google", "亚马逊", "维基百科"]),
+    hasParams(engines, "Google", "searchbar", "client=ubuntu-sn") &&
+    hasParams(engines, "Google", "searchbar", "channel=fs") &&
+    hasTelemetryId(engines, "Google", "google-ubuntu-sn"),
+});
+
+tests.push({
+  locale: "en-US",
+  region: "GB",
+  distribution: "canonical-002",
+  test: engines =>
+    hasParams(engines, "Google", "searchbar", "client=ubuntu-sn") &&
+    hasParams(engines, "Google", "searchbar", "channel=fs") &&
+    hasTelemetryId(engines, "Google", "google-ubuntu-sn"),
 });
 
 tests.push({
@@ -323,6 +310,7 @@ tests.push({
   region: "US",
   distribution: "mint-001",
   test: engines =>
+    hasParams(engines, "DuckDuckGo", "searchbar", "t=lm") &&
     hasParams(engines, "Google", "searchbar", "client=firefox-b-1-lm") &&
     hasDefault(engines, "Google") &&
     hasEnginesFirst(engines, ["Google"]) &&
@@ -334,6 +322,7 @@ tests.push({
   region: "GB",
   distribution: "mint-001",
   test: engines =>
+    hasParams(engines, "DuckDuckGo", "searchbar", "t=lm") &&
     hasParams(engines, "Google", "searchbar", "client=firefox-b-lm") &&
     hasDefault(engines, "Google") &&
     hasEnginesFirst(engines, ["Google"]) &&

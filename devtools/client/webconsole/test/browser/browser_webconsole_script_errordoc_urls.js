@@ -6,7 +6,7 @@
 
 "use strict";
 
-const ErrorDocs = require("devtools/server/actors/errordocs");
+const ErrorDocs = require("resource://devtools/server/actors/errordocs.js");
 const TEST_URI = "data:text/html;charset=utf8,<!DOCTYPE html>errordoc tests";
 
 function makeURIData(script) {
@@ -31,7 +31,7 @@ const TestData = [
   },
 ];
 
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
 
   for (const data of TestData) {

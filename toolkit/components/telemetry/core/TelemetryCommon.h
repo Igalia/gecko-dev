@@ -27,7 +27,9 @@ enum class RecordedProcessType : uint16_t {
   Main = (1 << GeckoProcessType_Default),  // Also known as "parent process"
   Content = (1 << GeckoProcessType_Content),
   Gpu = (1 << GeckoProcessType_GPU),
+  Rdd = (1 << GeckoProcessType_RDD),
   Socket = (1 << GeckoProcessType_Socket),
+  Utility = (1 << GeckoProcessType_Utility),
   AllChildren = 0xFFFF - 1,  // All the child processes (i.e. content, gpu, ...)
                              // Always `All-Main` to allow easy matching.
   All = 0xFFFF               // All the processes

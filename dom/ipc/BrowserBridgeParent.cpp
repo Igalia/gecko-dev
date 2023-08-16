@@ -166,7 +166,7 @@ IPCResult BrowserBridgeParent::RecvScrollbarPreferenceChanged(
 }
 
 IPCResult BrowserBridgeParent::RecvLoadURL(nsDocShellLoadState* aLoadState) {
-  Unused << mBrowserParent->SendLoadURL(aLoadState,
+  Unused << mBrowserParent->SendLoadURL(WrapNotNull(aLoadState),
                                         mBrowserParent->GetShowInfo());
   return IPC_OK();
 }
@@ -250,10 +250,9 @@ IPCResult BrowserBridgeParent::RecvDeactivate(const bool& aWindowLowering,
   return IPC_OK();
 }
 
-IPCResult BrowserBridgeParent::RecvSetIsUnderHiddenEmbedderElement(
-    const bool& aIsUnderHiddenEmbedderElement) {
-  Unused << mBrowserParent->SendSetIsUnderHiddenEmbedderElement(
-      aIsUnderHiddenEmbedderElement);
+mozilla::ipc::IPCResult BrowserBridgeParent::RecvUpdateRemoteStyle(
+    const StyleImageRendering& aImageRendering) {
+  Unused << mBrowserParent->SendUpdateRemoteStyle(aImageRendering);
   return IPC_OK();
 }
 

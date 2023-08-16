@@ -8,7 +8,7 @@ import {
   actionCreators as ac,
   actionTypes as at,
   actionUtils as au,
-} from "common/Actions.jsm";
+} from "common/Actions.sys.mjs";
 import { applyMiddleware, combineReducers, createStore } from "redux";
 
 export const MERGE_STORE_ACTION = "NEW_TAB_INITIAL_STATE";
@@ -161,7 +161,7 @@ export function initStore(reducers, initialState) {
       try {
         store.dispatch(msg.data);
       } catch (ex) {
-        console.error("Content msg:", msg, "Dispatch error: ", ex); // eslint-disable-line no-console
+        console.error("Content msg:", msg, "Dispatch error: ", ex);
         dump(
           `Content msg: ${JSON.stringify(msg)}\nDispatch error: ${ex}\n${
             ex.stack

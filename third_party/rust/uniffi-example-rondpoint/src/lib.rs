@@ -179,7 +179,7 @@ impl Stringifier {
         value.to_string()
     }
     fn well_known_string(&self, value: String) -> String {
-        format!("uniffi 💚 {}!", value)
+        format!("uniffi 💚 {value}!")
     }
 }
 
@@ -290,4 +290,4 @@ pub struct OptionneurDictionnaire {
     dictionnaire_var: Option<minusculeMAJUSCULEEnum>,
 }
 
-include!(concat!(env!("OUT_DIR"), "/rondpoint.uniffi.rs"));
+uniffi::include_scaffolding!("rondpoint");

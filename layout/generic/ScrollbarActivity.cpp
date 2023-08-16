@@ -15,6 +15,7 @@
 #include "nsIScrollableFrame.h"
 #include "PresShell.h"
 #include "nsLayoutUtils.h"
+#include "nsScrollbarFrame.h"
 #include "nsRefreshDriver.h"
 #include "nsComponentManagerUtils.h"
 #include "nsStyledElement.h"
@@ -393,8 +394,7 @@ void ScrollbarActivity::CancelFadeBeginTimer() {
 static void MaybeInvalidateScrollbarForHover(
     Element* aScrollbarToInvalidate, Element* aScrollbarAboutToGetHover) {
   if (aScrollbarToInvalidate) {
-    bool hasHover =
-        aScrollbarToInvalidate->HasAttr(kNameSpaceID_None, nsGkAtoms::hover);
+    bool hasHover = aScrollbarToInvalidate->HasAttr(nsGkAtoms::hover);
     bool willHaveHover = (aScrollbarAboutToGetHover == aScrollbarToInvalidate);
 
     if (hasHover != willHaveHover) {

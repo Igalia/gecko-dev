@@ -4,9 +4,8 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 let h2Port;
@@ -16,20 +15,13 @@ function inChildProcess() {
   return Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
 }
 
-const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
-  Ci.nsIDNSService
-);
-
 add_setup(async function setup() {
   if (inChildProcess()) {
     return;
   }
 
   trr_test_setup();
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  h2Port = env.get("MOZHTTP2_PORT");
+  h2Port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(h2Port, null);
   Assert.notEqual(h2Port, "");
 
@@ -40,6 +32,7 @@ add_setup(async function setup() {
   });
 
   if (mozinfo.socketprocess_networking) {
+    Services.dns; // Needed to trigger socket process.
     await TestUtils.waitForCondition(() => Services.io.socketProcessLaunched);
   }
 
@@ -56,7 +49,7 @@ add_task(async function testHTTPSSVC() {
   }
 
   let { inRecord } = await new TRRDNSListener("test.httpssvc.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   });
   let answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;
   Assert.equal(answer[0].priority, 1);
@@ -233,7 +226,7 @@ add_task(async function test_aliasform() {
 
   {
     let { inStatus, inRecord } = await new TRRDNSListener("test.com", {
-      type: dns.RESOLVE_TYPE_HTTPSSVC,
+      type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
       expectedSuccess: false,
     });
     Assert.ok(Components.isSuccessCode(inStatus), `${inStatus} should succeed`);
@@ -302,7 +295,7 @@ add_task(async function test_aliasform() {
   });
 
   let { inStatus, inRecord } = await new TRRDNSListener("x.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   });
   Assert.ok(Components.isSuccessCode(inStatus), `${inStatus} should succeed`);
@@ -376,7 +369,7 @@ add_task(async function test_aliasform() {
   Assert.equal(await trrServer.requestCount("loop2.com", "HTTPS"), 0);
 
   ({ inStatus } = await new TRRDNSListener("loop.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
   Assert.ok(
@@ -448,7 +441,7 @@ add_task(async function test_aliasform() {
   });
 
   let { inStatus: inStatus2 } = await new TRRDNSListener("multi.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   });
   Assert.ok(
@@ -481,7 +474,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inStatus: inStatus2 } = await new TRRDNSListener("order.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
   Assert.ok(
@@ -510,7 +503,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inStatus: inStatus2 } = await new TRRDNSListener("duplicate.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
   Assert.ok(
@@ -540,7 +533,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inStatus: inStatus2 } = await new TRRDNSListener("mandatory.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
   Assert.ok(!Components.isSuccessCode(inStatus2), `${inStatus2} should fail`);
@@ -581,7 +574,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inStatus: inStatus2 } = await new TRRDNSListener("mandatory2.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   }));
 
   Assert.ok(Components.isSuccessCode(inStatus2), `${inStatus2} should succeed`);
@@ -604,7 +597,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inStatus: inStatus2 } = await new TRRDNSListener("no-alias.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
 
@@ -628,7 +621,7 @@ add_task(async function test_aliasform() {
   });
 
   ({ inRecord, inStatus: inStatus2 } = await new TRRDNSListener("service.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   }));
   Assert.ok(Components.isSuccessCode(inStatus2), `${inStatus2} should work`);
   answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;
@@ -638,7 +631,7 @@ add_task(async function test_aliasform() {
 
 add_task(async function testNegativeResponse() {
   let { inStatus } = await new TRRDNSListener("negative_test.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   });
   Assert.ok(
@@ -664,7 +657,7 @@ add_task(async function testNegativeResponse() {
 
   // Should still be failed because a negative response is from DNS cache.
   ({ inStatus } = await new TRRDNSListener("negative_test.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
     expectedSuccess: false,
   }));
   Assert.ok(
@@ -676,12 +669,12 @@ add_task(async function testNegativeResponse() {
     do_send_remote_message("clearCache");
     await do_await_remote_message("clearCache-done");
   } else {
-    dns.clearCache(true);
+    Services.dns.clearCache(true);
   }
 
   let inRecord;
   ({ inRecord, inStatus } = await new TRRDNSListener("negative_test.com", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   }));
   Assert.ok(Components.isSuccessCode(inStatus), `${inStatus} should work`);
   let answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;
@@ -723,7 +716,7 @@ add_task(async function testPortPrefixedName() {
   let { inRecord, inStatus } = await new TRRDNSListener(
     "port_prefix.test.com",
     {
-      type: dns.RESOLVE_TYPE_HTTPSSVC,
+      type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
       port: 4433,
     }
   );

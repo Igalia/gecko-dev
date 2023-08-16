@@ -1,7 +1,11 @@
 "use strict";
 
-const { getAddonAndLocalAPIsMocker } = ChromeUtils.import(
-  "resource://testing-common/LangPackMatcherTestUtils.jsm"
+const { getAddonAndLocalAPIsMocker } = ChromeUtils.importESModule(
+  "resource://testing-common/LangPackMatcherTestUtils.sys.mjs"
+);
+
+const { AWScreenUtils } = ChromeUtils.import(
+  "resource://activity-stream/lib/AWScreenUtils.jsm"
 );
 
 const sandbox = sinon.createSandbox();
@@ -42,16 +46,31 @@ async function openAboutWelcome() {
   await pushPrefs(
     // Speed up the tests by disabling transitions.
     ["browser.aboutwelcome.transitions", false],
-    ["intl.multilingual.aboutWelcome.languageMismatchEnabled", true]
+    ["intl.multilingual.aboutWelcome.languageMismatchEnabled", true],
+    ["browser.migrate.content-modal.about-welcome-behavior", "default"]
   );
   await setAboutWelcomePref(true);
 
   // Stub out the doesAppNeedPin to false so the about:welcome pages do not attempt
   // to pin the app.
-  const { ShellService } = ChromeUtils.import(
-    "resource:///modules/ShellService.jsm"
+  const { ShellService } = ChromeUtils.importESModule(
+    "resource:///modules/ShellService.sys.mjs"
   );
   sandbox.stub(ShellService, "doesAppNeedPin").returns(false);
+
+  sandbox
+    .stub(AWScreenUtils, "evaluateScreenTargeting")
+    .resolves(true)
+    .withArgs(
+      "os.windowsBuildNumber >= 15063 && !isDefaultBrowser && !doesAppNeedPin && !useEmbeddedMigrationWizard"
+    )
+    .resolves(false)
+    .withArgs(
+      "os.windowsBuildNumber >= 15063 && !isDefaultBrowser && !doesAppNeedPin && useEmbeddedMigrationWizard"
+    )
+    .resolves(false)
+    .withArgs("isDeviceMigration")
+    .resolves(false);
 
   info("Opening about:welcome");
   let tab = await BrowserTestUtils.openNewForegroundTab(
@@ -159,9 +178,9 @@ function eventsMatch(
 }
 
 const liveLanguageSwitchSelectors = [
-  ".screen-1",
+  ".screen.AW_LANGUAGE_MISMATCH",
   `[data-l10n-id*="onboarding-live-language"]`,
-  `[data-l10n-id="onboarding-live-language-header"]`,
+  `[data-l10n-id="mr2022-onboarding-live-language-text"]`,
 ];
 
 /**
@@ -171,19 +190,24 @@ const liveLanguageSwitchSelectors = [
  */
 add_task(async function test_aboutwelcome_languageSwitcher_accept() {
   sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "es-ES",
-    appLocale: "en-US",
-  });
+  const { resolveLangPacks, resolveInstaller, mockable } =
+    mockAddonAndLocaleAPIs({
+      systemLocale: "es-ES",
+      appLocale: "en-US",
+    });
 
   const { browser, flushClickTelemetry } = await openAboutWelcome();
+  await testScreenContent(
+    browser,
+    "First Screen primary CTA loaded",
+    // Expected selectors:
+    [`button.primary[value="primary_button"]`],
+    // Unexpected selectors:
+    []
+  );
 
   info("Clicking the primary button to start the onboarding process.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   await testScreenContent(
     browser,
@@ -191,9 +215,9 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
     // Expected selectors:
     [
       ...liveLanguageSwitchSelectors,
-      `[data-l10n-id="onboarding-live-language-header"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-text"]`,
       `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
+      `[data-l10n-id="mr2022-onboarding-secondary-skip-button-label"]`,
     ],
     // Unexpected selectors:
     []
@@ -211,16 +235,17 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
     [
       ...liveLanguageSwitchSelectors,
       `button.primary[value="primary_button"]`,
-      `button.secondary[value="decline"]`,
+      `button.primary[value="decline"]`,
     ],
     // Unexpected selectors:
     [
-      `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
+      `button[disabled] [data-l10n-id="mr2022-onboarding-live-language-waiting-button"]`,
+      `[data-l10n-id="mr2022-onboarding-secondary-skip-button-label"]`,
     ]
   );
 
   info("Clicking the primary button to view language switching page.");
+
   await clickVisibleButton(browser, "button.primary");
 
   await testScreenContent(
@@ -245,7 +270,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
         source: "download_langpack",
         page: "about:welcome",
       },
-      message_id: "DEFAULT_ABOUTWELCOME_PROTON_1_AW_LANGUAGE_MISMATCH",
+      message_id: "MR_WELCOME_DEFAULT_1_AW_LANGUAGE_MISMATCH",
     },
   ]);
 
@@ -257,7 +282,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
     browser,
     "Language changed",
     // Expected selectors:
-    [`.screen-2`],
+    [`.screen.AW_IMPORT_SETTINGS`],
     // Unexpected selectors:
     liveLanguageSwitchSelectors
   );
@@ -272,110 +297,9 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
         source: "download_complete",
         page: "about:welcome",
       },
-      message_id: "DEFAULT_ABOUTWELCOME_PROTON_1_AW_LANGUAGE_MISMATCH",
+      message_id: "MR_WELCOME_DEFAULT_1_AW_LANGUAGE_MISMATCH",
     },
   ]);
-});
-
-/**
- * Accept the about:welcome offer to change the Firefox language when
- * there is a mismatch between the operating system language and the Firefox
- * language.
- */
-add_task(async function test_aboutwelcome_languageSwitcher_accept() {
-  sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "es-ES",
-    appLocale: "en-US",
-  });
-
-  const { browser, flushClickTelemetry } = await openAboutWelcome();
-
-  info("Clicking the primary button to start the onboarding process.");
-  await clickVisibleButton(browser, "button.primary");
-
-  await testScreenContent(
-    browser,
-    "Live language switching (waiting for languages)",
-    // Expected selectors:
-    [
-      ...liveLanguageSwitchSelectors,
-      `[data-l10n-id="onboarding-live-language-header"]`,
-      `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
-    ],
-    // Unexpected selectors:
-    []
-  );
-
-  // Ignore the telemetry of the initial welcome screen.
-  flushClickTelemetry();
-
-  resolveLangPacks(["es-MX", "es-ES", "fr-FR"]);
-
-  await testScreenContent(
-    browser,
-    "Live language switching, asking for a language",
-    // Expected selectors:
-    [
-      ...liveLanguageSwitchSelectors,
-      `button.primary[value="primary_button"]`,
-      `button.secondary[value="decline"]`,
-    ],
-    // Unexpected selectors:
-    [
-      `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
-    ]
-  );
-
-  info("Clicking the primary button to view language switching page.");
-  await clickVisibleButton(browser, "button.primary");
-
-  await testScreenContent(
-    browser,
-    "Live language switching, waiting for langpack to download",
-    // Expected selectors:
-    [
-      ...liveLanguageSwitchSelectors,
-      `[data-l10n-id="onboarding-live-language-button-label-downloading"]`,
-      `[data-l10n-id="onboarding-live-language-secondary-cancel-download"]`,
-    ],
-    // Unexpected selectors:
-    [
-      `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-    ]
-  );
-
-  eventsMatch(flushClickTelemetry(), [
-    {
-      event: "CLICK_BUTTON",
-      event_context: {
-        source: "download_langpack",
-        page: "about:welcome",
-      },
-      message_id: "DEFAULT_ABOUTWELCOME_PROTON_1_AW_LANGUAGE_MISMATCH",
-    },
-  ]);
-
-  sinon.assert.notCalled(mockable.setRequestedAppLocales);
-  await resolveInstaller();
-
-  await testScreenContent(
-    browser,
-    "Language selection accepted",
-    // Expected selectors:
-    [`.screen-2`],
-    // Unexpected selectors:
-    liveLanguageSwitchSelectors
-  );
-
-  info("The app locale was changed to the OS locale.");
-  sinon.assert.calledWith(mockable.setRequestedAppLocales, ["es-ES", "en-US"]);
 });
 
 /**
@@ -385,19 +309,24 @@ add_task(async function test_aboutwelcome_languageSwitcher_accept() {
  */
 add_task(async function test_aboutwelcome_languageSwitcher_decline() {
   sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "es-ES",
-    appLocale: "en-US",
-  });
+  const { resolveLangPacks, resolveInstaller, mockable } =
+    mockAddonAndLocaleAPIs({
+      systemLocale: "es-ES",
+      appLocale: "en-US",
+    });
 
   const { browser, flushClickTelemetry } = await openAboutWelcome();
+  await testScreenContent(
+    browser,
+    "First Screen primary CTA loaded",
+    // Expected selectors:
+    [`button.primary[value="primary_button"]`],
+    // Unexpected selectors:
+    []
+  );
 
   info("Clicking the primary button to view language switching page.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   await testScreenContent(
     browser,
@@ -405,9 +334,9 @@ add_task(async function test_aboutwelcome_languageSwitcher_decline() {
     // Expected selectors:
     [
       ...liveLanguageSwitchSelectors,
-      `[data-l10n-id="onboarding-live-language-header"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-text"]`,
       `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
+      `[data-l10n-id="mr2022-onboarding-secondary-skip-button-label"]`,
     ],
     // Unexpected selectors:
     []
@@ -426,25 +355,25 @@ add_task(async function test_aboutwelcome_languageSwitcher_decline() {
     [
       ...liveLanguageSwitchSelectors,
       `button.primary[value="primary_button"]`,
-      `button.secondary[value="decline"]`,
+      `button.primary[value="decline"]`,
     ],
     // Unexpected selectors:
     [
       `button[disabled] [data-l10n-id="onboarding-live-language-waiting-button"]`,
-      `[data-l10n-id="onboarding-live-language-skip-button-label"]`,
+      `[data-l10n-id="mr2022-onboarding-secondary-skip-button-label"]`,
     ]
   );
 
   sinon.assert.notCalled(mockable.setRequestedAppLocales);
 
   info("Clicking the secondary button to skip installing the langpack.");
-  await clickVisibleButton(browser, "button.secondary");
+  await clickVisibleButton(browser, `button.primary[value="decline"]`);
 
   await testScreenContent(
     browser,
     "Language selection declined",
     // Expected selectors:
-    [`.screen-2`],
+    [`.screen.AW_IMPORT_SETTINGS`],
     // Unexpected selectors:
     liveLanguageSwitchSelectors
   );
@@ -459,7 +388,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_decline() {
         source: "decline",
         page: "about:welcome",
       },
-      message_id: "DEFAULT_ABOUTWELCOME_PROTON_1_AW_LANGUAGE_MISMATCH",
+      message_id: "MR_WELCOME_DEFAULT_1_AW_LANGUAGE_MISMATCH",
     },
   ]);
 });
@@ -469,14 +398,11 @@ add_task(async function test_aboutwelcome_languageSwitcher_decline() {
  */
 add_task(async function test_aboutwelcome_languageSwitcher_asyncCalls() {
   sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "es-ES",
-    appLocale: "en-US",
-  });
+  const { resolveLangPacks, resolveInstaller, mockable } =
+    mockAddonAndLocaleAPIs({
+      systemLocale: "es-ES",
+      appLocale: "en-US",
+    });
 
   await openAboutWelcome();
 
@@ -504,14 +430,11 @@ add_task(async function test_aboutwelcome_languageSwitcher_asyncCalls() {
  */
 add_task(async function test_aboutwelcome_fallback_locale() {
   sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "en-US",
-    appLocale: "it",
-  });
+  const { resolveLangPacks, resolveInstaller, mockable } =
+    mockAddonAndLocaleAPIs({
+      systemLocale: "en-US",
+      appLocale: "it",
+    });
 
   await openAboutWelcome();
 
@@ -546,7 +469,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_noMatch() {
   const { browser } = await openAboutWelcome();
 
   info("Clicking the primary button to start installing the langpack.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   // Klingon is not supported.
   resolveLangPacks(["es-MX", "es-ES", "fr-FR"]);
@@ -555,7 +478,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_noMatch() {
     browser,
     "Language selection skipped",
     // Expected selectors:
-    [`.screen-1`],
+    [`.screen.AW_IMPORT_SETTINGS`],
     // Unexpected selectors:
     [
       `[data-l10n-id*="onboarding-live-language"]`,
@@ -580,13 +503,13 @@ add_task(async function test_aboutwelcome_languageSwitcher_bidiNotSupported() {
   const { browser } = await openAboutWelcome();
 
   info("Clicking the primary button to start installing the langpack.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   await testScreenContent(
     browser,
     "Language selection skipped for bidi",
     // Expected selectors:
-    [`.screen-1`],
+    [`.screen.AW_IMPORT_SETTINGS`],
     // Unexpected selectors:
     [
       `[data-l10n-id*="onboarding-live-language"]`,
@@ -614,13 +537,13 @@ add_task(
     const { browser } = await openAboutWelcome();
 
     info("Clicking the primary button to start installing the langpack.");
-    await clickVisibleButton(browser, "button.primary");
+    await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
     await testScreenContent(
       browser,
       "Language selection skipped for bidi",
       // Expected selectors:
-      [`.screen-1`],
+      [`.screen.AW_IMPORT_SETTINGS`],
       // Unexpected selectors:
       [
         `[data-l10n-id*="onboarding-live-language"]`,
@@ -647,7 +570,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_bidiNotSupported() {
   const { browser } = await openAboutWelcome();
 
   info("Clicking the primary button to start installing the langpack.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   resolveLangPacks(["ar-EG", "es-ES", "fr-FR"]);
 
@@ -668,19 +591,16 @@ add_task(async function test_aboutwelcome_languageSwitcher_bidiNotSupported() {
  */
 add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
   sandbox.restore();
-  const {
-    resolveLangPacks,
-    resolveInstaller,
-    mockable,
-  } = mockAddonAndLocaleAPIs({
-    systemLocale: "es-ES",
-    appLocale: "en-US",
-  });
+  const { resolveLangPacks, resolveInstaller, mockable } =
+    mockAddonAndLocaleAPIs({
+      systemLocale: "es-ES",
+      appLocale: "en-US",
+    });
 
   const { browser, flushClickTelemetry } = await openAboutWelcome();
 
   info("Clicking the primary button to start the onboarding process.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
   resolveLangPacks(["es-MX", "es-ES", "fr-FR"]);
 
   await testScreenContent(
@@ -693,7 +613,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
   );
 
   info("Clicking the primary button to view language switching page.");
-  await clickVisibleButton(browser, "button.primary");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
 
   await testScreenContent(
     browser,
@@ -720,7 +640,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
     browser,
     "Language selection declined waiting",
     // Expected selectors:
-    [`.screen-2`],
+    [`.screen.AW_IMPORT_SETTINGS`],
     // Unexpected selectors:
     liveLanguageSwitchSelectors
   );
@@ -732,7 +652,7 @@ add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
         source: "cancel_waiting",
         page: "about:welcome",
       },
-      message_id: "DEFAULT_ABOUTWELCOME_PROTON_1_AW_LANGUAGE_MISMATCH",
+      message_id: "MR_WELCOME_DEFAULT_1_AW_LANGUAGE_MISMATCH",
     },
   ]);
 
@@ -740,4 +660,51 @@ add_task(async function test_aboutwelcome_languageSwitcher_cancelWaiting() {
 
   is(flushClickTelemetry().length, 0);
   sinon.assert.notCalled(mockable.setRequestedAppLocales);
+});
+
+/**
+ * Test MR About Welcome language mismatch screen
+ */
+add_task(async function test_aboutwelcome_languageSwitcher_MR() {
+  sandbox.restore();
+
+  const { resolveLangPacks, resolveInstaller } = mockAddonAndLocaleAPIs({
+    systemLocale: "es-ES",
+    appLocale: "en-US",
+  });
+
+  const { browser } = await openAboutWelcome(true);
+
+  info("Clicking the primary button to view language switching screen.");
+  await clickVisibleButton(browser, `button.primary[value="primary_button"]`);
+
+  resolveLangPacks(["es-AR"]);
+  await testScreenContent(
+    browser,
+    "Live language switching, asking for a language",
+    // Expected selectors:
+    [
+      `#mainContentHeader[data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-language-mismatch-subtitle"]`,
+      `.section-secondary [data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-switch-to"]`,
+      `button.primary[value="primary_button"]`,
+      `button.primary[value="decline"]`,
+    ],
+    // Unexpected selectors:
+    [`[data-l10n-id="onboarding-live-language-header"]`]
+  );
+
+  await resolveInstaller();
+  await testScreenContent(
+    browser,
+    "Switched some to langpack (raw) strings after install",
+    // Expected selectors:
+    [`#mainContentHeader[data-l10n-id="mr2022-onboarding-live-language-text"]`],
+    // Unexpected selectors:
+    [
+      `.section-secondary [data-l10n-id="mr2022-onboarding-live-language-text"]`,
+      `[data-l10n-id="mr2022-onboarding-live-language-switch-to"]`,
+    ]
+  );
 });

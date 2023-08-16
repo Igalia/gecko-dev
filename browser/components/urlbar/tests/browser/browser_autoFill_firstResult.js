@@ -6,7 +6,7 @@
 
 "use strict";
 
-add_task(async function init() {
+add_setup(async function () {
   await PlacesUtils.bookmarks.eraseEverything();
   await PlacesUtils.history.clear();
   await PlacesTestUtils.addVisits(["http://example.com/"]);
@@ -79,6 +79,7 @@ add_task(async function caretNotAtEndOfSearchString() {
     value: "exam",
     selectionStart: "exa".length,
     selectionEnd: "exa".length,
+    fireInputEvent: false,
   });
 
   // The first result should be an autofill result, but it should not have been

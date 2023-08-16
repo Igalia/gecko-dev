@@ -10,7 +10,6 @@
 var gFetchCount = 0;
 var gGoodOCSPResponse = null;
 var gResponsePattern = [];
-var gMessage = "";
 
 function respondWithGoodOCSP(request, response) {
   info("returning 200 OK");
@@ -52,22 +51,14 @@ function add_ocsp_test(
   add_connection_test(
     aHost,
     aExpectedResult,
-    function() {
+    function () {
       clearSessionCache();
       gFetchCount = 0;
       gResponsePattern = aResponses;
-      gMessage = aMessage;
     },
-    function() {
+    function () {
       // check the number of requests matches the size of aResponses
-      equal(
-        gFetchCount,
-        aResponses.length,
-        "should have made " +
-          aResponses.length +
-          " OCSP request" +
-          (aResponses.length == 1 ? "" : "s")
-      );
+      equal(gFetchCount, aResponses.length, aMessage);
     },
     null,
     aOriginAttributes
@@ -81,7 +72,7 @@ function run_test() {
   add_tls_server_setup("OCSPStaplingServer", "ocsp_certs");
 
   let ocspResponder = new HttpServer();
-  ocspResponder.registerPrefixHandler("/", function(request, response) {
+  ocspResponder.registerPrefixHandler("/", function (request, response) {
     info("gFetchCount: " + gFetchCount);
     let responseFunction = gResponsePattern[gFetchCount];
     Assert.notEqual(undefined, responseFunction);
@@ -93,7 +84,7 @@ function run_test() {
 
   add_tests();
 
-  add_test(function() {
+  add_test(function () {
     ocspResponder.stop(run_next_test);
   });
   run_next_test();
@@ -104,7 +95,7 @@ function add_tests() {
   // in OCSP fetching. Due to longevity requirements in our testing
   // infrastructure, the certificate we encounter is valid for a very long
   // time, so we have to define a "short lifetime" as something very long.
-  add_test(function() {
+  add_test(function () {
     Services.prefs.setIntPref(
       "security.pki.cert_short_lifetime_in_days",
       12000
@@ -119,7 +110,7 @@ function add_tests() {
     "expected zero OCSP requests for a short-lived certificate"
   );
 
-  add_test(function() {
+  add_test(function () {
     Services.prefs.setIntPref("security.pki.cert_short_lifetime_in_days", 100);
     run_next_test();
   });
@@ -133,14 +124,14 @@ function add_tests() {
     [respondWithError],
     "expected one OCSP request for a long-lived certificate"
   );
-  add_test(function() {
+  add_test(function () {
     Services.prefs.clearUserPref("security.pki.cert_short_lifetime_in_days");
     run_next_test();
   });
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });
@@ -173,7 +164,7 @@ function add_tests() {
   // response have different thisUpdate timestamps; otherwise, the Good
   // response will be seen as "not newer" and it won't replace the existing
   // entry.
-  add_test(function() {
+  add_test(function () {
     gGoodOCSPResponse = generateGoodOCSPResponse(1200);
     run_next_test();
   });
@@ -198,7 +189,7 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });
@@ -234,7 +225,7 @@ function add_tests() {
   // Ensure OCSP responses from signers with SHA1 certificates are OK. This
   // is included in the OCSP caching tests since there were OCSP cache-related
   // regressions when sha-1 telemetry probes were added.
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     // set security.OCSP.require so that checking the OCSP signature fails
     Services.prefs.setBoolPref("security.OCSP.require", true);
@@ -248,7 +239,7 @@ function add_tests() {
     "OCSP signing cert was issued with sha1 - should fail"
   );
 
-  add_test(function() {
+  add_test(function () {
     Services.prefs.setBoolPref("security.OCSP.require", false);
     run_next_test();
   });
@@ -256,7 +247,7 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });
@@ -294,7 +285,7 @@ function add_tests() {
   }
 
   let stopObservingChannels;
-  add_test(function() {
+  add_test(function () {
     stopObservingChannels = startObservingChannels("foo.com");
     run_next_test();
   });
@@ -319,14 +310,14 @@ function add_tests() {
     { firstPartyDomain: "foo.com" }
   );
 
-  add_test(function() {
+  add_test(function () {
     stopObservingChannels();
     equal(gObservedCnt, 1, "should have observed only 1 OCSP requests");
     gObservedCnt = 0;
     run_next_test();
   });
 
-  add_test(function() {
+  add_test(function () {
     stopObservingChannels = startObservingChannels("bar.com");
     run_next_test();
   });
@@ -341,7 +332,7 @@ function add_tests() {
     { firstPartyDomain: "bar.com" }
   );
 
-  add_test(function() {
+  add_test(function () {
     stopObservingChannels();
     equal(gObservedCnt, 1, "should have observed only 1 OCSP requests");
     gObservedCnt = 0;
@@ -351,7 +342,7 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });
@@ -391,14 +382,14 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });
 
   // This test makes sure that OCSP cache are isolated by partitionKey.
 
-  add_test(function() {
+  add_test(function () {
     Services.prefs.setBoolPref(
       "privacy.partition.network_state.ocsp_cache",
       true
@@ -439,7 +430,7 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     Services.prefs.clearUserPref("privacy.partition.network_state.ocsp_cache");
     clearOCSPCache();
     run_next_test();
@@ -481,7 +472,7 @@ function add_tests() {
   // ---------------------------------------------------------------------------
 
   // Reset state
-  add_test(function() {
+  add_test(function () {
     clearOCSPCache();
     run_next_test();
   });

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -10,9 +10,6 @@ features: [Temporal]
 ---*/
 
 const expected = [
-  "get options.overflow",
-  "get options.overflow.toString",
-  "call options.overflow.toString",
   "get fields.day",
   "get fields.day.valueOf",
   "call fields.day.valueOf",
@@ -31,6 +28,9 @@ const expected = [
   "get fields.year",
   "get fields.year.valueOf",
   "call fields.year.valueOf",
+  "get options.overflow",
+  "get options.overflow.toString",
+  "call options.overflow.toString",
 ];
 const actual = [];
 
@@ -73,7 +73,7 @@ const arg2 = new Proxy(options, {
 
 const result = instance.monthDayFromFields(arg1, arg2);
 TemporalHelpers.assertPlainMonthDay(result, "M01", 1, "monthDay result");
-assert.sameValue(result.calendar, instance, "calendar result");
+assert.sameValue(result.getISOFields().calendar, "gregory", "calendar slot should store a string");
 assert.compareArray(actual, expected, "order of operations");
 
 reportCompare(0, 0);

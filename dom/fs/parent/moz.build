@@ -4,15 +4,40 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
+DIRS += [
+    "datamodel",
+]
+
 EXPORTS.mozilla.dom += [
-    "BackgroundFileSystemParent.h",
-    "OriginPrivateFileSystemParent.h",
+    "FileSystemAccessHandle.h",
+    "FileSystemAccessHandleControlParent.h",
+    "FileSystemAccessHandleParent.h",
+    "FileSystemManagerParent.h",
+    "FileSystemManagerParentFactory.h",
+    "FileSystemParentTypes.h",
+    "FileSystemQuotaClient.h",
+    "FileSystemWritableFileStreamParent.h",
 ]
 
 UNIFIED_SOURCES += [
-    "BackgroundFileSystemParent.cpp",
+    "FileSystemAccessHandle.cpp",
+    "FileSystemAccessHandleControlParent.cpp",
+    "FileSystemAccessHandleParent.cpp",
+    "FileSystemContentTypeGuess.cpp",
     "FileSystemHashSource.cpp",
-    "OriginPrivateFileSystemParent.cpp",
+    "FileSystemHashStorageFunction.cpp",
+    "FileSystemManagerParent.cpp",
+    "FileSystemManagerParentFactory.cpp",
+    "FileSystemQuotaClient.cpp",
+    "FileSystemStreamCallbacks.cpp",
+    "FileSystemWritableFileStreamParent.cpp",
+    "ResultStatement.cpp",
+    "StartedTransaction.cpp",
+]
+
+LOCAL_INCLUDES += [
+    "/dom/fs/include",
+    "/dom/fs/parent/datamodel",
 ]
 
 FINAL_LIBRARY = "xul"
@@ -25,6 +50,12 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
         inputs=["/dom/fs/parent/rust/data-encoding-ffi"],
     )
 
+    CbindgenHeader(
+        "mime_guess_ffi_generated.h",
+        inputs=["/dom/fs/parent/rust/mime-guess-ffi"],
+    )
+
     EXPORTS.mozilla.dom += [
         "!data_encoding_ffi_generated.h",
+        "!mime_guess_ffi_generated.h",
     ]

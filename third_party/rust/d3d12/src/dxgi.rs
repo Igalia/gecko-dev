@@ -1,15 +1,16 @@
-use crate::{com::WeakPtr, D3DResult, Resource, SampleDesc, HRESULT};
+use crate::{com::ComPtr, D3DResult, Resource, SampleDesc, HRESULT};
 use std::ptr;
 use winapi::{
     shared::{
         dxgi, dxgi1_2, dxgi1_3, dxgi1_4, dxgi1_5, dxgi1_6, dxgiformat, dxgitype, minwindef::TRUE,
         windef::HWND,
     },
-    um::{d3d12, dxgidebug, unknwnbase::IUnknown},
+    um::{d3d12, dxgidebug, unknwnbase::IUnknown, winnt::HANDLE},
     Interface,
 };
 
 bitflags! {
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct FactoryCreationFlags: u32 {
         const DEBUG = dxgi1_3::DXGI_CREATE_FACTORY_DEBUG;
     }
@@ -42,14 +43,14 @@ pub enum AlphaMode {
     ForceDword = dxgi1_2::DXGI_ALPHA_MODE_FORCE_DWORD,
 }
 
-pub type InfoQueue = WeakPtr<dxgidebug::IDXGIInfoQueue>;
+pub type InfoQueue = ComPtr<dxgidebug::IDXGIInfoQueue>;
 
-pub type Adapter1 = WeakPtr<dxgi::IDXGIAdapter1>;
-pub type Adapter2 = WeakPtr<dxgi1_2::IDXGIAdapter2>;
-pub type Adapter3 = WeakPtr<dxgi1_4::IDXGIAdapter3>;
-pub type Adapter4 = WeakPtr<dxgi1_6::IDXGIAdapter4>;
+pub type Adapter1 = ComPtr<dxgi::IDXGIAdapter1>;
+pub type Adapter2 = ComPtr<dxgi1_2::IDXGIAdapter2>;
+pub type Adapter3 = ComPtr<dxgi1_4::IDXGIAdapter3>;
+pub type Adapter4 = ComPtr<dxgi1_6::IDXGIAdapter4>;
 crate::weak_com_inheritance_chain! {
-    #[derive(Debug, Copy, Clone, PartialEq, Hash)]
+    #[derive(Debug, Clone, PartialEq, Hash)]
     pub enum DxgiAdapter {
         Adapter1(dxgi::IDXGIAdapter1), from_adapter1, as_adapter1, adapter1;
         Adapter2(dxgi1_2::IDXGIAdapter2), from_adapter2, as_adapter2, unwrap_adapter2;
@@ -58,14 +59,14 @@ crate::weak_com_inheritance_chain! {
     }
 }
 
-pub type Factory1 = WeakPtr<dxgi::IDXGIFactory1>;
-pub type Factory2 = WeakPtr<dxgi1_2::IDXGIFactory2>;
-pub type Factory3 = WeakPtr<dxgi1_3::IDXGIFactory3>;
-pub type Factory4 = WeakPtr<dxgi1_4::IDXGIFactory4>;
-pub type Factory5 = WeakPtr<dxgi1_5::IDXGIFactory5>;
-pub type Factory6 = WeakPtr<dxgi1_6::IDXGIFactory6>;
+pub type Factory1 = ComPtr<dxgi::IDXGIFactory1>;
+pub type Factory2 = ComPtr<dxgi1_2::IDXGIFactory2>;
+pub type Factory3 = ComPtr<dxgi1_3::IDXGIFactory3>;
+pub type Factory4 = ComPtr<dxgi1_4::IDXGIFactory4>;
+pub type Factory5 = ComPtr<dxgi1_5::IDXGIFactory5>;
+pub type Factory6 = ComPtr<dxgi1_6::IDXGIFactory6>;
 crate::weak_com_inheritance_chain! {
-    #[derive(Debug, Copy, Clone, PartialEq, Hash)]
+    #[derive(Debug, Clone, PartialEq, Hash)]
     pub enum DxgiFactory {
         Factory1(dxgi::IDXGIFactory1), from_factory1, as_factory1, factory1;
         Factory2(dxgi1_2::IDXGIFactory2), from_factory2, as_factory2, unwrap_factory2;
@@ -76,12 +77,14 @@ crate::weak_com_inheritance_chain! {
     }
 }
 
-pub type SwapChain = WeakPtr<dxgi::IDXGISwapChain>;
-pub type SwapChain1 = WeakPtr<dxgi1_2::IDXGISwapChain1>;
-pub type SwapChain2 = WeakPtr<dxgi1_3::IDXGISwapChain2>;
-pub type SwapChain3 = WeakPtr<dxgi1_4::IDXGISwapChain3>;
+pub type FactoryMedia = ComPtr<dxgi1_3::IDXGIFactoryMedia>;
+
+pub type SwapChain = ComPtr<dxgi::IDXGISwapChain>;
+pub type SwapChain1 = ComPtr<dxgi1_2::IDXGISwapChain1>;
+pub type SwapChain2 = ComPtr<dxgi1_3::IDXGISwapChain2>;
+pub type SwapChain3 = ComPtr<dxgi1_4::IDXGISwapChain3>;
 crate::weak_com_inheritance_chain! {
-    #[derive(Debug, Copy, Clone, PartialEq, Hash)]
+    #[derive(Debug, Clone, PartialEq, Hash)]
     pub enum DxgiSwapchain {
         SwapChain(dxgi::IDXGISwapChain), from_swap_chain, as_swap_chain, swap_chain;
         SwapChain1(dxgi1_2::IDXGISwapChain1), from_swap_chain1, as_swap_chain1, unwrap_swap_chain1;
@@ -135,6 +138,22 @@ impl DxgiLib {
         let hr = unsafe {
             let func: libloading::Symbol<Fun> = self.lib.get(b"CreateDXGIFactory1")?;
             func(&dxgi::IDXGIFactory1::uuidof(), factory.mut_void())
+        };
+
+        Ok((factory, hr))
+    }
+
+    pub fn create_factory_media(&self) -> Result<D3DResult<FactoryMedia>, libloading::Error> {
+        type Fun = extern "system" fn(
+            winapi::shared::guiddef::REFIID,
+            *mut *mut winapi::ctypes::c_void,
+        ) -> HRESULT;
+
+        let mut factory = FactoryMedia::null();
+        let hr = unsafe {
+            // https://learn.microsoft.com/en-us/windows/win32/api/dxgi1_3/nn-dxgi1_3-idxgifactorymedia
+            let func: libloading::Symbol<Fun> = self.lib.get(b"CreateDXGIFactory1")?;
+            func(&dxgi1_3::IDXGIFactoryMedia::uuidof(), factory.mut_void())
         };
 
         Ok((factory, hr))
@@ -295,7 +314,30 @@ impl Factory4 {
     }
 }
 
+impl FactoryMedia {
+    pub fn create_swapchain_for_composition_surface_handle(
+        &self,
+        queue: *mut IUnknown,
+        surface_handle: HANDLE,
+        desc: &SwapchainDesc,
+    ) -> D3DResult<SwapChain1> {
+        let mut swap_chain = SwapChain1::null();
+        let hr = unsafe {
+            self.CreateSwapChainForCompositionSurfaceHandle(
+                queue,
+                surface_handle,
+                &desc.to_desc1(),
+                ptr::null_mut(),
+                swap_chain.mut_void() as *mut *mut _,
+            )
+        };
+
+        (swap_chain, hr)
+    }
+}
+
 bitflags! {
+    #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd)]
     pub struct SwapChainPresentFlags: u32 {
         const DXGI_PRESENT_DO_NOT_SEQUENCE = dxgi::DXGI_PRESENT_DO_NOT_SEQUENCE;
         const DXGI_PRESENT_TEST = dxgi::DXGI_PRESENT_TEST;

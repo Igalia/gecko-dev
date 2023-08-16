@@ -83,12 +83,19 @@ template <typename T>
     response->SetAlternativeBody(alternativeBody.get());
   }
 
-  response->InitChannelInfo(aIPCResponse.metadata().channelInfo());
+  response->InitChannelInfo(aIPCResponse.metadata().securityInfo());
 
   if (aIPCResponse.metadata().principalInfo()) {
     response->SetPrincipalInfo(MakeUnique<mozilla::ipc::PrincipalInfo>(
         aIPCResponse.metadata().principalInfo().ref()));
   }
+
+  nsAutoCString bodyBlobURISpec(aIPCResponse.metadata().bodyBlobURISpec());
+  response->SetBodyBlobURISpec(bodyBlobURISpec);
+  nsAutoString bodyLocalPath(aIPCResponse.metadata().bodyLocalPath());
+  response->SetBodyLocalPath(bodyLocalPath);
+
+  response->mCredentialsMode = aIPCResponse.metadata().credentialsMode();
 
   switch (aIPCResponse.metadata().type()) {
     case ResponseType::Basic:
@@ -124,12 +131,17 @@ InternalResponseMetadata InternalResponse::GetMetadata() {
   Maybe<mozilla::ipc::PrincipalInfo> principalInfo =
       mPrincipalInfo ? Some(*mPrincipalInfo) : Nothing();
 
+  nsAutoCString bodyBlobURISpec(BodyBlobURISpec());
+  nsAutoString bodyLocalPath(BodyLocalPath());
+
   // Note: all the arguments are copied rather than moved, which would be more
   // efficient, because there's no move-friendly constructor generated.
+  nsCOMPtr<nsITransportSecurityInfo> securityInfo(mChannelInfo.SecurityInfo());
   return InternalResponseMetadata(
       mType, GetUnfilteredURLList(), GetUnfilteredStatus(),
       GetUnfilteredStatusText(), headersGuard, headers, mErrorCode,
-      GetAlternativeDataType(), mChannelInfo.AsIPCChannelInfo(), principalInfo);
+      GetAlternativeDataType(), securityInfo, principalInfo, bodyBlobURISpec,
+      bodyLocalPath, GetCredentialsMode());
 }
 
 void InternalResponse::ToChildToParentInternalResponse(
@@ -180,6 +192,45 @@ InternalResponse::ToParentToParentInternalResponse() {
   if (alternativeBody) {
     result.alternativeBody() = Some(ToParentToParentStream(
         WrapNotNull(alternativeBody), UNKNOWN_BODY_SIZE));
+  }
+
+  return result;
+}
+
+ParentToChildInternalResponse InternalResponse::ToParentToChildInternalResponse(
+    NotNull<mozilla::ipc::PBackgroundParent*> aBackgroundParent) {
+  ParentToChildInternalResponse result(GetMetadata(), Nothing(),
+                                       UNKNOWN_BODY_SIZE, Nothing());
+
+  nsCOMPtr<nsIInputStream> body;
+  int64_t bodySize;
+  GetUnfilteredBody(getter_AddRefs(body), &bodySize);
+
+  if (body) {
+    ParentToChildStream bodyStream = ToParentToChildStream(
+        WrapNotNull(body), bodySize, aBackgroundParent, mSerializeAsLazy);
+    // The body stream can fail to serialize as an IPCStream. In the case, the
+    // IPCStream's type would be T__None. Don't set up IPCInternalResponse's
+    // body with the failed IPCStream.
+    if (mSerializeAsLazy || bodyStream.get_IPCStream().stream().type() !=
+                                mozilla::ipc::InputStreamParams::T__None) {
+      result.body() = Some(bodyStream);
+      result.bodySize() = bodySize;
+    }
+  }
+
+  nsCOMPtr<nsIInputStream> alternativeBody = TakeAlternativeBody();
+  if (alternativeBody) {
+    ParentToChildStream alterBodyStream =
+        ToParentToChildStream(WrapNotNull(alternativeBody), UNKNOWN_BODY_SIZE,
+                              aBackgroundParent, mSerializeAsLazy);
+    // The body stream can fail to serialize as an IPCStream. In the case, the
+    // IPCStream's type would be T__None. Don't set up IPCInternalResponse's
+    // body with the failed IPCStream.
+    if (mSerializeAsLazy || alterBodyStream.get_IPCStream().stream().type() !=
+                                mozilla::ipc::InputStreamParams::T__None) {
+      result.alternativeBody() = Some(alterBodyStream);
+    }
   }
 
   return result;

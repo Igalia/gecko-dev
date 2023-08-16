@@ -7,6 +7,8 @@
 
 #include "RemoteDecoderManagerChild.h"
 
+#include "mozilla/RemoteDecodeUtils.h"
+
 namespace mozilla {
 
 RemoteDecoderChild::RemoteDecoderChild(RemoteDecodeIn aLocation)
@@ -49,10 +51,13 @@ void RemoteDecoderChild::HandleRejectionError(
     return;
   }
 
-  nsresult err = ((mLocation == RemoteDecodeIn::GpuProcess) ||
-                  (mLocation == RemoteDecodeIn::RddProcess))
-                     ? NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR
-                     : NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR;
+  nsresult err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR;
+  if (mLocation == RemoteDecodeIn::GpuProcess ||
+      mLocation == RemoteDecodeIn::RddProcess) {
+    err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR;
+  } else if (mLocation == RemoteDecodeIn::UtilityProcess_MFMediaEngineCDM) {
+    err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_MF_CDM_ERR;
+  }
   // The RDD process is restarted on demand and asynchronously, we can
   // immediately inform the caller that a new decoder is needed. The RDD will
   // then be restarted during the new decoder creation by
@@ -99,13 +104,14 @@ RefPtr<MediaDataDecoder::InitPromise> RemoteDecoderChild::Init() {
               return;
             }
             const auto& initResponse = aResponse.get_InitCompletionIPDL();
-            mDescription =
-                initResponse.decoderDescription() +
-                (GetManager()->Location() == RemoteDecodeIn::UtilityProcess
-                     ? " (Utility remote)"_ns
-                 : GetManager()->Location() == RemoteDecodeIn::RddProcess
-                     ? " (RDD remote)"_ns
-                     : " (GPU remote)"_ns);
+            mDescription = initResponse.decoderDescription();
+            mDescription.Append(" (");
+            mDescription.Append(RemoteDecodeInToStr(GetManager()->Location()));
+            mDescription.Append(" remote)");
+
+            mProcessName = initResponse.decoderProcessName();
+            mCodecName = initResponse.decoderCodecName();
+
             mIsHardwareAccelerated = initResponse.hardware();
             mHardwareAcceleratedReason = initResponse.hardwareReason();
             mConversion = initResponse.conversion();
@@ -130,11 +136,13 @@ RefPtr<MediaDataDecoder::DecodePromise> RemoteDecoderChild::Decode(
   AssertOnManagerThread();
 
   if (mRemoteDecoderCrashed) {
-    nsresult err =
-        ((mLocation == RemoteDecodeIn::GpuProcess) ||
-         (mLocation == RemoteDecodeIn::RddProcess))
-            ? NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR
-            : NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR;
+    nsresult err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR;
+    if (mLocation == RemoteDecodeIn::GpuProcess ||
+        mLocation == RemoteDecodeIn::RddProcess) {
+      err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR;
+    } else if (mLocation == RemoteDecodeIn::UtilityProcess_MFMediaEngineCDM) {
+      err = NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_MF_CDM_ERR;
+    }
     return MediaDataDecoder::DecodePromise::CreateAndReject(err, __func__);
   }
 
@@ -270,6 +278,16 @@ bool RemoteDecoderChild::IsHardwareAccelerated(
 nsCString RemoteDecoderChild::GetDescriptionName() const {
   AssertOnManagerThread();
   return mDescription;
+}
+
+nsCString RemoteDecoderChild::GetProcessName() const {
+  AssertOnManagerThread();
+  return mProcessName;
+}
+
+nsCString RemoteDecoderChild::GetCodecName() const {
+  AssertOnManagerThread();
+  return mCodecName;
 }
 
 void RemoteDecoderChild::SetSeekThreshold(const media::TimeUnit& aTime) {

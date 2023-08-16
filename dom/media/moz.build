@@ -18,7 +18,7 @@ with Files("tests/**"):
     BUG_COMPONENT = ("Core", "WebRTC")
 
 component_signaling = ("Core", "WebRTC: Signaling")
-with Files("IdpSandbox.jsm"):
+with Files("IdpSandbox.sys.mjs"):
     BUG_COMPONENT = component_signaling
 with Files("PeerConnection*"):
     BUG_COMPONENT = component_signaling
@@ -50,6 +50,7 @@ DIRS += [
     "utils",
     "wave",
     "webaudio",
+    "webcodecs",
     "webm",
     "webrtc",
     "webspeech",
@@ -83,7 +84,9 @@ MOCHITEST_MANIFESTS += [
     "test/mochitest.ini",
     "test/mochitest_background_video.ini",
     "test/mochitest_bugs.ini",
+    "test/mochitest_compat.ini",
     "test/mochitest_eme.ini",
+    "test/mochitest_media_engine.ini",
     "test/mochitest_media_recorder.ini",
     "test/mochitest_seek.ini",
     "test/mochitest_stream.ini",
@@ -96,6 +99,7 @@ BROWSER_CHROME_MANIFESTS += [
     "mediacontrol/tests/browser/browser.ini",
     "mediasession/test/browser.ini",
     "test/browser/browser.ini",
+    "test/browser/wmfme/browser.ini",
 ]
 
 if CONFIG["MOZ_WEBRTC"]:
@@ -135,7 +139,6 @@ EXPORTS += [
     "AudioSampleFormat.h",
     "AudioSegment.h",
     "AudioStream.h",
-    "AudioThreadRegistry.h",
     "BackgroundVideoDecodingPermissionObserver.h",
     "Benchmark.h",
     "BitReader.h",
@@ -143,6 +146,7 @@ EXPORTS += [
     "BufferMediaResource.h",
     "BufferReader.h",
     "ByteWriter.h",
+    "CallbackThreadRegistry.h",
     "ChannelMediaDecoder.h",
     "CrossGraphPort.h",
     "CubebUtils.h",
@@ -263,6 +267,7 @@ UNIFIED_SOURCES += [
     "Benchmark.cpp",
     "BitReader.cpp",
     "BitWriter.cpp",
+    "CallbackThreadRegistry.cpp",
     "CanvasCaptureMediaStream.cpp",
     "ChannelMediaDecoder.cpp",
     "ChannelMediaResource.cpp",
@@ -307,6 +312,7 @@ UNIFIED_SOURCES += [
     "QueueObject.cpp",
     "ReaderProxy.cpp",
     "SeekJob.cpp",
+    "TimeUnits.cpp",
     "Tracing.cpp",
     "VideoFrameContainer.cpp",
     "VideoPlaybackQuality.cpp",
@@ -343,12 +349,12 @@ if CONFIG["MOZ_WEBRTC"]:
     ]
 
     EXTRA_JS_MODULES.media += [
-        "PeerConnection.jsm",
+        "PeerConnection.sys.mjs",
     ]
 
 EXTRA_JS_MODULES.media += [
-    "IdpSandbox.jsm",
-    "PeerConnectionIdp.jsm",
+    "IdpSandbox.sys.mjs",
+    "PeerConnectionIdp.sys.mjs",
 ]
 
 LOCAL_INCLUDES += [
@@ -371,7 +377,6 @@ if CONFIG["MOZ_WEBRTC"]:
     ]
 
 DEFINES["MOZILLA_INTERNAL_API"] = True
-DEFINES["TRACING"] = True
 
 if CONFIG["MOZ_ANDROID_HLS_SUPPORT"]:
     DEFINES["MOZ_ANDROID_HLS_SUPPORT"] = True
@@ -380,8 +385,6 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
     EXPORTS += [
         "!audioipc2_client_ffi_generated.h",
         "!audioipc2_server_ffi_generated.h",
-        "!audioipc_client_ffi_generated.h",
-        "!audioipc_server_ffi_generated.h",
     ]
 
     CbindgenHeader(
@@ -394,13 +397,10 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
         inputs=["/third_party/rust/audioipc2-server"],
     )
 
-    CbindgenHeader(
-        "audioipc_client_ffi_generated.h", inputs=["/third_party/rust/audioipc-client"]
-    )
-
-    CbindgenHeader(
-        "audioipc_server_ffi_generated.h", inputs=["/third_party/rust/audioipc-server"]
-    )
+if CONFIG["ENABLE_TESTS"]:
+    DIRS += [
+        "test/rdd_process_xpcom",
+    ]
 
 include("/ipc/chromium/chromium-config.mozbuild")
 

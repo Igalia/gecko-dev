@@ -3,11 +3,9 @@
 
 /* eslint-env webextensions */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+});
 
 const TP_PREF = "privacy.trackingprotection.enabled";
 const TP_PBM_PREF = "privacy.trackingprotection.pbmode.enabled";
@@ -17,6 +15,9 @@ const CAT_PREF = "browser.contentblocking.category";
 const FP_PREF = "privacy.trackingprotection.fingerprinting.enabled";
 const CM_PREF = "privacy.trackingprotection.cryptomining.enabled";
 const STP_PREF = "privacy.trackingprotection.socialtracking.enabled";
+const EMAIL_TP_PREF = "privacy.trackingprotection.emailtracking.enabled";
+const EMAIL_TP_PBM_PREF =
+  "privacy.trackingprotection.emailtracking.pbmode.enabled";
 const LEVEL2_PREF = "privacy.annotate_channels.strict_list.enabled";
 const REFERRER_PREF = "network.http.referer.disallowCrossSiteRelaxingDefault";
 const REFERRER_TOP_PREF =
@@ -59,6 +60,14 @@ add_task(async function testContentBlockingStandardDefinition() {
     `${STP_PREF} pref has the default value`
   );
   ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PREF),
+    `${EMAIL_TP_PREF} pref has the default value`
+  );
+  ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PBM_PREF),
+    `${EMAIL_TP_PBM_PREF} pref has the default value`
+  );
+  ok(
     !Services.prefs.prefHasUserValue(NCB_PREF),
     `${NCB_PREF} pref has the default value`
   );
@@ -97,6 +106,8 @@ add_task(async function testContentBlockingStandardDefinition() {
   let originalFP = defaults.getBoolPref(FP_PREF);
   let originalCM = defaults.getBoolPref(CM_PREF);
   let originalSTP = defaults.getBoolPref(STP_PREF);
+  let originalEmailTP = defaults.getBoolPref(EMAIL_TP_PREF);
+  let originalEmailTPPBM = defaults.getBoolPref(EMAIL_TP_PBM_PREF);
   let originalNCB = defaults.getIntPref(NCB_PREF);
   let originalNCBP = defaults.getIntPref(NCBP_PREF);
   let originalLEVEL2 = defaults.getBoolPref(LEVEL2_PREF);
@@ -133,6 +144,8 @@ add_task(async function testContentBlockingStandardDefinition() {
   defaults.setBoolPref(FP_PREF, !originalFP);
   defaults.setBoolPref(CM_PREF, !originalCM);
   defaults.setBoolPref(CM_PREF, !originalSTP);
+  defaults.setBoolPref(EMAIL_TP_PREF, !originalEmailTP);
+  defaults.setBoolPref(EMAIL_TP_PBM_PREF, !originalEmailTPPBM);
   defaults.setIntPref(NCB_PREF, !originalNCB);
   defaults.setBoolPref(LEVEL2_PREF, !originalLEVEL2);
   defaults.setBoolPref(REFERRER_PREF, !originalREFERRER);
@@ -160,6 +173,14 @@ add_task(async function testContentBlockingStandardDefinition() {
   ok(
     !Services.prefs.prefHasUserValue(STP_PREF),
     `${STP_PREF} pref has the default value`
+  );
+  ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PREF),
+    `${EMAIL_TP_PREF} pref has the default value`
+  );
+  ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PBM_PREF),
+    `${EMAIL_TP_PBM_PREF} pref has the default value`
   );
   ok(
     !Services.prefs.prefHasUserValue(NCB_PREF),
@@ -201,6 +222,8 @@ add_task(async function testContentBlockingStandardDefinition() {
   defaults.setBoolPref(FP_PREF, originalFP);
   defaults.setBoolPref(CM_PREF, originalCM);
   defaults.setBoolPref(STP_PREF, originalSTP);
+  defaults.setBoolPref(EMAIL_TP_PREF, originalEmailTP);
+  defaults.setBoolPref(EMAIL_TP_PBM_PREF, originalEmailTPPBM);
   defaults.setIntPref(NCB_PREF, originalNCB);
   defaults.setIntPref(NCBP_PREF, originalNCBP);
   defaults.setBoolPref(LEVEL2_PREF, originalLEVEL2);
@@ -219,7 +242,7 @@ add_task(async function testContentBlockingStrictDefinition() {
   let originalStrictPref = defaults.getStringPref(STRICT_DEF_PREF);
   defaults.setStringPref(
     STRICT_DEF_PREF,
-    "tp,tpPrivate,fp,cm,cookieBehavior0,cookieBehaviorPBM0,stp,lvl2,rp,rpTop,ocsp,qps,qpsPBM"
+    "tp,tpPrivate,fp,cm,cookieBehavior0,cookieBehaviorPBM0,stp,emailTP,emailTPPrivate,lvl2,rp,rpTop,ocsp,qps,qpsPBM"
   );
   Services.prefs.setStringPref(CAT_PREF, "strict");
   is(
@@ -234,7 +257,7 @@ add_task(async function testContentBlockingStrictDefinition() {
   );
   is(
     Services.prefs.getStringPref(STRICT_DEF_PREF),
-    "tp,tpPrivate,fp,cm,cookieBehavior0,cookieBehaviorPBM0,stp,lvl2,rp,rpTop,ocsp,qps,qpsPBM",
+    "tp,tpPrivate,fp,cm,cookieBehavior0,cookieBehaviorPBM0,stp,emailTP,emailTPPrivate,lvl2,rp,rpTop,ocsp,qps,qpsPBM",
     `${STRICT_DEF_PREF} changed to what we set.`
   );
 
@@ -262,6 +285,16 @@ add_task(async function testContentBlockingStrictDefinition() {
     Services.prefs.getBoolPref(STP_PREF),
     true,
     `${STP_PREF} pref has been set to true`
+  );
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PREF),
+    true,
+    `${EMAIL_TP_PREF} pref has been set to true`
+  );
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+    true,
+    `${EMAIL_TP_PBM_PREF} pref has been set to true`
   );
   is(
     Services.prefs.getIntPref(NCB_PREF),
@@ -328,6 +361,14 @@ add_task(async function testContentBlockingStrictDefinition() {
     `${STP_PREF} pref has the default value`
   );
   ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PREF),
+    `${EMAIL_TP_PREF} pref has the default value`
+  );
+  ok(
+    !Services.prefs.prefHasUserValue(EMAIL_TP_PBM_PREF),
+    `${EMAIL_TP_PBM_PREF} pref has the default value`
+  );
+  ok(
     !Services.prefs.prefHasUserValue(NCB_PREF),
     `${NCB_PREF} pref has the default value`
   );
@@ -362,7 +403,7 @@ add_task(async function testContentBlockingStrictDefinition() {
 
   defaults.setStringPref(
     STRICT_DEF_PREF,
-    "-tpPrivate,-fp,-cm,-tp,cookieBehavior3,cookieBehaviorPBM2,-stp,-lvl2,-rp,-ocsp,-qps,-qpsPBM"
+    "-tpPrivate,-fp,-cm,-tp,cookieBehavior3,cookieBehaviorPBM2,-stp,-emailTP,-emailTPPrivate,-lvl2,-rp,-ocsp,-qps,-qpsPBM"
   );
   is(
     Services.prefs.getBoolPref(TP_PREF),
@@ -388,6 +429,16 @@ add_task(async function testContentBlockingStrictDefinition() {
     Services.prefs.getBoolPref(STP_PREF),
     false,
     `${STP_PREF} pref has been set to false`
+  );
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PREF),
+    false,
+    `${EMAIL_TP_PREF} pref has been set to false`
+  );
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+    false,
+    `${EMAIL_TP_PBM_PREF} pref has been set to false`
   );
   is(
     Services.prefs.getIntPref(NCB_PREF),

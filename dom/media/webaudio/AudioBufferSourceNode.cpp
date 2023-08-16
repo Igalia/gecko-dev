@@ -18,6 +18,7 @@
 #include "AudioParamTimeline.h"
 #include <limits>
 #include <algorithm>
+#include "Tracing.h"
 
 namespace mozilla::dom {
 
@@ -460,11 +461,9 @@ class AudioBufferSourceNodeEngine final : public AudioNodeEngine {
     } else {
       detune = mDetuneTimeline.GetValueAtTime(aTrackPosition);
     }
-    if (playbackRate <= 0 || mozilla::IsNaN(playbackRate)) {
+    if (playbackRate <= 0 || std::isnan(playbackRate)) {
       playbackRate = 1.0f;
     }
-
-    detune = std::min(std::max(-1200.f, detune), 1200.f);
 
     int32_t outRate = ComputeFinalOutSampleRate(playbackRate, detune);
     UpdateResampler(outRate, aChannels);
@@ -473,6 +472,7 @@ class AudioBufferSourceNodeEngine final : public AudioNodeEngine {
   void ProcessBlock(AudioNodeTrack* aTrack, GraphTime aFrom,
                     const AudioBlock& aInput, AudioBlock* aOutput,
                     bool* aFinished) override {
+    TRACE("AudioBufferSourceNodeEngine::ProcessBlock");
     if (mBufferSampleRate == 0) {
       // start() has not yet been called or no buffer has yet been set
       aOutput->SetNull(WEBAUDIO_BLOCK_SIZE);

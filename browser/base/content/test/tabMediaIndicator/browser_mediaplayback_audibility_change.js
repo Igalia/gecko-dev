@@ -62,7 +62,7 @@ add_task(async function testSoundIndicatorShouldDisappearAfterTabNavigation() {
   await waitForTabSoundIndicatorAppears(tab);
 
   info(`sound indicator should disappear after navigating tab to blank page`);
-  BrowserTestUtils.loadURI(tab.linkedBrowser, "about:blank");
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, "about:blank");
   await waitForTabSoundIndicatorDisappears(tab);
 
   info("remove tab");
@@ -207,7 +207,8 @@ function initMediaPlaybackDocument(
 function initMediaStreamPlaybackDocument(tab) {
   return SpecialPowers.spawn(tab.linkedBrowser, [], async _ => {
     content.media = content.document.createElement("audio");
-    content.media.srcObject = new content.AudioContext().createMediaStreamDestination().stream;
+    content.media.srcObject =
+      new content.AudioContext().createMediaStreamDestination().stream;
   });
 }
 

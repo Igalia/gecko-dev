@@ -21,13 +21,13 @@
 #include "mozilla/Span.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/WritingModes.h"
-#include "mozilla/layout/FrameChildList.h"
 #include "mozilla/layers/ScrollableLayerGuid.h"
 #include "mozilla/gfx/2D.h"
 
 #include "gfxPoint.h"
 #include "nsBoundingMetrics.h"
 #include "nsCSSPropertyIDSet.h"
+#include "nsFrameList.h"
 #include "nsThreadUtils.h"
 #include "Units.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -96,9 +96,11 @@ class Event;
 class HTMLImageElement;
 class HTMLCanvasElement;
 class HTMLVideoElement;
+class ImageBitmap;
 class InspectorFontFace;
 class OffscreenCanvas;
 class Selection;
+class VideoFrame;
 }  // namespace dom
 namespace gfx {
 struct RectCornerRadii;
@@ -115,8 +117,10 @@ class Image;
 class StackingContextHelper;
 class Layer;
 class WebRenderLayerManager;
-
 }  // namespace layers
+namespace widget {
+enum class TransparencyMode : uint8_t;
+}
 }  // namespace mozilla
 
 // Flags to customize the behavior of nsLayoutUtils::DrawString.
@@ -146,7 +150,6 @@ class nsLayoutUtils {
   typedef mozilla::LengthPercentage LengthPercentage;
   typedef mozilla::LengthPercentageOrAuto LengthPercentageOrAuto;
   typedef mozilla::dom::DOMRectList DOMRectList;
-  typedef mozilla::layers::Layer Layer;
   typedef mozilla::layers::StackingContextHelper StackingContextHelper;
   typedef mozilla::IntrinsicSize IntrinsicSize;
   typedef mozilla::RelativeTo RelativeTo;
@@ -246,8 +249,7 @@ class nsLayoutUtils {
    * Use heuristics to figure out the child list that
    * aChildFrame is currently in.
    */
-  static mozilla::layout::FrameChildListID GetChildListNameFor(
-      nsIFrame* aChildFrame);
+  static mozilla::FrameChildListID GetChildListNameFor(nsIFrame* aChildFrame);
 
   /**
    * Returns the ::before pseudo-element for aContent, if any.
@@ -622,14 +624,6 @@ class nsLayoutUtils {
      * would be undesirable as a 'position:sticky' container for content).
      */
     SCROLLABLE_STOP_AT_PAGE = 0x20,
-    /**
-     * If the SCROLLABLE_FOLLOW_OOF_TO_PLACEHOLDER flag is set, we navigate
-     * from out-of-flow frames to their placeholder frame rather than their
-     * parent frame.
-     * Note, fixed-pos frames are out-of-flow frames, but
-     * SCROLLABLE_FIXEDPOS_FINDS_ROOT takes precedence over this.
-     */
-    SCROLLABLE_FOLLOW_OOF_TO_PLACEHOLDER = 0x40
   };
   /**
    * GetNearestScrollableFrame locates the first ancestor of aFrame
@@ -677,10 +671,10 @@ class nsLayoutUtils {
    */
   static nsIFrame* GetFloatFromPlaceholder(nsIFrame* aPlaceholder);
 
-  // Combine aNewBreakType with aOrigBreakType, but limit the break types
+  // Combine aOrigClearType with aNewClearType, but limit the clear types
   // to StyleClear::Left, Right, Both.
-  static mozilla::StyleClear CombineBreakType(
-      mozilla::StyleClear aOrigBreakType, mozilla::StyleClear aNewBreakType);
+  static mozilla::StyleClear CombineClearType(
+      mozilla::StyleClear aOrigClearType, mozilla::StyleClear aNewClearType);
 
   /**
    * Get the coordinates of a given DOM mouse event, relative to a given
@@ -753,9 +747,13 @@ class nsLayoutUtils {
    * @return        Null, if there is no popup frame at the point, otherwise,
    *                returns top-most popup frame at the point.
    */
+  enum class GetPopupFrameForPointFlags : uint8_t {
+    OnlyReturnFramesWithWidgets = 0x1,
+  };
   static nsIFrame* GetPopupFrameForPoint(
       nsPresContext* aRootPresContext, nsIWidget* aWidget,
-      const mozilla::LayoutDeviceIntPoint& aPoint);
+      const mozilla::LayoutDeviceIntPoint& aPoint,
+      GetPopupFrameForPointFlags aFlags = GetPopupFrameForPointFlags(0));
 
   /**
    * Get container and offset if aEvent collapses Selection.
@@ -1065,15 +1063,6 @@ class nsLayoutUtils {
    * aFrame.
    */
   static nsRect ClampRectToScrollFrames(nsIFrame* aFrame, const nsRect& aRect);
-
-  /**
-   * Return true if a "layer transform" could be computed for aFrame,
-   * and optionally return the computed transform.  The returned
-   * transform is what would be set on the layer currently if a layers
-   * transaction were opened at the time this helper is called.
-   */
-  static bool GetLayerTransformForFrame(nsIFrame* aFrame,
-                                        Matrix4x4Flagged* aTransform);
 
   /**
    * Given a point in the global coordinate space, returns that point expressed
@@ -1572,7 +1561,7 @@ class nsLayoutUtils {
    */
   static nscoord ComputeCBDependentValue(nscoord aPercentBasis,
                                          const LengthPercentage& aCoord) {
-    NS_WARNING_ASSERTION(
+    NS_ASSERTION(
         aPercentBasis != NS_UNCONSTRAINEDSIZE,
         "have unconstrained width or height; this should only result from very "
         "large sizes, not attempts at intrinsic size calculation");
@@ -1766,7 +1755,9 @@ class nsLayoutUtils {
    * Otherwise returns false.
    */
   struct LinePosition {
-    nscoord mBStart, mBaseline, mBEnd;
+    nscoord mBStart{nscoord_MAX};
+    nscoord mBaseline{nscoord_MAX};
+    nscoord mBEnd{nscoord_MAX};
 
     LinePosition operator+(nscoord aOffset) const {
       LinePosition result;
@@ -1963,17 +1954,12 @@ class nsLayoutUtils {
    *                            variety.
    *   @param aAnchor           If non-null, a point which we will ensure
    *                            is pixel-aligned in the output.
-   *   @param aSourceArea       If non-null, this area is extracted from
-   *                            the image and drawn in aDest. It's
-   *                            in appunits. For best results it should
-   *                            be aligned with image pixels.
    */
   static ImgDrawResult DrawSingleImage(
       gfxContext& aContext, nsPresContext* aPresContext, imgIContainer* aImage,
       SamplingFilter aSamplingFilter, const nsRect& aDest, const nsRect& aDirty,
       const mozilla::SVGImageContext& aSVGContext, uint32_t aImageFlags,
-      const nsPoint* aAnchorPoint = nullptr,
-      const nsRect* aSourceArea = nullptr);
+      const nsPoint* aAnchorPoint = nullptr);
 
   /**
    * Given an imgIContainer, this method attempts to obtain an intrinsic
@@ -2051,6 +2037,11 @@ class nsLayoutUtils {
       const mozilla::StyleImageOrientation& aOrientation);
 
   /**
+   * Given an image request, determine if the request uses CORS.
+   */
+  static bool ImageRequestUsesCORS(imgIRequest* aRequest);
+
+  /**
    * Determine if any corner radius is of nonzero size
    *   @param aCorners the |BorderRadius| object to check
    *   @return true unless all the coordinates are 0%, 0 or null.
@@ -2080,8 +2071,9 @@ class nsLayoutUtils {
    *                           same.
    *   @return a value suitable for passing to SetWindowTranslucency.
    */
-  static nsTransparencyMode GetFrameTransparency(nsIFrame* aBackgroundFrame,
-                                                 nsIFrame* aCSSRootFrame);
+  using TransparencyMode = mozilla::widget::TransparencyMode;
+  static TransparencyMode GetFrameTransparency(nsIFrame* aBackgroundFrame,
+                                               nsIFrame* aCSSRootFrame);
 
   /**
    * A frame is a popup if it has its own floating window. Menus, panels
@@ -2205,6 +2197,10 @@ class nsLayoutUtils {
      * The surface might be different for, e.g., a EXIF-scaled raster image, if
      * we don't rescale during decode. */
     SFE_EXACT_SIZE_SURFACE = 1 << 6,
+    /* Use orientation from image */
+    SFE_ORIENTATION_FROM_IMAGE = 1 << 7,
+    /* Caller handles SFER::mCropRect.isSome() */
+    SFE_ALLOW_UNCROPPED_UNSCALED = 1 << 8,
   };
 
   // This function can be called on any thread.
@@ -2217,6 +2213,18 @@ class nsLayoutUtils {
     RefPtr<DrawTarget> target = nullptr;
     return SurfaceFromOffscreenCanvas(aOffscreenCanvas, aSurfaceFlags, target);
   }
+  // This function can be called on any thread.
+  static mozilla::SurfaceFromElementResult SurfaceFromVideoFrame(
+      mozilla::dom::VideoFrame* aVideoFrame, uint32_t aSurfaceFlags,
+      RefPtr<DrawTarget>& aTarget);
+  static mozilla::SurfaceFromElementResult SurfaceFromVideoFrame(
+      mozilla::dom::VideoFrame* aVideoFrame, uint32_t aSurfaceFlags = 0) {
+    RefPtr<DrawTarget> target = nullptr;
+    return SurfaceFromVideoFrame(aVideoFrame, aSurfaceFlags, target);
+  }
+  // This function can be called on any thread.
+  static mozilla::SurfaceFromElementResult SurfaceFromImageBitmap(
+      mozilla::dom::ImageBitmap* aImageBitmap, uint32_t aSurfaceFlags);
 
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::Element* aElement,
@@ -2261,6 +2269,11 @@ class nsLayoutUtils {
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::HTMLCanvasElement* aElement, uint32_t aSurfaceFlags,
       RefPtr<DrawTarget>& aTarget);
+  static mozilla::SurfaceFromElementResult SurfaceFromElement(
+      mozilla::dom::HTMLCanvasElement* aElement, uint32_t aSurfaceFlags) {
+    RefPtr<DrawTarget> target = nullptr;
+    return SurfaceFromElement(aElement, aSurfaceFlags, target);
+  }
   static mozilla::SurfaceFromElementResult SurfaceFromElement(
       mozilla::dom::HTMLVideoElement* aElement, uint32_t aSurfaceFlags,
       RefPtr<DrawTarget>& aTarget);
@@ -2454,12 +2467,11 @@ class nsLayoutUtils {
   /**
    * Unions the overflow areas of the children of aFrame with aOverflowAreas.
    * aSkipChildLists specifies any child lists that should be skipped.
-   * kPopupList is always skipped.
+   * FrameChildListID::Popup is always skipped.
    */
   static void UnionChildOverflow(
       nsIFrame* aFrame, mozilla::OverflowAreas& aOverflowAreas,
-      mozilla::layout::FrameChildListIDs aSkipChildLists =
-          mozilla::layout::FrameChildListIDs());
+      mozilla::FrameChildListIDs aSkipChildLists = {});
 
   /**
    * Return the font size inflation *ratio* for a given frame.  This is
@@ -2636,9 +2648,19 @@ class nsLayoutUtils {
       const nsPresContext* aPresContext, LayoutDeviceIntSize& aOutSize,
       SubtractDynamicToolbar = SubtractDynamicToolbar::Yes);
 
+  /**
+   * Whether to include the dynamic toolbar area automatically (depending
+   * whether the root container is scrollable or not) or forcibly in below
+   * UpdateCompositionBoundsForRCDRSF and CalculateCompositionSizeForFrame
+   * functions.
+   */
+  enum class IncludeDynamicToolbar { Auto, Force };
+
  private:
   static bool UpdateCompositionBoundsForRCDRSF(
-      mozilla::ParentLayerRect& aCompBounds, const nsPresContext* aPresContext);
+      mozilla::ParentLayerRect& aCompBounds, const nsPresContext* aPresContext,
+      IncludeDynamicToolbar aIncludeDynamicToolbar =
+          IncludeDynamicToolbar::Auto);
 
  public:
   /**
@@ -2652,7 +2674,9 @@ class nsLayoutUtils {
    */
   static nsSize CalculateCompositionSizeForFrame(
       nsIFrame* aFrame, bool aSubtractScrollbars = true,
-      const nsSize* aOverrideScrollPortSize = nullptr);
+      const nsSize* aOverrideScrollPortSize = nullptr,
+      IncludeDynamicToolbar aIncludeDynamicToolbar =
+          IncludeDynamicToolbar::Auto);
 
   /**
    * Calculate a size suitable for bounding the size of the composition bounds
@@ -2819,7 +2843,6 @@ class nsLayoutUtils {
   static nsMargin ScrollbarAreaToExcludeFromCompositionBoundsFor(
       const nsIFrame* aScrollFrame);
 
-  static bool ShouldUseNoScriptSheet(mozilla::dom::Document*);
   static bool ShouldUseNoFramesSheet(mozilla::dom::Document*);
 
   /**
@@ -2932,6 +2955,12 @@ class nsLayoutUtils {
   static bool IsInvisibleBreak(nsINode* aNode,
                                nsIFrame** aNextLineFrame = nullptr);
 
+  static nsRect ComputeSVGViewBox(mozilla::dom::SVGViewportElement*);
+
+  static nsRect ComputeHTMLReferenceRect(const nsIFrame*, StyleGeometryBox);
+
+  static StyleGeometryBox CoordBoxToGeometryBox(mozilla::StyleCoordBox);
+
   static nsRect ComputeGeometryBox(nsIFrame*, StyleGeometryBox);
 
   static nsRect ComputeGeometryBox(nsIFrame*,
@@ -2992,7 +3021,7 @@ class nsLayoutUtils {
    * Get the computed style from which the scrollbar style should be
    * used for the given scrollbar part frame.
    */
-  static ComputedStyle* StyleForScrollbar(nsIFrame* aScrollbarPart);
+  static ComputedStyle* StyleForScrollbar(const nsIFrame* aScrollbarPart);
 
   /**
    * Returns true if |aFrame| is scrolled out of view by a scrollable element in
@@ -3029,6 +3058,19 @@ class nsLayoutUtils {
    **/
   static nsIFrame* GetNearestOverflowClipFrame(nsIFrame* aFrame);
 
+  /*
+   * Returns true if the user's preferences allow for smooth scrolling.
+   */
+  static bool IsSmoothScrollingEnabled();
+
+  /*
+   * Recompute the default value of general.smoothScroll based on
+   * the system settings for prefers-reduced-motion.
+   *
+   * Note: Must only be called from the main thread.
+   */
+  static void RecomputeSmoothScrollDefault();
+
  private:
   /**
    * Helper function for LogTestDataForPaint().
@@ -3044,6 +3086,7 @@ class nsLayoutUtils {
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsLayoutUtils::PaintFrameFlags)
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(nsLayoutUtils::GetPopupFrameForPointFlags)
 
 template <typename PointType, typename RectType, typename CoordType>
 /* static */ bool nsLayoutUtils::PointIsCloserToRect(

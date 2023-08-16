@@ -157,9 +157,11 @@ RemoteLazyInputStream::RemoteLazyInputStream(nsIInputStream* aStream)
 
 static already_AddRefed<RemoteLazyInputStreamChild> BindChildActor(
     nsID aId, mozilla::ipc::Endpoint<PRemoteLazyInputStreamChild> aEndpoint) {
-  auto actor = MakeRefPtr<RemoteLazyInputStreamChild>(aId);
-
   auto* thread = RemoteLazyInputStreamThread::GetOrCreate();
+  if (NS_WARN_IF(!thread)) {
+    return nullptr;
+  }
+  auto actor = MakeRefPtr<RemoteLazyInputStreamChild>(aId);
   thread->Dispatch(
       NS_NewRunnableFunction("RemoteLazyInputStream::BindChildActor",
                              [actor, childEp = std::move(aEndpoint)]() mutable {
@@ -215,6 +217,13 @@ already_AddRefed<RemoteLazyInputStream> RemoteLazyInputStream::WrapStream(
 
   RefPtr<RemoteLazyInputStreamChild> actor =
       BindChildActor(id, std::move(childEp));
+
+  if (!actor) {
+    MOZ_LOG(gRemoteLazyStreamLog, LogLevel::Warning,
+            ("Wrapping stream failed as we are probably late in shutdown!"));
+    return do_AddRef(new RemoteLazyInputStream());
+  }
+
   return do_AddRef(new RemoteLazyInputStream(actor));
 }
 
@@ -319,6 +328,36 @@ RemoteLazyInputStream::Available(uint64_t* aLength) {
 
   MOZ_ASSERT(stream);
   return stream->Available(aLength);
+}
+
+NS_IMETHODIMP
+RemoteLazyInputStream::StreamStatus() {
+  nsCOMPtr<nsIAsyncInputStream> stream;
+  {
+    MutexAutoLock lock(mMutex);
+
+    // We don't have a remoteStream yet: let's return 0.
+    if (mState == eInit || mState == ePending) {
+      return NS_OK;
+    }
+
+    if (mState == eClosed) {
+      return NS_BASE_STREAM_CLOSED;
+    }
+
+    MOZ_ASSERT(mState == eRunning);
+    MOZ_ASSERT(mInnerStream || mAsyncInnerStream);
+
+    nsresult rv = EnsureAsyncRemoteStream();
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    stream = mAsyncInnerStream;
+  }
+
+  MOZ_ASSERT(stream);
+  return stream->StreamStatus();
 }
 
 NS_IMETHODIMP
@@ -452,6 +491,10 @@ RemoteLazyInputStream::Close() {
 
   {
     MutexAutoLock lock(mMutex);
+    if (mState == eClosed) {
+      return NS_OK;
+    }
+
     MOZ_LOG(gRemoteLazyStreamLog, LogLevel::Debug,
             ("Close %s", Describe().get()));
 
@@ -578,16 +621,12 @@ RemoteLazyInputStream::CloneWithRange(uint64_t aStart, uint64_t aLength,
     // copy into a pipe and replace our internal stream.
     nsCOMPtr<nsIAsyncInputStream> pipeIn;
     nsCOMPtr<nsIAsyncOutputStream> pipeOut;
-    rv = NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut), true,
-                     true);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+    NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut), true, true);
 
     RefPtr<RemoteLazyInputStreamThread> thread =
         RemoteLazyInputStreamThread::GetOrCreate();
     if (NS_WARN_IF(!thread)) {
-      return NS_ERROR_FAILURE;
+      return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
     }
 
     mAsyncInnerStream = pipeIn;
@@ -669,7 +708,7 @@ RemoteLazyInputStream::AsyncWait(nsIInputStreamCallback* aCallback,
   if (aCallback && !eventTarget) {
     eventTarget = RemoteLazyInputStreamThread::GetOrCreate();
     if (NS_WARN_IF(!eventTarget)) {
-      return NS_ERROR_UNEXPECTED;
+      return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
     }
   }
 
@@ -765,6 +804,9 @@ void RemoteLazyInputStream::StreamNeeded() {
           ("StreamNeeded %s", Describe().get()));
 
   auto* thread = RemoteLazyInputStreamThread::GetOrCreate();
+  if (NS_WARN_IF(!thread)) {
+    return;
+  }
   thread->Dispatch(NS_NewRunnableFunction(
       "RemoteLazyInputStream::StreamNeeded",
       [self = RefPtr{this}, actor = mActor, start = mStart, length = mLength] {
@@ -1071,16 +1113,12 @@ nsresult RemoteLazyInputStream::EnsureAsyncRemoteStream() {
     // Let's make the stream async using the DOMFile thread.
     nsCOMPtr<nsIAsyncInputStream> pipeIn;
     nsCOMPtr<nsIAsyncOutputStream> pipeOut;
-    rv = NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut), true,
-                     true);
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
+    NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut), true, true);
 
     RefPtr<RemoteLazyInputStreamThread> thread =
         RemoteLazyInputStreamThread::GetOrCreate();
     if (NS_WARN_IF(!thread)) {
-      return NS_ERROR_FAILURE;
+      return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
     }
 
     rv = NS_AsyncCopy(stream, pipeOut, thread, NS_ASYNCCOPY_VIA_WRITESEGMENTS);
@@ -1179,6 +1217,9 @@ RemoteLazyInputStream::AsyncLengthWait(nsIInputStreamLengthCallback* aCallback,
     if (mActor) {
       if (aCallback) {
         auto* thread = RemoteLazyInputStreamThread::GetOrCreate();
+        if (NS_WARN_IF(!thread)) {
+          return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
+        }
         thread->Dispatch(NS_NewRunnableFunction(
             "RemoteLazyInputStream::AsyncLengthWait",
             [self = RefPtr{this}, actor = mActor,
@@ -1284,14 +1325,18 @@ void RemoteLazyInputStream::IPCWrite(IPC::MessageWriter* aWriter) {
         PRemoteLazyInputStream::CreateEndpoints(&parentEp, &childEp));
 
     auto* thread = RemoteLazyInputStreamThread::GetOrCreate();
-    thread->Dispatch(NS_NewRunnableFunction(
-        "RemoteLazyInputStreamChild::SendClone",
-        [actor, parentEp = std::move(parentEp)]() mutable {
-          bool ok = actor->SendClone(std::move(parentEp));
-          MOZ_LOG(gRemoteLazyStreamLog, LogLevel::Verbose,
-                  ("SendClone for %s: %s",
-                   nsIDToCString(actor->StreamID()).get(), ok ? "OK" : "ERR"));
-        }));
+    if (thread) {
+      thread->Dispatch(NS_NewRunnableFunction(
+          "RemoteLazyInputStreamChild::SendClone",
+          [actor, parentEp = std::move(parentEp)]() mutable {
+            bool ok = actor->SendClone(std::move(parentEp));
+            MOZ_LOG(
+                gRemoteLazyStreamLog, LogLevel::Verbose,
+                ("SendClone for %s: %s", nsIDToCString(actor->StreamID()).get(),
+                 ok ? "OK" : "ERR"));
+          }));
+
+    }  // else we are shutting down xpcom threads.
 
     // NOTE: Call `StreamConsumed` after dispatching the `SendClone` runnable,
     // as this method may dispatch a runnable to `RemoteLazyInputStreamThread`
@@ -1376,6 +1421,12 @@ already_AddRefed<RemoteLazyInputStream> RemoteLazyInputStream::IPCRead(
 
   RefPtr<RemoteLazyInputStreamChild> actor =
       BindChildActor(id, std::move(endpoint));
+
+  if (!actor) {
+    MOZ_LOG(gRemoteLazyStreamLog, LogLevel::Warning,
+            ("Deserialize failed as we are probably late in shutdown!"));
+    return do_AddRef(new RemoteLazyInputStream());
+  }
 
   return do_AddRef(new RemoteLazyInputStream(actor, start, length));
 }

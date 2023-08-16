@@ -7,8 +7,8 @@
 #ifndef mozilla_a11y_AccIterator_h__
 #define mozilla_a11y_AccIterator_h__
 
-#include "DocAccessible.h"
 #include "Filters.h"
+#include "mozilla/a11y/DocAccessible.h"
 #include "nsTArray.h"
 
 #include <memory>
@@ -244,17 +244,17 @@ class IDRefsIterator : public AccIterable {
  */
 class SingleAccIterator : public AccIterable {
  public:
-  explicit SingleAccIterator(LocalAccessible* aTarget) : mAcc(aTarget) {}
+  explicit SingleAccIterator(Accessible* aTarget) : mAcc(aTarget) {}
   virtual ~SingleAccIterator() {}
 
-  virtual LocalAccessible* Next() override;
+  virtual Accessible* Next() override;
 
  private:
   SingleAccIterator();
   SingleAccIterator(const SingleAccIterator&);
   SingleAccIterator& operator=(const SingleAccIterator&);
 
-  RefPtr<LocalAccessible> mAcc;
+  Accessible* mAcc;
 };
 
 /**
@@ -262,19 +262,18 @@ class SingleAccIterator : public AccIterable {
  */
 class ItemIterator : public AccIterable {
  public:
-  explicit ItemIterator(const LocalAccessible* aItemContainer)
+  explicit ItemIterator(const Accessible* aItemContainer)
       : mContainer(aItemContainer), mAnchor(nullptr) {}
-  virtual ~ItemIterator() {}
 
-  virtual LocalAccessible* Next() override;
+  virtual Accessible* Next() override;
 
  private:
   ItemIterator() = delete;
   ItemIterator(const ItemIterator&) = delete;
   ItemIterator& operator=(const ItemIterator&) = delete;
 
-  const LocalAccessible* mContainer;
-  LocalAccessible* mAnchor;
+  const Accessible* mContainer;
+  Accessible* mAnchor;
 };
 
 /**
@@ -313,20 +312,11 @@ class RemoteAccIterator : public AccIterable {
   RemoteAccIterator(const nsTArray<uint64_t>& aIds, DocAccessibleParent* aDoc)
       : mIds(aIds), mDoc(aDoc), mIndex(0) {}
 
-  /**
-   * Construct with an array moved from somewhere else. In this case, this
-   * RemoteAccIterator takes ownership of the array. This should be used, for
-   * example, when using sync IPC to retrieve relations.
-   */
-  RemoteAccIterator(nsTArray<uint64_t>&& aIds, DocAccessibleParent* aDoc);
-
   virtual ~RemoteAccIterator() = default;
 
   virtual Accessible* Next() override;
 
  private:
-  // Used when ownership of the array is transferred to this instance.
-  nsTArray<uint64_t> mOwnedIds;
   const nsTArray<uint64_t>& mIds;
   DocAccessibleParent* mDoc;
   uint32_t mIndex;

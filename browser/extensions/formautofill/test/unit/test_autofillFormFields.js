@@ -5,19 +5,12 @@
 
 "use strict";
 
-const { setTimeout, clearTimeout } = ChromeUtils.import(
-  "resource://gre/modules/Timer.jsm"
+const { setTimeout, clearTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
-
-var FormAutofillHandler, OSKeyStore;
-add_setup(async () => {
-  ({ FormAutofillHandler } = ChromeUtils.import(
-    "resource://autofill/FormAutofillHandler.jsm"
-  ));
-  ({ OSKeyStore } = ChromeUtils.import(
-    "resource://gre/modules/OSKeyStore.jsm"
-  ));
-});
+const { OSKeyStore } = ChromeUtils.importESModule(
+  "resource://gre/modules/OSKeyStore.sys.mjs"
+);
 
 const TESTCASES = [
   {
@@ -880,15 +873,14 @@ const TESTCASES_BOTH_CHANGED_AND_UNCHANGED = [
 
 function do_test(testcases, testFn) {
   for (let tc of testcases) {
-    (function() {
+    (function () {
       let testcase = tc;
-      add_task(async function() {
+      add_task(async function () {
         info("Starting testcase: " + testcase.description);
         let ccNumber = testcase.profileData["cc-number"];
         if (ccNumber) {
-          testcase.profileData[
-            "cc-number-encrypted"
-          ] = await OSKeyStore.encrypt(ccNumber);
+          testcase.profileData["cc-number-encrypted"] =
+            await OSKeyStore.encrypt(ccNumber);
           delete testcase.profileData["cc-number"];
         }
 
@@ -926,7 +918,7 @@ function do_test(testcases, testFn) {
         }
 
         handler.activeSection.fieldDetails.forEach(field => {
-          let element = field.elementWeakRef.get();
+          let element = field.element;
           if (!testcase.profileData[field.fieldName]) {
             // Avoid waiting for `change` event of a input with a blank value to
             // be filled.

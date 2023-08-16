@@ -7,10 +7,7 @@
 
 #include "LocalAccessible-inl.h"
 #include "nsEventShell.h"
-#include "DocAccessible.h"
 #include "DocAccessibleChild.h"
-#include "mozilla/StaticPrefs_accessibility.h"
-#include "nsAccessibilityService.h"
 #include "nsTextEquivUtils.h"
 #ifdef A11Y_LOG
 #  include "Logging.h"
@@ -49,18 +46,26 @@ bool EventQueue::PushEvent(AccEvent* aEvent) {
       (aEvent->mEventType == nsIAccessibleEvent::EVENT_NAME_CHANGE ||
        aEvent->mEventType == nsIAccessibleEvent::EVENT_TEXT_REMOVED ||
        aEvent->mEventType == nsIAccessibleEvent::EVENT_TEXT_INSERTED)) {
-    PushNameOrDescriptionChange(aEvent->mAccessible);
+    PushNameOrDescriptionChange(aEvent);
   }
   return true;
 }
 
-bool EventQueue::PushNameOrDescriptionChange(LocalAccessible* aTarget) {
+bool EventQueue::PushNameOrDescriptionChange(AccEvent* aOrigEvent) {
   // Fire name/description change event on parent or related LocalAccessible
   // being labelled/described given that this event hasn't been coalesced, the
   // dependent's name/description was calculated from this subtree, and the
   // subtree was changed.
-  const bool doName = aTarget->HasNameDependent();
-  const bool doDesc = aTarget->HasDescriptionDependent();
+  LocalAccessible* target = aOrigEvent->mAccessible;
+  // If the text of a text leaf changed without replacing the leaf, the only
+  // event we get is text inserted on the container. In this case, we might
+  // need to fire a name change event on the target itself.
+  const bool maybeTargetNameChanged =
+      (aOrigEvent->mEventType == nsIAccessibleEvent::EVENT_TEXT_REMOVED ||
+       aOrigEvent->mEventType == nsIAccessibleEvent::EVENT_TEXT_INSERTED) &&
+      nsTextEquivUtils::HasNameRule(target, eNameFromSubtreeRule);
+  const bool doName = target->HasNameDependent() || maybeTargetNameChanged;
+  const bool doDesc = target->HasDescriptionDependent();
   if (!doName && !doDesc) {
     return false;
   }
@@ -69,11 +74,11 @@ bool EventQueue::PushNameOrDescriptionChange(LocalAccessible* aTarget) {
   // Only continue traversing up the tree if it's possible that the parent
   // LocalAccessible's name (or a LocalAccessible being labelled by this
   // LocalAccessible or an ancestor) can depend on this LocalAccessible's name.
-  LocalAccessible* parent = aTarget;
+  LocalAccessible* parent = target;
   do {
     // Test possible name dependent parent.
     if (doName) {
-      if (nameCheckAncestor && parent != aTarget &&
+      if (nameCheckAncestor && (maybeTargetNameChanged || parent != target) &&
           nsTextEquivUtils::HasNameRule(parent, eNameFromSubtreeRule)) {
         nsAutoString name;
         ENameValueFlag nameFlag = parent->Name(name);
@@ -103,6 +108,10 @@ bool EventQueue::PushNameOrDescriptionChange(LocalAccessible* aTarget) {
       }
     }
 
+    if (parent->IsDoc()) {
+      // Never cross document boundaries.
+      break;
+    }
     parent = parent->LocalParent();
   } while (parent &&
            nsTextEquivUtils::HasNameRule(parent, eNameFromSubtreeIfReqRule));
@@ -345,8 +354,7 @@ void EventQueue::ProcessEventQueue() {
     if (!target || target->IsDefunct()) continue;
 
     // Collect select changes
-    if (IPCAccessibilityActive() &&
-        StaticPrefs::accessibility_cache_enabled_AtStartup()) {
+    if (IPCAccessibilityActive()) {
       if ((event->mEventRule == AccEvent::eDoNotEmit &&
            (eventType == nsIAccessibleEvent::EVENT_SELECTION_ADD ||
             eventType == nsIAccessibleEvent::EVENT_SELECTION_REMOVE ||
@@ -357,14 +365,16 @@ void EventQueue::ProcessEventQueue() {
         // and manually push their new state to the parent process.
         AccSelChangeEvent* selChangeEvent = downcast_accEvent(event);
         LocalAccessible* item = selChangeEvent->mItem;
-        uint64_t itemID =
-            item->IsDoc() ? 0 : reinterpret_cast<uint64_t>(item->UniqueID());
-        bool selected =
-            selChangeEvent->mSelChangeType == AccSelChangeEvent::eSelectionAdd;
-        if (selected) {
-          selectedIDs.AppendElement(itemID);
-        } else {
-          unselectedIDs.AppendElement(itemID);
+        if (!item->IsDefunct()) {
+          uint64_t itemID =
+              item->IsDoc() ? 0 : reinterpret_cast<uint64_t>(item->UniqueID());
+          bool selected = selChangeEvent->mSelChangeType ==
+                          AccSelChangeEvent::eSelectionAdd;
+          if (selected) {
+            selectedIDs.AppendElement(itemID);
+          } else {
+            unselectedIDs.AppendElement(itemID);
+          }
         }
       }
     }
@@ -410,7 +420,6 @@ void EventQueue::ProcessEventQueue() {
   }
 
   if (mDocument && IPCAccessibilityActive() &&
-      StaticPrefs::accessibility_cache_enabled_AtStartup() &&
       (!selectedIDs.IsEmpty() || !unselectedIDs.IsEmpty())) {
     DocAccessibleChild* ipcDoc = mDocument->IPCDoc();
     ipcDoc->SendSelectedAccessiblesChanged(selectedIDs, unselectedIDs);

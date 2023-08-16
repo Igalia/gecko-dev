@@ -4,10 +4,7 @@
 
 "use strict";
 
-const Services = require("Services");
-const { throttle } = require("devtools/shared/throttle");
-
-const BROWSERTOOLBOX_FISSION_ENABLED = "devtools.browsertoolbox.fission";
+const { throttle } = require("resource://devtools/shared/throttle.js");
 
 let gLastResourceId = 0;
 
@@ -29,6 +26,9 @@ class ResourceCommand {
    */
   constructor({ commands }) {
     this.targetCommand = commands.targetCommand;
+
+    // Public attribute set by tests to disable throttling
+    this.throttlingDisabled = false;
 
     this._onTargetAvailable = this._onTargetAvailable.bind(this);
     this._onTargetDestroyed = this._onTargetDestroyed.bind(this);
@@ -294,7 +294,7 @@ class ResourceCommand {
     }
     this._watchers = this._watchers.filter(entry => {
       // Remove entries entirely if it isn't watching for any resource type
-      return entry.resources.length > 0;
+      return !!entry.resources.length;
     });
 
     // Stop listening to all resources for which we removed the last watcher
@@ -562,8 +562,8 @@ class ResourceCommand {
     // and only become true when doing a bfcache navigation.
     // (only server side targets follow the WindowGlobal lifecycle)
     // When server side targets are enabled, this will always be true.
-    const isServerSideTarget = this.targetCommand.targetFront.targetForm
-      .followWindowGlobalLifeCycle;
+    const isServerSideTarget =
+      this.targetCommand.targetFront.targetForm.followWindowGlobalLifeCycle;
     if (isServerSideTarget) {
       // For top-level targets created from the server, only restart legacy
       // listeners.
@@ -655,9 +655,8 @@ class ResourceCommand {
 
       // isAlreadyExistingResource indicates that the resources already existed before
       // the resource command started watching for this type of resource.
-      resource.isAlreadyExistingResource = this._processingExistingResources.has(
-        resourceType
-      );
+      resource.isAlreadyExistingResource =
+        this._processingExistingResources.has(resourceType);
 
       // Put the targetFront on the resource for easy retrieval.
       // (Resources from the legacy listeners may already have the attribute set)
@@ -713,7 +712,8 @@ class ResourceCommand {
     if (
       includesDocumentEventWillNavigate ||
       (includesDocumentEventDomLoading &&
-        !this.targetCommand.hasTargetWatcherSupport("service_worker"))
+        !this.targetCommand.hasTargetWatcherSupport("service_worker")) ||
+      this.throttlingDisabled
     ) {
       this._notifyWatchers();
     } else {
@@ -836,7 +836,7 @@ class ResourceCommand {
         continue;
       }
       // If we receive a new event of the same type, accumulate the new update in the last event
-      if (pendingEvents.length > 0) {
+      if (pendingEvents.length) {
         const lastEvent = pendingEvents[pendingEvents.length - 1];
         if (lastEvent.callbackType == callbackType) {
           lastEvent.updates.push(update);
@@ -859,12 +859,8 @@ class ResourceCommand {
    */
   _notifyWatchers() {
     for (const watcherEntry of this._watchers) {
-      const {
-        onAvailable,
-        onUpdated,
-        onDestroyed,
-        pendingEvents,
-      } = watcherEntry;
+      const { onAvailable, onUpdated, onDestroyed, pendingEvents } =
+        watcherEntry;
       // Immediately clear the buffer in order to avoid possible races, where an event listener
       // would end up somehow adding a new throttled resource
       watcherEntry.pendingEvents = [];
@@ -938,16 +934,6 @@ class ResourceCommand {
    * @return {Boolean} True, if the server supports this type.
    */
   hasResourceCommandSupport(resourceType) {
-    // If we're in the browser console or browser toolbox and the browser
-    // toolbox fission pref is disabled, we don't want to use watchers
-    // (even if traits on the server are enabled).
-    if (
-      this.targetCommand.descriptorFront.isBrowserProcessDescriptor &&
-      !Services.prefs.getBoolPref(BROWSERTOOLBOX_FISSION_ENABLED, false)
-    ) {
-      return false;
-    }
-
     return this.watcherFront?.traits?.resources?.[resourceType];
   }
 
@@ -1034,10 +1020,7 @@ class ResourceCommand {
    * being fetched from these targets.
    */
   _shouldRunLegacyListenerEvenWithWatcherSupport(resourceType) {
-    return (
-      resourceType == ResourceCommand.TYPES.SOURCE ||
-      resourceType == ResourceCommand.TYPES.THREAD_STATE
-    );
+    return WORKER_RESOURCE_TYPES.includes(resourceType);
   }
 
   async _forwardExistingResources(resourceTypes, onAvailable) {
@@ -1047,7 +1030,7 @@ class ResourceCommand {
         existingResources.push(resource);
       }
     }
-    if (existingResources.length > 0) {
+    if (existingResources.length) {
       await onAvailable(existingResources, { areExistingResources: true });
     }
   }
@@ -1064,6 +1047,17 @@ class ResourceCommand {
     if (this._hasResourceCommandSupportForTarget(resourceType, targetFront)) {
       // This resource / target pair should already be handled by the watcher,
       // no need to start legacy listeners.
+      return;
+    }
+
+    // All workers target types are still not supported by the watcher
+    // so that we have to spawn legacy listener for all their resources.
+    // But some resources are irrelevant to workers, like network events.
+    // And we removed the related legacy listener as they are no longer used.
+    if (
+      targetFront.targetType.endsWith("worker") &&
+      !WORKER_RESOURCE_TYPES.includes(resourceType)
+    ) {
       return;
     }
 
@@ -1146,9 +1140,8 @@ class ResourceCommand {
         this.watcherFront.unwatchResources([resourceType]);
       }
 
-      const shouldRunLegacyListeners = this._shouldRunLegacyListenerEvenWithWatcherSupport(
-        resourceType
-      );
+      const shouldRunLegacyListeners =
+        this._shouldRunLegacyListenerEvenWithWatcherSupport(resourceType);
       if (!shouldRunLegacyListeners) {
         return;
       }
@@ -1201,8 +1194,6 @@ ResourceCommand.TYPES = ResourceCommand.prototype.TYPES = {
   CSS_MESSAGE: "css-message",
   ERROR_MESSAGE: "error-message",
   PLATFORM_MESSAGE: "platform-message",
-  // Legacy listener only. Can be removed in Bug 1625937.
-  CLONED_CONTENT_PROCESS_MESSAGE: "cloned-content-process-message",
   DOCUMENT_EVENT: "document-event",
   ROOT_NODE: "root-node",
   STYLESHEET: "stylesheet",
@@ -1218,12 +1209,24 @@ ResourceCommand.TYPES = ResourceCommand.prototype.TYPES = {
   REFLOW: "reflow",
   SOURCE: "source",
   THREAD_STATE: "thread-state",
+  TRACING_STATE: "tracing-state",
   SERVER_SENT_EVENT: "server-sent-event",
+  LAST_PRIVATE_CONTEXT_EXIT: "last-private-context-exit",
 };
 ResourceCommand.ALL_TYPES = ResourceCommand.prototype.ALL_TYPES = Object.values(
   ResourceCommand.TYPES
 );
 module.exports = ResourceCommand;
+
+// This is the list of resource types supported by workers.
+// We need such list to know when forcing to run the legacy listeners
+// and when to avoid try to spawn some unsupported ones for workers.
+const WORKER_RESOURCE_TYPES = [
+  ResourceCommand.TYPES.CONSOLE_MESSAGE,
+  ResourceCommand.TYPES.ERROR_MESSAGE,
+  ResourceCommand.TYPES.SOURCE,
+  ResourceCommand.TYPES.THREAD_STATE,
+];
 
 // Backward compat code for each type of resource.
 // Each section added here should eventually be removed once the equivalent server
@@ -1250,107 +1253,49 @@ const LegacyListeners = {
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.CONSOLE_MESSAGE,
-  "devtools/shared/commands/resource/legacy-listeners/console-messages"
+  "resource://devtools/shared/commands/resource/legacy-listeners/console-messages.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.CSS_CHANGE,
-  "devtools/shared/commands/resource/legacy-listeners/css-changes"
+  "resource://devtools/shared/commands/resource/legacy-listeners/css-changes.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.CSS_MESSAGE,
-  "devtools/shared/commands/resource/legacy-listeners/css-messages"
+  "resource://devtools/shared/commands/resource/legacy-listeners/css-messages.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.ERROR_MESSAGE,
-  "devtools/shared/commands/resource/legacy-listeners/error-messages"
+  "resource://devtools/shared/commands/resource/legacy-listeners/error-messages.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.PLATFORM_MESSAGE,
-  "devtools/shared/commands/resource/legacy-listeners/platform-messages"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.CLONED_CONTENT_PROCESS_MESSAGE,
-  "devtools/shared/commands/resource/legacy-listeners/cloned-content-process-messages"
+  "resource://devtools/shared/commands/resource/legacy-listeners/platform-messages.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.ROOT_NODE,
-  "devtools/shared/commands/resource/legacy-listeners/root-node"
+  "resource://devtools/shared/commands/resource/legacy-listeners/root-node.js"
 );
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.STYLESHEET,
-  "devtools/shared/commands/resource/legacy-listeners/stylesheet"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.NETWORK_EVENT,
-  "devtools/shared/commands/resource/legacy-listeners/network-events"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.WEBSOCKET,
-  "devtools/shared/commands/resource/legacy-listeners/websocket"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.COOKIE,
-  "devtools/shared/commands/resource/legacy-listeners/cookie"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.CACHE_STORAGE,
-  "devtools/shared/commands/resource/legacy-listeners/cache-storage"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.LOCAL_STORAGE,
-  "devtools/shared/commands/resource/legacy-listeners/local-storage"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.SESSION_STORAGE,
-  "devtools/shared/commands/resource/legacy-listeners/session-storage"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.EXTENSION_STORAGE,
-  "devtools/shared/commands/resource/legacy-listeners/extension-storage"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.INDEXED_DB,
-  "devtools/shared/commands/resource/legacy-listeners/indexed-db"
-);
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.NETWORK_EVENT_STACKTRACE,
-  "devtools/shared/commands/resource/legacy-listeners/network-event-stacktraces"
-);
+
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.SOURCE,
-  "devtools/shared/commands/resource/legacy-listeners/source"
+  "resource://devtools/shared/commands/resource/legacy-listeners/source.js"
 );
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.THREAD_STATE,
-  "devtools/shared/commands/resource/legacy-listeners/thread-states"
+  "resource://devtools/shared/commands/resource/legacy-listeners/thread-states.js"
 );
-loader.lazyRequireGetter(
-  LegacyListeners,
-  ResourceCommand.TYPES.SERVER_SENT_EVENT,
-  "devtools/shared/commands/resource/legacy-listeners/server-sent-events"
-);
+
 loader.lazyRequireGetter(
   LegacyListeners,
   ResourceCommand.TYPES.REFLOW,
-  "devtools/shared/commands/resource/legacy-listeners/reflow"
+  "resource://devtools/shared/commands/resource/legacy-listeners/reflow.js"
 );
 
 // Optional transformers for each type of resource.
@@ -1358,48 +1303,54 @@ loader.lazyRequireGetter(
 // and perform some transformation on the resource before it will be emitted.
 // This is a good place to handle backward compatibility and manual resource marshalling.
 const ResourceTransformers = {};
+
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.CONSOLE_MESSAGE,
-  "devtools/shared/commands/resource/transformers/console-messages"
+  "resource://devtools/shared/commands/resource/transformers/console-messages.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.ERROR_MESSAGE,
-  "devtools/shared/commands/resource/transformers/error-messages"
+  "resource://devtools/shared/commands/resource/transformers/error-messages.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.CACHE_STORAGE,
-  "devtools/shared/commands/resource/transformers/storage-cache.js"
+  "resource://devtools/shared/commands/resource/transformers/storage-cache.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.COOKIE,
-  "devtools/shared/commands/resource/transformers/storage-cookie.js"
+  "resource://devtools/shared/commands/resource/transformers/storage-cookie.js"
+);
+loader.lazyRequireGetter(
+  ResourceTransformers,
+  ResourceCommand.TYPES.EXTENSION_STORAGE,
+  "resource://devtools/shared/commands/resource/transformers/storage-extension.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.INDEXED_DB,
-  "devtools/shared/commands/resource/transformers/storage-indexed-db.js"
+  "resource://devtools/shared/commands/resource/transformers/storage-indexed-db.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.LOCAL_STORAGE,
-  "devtools/shared/commands/resource/transformers/storage-local-storage.js"
+  "resource://devtools/shared/commands/resource/transformers/storage-local-storage.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.SESSION_STORAGE,
-  "devtools/shared/commands/resource/transformers/storage-session-storage.js"
+  "resource://devtools/shared/commands/resource/transformers/storage-session-storage.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.NETWORK_EVENT,
-  "devtools/shared/commands/resource/transformers/network-events"
+  "resource://devtools/shared/commands/resource/transformers/network-events.js"
 );
 loader.lazyRequireGetter(
   ResourceTransformers,
   ResourceCommand.TYPES.THREAD_STATE,
-  "devtools/shared/commands/resource/transformers/thread-states"
+  "resource://devtools/shared/commands/resource/transformers/thread-states.js"
 );

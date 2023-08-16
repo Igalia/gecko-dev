@@ -16,7 +16,8 @@ var certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(
 );
 /**
  * Test certificate (i.e. build/pgo/certs/mochitest.client).
- * @type nsIX509Cert
+ *
+ * @type {nsIX509Cert}
  */
 var cert;
 
@@ -59,9 +60,9 @@ function openClientAuthDialog(cert) {
  * of build/pgo/certs/mochitest.client.
  *
  * @param {window} win The cert chooser window.
- * @param {String} notBefore
+ * @param {string} notBefore
  *        The formatted notBefore date of mochitest.client.
- * @param {String} notAfter
+ * @param {string} notAfter
  *        The formatted notAfter date of mochitest.client.
  */
 function checkDialogContents(win, notBefore, notAfter) {
@@ -92,13 +93,9 @@ function checkDialogContents(win, notBefore, notAfter) {
     "correct number of items"
   );
 
-  let [
-    subject,
-    serialNum,
-    validity,
-    issuer,
-    tokenName,
-  ] = win.document.getElementById("details").value.split("\n");
+  let [subject, serialNum, validity, issuer, tokenName] = win.document
+    .getElementById("details")
+    .value.split("\n");
   is(
     subject,
     "Issued to: CN=Mochitest client",
@@ -135,7 +132,7 @@ function findCertByCommonName(commonName) {
   return null;
 }
 
-add_setup(async function() {
+add_setup(async function () {
   cert = findCertByCommonName("Mochitest client");
   isnot(cert, null, "Should be able to find the test client cert");
 });

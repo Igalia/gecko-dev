@@ -96,11 +96,15 @@ void DOMLocalization::Destroy() { DisconnectMutations(); }
 
 DOMLocalization::~DOMLocalization() { Destroy(); }
 
+bool DOMLocalization::HasPendingMutations() const {
+  return mMutations && mMutations->HasPendingMutations();
+}
+
 /**
  * DOMLocalization API
  */
 
-void DOMLocalization::ConnectRoot(nsINode& aNode, ErrorResult& aRv) {
+void DOMLocalization::ConnectRoot(nsINode& aNode) {
   nsCOMPtr<nsIGlobalObject> global = aNode.GetOwnerGlobal();
   if (!global) {
     return;
@@ -121,33 +125,25 @@ void DOMLocalization::ConnectRoot(nsINode& aNode, ErrorResult& aRv) {
   aNode.AddMutationObserverUnlessExists(mMutations);
 }
 
-void DOMLocalization::DisconnectRoot(nsINode& aNode, ErrorResult& aRv) {
+void DOMLocalization::DisconnectRoot(nsINode& aNode) {
   if (mRoots.Contains(&aNode)) {
     aNode.RemoveMutationObserver(mMutations);
     mRoots.Remove(&aNode);
   }
 }
 
-void DOMLocalization::PauseObserving(ErrorResult& aRv) {
-  mMutations->PauseObserving();
-}
+void DOMLocalization::PauseObserving() { mMutations->PauseObserving(); }
 
-void DOMLocalization::ResumeObserving(ErrorResult& aRv) {
-  mMutations->ResumeObserving();
-}
+void DOMLocalization::ResumeObserving() { mMutations->ResumeObserving(); }
 
 void DOMLocalization::SetAttributes(
     JSContext* aCx, Element& aElement, const nsAString& aId,
     const Optional<JS::Handle<JSObject*>>& aArgs, ErrorResult& aRv) {
-  if (!aElement.AttrValueIs(kNameSpaceID_None, nsGkAtoms::datal10nid, aId,
-                            eCaseMatters)) {
-    aElement.SetAttr(kNameSpaceID_None, nsGkAtoms::datal10nid, aId, true);
-  }
-
   if (aArgs.WasPassed() && aArgs.Value()) {
     nsAutoString data;
     JS::Rooted<JS::Value> val(aCx, JS::ObjectValue(*aArgs.Value()));
-    if (!nsContentUtils::StringifyJSON(aCx, &val, data)) {
+    if (!nsContentUtils::StringifyJSON(aCx, val, data,
+                                       UndefinedIsNullStringLiteral)) {
       aRv.NoteJSContextException(aCx);
       return;
     }
@@ -158,6 +154,11 @@ void DOMLocalization::SetAttributes(
   } else {
     aElement.UnsetAttr(kNameSpaceID_None, nsGkAtoms::datal10nargs, true);
   }
+
+  if (!aElement.AttrValueIs(kNameSpaceID_None, nsGkAtoms::datal10nid, aId,
+                            eCaseMatters)) {
+    aElement.SetAttr(kNameSpaceID_None, nsGkAtoms::datal10nid, aId, true);
+  }
 }
 
 void DOMLocalization::GetAttributes(Element& aElement, L10nIdArgs& aResult,
@@ -165,12 +166,32 @@ void DOMLocalization::GetAttributes(Element& aElement, L10nIdArgs& aResult,
   nsAutoString l10nId;
   nsAutoString l10nArgs;
 
-  if (aElement.GetAttr(kNameSpaceID_None, nsGkAtoms::datal10nid, l10nId)) {
+  if (aElement.GetAttr(nsGkAtoms::datal10nid, l10nId)) {
     CopyUTF16toUTF8(l10nId, aResult.mId);
   }
 
-  if (aElement.GetAttr(kNameSpaceID_None, nsGkAtoms::datal10nargs, l10nArgs)) {
+  if (aElement.GetAttr(nsGkAtoms::datal10nargs, l10nArgs)) {
     ConvertStringToL10nArgs(l10nArgs, aResult.mArgs.SetValue(), aRv);
+  }
+}
+
+void DOMLocalization::SetArgs(JSContext* aCx, Element& aElement,
+                              const Optional<JS::Handle<JSObject*>>& aArgs,
+                              ErrorResult& aRv) {
+  if (aArgs.WasPassed() && aArgs.Value()) {
+    nsAutoString data;
+    JS::Rooted<JS::Value> val(aCx, JS::ObjectValue(*aArgs.Value()));
+    if (!nsContentUtils::StringifyJSON(aCx, val, data,
+                                       UndefinedIsNullStringLiteral)) {
+      aRv.NoteJSContextException(aCx);
+      return;
+    }
+    if (!aElement.AttrValueIs(kNameSpaceID_None, nsGkAtoms::datal10nargs, data,
+                              eCaseMatters)) {
+      aElement.SetAttr(kNameSpaceID_None, nsGkAtoms::datal10nargs, data, true);
+    }
+  } else {
+    aElement.UnsetAttr(kNameSpaceID_None, nsGkAtoms::datal10nargs, true);
   }
 }
 
@@ -347,23 +368,27 @@ already_AddRefed<Promise> DOMLocalization::TranslateElements(
 
     FormatMessagesSync(l10nKeys, l10nMessages, aRv);
 
+    if (NS_WARN_IF(aRv.Failed())) {
+      promise->MaybeRejectWithUndefined();
+      return promise.forget();
+    }
+
     bool allTranslated =
         ApplyTranslations(domElements, l10nMessages, aProto, aRv);
     if (NS_WARN_IF(aRv.Failed()) || !allTranslated) {
       promise->MaybeRejectWithUndefined();
-      return MaybeWrapPromise(promise);
+      return promise.forget();
     }
 
     promise->MaybeResolveWithUndefined();
-  } else {
-    RefPtr<Promise> callbackResult = FormatMessages(l10nKeys, aRv);
-    if (NS_WARN_IF(aRv.Failed())) {
-      return nullptr;
-    }
-    nativeHandler->SetReturnValuePromise(promise);
-    callbackResult->AppendNativeHandler(nativeHandler);
+    return promise.forget();
   }
-
+  RefPtr<Promise> callbackResult = FormatMessages(l10nKeys, aRv);
+  if (NS_WARN_IF(aRv.Failed())) {
+    return nullptr;
+  }
+  nativeHandler->SetReturnValuePromise(promise);
+  callbackResult->AppendNativeHandler(nativeHandler);
   return MaybeWrapPromise(promise);
 }
 
@@ -442,7 +467,7 @@ void DOMLocalization::GetTranslatables(
 
     Element* domElement = node->AsElement();
 
-    if (!domElement->HasAttr(kNameSpaceID_None, nsGkAtoms::datal10nid)) {
+    if (!domElement->HasAttr(nsGkAtoms::datal10nid)) {
       continue;
     }
 
@@ -483,11 +508,7 @@ bool DOMLocalization::ApplyTranslations(
     return false;
   }
 
-  PauseObserving(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return false;
-  }
+  PauseObserving();
 
   bool hasMissingTranslation = false;
 
@@ -510,7 +531,7 @@ bool DOMLocalization::ApplyTranslations(
     // It is possible that someone removed the `data-l10n-id` from the element
     // before the async translation completed. In that case, skip applying
     // the translation.
-    if (!elem->HasAttr(kNameSpaceID_None, nsGkAtoms::datal10nid)) {
+    if (!elem->HasAttr(nsGkAtoms::datal10nid)) {
       continue;
     }
     L10nOverlays::TranslateElement(*elem, aTranslations[i].Value(), errors,
@@ -529,11 +550,7 @@ bool DOMLocalization::ApplyTranslations(
 
   ReportL10nOverlaysErrors(errors);
 
-  ResumeObserving(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    aRv.Throw(NS_ERROR_FAILURE);
-    return false;
-  }
+  ResumeObserving();
 
   return !hasMissingTranslation;
 }
@@ -625,6 +642,10 @@ void DOMLocalization::ReportL10nOverlaysErrors(
 void DOMLocalization::ConvertStringToL10nArgs(const nsString& aInput,
                                               intl::L10nArgs& aRetVal,
                                               ErrorResult& aRv) {
+  if (aInput.IsEmpty()) {
+    // There are no properties.
+    return;
+  }
   // This method uses a temporary dictionary to automate
   // converting a JSON string into an IDL Record via a dictionary.
   //

@@ -12,10 +12,10 @@
 [package]
 edition = "2018"
 name = "devd-rs"
-version = "0.3.4"
-authors = ["Greg V <greg@unrelenting.technology>"]
+version = "0.3.6"
+authors = ["Val Packett <val@packett.cool>"]
 description = "An interface to devd, the device hotplug daemon on FreeBSD and DragonFlyBSD"
-homepage = "https://github.com/unrelentingtech/devd-rs"
+homepage = "https://codeberg.org/valpackett/devd-rs"
 readme = "README.md"
 keywords = [
     "System",
@@ -26,7 +26,7 @@ keywords = [
 ]
 categories = ["os::unix-apis"]
 license = "Unlicense/MIT"
-repository = "https://github.com/unrelentingtech/devd-rs"
+repository = "https://codeberg.org/valpackett/devd-rs"
 
 [dependencies.libc]
 version = "0"

@@ -1,3 +1,43 @@
+## [1.6.0] - 2023-02-18
+w
+### Changed
+- MinGW directories are not searched for `libclang` instances on Windows when
+compiling for an MSVC target
+- Bumped minimum supported Rust version (MSRV) to 1.51.0
+- Changed Windows search directory preferences (`libclang` instances from
+Visual Studio installs are now the lowest priority rather than the second
+highest)
+
+## ~~[1.5.1] - 2023-02-05~~ (YANKED)
+
+### Changed
+- MinGW directories are not searched for `libclang` instances on Windows when
+compiling for an MSVC target
+
+## ~~[1.5.0] - 2023-02-05~~ (YANKED)
+
+### Changed
+- Bumped minimum supported Rust version (MSRV) to 1.51.0
+- Changed Windows search directory preferences (`libclang` instances from
+Visual Studio installs are now the lowest priority rather than the second
+highest)
+
+### Added
+- Added additional support for `clang` 16.0.x
+
+## [1.4.0] - 2022-09-22
+
+### Changed
+- The value of an `EntityKind` enum variant
+(`EntityKind::CXCursor_TranslationUnit`) has been updated for Clang 15.0 and
+later to match the
+[breaking change made in `libclang`](https://github.com/llvm/llvm-project/commit/bb83f8e70bd1d56152f02307adacd718cd67e312#diff-674613a0e47f4e66cc19061e28e3296d39be2d124dceefb68237b30b8e241e7c)
+
+### Added
+- Added support for `clang` 16.0.x
+- Added support for `clang` 15.0.x
+- Added support for `clang` 14.0.x
+
 ## [1.3.3] - 2022-05-28
 
 ### Fixed

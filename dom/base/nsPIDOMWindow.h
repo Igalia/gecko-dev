@@ -26,7 +26,6 @@
 #define DOM_WINDOW_FROZEN_TOPIC "dom-window-frozen"
 #define DOM_WINDOW_THAWED_TOPIC "dom-window-thawed"
 
-class nsDOMOfflineResourceList;
 class nsGlobalWindowInner;
 class nsGlobalWindowOuter;
 class nsIArray;
@@ -75,13 +74,6 @@ class WindowGlobalChild;
 class CustomElementRegistry;
 enum class CallerType : uint32_t;
 }  // namespace mozilla::dom
-
-enum UIStateChangeType {
-  UIStateChangeType_NoChange,
-  UIStateChangeType_Set,
-  UIStateChangeType_Clear,
-  UIStateChangeType_Invalid  // used for serialization only
-};
 
 enum class FullscreenReason {
   // Toggling the fullscreen mode requires trusted context.
@@ -143,7 +135,7 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   // Returns true if the document of this window is the active document.  This
   // is identical to IsCurrentInnerWindow() now that document.open() no longer
   // creates new inner windows for the document it is called on.
-  inline bool HasActiveDocument();
+  inline bool HasActiveDocument() const;
 
   // Return true if this object is the currently-active inner window for its
   // BrowsingContext and any container document is also fully active.
@@ -241,6 +233,20 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
    */
   void SetHasPointerEnterLeaveEventListeners() {
     mMayHavePointerEnterLeaveEventListener = true;
+  }
+
+  /**
+   * Call this to check whether some node (this window, its document,
+   * or content in that document) has a transition* event listeners.
+   */
+  bool HasTransitionEventListeners() { return mMayHaveTransitionEventListener; }
+
+  /**
+   * Call this to indicate that some node (this window, its document,
+   * or content in that document) has a transition* event listener.
+   */
+  void SetHasTransitionEventListeners() {
+    mMayHaveTransitionEventListener = true;
   }
 
   /**
@@ -607,8 +613,6 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
       mozilla::dom::Element& aElt, const nsAString& aPseudoElt,
       mozilla::ErrorResult& aError) = 0;
 
-  virtual nsDOMOfflineResourceList* GetApplicationCache() = 0;
-
   virtual bool GetFullScreen() = 0;
 
   virtual nsresult Focus(mozilla::dom::CallerType aCallerType) = 0;
@@ -628,6 +632,13 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
     return mLockCount;
   };
   bool HasActiveLocks() { return mLockCount > 0; }
+
+  uint32_t UpdateWebTransportCount(bool aIncrement) {
+    MOZ_ASSERT_IF(!aIncrement, mWebTransportCount > 0);
+    mWebTransportCount += aIncrement ? 1 : -1;
+    return mWebTransportCount;
+  };
+  bool HasActiveWebTransports() { return mWebTransportCount > 0; }
 
  protected:
   void CreatePerformanceObjectIfNeeded();
@@ -674,6 +685,7 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
   bool mMayHaveFormSelectEventListener;
   bool mMayHaveMouseEnterLeaveEventListener;
   bool mMayHavePointerEnterLeaveEventListener;
+  bool mMayHaveTransitionEventListener;
   // Only used for telemetry probes.  This may be wrong if some nodes have
   // come from another document with `Document.adoptNode`.
   bool mMayHaveBeforeInputEventListenerForTelemetry;
@@ -750,6 +762,11 @@ class nsPIDOMWindowInner : public mozIDOMWindow {
    * workers.
    */
   uint32_t mLockCount = 0;
+  /**
+   * Count of the number of active WebTransport objects, including ones from
+   * workers.
+   */
+  uint32_t mWebTransportCount = 0;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsPIDOMWindowInner, NS_PIDOMWINDOWINNER_IID)
@@ -792,21 +809,12 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
 
   bool IsRootOuterWindow() { return mIsRootOuterWindow; }
 
-  /**
-   * Set initial keyboard indicator state for focus rings.
-   */
-  void SetInitialKeyboardIndicators(UIStateChangeType aShowFocusRings);
-
   // Internal getter/setter for the frame element, this version of the
   // getter crosses chrome boundaries whereas the public scriptable
   // one doesn't for security reasons.
   mozilla::dom::Element* GetFrameElementInternal() const;
   void SetFrameElementInternal(mozilla::dom::Element* aFrameElement);
 
-  void SetDesktopModeViewport(bool aDesktopModeViewport) {
-    mDesktopModeViewport = aDesktopModeViewport;
-  }
-  bool IsDesktopModeViewport() const { return mDesktopModeViewport; }
   bool IsBackground() { return mIsBackground; }
 
   // Audio API
@@ -880,10 +888,10 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
     return mDoc;
   }
 
-  // Set the window up with an about:blank document with the current subject
-  // principal and potentially a CSP and a COEP.
-  virtual void SetInitialPrincipalToSubject(
-      nsIContentSecurityPolicy* aCSP,
+  // Set the window up with an about:blank document with the given principal and
+  // potentially a CSP and a COEP.
+  virtual void SetInitialPrincipal(
+      nsIPrincipal* aNewWindowPrincipal, nsIContentSecurityPolicy* aCSP,
       const mozilla::Maybe<nsILoadInfo::CrossOriginEmbedderPolicy>& aCoep) = 0;
 
   // Returns an object containing the window's state.  This also suspends
@@ -1032,11 +1040,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   virtual bool ShouldShowFocusRing() = 0;
 
   /**
-   * Set the keyboard indicator state for accelerators and focus rings.
-   */
-  virtual void SetKeyboardIndicators(UIStateChangeType aShowFocusRings) = 0;
-
-  /**
    * Indicates that the page in the window has been hidden. This is used to
    * reset the focus state.
    */
@@ -1165,9 +1168,6 @@ class nsPIDOMWindowOuter : public mozIDOMWindowProxy {
   // is false.  Too bad we have so many different concepts of
   // "active".
   bool mIsBackground;
-
-  // current desktop mode flag.
-  bool mDesktopModeViewport;
 
   bool mIsRootOuterWindow;
 

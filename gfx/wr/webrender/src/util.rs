@@ -5,7 +5,7 @@
 use api::BorderRadius;
 use api::units::*;
 use euclid::{Point2D, Rect, Box2D, Size2D, Vector2D, point2, point3};
-use euclid::{default, Transform2D, Transform3D, Scale};
+use euclid::{default, Transform2D, Transform3D, Scale, approxeq::ApproxEq};
 use malloc_size_of::{MallocShallowSizeOf, MallocSizeOf, MallocSizeOfOps};
 use plane_split::{Clipper, Polygon};
 use std::{i32, f32, fmt, ptr};
@@ -126,12 +126,13 @@ impl<T> VecHelper<T> for Vec<T> {
 // TODO(gw): We should try and incorporate F <-> T units here,
 //           but it's a bit tricky to do that now with the
 //           way the current spatial tree works.
+#[repr(C)]
 #[derive(Debug, Clone, Copy, MallocSizeOf, PartialEq)]
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
 pub struct ScaleOffset {
-    pub scale: default::Vector2D<f32>,
-    pub offset: default::Vector2D<f32>,
+    pub scale: euclid::Vector2D<f32, euclid::UnknownUnit>,
+    pub offset: euclid::Vector2D<f32, euclid::UnknownUnit>,
 }
 
 impl ScaleOffset {
@@ -196,6 +197,14 @@ impl ScaleOffset {
     }
 
     pub fn inverse(&self) -> Self {
+        // If either of the scale factors is 0, inverse also has scale 0
+        // TODO(gw): Consider making this return Option<Self> in future
+        //           so that callers can detect and handle when inverse
+        //           fails here.
+        if self.scale.x.approx_eq(&0.0) || self.scale.y.approx_eq(&0.0) {
+            return ScaleOffset::new(0.0, 0.0, 0.0, 0.0);
+        }
+
         ScaleOffset {
             scale: Vector2D::new(
                 1.0 / self.scale.x,
@@ -854,6 +863,17 @@ pub mod test {
     }
 
     #[test]
+    fn scale_offset_invalid_scale() {
+        let s0 = ScaleOffset::new(0.0, 1.0, 10.0, 20.0);
+        let i0 = s0.inverse();
+        assert_eq!(i0, ScaleOffset::new(0.0, 0.0, 0.0, 0.0));
+
+        let s1 = ScaleOffset::new(1.0, 0.0, 10.0, 20.0);
+        let i1 = s1.inverse();
+        assert_eq!(i1, ScaleOffset::new(0.0, 0.0, 0.0, 0.0));
+    }
+
+    #[test]
     fn inverse_project_2d_origin() {
         let mut m = Transform3D::identity();
         assert_eq!(m.inverse_project_2d_origin(), Some(Point2D::zero()));
@@ -1225,11 +1245,11 @@ pub fn project_rect<F, T>(
     // Otherwise, it will be clamped to the screen bounds anyway.
     if homogens.iter().any(|h| h.w <= 0.0 || h.w.is_nan()) {
         let mut clipper = Clipper::new();
-        let polygon = Polygon::from_rect(rect.to_rect(), 1);
+        let polygon = Polygon::from_rect(rect.to_rect().cast().cast_unit(), 1);
 
-        let planes = match Clipper::<_, _, usize>::frustum_planes(
-            transform,
-            Some(bounds.to_rect()),
+        let planes = match Clipper::<usize>::frustum_planes(
+            &transform.cast_unit().cast(),
+            Some(bounds.to_rect().cast_unit().to_f64()),
         ) {
             Ok(planes) => planes,
             Err(..) => return None,
@@ -1249,7 +1269,7 @@ pub fn project_rect<F, T>(
             // filter out parts behind the view plane
             .flat_map(|poly| &poly.points)
             .map(|p| {
-                let mut homo = transform.transform_point2d_homogeneous(p.to_2d());
+                let mut homo = transform.transform_point2d_homogeneous(p.to_2d().to_f32().cast_unit());
                 homo.w = homo.w.max(0.00000001); // avoid infinite values
                 homo.to_point2d().unwrap()
             })

@@ -18,7 +18,7 @@ Running Locally
 
 **Prerequisites**
 
-- A local mozilla repository clone with a `successful Firefox build <https://developer.mozilla.org/en-US/docs/Mozilla/Developer_guide/Build_Instructions>`_ completed
+- A local mozilla repository clone with a `successful Firefox build </setup>`_ completed
 
 Running on Firefox Desktop
 --------------------------
@@ -28,7 +28,7 @@ Vanilla Browsertime tests
 
 If you want to run highly customized tests, you can make use of our customizable ``browsertime`` test.
 
-With this test, you can customize the page to test, test script to use, and anything else required. It will make use of default settings that Raptor uses in browsertime but these can be overriden with ``--browsertime-arg`` settings.
+With this test, you can customize the page to test, test script to use, and anything else required. It will make use of default settings that Raptor uses in browsertime but these can be overridden with ``--browsertime-arg`` settings.
 
 For example, here's a test on ``https://www.sitespeed.io`` using this custom test:
 
@@ -127,10 +127,10 @@ Or for Raptor-Browsertime (use ``chrome`` for desktop, and ``chrome-m`` for mobi
 More Examples
 -------------
 
-`Browsertime docs <https://github.com/mozilla/browsertime/tree/master/docs/examples>`_
+`Browsertime docs <https://github.com/sitespeedio/browsertime/tree/main/docs/examples>`_
 
-Passing Additional Arguments to Browertime
-------------------------------------------
+Passing Additional Arguments to Browsertime
+-------------------------------------------
 
 Browsertime has many command line flags to configure its usage, see `Browsertime configuration <https://www.sitespeed.io/documentation/browsertime/configuration/>`_.
 
@@ -172,6 +172,17 @@ To run gecko profiling using Raptor-Browsertime you can add the ``--gecko-profil
 
 Note that vanilla Browsertime does support Gecko Profiling but **it does not symbolicate the profiles** so it is **not recommended** to use for debugging performance regressions/improvements.
 
+Custom Gecko profiling with Raptor-Browsertime
+----------------------------------------------
+
+With browsertime you can now use the exposed start/stop commands of the gecko profiler. First, one needs to define the ``expose_gecko_profiler`` variable in the `test's configuration file <https://searchfox.org/mozilla-central/rev/2e06f92ba068e32a9a7213ee726e8171f91605c7/testing/raptor/raptor/tests/benchmarks/speedometer-desktop.ini#12>`_
+
+If you want to run the test in CI then you will want to ensure you set the ``--extra-profiler-run`` flag in the mozharness extra options for where your test is defined in the `browsertime-desktop yaml file <https://searchfox.org/mozilla-central/rev/2e06f92ba068e32a9a7213ee726e8171f91605c7/taskcluster/ci/test/browsertime-desktop.yml#404-406>`_. Otherwise you can just pass the ``--extra-profiler-run`` flag locally in your command line.
+
+Both of these steps are required to satisfy the ``_expose_gecko_profiler()`` `method <https://searchfox.org/mozilla-central/rev/2e06f92ba068e32a9a7213ee726e8171f91605c7/testing/raptor/raptor/browsertime/base.py#186-196>`_ so that the option, `expose_profiler <https://searchfox.org/mozilla-central/rev/2e06f92ba068e32a9a7213ee726e8171f91605c7/testing/raptor/raptor/browsertime/base.py#330-333>`_, is passed into your browsertime script. Finally, it should be as simple as calling the ``start()`` & ``stop()`` commands in your `script <https://searchfox.org/mozilla-central/rev/7a4c08f2c3a895c9dc064734ada320f920250c1f/testing/raptor/browsertime/speedometer3.js#16,32-35,71-74>`_.
+
+You should also keep in mind these `default parameters <https://searchfox.org/mozilla-central/rev/2e06f92ba068e32a9a7213ee726e8171f91605c7/testing/raptor/raptor/browsertime/base.py#474-495>`_, which you may or may not want to change yourself in your tests configuration file.
+
 Upgrading Browsertime In-Tree
 -----------------------------
 To upgrade the browsertime version used in-tree you can run, then commit the changes made to ``package.json`` and ``package-lock.json``:
@@ -183,6 +194,14 @@ To upgrade the browsertime version used in-tree you can run, then commit the cha
 Here is a sample URL that we can update to: https://github.com/sitespeedio/browsertime/tarball/89771a1d6be54114db190427dbc281582cba3d47
 
 To test the upgrade, run a raptor test locally (with and without visual-metrics ``--browsertime-visualmetrics`` if possible) and test it on try with at least one test on desktop and mobile.
+
+Updating Benchmark Tests
+------------------------
+To upgrade any of our benchmark tests, you will need to change the revision used in the test manifest. There are three fields that you have available to use there: ``repository_revision`` to denote the revision, ``repository_branch`` to denote the branch name, and ``repository`` to provide the link of the Github repo that contains the benchmark.
+
+For instance, with Speedometer 3 (sp3), we can update the revision `by changing the repository_revision field found here <https://searchfox.org/mozilla-central/rev/aa3ccd258b64abfd4c5ce56c1f512bc7f65b844c/testing/raptor/raptor/tests/benchmarks/speedometer-desktop.ini#29>`_. If the change isn't found on the default branch (master/main branch), then you will need to add an entry for ``repository_branch`` to specify this.
+
+If the path to the test file changes (the file that is invoked to run the test), then the ``test_url`` will need to be changed.
 
 Finding the Geckodriver Being Used
 ----------------------------------
@@ -205,7 +224,7 @@ Mach Browsertime Setup
 ----------------------
 
 **WARNING**
- Raptor-Browsertime (i.e. ``./mach raptor --browsertime -t <TEST>``) is currently required to be ran first in order to acquire the Node-16 binary. In general, it is also not reccomended to use ``./mach browsertime`` for testing as it will be deprecated soon.
+ Raptor-Browsertime (i.e. ``./mach raptor --browsertime -t <TEST>``) is currently required to be ran first in order to acquire the Node-16 binary. In general, it is also not recommended to use ``./mach browsertime`` for testing as it will be deprecated soon.
 
 Note that if you are running Raptor-Browsertime then it will get installed automatically and also update itself. Otherwise, you can run:
 

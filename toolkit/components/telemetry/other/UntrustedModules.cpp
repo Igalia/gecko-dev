@@ -9,6 +9,8 @@
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/MozPromise.h"
 #include "mozilla/net/SocketProcessParent.h"
+#include "mozilla/ipc/UtilityProcessParent.h"
+#include "mozilla/ipc/UtilityProcessManager.h"
 #include "mozilla/RDDChild.h"
 #include "mozilla/RDDProcessManager.h"
 #include "mozilla/WinDllServices.h"
@@ -140,6 +142,14 @@ MultiGetUntrustedModulesData::GetUntrustedModuleLoadEvents() {
     }
   }
 
+  if (RefPtr<ipc::UtilityProcessManager> utilityManager =
+          ipc::UtilityProcessManager::GetIfExists()) {
+    for (RefPtr<ipc::UtilityProcessParent>& parent :
+         utilityManager->GetAllProcessesProcessParent()) {
+      AddPending(parent->SendGetUntrustedModulesData());
+    }
+  }
+
   return mPromise;
 }
 
@@ -226,6 +236,29 @@ void MultiGetUntrustedModulesData::Serialize(RefPtr<dom::Promise>&& aPromise) {
       mBackupSvc->SettleAllStagingData();
     }
   }
+
+#if defined(XP_WIN)
+  RefPtr<DllServices> dllSvc(DllServices::Get());
+  nt::SharedSection* sharedSection = dllSvc->GetSharedSection();
+  if (sharedSection) {
+    auto dynamicBlocklist = sharedSection->GetDynamicBlocklist();
+
+    nsTArray<nsDependentSubstring> blockedModules;
+    for (const auto& blockedEntry : dynamicBlocklist) {
+      if (!blockedEntry.IsValidDynamicBlocklistEntry()) {
+        break;
+      }
+      blockedModules.AppendElement(
+          nsDependentSubstring(blockedEntry.mName.Buffer,
+                               blockedEntry.mName.Length / sizeof(wchar_t)));
+    }
+    rv = serializer.AddBlockedModules(blockedModules);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      aPromise->MaybeReject(rv);
+      return;
+    }
+  }
+#endif
 
   JS::Rooted<JS::Value> jsval(cx);
   serializer.GetObject(&jsval);

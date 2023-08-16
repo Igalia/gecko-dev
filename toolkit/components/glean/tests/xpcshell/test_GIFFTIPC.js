@@ -3,16 +3,18 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { ContentTaskUtils } = ChromeUtils.import(
-  "resource://testing-common/ContentTaskUtils.jsm"
+const { ContentTaskUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/ContentTaskUtils.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 const Telemetry = Services.telemetry;
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 function sleep(ms) {
@@ -99,7 +101,7 @@ add_task({ skip_if: () => runningInParent }, async function run_child_stuff() {
 
   // Has to be different from aLabeledCounter so the error we record doesn't
   // get in the way.
-  Glean.testOnlyIpc.anotherLabeledCounter.InvalidLabel.add(INVALID_COUNTERS);
+  Glean.testOnlyIpc.anotherLabeledCounter["1".repeat(72)].add(INVALID_COUNTERS);
 
   Glean.testOnlyIpc.irate.addToNumerator(IRATE_NUMERATOR);
   Glean.testOnlyIpc.irate.addToDenominator(IRATE_DENOMINATOR);
@@ -219,7 +221,7 @@ add_task(
     );
     Assert.deepEqual(
       {
-        InvalidLabel: INVALID_COUNTERS,
+        ["1".repeat(72)]: INVALID_COUNTERS,
       },
       value
     );
@@ -295,7 +297,9 @@ add_task(
       )
     );
     const timingHist = histSnapshot.content.TELEMETRY_TEST_EXPONENTIAL;
-    Assert.greaterOrEqual(timingHist.sum, 15, "Histogram's in milliseconds.");
+    Assert.greaterOrEqual(timingHist.sum, 13, "Histogram's in milliseconds.");
+    // Both values, 10 and 5, are truncated by a cast in AccumulateTimeDelta
+    // Minimally downcast 9. + 4. could realistically result in 13.
     Assert.equal(
       2,
       Object.entries(timingHist.values).reduce(

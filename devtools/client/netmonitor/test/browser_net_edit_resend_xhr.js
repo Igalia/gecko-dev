@@ -8,7 +8,7 @@
  * cloned request retains the same cause type.
  */
 
-add_task(async function() {
+add_task(async function () {
   if (
     Services.prefs.getBoolPref(
       "devtools.netmonitor.features.newEditAndResend",
@@ -45,7 +45,7 @@ add_task(async function() {
 
   // Context Menu > "Edit & Resend"
   EventUtils.sendMouseEvent({ type: "contextmenu" }, xhrRequest);
-  getContextMenuItem(monitor, "request-list-context-resend").click();
+  await selectContextMenuItem(monitor, "request-list-context-edit-resend");
 
   // 1) Wait for "Edit & Resend" panel to appear
   // 2) Click the "Send" button
@@ -73,7 +73,7 @@ add_task(async function() {
  * new request retains the same cause type.
  */
 
-add_task(async function() {
+add_task(async function () {
   if (
     Services.prefs.getBoolPref(
       "devtools.netmonitor.features.newEditAndResend",
@@ -105,12 +105,18 @@ add_task(async function() {
 
     // Context Menu > "Edit & Resend"
     EventUtils.sendMouseEvent({ type: "contextmenu" }, xhrRequest);
-    getContextMenuItem(monitor, "request-list-context-resend").click();
+    await selectContextMenuItem(monitor, "request-list-context-edit-resend");
 
     // 1) Wait for "Edit & Resend" panel to appear
+    // 2) Wait for the Send button to be  enabled (i.e all the data is loaded)
     // 2) Click the "Send" button
     // 3) Wait till the new request appears in the list
-    await waitUntil(() => document.querySelector(".http-custom-request-panel"));
+    await waitUntil(
+      () =>
+        document.querySelector(".http-custom-request-panel") &&
+        document.querySelector("#http-custom-request-send-button").disabled ===
+          false
+    );
     document.querySelector("#http-custom-request-send-button").click();
     await waitForNetworkEvents(monitor, 1);
 

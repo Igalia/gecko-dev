@@ -39,15 +39,6 @@ pref("dom.webshare.enabled", true);
 // Enable capture attribute for file input.
 pref("dom.capture.enabled", true);
 
-// Disable Web Push until we get it working
-pref("dom.push.enabled", true);
-
-// enable external storage API
-pref("dom.storageManager.enabled", true);
-
-// enable storage access API
-pref("dom.storage_access.enabled", true);
-
 // Inherit locale from the OS, used for multi-locale builds
 pref("intl.locale.requested", "");
 
@@ -92,3 +83,10 @@ pref("extensions.formautofill.addresses.capture.enabled", true);
 // Debug prefs.
 pref("browser.formfill.debug", false);
 pref("extensions.formautofill.loglevel", "Warn");
+
+// PDF.js (enabled in StaticPrefList.yaml)
+// Try to convert PDFs sent as octet-stream
+pref("pdfjs.handleOctetStream", true);
+pref("browser.download.open_pdf_attachments_inline", true);
+pref("pdfjs.annotationEditorMode", -1);
+pref("pdfjs.enableFloatingToolbar", true);

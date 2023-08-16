@@ -57,7 +57,7 @@ var gMoreFromMozillaPane = {
       pageUrl.searchParams.append(key, val);
     }
 
-    // Append region by product to utm_cotent and also
+    // Append region by product to utm_content and also
     // append '-email' when URL is opened
     // from send email link in QRCode box
     if (option) {
@@ -128,19 +128,19 @@ var gMoreFromMozillaPane = {
       products.push(vpn);
     }
 
-    if (BrowserUtils.shouldShowRallyPromo()) {
-      const rally = {
-        id: "mozilla-rally",
-        title_string_id: "more-from-moz-mozilla-rally-title",
-        description_string_id: "more-from-moz-mozilla-rally-description",
-        region: "na",
+    if (BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.RELAY)) {
+      const relay = {
+        id: "firefox-relay",
+        title_string_id: "more-from-moz-firefox-relay-title",
+        description_string_id: "more-from-moz-firefox-relay-description",
+        region: "global",
         button: {
-          id: "mozillaRally",
-          label_string_id: "more-from-moz-button-mozilla-rally-2",
-          actionURL: "https://rally.mozilla.org/",
+          id: "firefoxRelay",
+          label_string_id: "more-from-moz-firefox-relay-button",
+          actionURL: "https://relay.firefox.com/",
         },
       };
-      products.push(rally);
+      products.push(relay);
     }
 
     this._productsContainer = document.getElementById(
@@ -159,10 +159,10 @@ var gMoreFromMozillaPane = {
       let title = template.querySelector(".product-title");
       let desc = template.querySelector(".description");
 
-      title.setAttribute("data-l10n-id", product.title_string_id);
+      document.l10n.setAttributes(title, product.title_string_id);
       title.id = product.id;
 
-      desc.setAttribute("data-l10n-id", product.description_string_id);
+      document.l10n.setAttributes(desc, product.description_string_id);
 
       let isLink = product.button.type === "link";
       let actionElement = template.querySelector(
@@ -182,9 +182,8 @@ var gMoreFromMozillaPane = {
             "href",
             this.getURL(product.button.actionURL, product.region, this.option)
           );
-          actionElement.setAttribute("target", "_blank");
         } else {
-          actionElement.addEventListener("click", function() {
+          actionElement.addEventListener("click", function () {
             let mainWindow = window.windowRoot.ownerGlobal;
             mainWindow.openTrustedLinkIn(
               gMoreFromMozillaPane.getURL(
@@ -203,8 +202,8 @@ var gMoreFromMozillaPane = {
         qrcode.setAttribute("hidden", "false");
 
         let qrcode_title = template.querySelector(".qr-code-box-title");
-        qrcode_title.setAttribute(
-          "data-l10n-id",
+        document.l10n.setAttributes(
+          qrcode_title,
           product.qrcode.title.string_id
         );
 
@@ -223,8 +222,8 @@ var gMoreFromMozillaPane = {
           }` +
           ".svg";
         // Add image a11y attributes
-        img.setAttribute(
-          "data-l10n-id",
+        document.l10n.setAttributes(
+          img,
           "more-from-moz-qr-code-firefox-mobile-img"
         );
 
@@ -233,12 +232,11 @@ var gMoreFromMozillaPane = {
         // So the telemetry includes info about which option is being used
         qrc_link.id = `${this.option}-${product.qrcode.button.id}`;
 
-        // For supported locales, this link allows users to send themselves a download link by email. It should be hidden for unsupported locales.
-        if (!BrowserUtils.sendToDeviceEmailsSupported()) {
-          qrc_link.classList.add("hidden");
-        } else {
-          qrc_link.setAttribute(
-            "data-l10n-id",
+        // For supported locales, this link allows users to send themselves a
+        // download link by email. It should be hidden for unsupported locales.
+        if (BrowserUtils.sendToDeviceEmailsSupported()) {
+          document.l10n.setAttributes(
+            qrc_link,
             product.qrcode.button.label.string_id
           );
           qrc_link.href = this.getURL(
@@ -247,6 +245,7 @@ var gMoreFromMozillaPane = {
             this.option,
             true
           );
+          qrc_link.hidden = false;
         }
       }
 

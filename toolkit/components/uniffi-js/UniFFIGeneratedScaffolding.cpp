@@ -2,45 +2,298 @@
 
 #include "nsString.h"
 #include "nsPrintfCString.h"
+#include "mozilla/Logging.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/StaticPtr.h"
+#include "mozilla/dom/UniFFICallbacks.h"
 #include "mozilla/dom/UniFFIScaffolding.h"
 #include "mozilla/dom/ScaffoldingCall.h"
 
 namespace mozilla::uniffi {
 
 using dom::ArrayBuffer;
+using dom::AutoEntryScript;
 using dom::GlobalObject;
 using dom::RootedDictionary;
 using dom::Promise;
 using dom::ScaffoldingType;
 using dom::Sequence;
+using dom::UniFFICallbackHandler;
 using dom::UniFFIPointer;
 using dom::UniFFIScaffoldingCallResult;
 
 // Define scaffolding functions from UniFFI
 extern "C" {
+  void uniffi_tabs_fn_free_tabsstore(void *, RustCallStatus*);
+  void * uniffi_tabs_fn_constructor_tabsstore_new(RustBuffer, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsstore_get_all(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsstore_set_local_tabs(void *, RustBuffer, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsstore_register_with_sync_manager(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsstore_reset(void *, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsstore_sync(void *, RustBuffer, RustBuffer, RustBuffer, RustBuffer, RustBuffer, RustCallStatus*);
+  void * uniffi_tabs_fn_method_tabsstore_bridged_engine(void *, RustCallStatus*);
+  void uniffi_tabs_fn_free_tabsbridgedengine(void *, RustCallStatus*);
+  int64_t uniffi_tabs_fn_method_tabsbridgedengine_last_sync(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync(void *, int64_t, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsbridgedengine_sync_id(void *, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id(void *, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id(void *, RustBuffer, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync(void *, RustBuffer, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_sync_started(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_store_incoming(void *, RustBuffer, RustCallStatus*);
+  RustBuffer uniffi_tabs_fn_method_tabsbridgedengine_apply(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded(void *, int64_t, RustBuffer, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_sync_finished(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_reset(void *, RustCallStatus*);
+  void uniffi_tabs_fn_method_tabsbridgedengine_wipe(void *, RustCallStatus*);
 }
 
 // Define pointer types
+const static mozilla::uniffi::UniFFIPointerType kTabsTabsStorePointerType {
+  "tabs::TabsStore"_ns,
+  uniffi_tabs_fn_free_tabsstore
+};
+const static mozilla::uniffi::UniFFIPointerType kTabsTabsBridgedEnginePointerType {
+  "tabs::TabsBridgedEngine"_ns,
+  uniffi_tabs_fn_free_tabsbridgedengine
+};
+
+// Define the data we need per-callback interface
+
+// Define a lookup function for our callback interface info
+Maybe<CallbackInterfaceInfo> UniFFIGetCallbackInterfaceInfo(uint64_t aInterfaceId) {
+    switch(aInterfaceId) {
+
+        default:
+            return Nothing();
+    }
+}
 
 Maybe<already_AddRefed<Promise>> UniFFICallAsync(const GlobalObject& aGlobal, uint64_t aId, const Sequence<ScaffoldingType>& aArgs, ErrorResult& aError) {
   switch (aId) {
+    case 0: { // tabs:uniffi_tabs_fn_constructor_tabsstore_new
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_constructor_tabsstore_new, aGlobal, aArgs, "uniffi_tabs_fn_constructor_tabsstore_new: "_ns, aError));
+    }
+    case 1: { // tabs:uniffi_tabs_fn_method_tabsstore_get_all
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_get_all, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_get_all: "_ns, aError));
+    }
+    case 2: { // tabs:uniffi_tabs_fn_method_tabsstore_set_local_tabs
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_set_local_tabs, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_set_local_tabs: "_ns, aError));
+    }
+    case 3: { // tabs:uniffi_tabs_fn_method_tabsstore_register_with_sync_manager
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_register_with_sync_manager, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_register_with_sync_manager: "_ns, aError));
+    }
+    case 4: { // tabs:uniffi_tabs_fn_method_tabsstore_reset
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_reset, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_reset: "_ns, aError));
+    }
+    case 5: { // tabs:uniffi_tabs_fn_method_tabsstore_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_sync, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_sync: "_ns, aError));
+    }
+    case 6: { // tabs:uniffi_tabs_fn_method_tabsstore_bridged_engine
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsstore_bridged_engine, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsstore_bridged_engine: "_ns, aError));
+    }
+    case 7: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_last_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<int64_t>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_last_sync, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_last_sync: "_ns, aError));
+    }
+    case 8: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<int64_t>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync: "_ns, aError));
+    }
+    case 9: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_sync_id, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_sync_id: "_ns, aError));
+    }
+    case 10: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id: "_ns, aError));
+    }
+    case 11: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id: "_ns, aError));
+    }
+    case 12: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync: "_ns, aError));
+    }
+    case 13: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_started
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_sync_started, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_sync_started: "_ns, aError));
+    }
+    case 14: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_store_incoming
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_store_incoming, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_store_incoming: "_ns, aError));
+    }
+    case 15: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_apply
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_apply, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_apply: "_ns, aError));
+    }
+    case 16: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<int64_t>, ScaffoldingConverter<RustBuffer>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded: "_ns, aError));
+    }
+    case 17: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_finished
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_sync_finished, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_sync_finished: "_ns, aError));
+    }
+    case 18: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_reset
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_reset, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_reset: "_ns, aError));
+    }
+    case 19: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_wipe
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      return Some(CallHandler::CallAsync(uniffi_tabs_fn_method_tabsbridgedengine_wipe, aGlobal, aArgs, "uniffi_tabs_fn_method_tabsbridgedengine_wipe: "_ns, aError));
+    }
   }
   return Nothing();
 }
 
 bool UniFFICallSync(const GlobalObject& aGlobal, uint64_t aId, const Sequence<ScaffoldingType>& aArgs, RootedDictionary<UniFFIScaffoldingCallResult>& aReturnValue, ErrorResult& aError) {
   switch (aId) {
+    case 0: { // tabs:uniffi_tabs_fn_constructor_tabsstore_new
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_constructor_tabsstore_new, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_constructor_tabsstore_new: "_ns, aError);
+      return true;
+    }
+    case 1: { // tabs:uniffi_tabs_fn_method_tabsstore_get_all
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_get_all, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_get_all: "_ns, aError);
+      return true;
+    }
+    case 2: { // tabs:uniffi_tabs_fn_method_tabsstore_set_local_tabs
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_set_local_tabs, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_set_local_tabs: "_ns, aError);
+      return true;
+    }
+    case 3: { // tabs:uniffi_tabs_fn_method_tabsstore_register_with_sync_manager
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_register_with_sync_manager, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_register_with_sync_manager: "_ns, aError);
+      return true;
+    }
+    case 4: { // tabs:uniffi_tabs_fn_method_tabsstore_reset
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_reset, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_reset: "_ns, aError);
+      return true;
+    }
+    case 5: { // tabs:uniffi_tabs_fn_method_tabsstore_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_sync, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_sync: "_ns, aError);
+      return true;
+    }
+    case 6: { // tabs:uniffi_tabs_fn_method_tabsstore_bridged_engine
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingObjectConverter<&kTabsTabsStorePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsstore_bridged_engine, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsstore_bridged_engine: "_ns, aError);
+      return true;
+    }
+    case 7: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_last_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<int64_t>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_last_sync, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_last_sync: "_ns, aError);
+      return true;
+    }
+    case 8: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<int64_t>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_set_last_sync: "_ns, aError);
+      return true;
+    }
+    case 9: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_sync_id, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_sync_id: "_ns, aError);
+      return true;
+    }
+    case 10: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_reset_sync_id: "_ns, aError);
+      return true;
+    }
+    case 11: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_ensure_current_sync_id: "_ns, aError);
+      return true;
+    }
+    case 12: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_prepare_for_sync: "_ns, aError);
+      return true;
+    }
+    case 13: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_started
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_sync_started, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_sync_started: "_ns, aError);
+      return true;
+    }
+    case 14: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_store_incoming
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_store_incoming, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_store_incoming: "_ns, aError);
+      return true;
+    }
+    case 15: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_apply
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<RustBuffer>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_apply, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_apply: "_ns, aError);
+      return true;
+    }
+    case 16: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>, ScaffoldingConverter<int64_t>, ScaffoldingConverter<RustBuffer>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_set_uploaded: "_ns, aError);
+      return true;
+    }
+    case 17: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_sync_finished
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_sync_finished, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_sync_finished: "_ns, aError);
+      return true;
+    }
+    case 18: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_reset
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_reset, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_reset: "_ns, aError);
+      return true;
+    }
+    case 19: { // tabs:uniffi_tabs_fn_method_tabsbridgedengine_wipe
+      using CallHandler = ScaffoldingCallHandler<ScaffoldingConverter<void>, ScaffoldingObjectConverter<&kTabsTabsBridgedEnginePointerType>>;
+      CallHandler::CallSync(uniffi_tabs_fn_method_tabsbridgedengine_wipe, aGlobal, aArgs, aReturnValue, "uniffi_tabs_fn_method_tabsbridgedengine_wipe: "_ns, aError);
+      return true;
+    }
   }
   return false;
 }
 
 Maybe<already_AddRefed<UniFFIPointer>> UniFFIReadPointer(const GlobalObject& aGlobal, uint64_t aId, const ArrayBuffer& aArrayBuff, long aPosition, ErrorResult& aError) {
-  return Nothing();
+  const UniFFIPointerType* type;
+  switch (aId) {
+    case 0: { // tabs:TabsStore
+      type = &kTabsTabsStorePointerType;
+      break;
+    }
+    case 1: { // tabs:TabsBridgedEngine
+      type = &kTabsTabsBridgedEnginePointerType;
+      break;
+    }
+    default:
+      return Nothing();
+  }
+  return Some(UniFFIPointer::Read(aArrayBuff, aPosition, type, aError));
 }
 
 bool UniFFIWritePointer(const GlobalObject& aGlobal, uint64_t aId, const UniFFIPointer& aPtr, const ArrayBuffer& aArrayBuff, long aPosition, ErrorResult& aError) {
-  return false;
+  const UniFFIPointerType* type;
+  switch (aId) {
+    case 0: { // tabs:TabsStore
+      type = &kTabsTabsStorePointerType;
+      break;
+    }
+    case 1: { // tabs:TabsBridgedEngine
+      type = &kTabsTabsBridgedEnginePointerType;
+      break;
+    }
+    default:
+      return false;
+  }
+  aPtr.Write(aArrayBuff, aPosition, type, aError);
+  return true;
 }
 
 }  // namespace mozilla::uniffi

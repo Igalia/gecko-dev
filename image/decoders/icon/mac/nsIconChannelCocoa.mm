@@ -15,7 +15,6 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsString.h"
 #include "nsMimeTypes.h"
-#include "nsMemory.h"
 #include "nsIURL.h"
 #include "nsNetCID.h"
 #include "nsIPipe.h"
@@ -65,6 +64,18 @@ nsIconChannel::IsPending(bool* result) { return mPump->IsPending(result); }
 
 NS_IMETHODIMP
 nsIconChannel::GetStatus(nsresult* status) { return mPump->GetStatus(status); }
+
+NS_IMETHODIMP nsIconChannel::SetCanceledReason(const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsIconChannel::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP nsIconChannel::CancelWithReason(nsresult aStatus, const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
+}
 
 NS_IMETHODIMP
 nsIconChannel::Cancel(nsresult status) {
@@ -206,7 +217,7 @@ nsIconChannel::AsyncOpen(nsIStreamListener* aListener) {
   }
 
   // Init our stream pump
-  nsCOMPtr<nsIEventTarget> target =
+  nsCOMPtr<nsISerialEventTarget> target =
       nsContentUtils::GetEventTargetByLoadInfo(mLoadInfo, mozilla::TaskCategory::Other);
   rv = mPump->Init(inStream, 0, 0, false, target);
   if (NS_FAILED(rv)) {
@@ -317,8 +328,8 @@ nsresult nsIconChannel::MakeInputStream(nsIInputStream** _retval, bool aNonBlock
   CGColorSpaceRelease(cs);
 
   NSGraphicsContext* oldContext = [NSGraphicsContext currentContext];
-  [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithGraphicsPort:ctx
-                                                                                  flipped:NO]];
+  [NSGraphicsContext setCurrentContext:[NSGraphicsContext graphicsContextWithCGContext:ctx
+                                                                               flipped:NO]];
 
   [iconImage drawInRect:NSMakeRect(0, 0, width, height)];
 
@@ -329,15 +340,13 @@ nsresult nsIconChannel::MakeInputStream(nsIInputStream** _retval, bool aNonBlock
   // Now, create a pipe and stuff our data into it
   nsCOMPtr<nsIInputStream> inStream;
   nsCOMPtr<nsIOutputStream> outStream;
-  rv = NS_NewPipe(getter_AddRefs(inStream), getter_AddRefs(outStream), bufferCapacity,
-                  bufferCapacity, aNonBlocking);
+  NS_NewPipe(getter_AddRefs(inStream), getter_AddRefs(outStream), bufferCapacity, bufferCapacity,
+             aNonBlocking);
 
+  uint32_t written;
+  rv = outStream->Write((char*)fileBuf.get(), bufferCapacity, &written);
   if (NS_SUCCEEDED(rv)) {
-    uint32_t written;
-    rv = outStream->Write((char*)fileBuf.get(), bufferCapacity, &written);
-    if (NS_SUCCEEDED(rv)) {
-      NS_IF_ADDREF(*_retval = inStream);
-    }
+    NS_IF_ADDREF(*_retval = inStream);
   }
 
   // Drop notification callbacks to prevent cycles.
@@ -485,7 +494,7 @@ nsIconChannel::SetNotificationCallbacks(nsIInterfaceRequestor* aNotificationCall
 }
 
 NS_IMETHODIMP
-nsIconChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
+nsIconChannel::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   *aSecurityInfo = nullptr;
   return NS_OK;
 }

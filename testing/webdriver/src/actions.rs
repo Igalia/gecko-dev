@@ -30,6 +30,8 @@ pub enum ActionsType {
         parameters: PointerActionParameters,
         actions: Vec<PointerActionItem>,
     },
+    #[serde(rename = "wheel")]
+    Wheel { actions: Vec<WheelActionItem> },
 }
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -209,18 +211,8 @@ pub struct PointerMoveAction {
     pub duration: Option<u64>,
     #[serde(default)]
     pub origin: PointerOrigin,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_to_option_i64"
-    )]
-    pub x: Option<i64>,
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "deserialize_to_option_i64"
-    )]
-    pub y: Option<i64>,
+    pub x: i64,
+    pub y: i64,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
@@ -379,6 +371,36 @@ impl<'de> Deserialize<'de> for PointerOrigin {
             )))
         }
     }
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum WheelActionItem {
+    General(GeneralAction),
+    Wheel(WheelAction),
+}
+
+#[derive(Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum WheelAction {
+    #[serde(rename = "scroll")]
+    Scroll(WheelScrollAction),
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct WheelScrollAction {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "deserialize_to_option_u64"
+    )]
+    pub duration: Option<u64>,
+    #[serde(default)]
+    pub origin: PointerOrigin,
+    pub x: Option<i64>,
+    pub y: Option<i64>,
+    pub deltaX: Option<i64>,
+    pub deltaY: Option<i64>,
 }
 
 fn serialize_webelement_id<S>(element: &WebElement, serializer: S) -> Result<S::Ok, S::Error>
@@ -582,8 +604,8 @@ mod test {
                     PointerActionItem::Pointer(PointerAction::Move(PointerMoveAction {
                         origin: PointerOrigin::Pointer,
                         duration: None,
-                        x: Some(10),
-                        y: Some(20),
+                        x: 10,
+                        y: 20,
                         ..Default::default()
                     })),
                     PointerActionItem::Pointer(PointerAction::Up(PointerUpAction {
@@ -1021,8 +1043,8 @@ mod test {
         let pointer_move = PointerAction::Move(PointerMoveAction {
             duration: Some(100),
             origin: PointerOrigin::Viewport,
-            x: Some(5),
-            y: Some(10),
+            x: 5,
+            y: 10,
             ..Default::default()
         });
 
@@ -1063,8 +1085,8 @@ mod test {
         let pointer_move = PointerAction::Move(PointerMoveAction {
             duration: None,
             origin: PointerOrigin::Viewport,
-            x: Some(5),
-            y: Some(10),
+            x: 5,
+            y: 10,
             ..Default::default()
         });
 
@@ -1118,8 +1140,8 @@ mod test {
         let pointer_move = PointerAction::Move(PointerMoveAction {
             duration: Some(100),
             origin: PointerOrigin::Viewport,
-            x: Some(5),
-            y: Some(10),
+            x: 5,
+            y: 10,
             ..Default::default()
         });
 
@@ -1138,8 +1160,8 @@ mod test {
         let pointer_move = PointerAction::Move(PointerMoveAction {
             duration: Some(100),
             origin: PointerOrigin::Element(WebElement("elem".into())),
-            x: Some(5),
-            y: Some(10),
+            x: 5,
+            y: 10,
             ..Default::default()
         });
 
@@ -1158,8 +1180,8 @@ mod test {
         let pointer_move = PointerAction::Move(PointerMoveAction {
             duration: Some(100),
             origin: PointerOrigin::Element(WebElement("elem".into())),
-            x: Some(5),
-            y: Some(10),
+            x: 5,
+            y: 10,
             ..Default::default()
         });
 
@@ -1176,25 +1198,6 @@ mod test {
             "y": 10,
         });
         assert!(serde_json::from_value::<PointerOrigin>(json).is_err());
-    }
-
-    #[test]
-    fn test_json_pointer_action_move_with_x_missing() {
-        let json = json!({
-            "type": "pointerMove",
-            "duration": 100,
-            "origin": "viewport",
-            "y": 10,
-        });
-        let pointer_move = PointerAction::Move(PointerMoveAction {
-            duration: Some(100),
-            origin: PointerOrigin::Viewport,
-            x: None,
-            y: Some(10),
-            ..Default::default()
-        });
-
-        assert_ser_de(&pointer_move, json);
     }
 
     #[test]
@@ -1219,25 +1222,6 @@ mod test {
             "y": 10,
         });
         assert!(serde_json::from_value::<PointerAction>(json).is_err());
-    }
-
-    #[test]
-    fn test_json_pointer_action_move_with_y_missing() {
-        let json = json!({
-            "type": "pointerMove",
-            "duration": 100,
-            "origin": "viewport",
-            "x": 5,
-        });
-        let pointer_move = PointerAction::Move(PointerMoveAction {
-            duration: Some(100),
-            origin: PointerOrigin::Viewport,
-            x: Some(5),
-            y: None,
-            ..Default::default()
-        });
-
-        assert_ser_de(&pointer_move, json);
     }
 
     #[test]
@@ -1401,6 +1385,9 @@ mod test {
                 json.insert("type".into(), actionType.into());
                 if actionType != "pointerMove" {
                     json.insert("button".into(), Value::from(0));
+                } else {
+                    json.insert("x".into(), Value::from(0));
+                    json.insert("y".into(), Value::from(0));
                 }
                 json.insert(prop_name.into(), value);
                 println!("{:?}", json);

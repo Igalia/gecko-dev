@@ -7,6 +7,7 @@
 #include "mozilla/dom/ScriptLoadContext.h"
 #include "mozilla/loader/ComponentModuleLoader.h"
 #include "mozilla/dom/WorkerLoadContext.h"
+#include "mozilla/dom/worklet/WorkletModuleLoader.h"  // WorkletLoadContext
 #include "js/loader/LoadContextBase.h"
 #include "js/loader/ScriptLoadRequest.h"
 
@@ -17,23 +18,15 @@ namespace JS::loader {
 ////////////////////////////////////////////////////////////////
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(LoadContextBase)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(LoadContextBase)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(LoadContextBase)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(LoadContextBase)
+NS_IMPL_CYCLE_COLLECTION(LoadContextBase, mRequest)
 
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(LoadContextBase)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mRequest)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(LoadContextBase)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mRequest)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-LoadContextBase::LoadContextBase(ContextKind kind)
-    : mKind(kind), mRequest(nullptr) {}
+LoadContextBase::LoadContextBase(ContextKind kind) : mKind(kind) {}
 
 void LoadContextBase::SetRequest(ScriptLoadRequest* aRequest) {
   MOZ_ASSERT(!mRequest);
@@ -57,6 +50,11 @@ mozilla::loader::ComponentLoadContext* LoadContextBase::AsComponentContext() {
 mozilla::dom::WorkerLoadContext* LoadContextBase::AsWorkerContext() {
   MOZ_ASSERT(IsWorkerContext());
   return static_cast<mozilla::dom::WorkerLoadContext*>(this);
+}
+
+mozilla::dom::WorkletLoadContext* LoadContextBase::AsWorkletContext() {
+  MOZ_ASSERT(IsWorkletContext());
+  return static_cast<mozilla::dom::WorkletLoadContext*>(this);
 }
 
 }  // namespace JS::loader

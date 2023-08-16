@@ -3,27 +3,25 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import, print_function
-
 import copy
 import os
-import six
 import sys
 import time
 import traceback
 
 import mozinfo
 import mozversion
+import six
+from mozgeckoprofiler import view_gecko_profile
+from mozlog import get_proxy_logger
 from wptserve import server
 from wptserve.handlers import handler
 
 from talos import utils
-from mozlog import get_proxy_logger
-from talos.config import get_configs, ConfigurationError
+from talos.config import ConfigurationError, get_configs
 from talos.results import TalosResults
 from talos.ttest import TTest
 from talos.utils import TalosError, TalosRegression
-from mozgeckoprofiler import view_gecko_profile
 
 # directory of this file
 here = os.path.dirname(os.path.realpath(__file__))
@@ -107,6 +105,17 @@ def setup_webserver(webserver):
         "GET", "tests/pdfpaint/tracemonkey.pdf", tracemonkey_pdf_handler
     )
     return httpd
+
+
+def skip_test(test_instance_dict, config):
+    # Determines if a test should be skipped, and returns
+    # a message with a reason why or None if it doesn't need
+    # to be skipped
+    if not test_instance_dict.get("pine", True) and config.get(
+        "project", ""
+    ).startswith("pine"):
+        return "Broken on the pine branch"
+    return None
 
 
 def run_tests(config, browser_config):
@@ -261,10 +270,6 @@ function FindProxyForURL(url, host) {
     talos_results.add_extra_option("e10s")
     talos_results.add_extra_option("stylo")
 
-    # measuring the difference of a a certain thread level
-    if config.get("stylothreads", 0) > 0:
-        talos_results.add_extra_option("%s_thread" % config["stylothreads"])
-
     if config["gecko_profile"]:
         talos_results.add_extra_option("gecko-profile")
 
@@ -294,7 +299,7 @@ function FindProxyForURL(url, host) {
             LOG.test_start(testname)
 
             # Skip test if necessary
-            skip_reason = test.get("skip_reason", None)
+            skip_reason = skip_test(test, config)
             if skip_reason is not None and skip_reason != "":
                 LOG.info("Skipping %s, reason: %s" % (testname, skip_reason))
                 LOG.test_end(

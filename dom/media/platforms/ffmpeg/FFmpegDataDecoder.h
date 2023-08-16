@@ -28,8 +28,9 @@ class FFmpegDataDecoder<LIBAV_VER>
     : public MediaDataDecoder,
       public DecoderDoctorLifeLogger<FFmpegDataDecoder<LIBAV_VER>> {
  public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FFmpegDataDecoder, final);
+
   FFmpegDataDecoder(FFmpegLibWrapper* aLib, AVCodecID aCodecID);
-  virtual ~FFmpegDataDecoder();
 
   static bool Link();
 
@@ -40,7 +41,7 @@ class FFmpegDataDecoder<LIBAV_VER>
   RefPtr<ShutdownPromise> Shutdown() override;
 
   static AVCodec* FindAVCodec(FFmpegLibWrapper* aLib, AVCodecID aCodec);
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   static AVCodec* FindHardwareAVCodec(FFmpegLibWrapper* aLib, AVCodecID aCodec);
 #endif
 
@@ -53,7 +54,7 @@ class FFmpegDataDecoder<LIBAV_VER>
   MediaResult InitDecoder();
   MediaResult AllocateExtraData();
   MediaResult DoDecode(MediaRawData* aSample, bool* aGotFrame,
-                       DecodedData& aOutResults);
+                       DecodedData& aResults);
 
   FFmpegLibWrapper* mLib;  // set in constructor
 
@@ -65,6 +66,8 @@ class FFmpegDataDecoder<LIBAV_VER>
   AVCodecID mCodecID;  // set in constructor
 
  protected:
+  virtual ~FFmpegDataDecoder();
+
   static StaticMutex sMutex;  // used to provide critical-section locking
                               // for calls into ffmpeg
   const RefPtr<TaskQueue> mTaskQueue;  // set in constructor

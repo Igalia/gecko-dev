@@ -35,14 +35,14 @@ namespace JS::loader {
 
 NS_IMPL_CYCLE_COLLECTION(ScriptFetchOptions, mTriggeringPrincipal, mElement)
 
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(ScriptFetchOptions, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(ScriptFetchOptions, Release)
-
 ScriptFetchOptions::ScriptFetchOptions(
     mozilla::CORSMode aCORSMode, mozilla::dom::ReferrerPolicy aReferrerPolicy,
+    const nsAString& aNonce, const ParserMetadata aParserMetadata,
     nsIPrincipal* aTriggeringPrincipal, mozilla::dom::Element* aElement)
     : mCORSMode(aCORSMode),
       mReferrerPolicy(aReferrerPolicy),
+      mNonce(aNonce),
+      mParserMetadata(aParserMetadata),
       mTriggeringPrincipal(aTriggeringPrincipal),
       mElement(aElement) {}
 
@@ -53,6 +53,7 @@ ScriptFetchOptions::~ScriptFetchOptions() = default;
 //////////////////////////////////////////////////////////////
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ScriptLoadRequest)
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ScriptLoadRequest)
@@ -90,20 +91,15 @@ ScriptLoadRequest::ScriptLoadRequest(ScriptKind aKind, nsIURI* aURI,
       mScriptBytecode(),
       mBytecodeOffset(0),
       mURI(aURI),
-      mLoadContext(aContext) {
+      mLoadContext(aContext),
+      mEarlyHintPreloaderId(0) {
   MOZ_ASSERT(mFetchOptions);
   if (mLoadContext) {
     mLoadContext->SetRequest(this);
   }
 }
 
-ScriptLoadRequest::~ScriptLoadRequest() {
-  if (IsMarkedForBytecodeEncoding()) {
-    DropBytecodeCacheReferences();
-  }
-  mLoadContext = nullptr;
-  DropJSObjects(this);
-}
+ScriptLoadRequest::~ScriptLoadRequest() { DropJSObjects(this); }
 
 void ScriptLoadRequest::SetReady() {
   MOZ_ASSERT(!IsReadyToRun());
@@ -126,6 +122,10 @@ bool ScriptLoadRequest::HasScriptLoadContext() const {
   return HasLoadContext() && mLoadContext->IsWindowContext();
 }
 
+bool ScriptLoadRequest::HasWorkerLoadContext() const {
+  return HasLoadContext() && mLoadContext->IsWorkerContext();
+}
+
 mozilla::dom::ScriptLoadContext* ScriptLoadRequest::GetScriptLoadContext() {
   MOZ_ASSERT(mLoadContext);
   return mLoadContext->AsWindowContext();
@@ -140,6 +140,11 @@ ScriptLoadRequest::GetComponentLoadContext() {
 mozilla::dom::WorkerLoadContext* ScriptLoadRequest::GetWorkerLoadContext() {
   MOZ_ASSERT(mLoadContext);
   return mLoadContext->AsWorkerContext();
+}
+
+mozilla::dom::WorkletLoadContext* ScriptLoadRequest::GetWorkletLoadContext() {
+  MOZ_ASSERT(mLoadContext);
+  return mLoadContext->AsWorkletContext();
 }
 
 ModuleLoadRequest* ScriptLoadRequest::AsModuleRequest() {

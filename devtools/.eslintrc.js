@@ -11,8 +11,8 @@ module.exports = {
     isWorker: true,
     loader: true,
     module: true,
-    reportError: true,
     require: true,
+    DebuggerNotificationObserver: true,
   },
   overrides: [
     {
@@ -23,23 +23,11 @@ module.exports = {
     },
     {
       files: [
-        "client/shared/*.jsm",
         // Allow non-camelcase so that run_test doesn't produce a warning.
         "**/test*/**/*",
       ],
       rules: {
         camelcase: "off",
-      },
-    },
-    {
-      files: [
-        "client/framework/**",
-        "client/shared/*.jsm",
-        "client/shared/widgets/*.jsm",
-        "client/storage/VariablesView.jsm",
-      ],
-      rules: {
-        "consistent-return": "off",
       },
     },
     {
@@ -49,13 +37,7 @@ module.exports = {
       },
     },
     {
-      files: [
-        "client/framework/**",
-        "client/shared/*.jsm",
-        "client/shared/widgets/*.jsm",
-        "client/storage/VariablesView.jsm",
-        "shared/webconsole/test/chrome/*.html",
-      ],
+      files: ["client/framework/**", "shared/webconsole/test/chrome/*.html"],
       rules: {
         "mozilla/no-aArgs": "off",
       },
@@ -67,11 +49,7 @@ module.exports = {
       },
     },
     {
-      files: [
-        "client/framework/**",
-        "client/shared/widgets/*.jsm",
-        "client/storage/VariablesView.jsm",
-      ],
+      files: ["client/framework/**"],
       rules: {
         "no-shadow": "off",
       },
@@ -115,10 +93,9 @@ module.exports = {
         "**/test/**/shared-head.js",
         "client/debugger/test/mochitest/code_frame-script.js",
         "client/responsive.html/browser/content.js",
-        "server/actors/webconsole/content-process-forward.js",
         "server/startup/content-process.js",
         "server/startup/frame.js",
-        "shared/loader/base-loader.js",
+        "shared/loader/base-loader.sys.mjs",
         "shared/loader/browser-loader.js",
         "shared/loader/worker-loader.js",
         "startup/aboutdebugging-registration.js",
@@ -154,6 +131,28 @@ module.exports = {
       ],
       rules: {
         "react/no-deprecated": "off",
+      },
+    },
+    {
+      // These files are used in both browser and node environments,
+      files: [
+        "shared/compatibility/constants.js",
+        "shared/compatibility/helpers.js",
+      ],
+      env: {
+        browser: false,
+        "mozilla/privileged": false,
+        "mozilla/specific": false,
+      },
+    },
+    {
+      // This file is only used in node environment.
+      files: ["shared/compatibility/bin/update.js"],
+      env: {
+        browser: false,
+        node: true,
+        "mozilla/privileged": false,
+        "mozilla/specific": false,
       },
     },
   ],
@@ -241,14 +240,6 @@ module.exports = {
     "no-multi-str": "error",
     // Disallow usage of __proto__ property.
     "no-proto": "error",
-    // Prevent using some properties
-    "no-restricted-properties": [
-      "error",
-      {
-        property: "setupInParent",
-        message: "avoid child/parent communication with setupInParent",
-      },
-    ],
     // Disallow use of assignment in return statement. It is preferable for a
     // single line of code to have only one easily predictable effect.
     "no-return-assign": "error",

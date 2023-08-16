@@ -30,7 +30,7 @@ job-defaults:
 jobs:
     lint-tidy:
         description: Runs linting checks on WebRender code
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: webrender}
         run:
@@ -47,7 +47,7 @@ jobs:
 
     linux64-release:
         description: Runs release-mode WebRender CI tests on a Linux worker
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: webrender}
         fetches:
@@ -71,7 +71,7 @@ jobs:
 
     linux64-debug:
         description: Runs debug-mode WebRender CI tests on a Linux worker
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: webrender}
         fetches:
@@ -95,7 +95,7 @@ jobs:
 
     wrench-macos-build:
         description: Cross compilation of wrench for macOS on Linux
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: webrender}
             chain-of-trust: true
@@ -107,13 +107,12 @@ jobs:
                   name: public/build/wrench-macos-headless.tar.bz2
                   path: /builds/worker/artifacts/wrench-macos-headless.tar.bz2
         dependencies:
-            macosx64-clang-14: toolchain-macosx64-clang-14
+            macosx64-clang-14: toolchain-macosx64-clang-14-raw
         fetches:
             toolchain:
                 - linux64-rust-macos
-                - linux64-cctools-port
                 - linux64-clang-14
-                - macosx64-sdk-11.0
+                - macosx64-sdk
                 - wrench-deps
             macosx64-clang-14:
                 - artifact: clang.tar.zst
@@ -160,7 +159,7 @@ jobs:
 
     cargotest-macos-build:
         description: Cross compilation of cargo tests for macOS on Linux
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: webrender}
             chain-of-trust: true
@@ -171,9 +170,8 @@ jobs:
         fetches:
             toolchain:
                 - linux64-rust-macos
-                - linux64-cctools-port
                 - linux64-clang
-                - macosx64-sdk-11.0
+                - macosx64-sdk
                 - wrench-deps
         run:
             using: run-task
@@ -215,7 +213,7 @@ jobs:
 
     windows:
         description: Runs WebRender CI tests on a Windows worker
-        worker-type: win10-64-2004-ssd
+        worker-type: win11-64-2009-source
         worker:
             max-run-time: 5400
             env:
@@ -223,18 +221,18 @@ jobs:
         fetches:
             toolchain:
                 - win64-rust
-                - win64-vs2017
+                - vs
                 - wrench-deps
         run:
             using: run-task
             use-caches: false
             command: '$GECKO_PATH/taskcluster/scripts/misc/wrench-windows-tests.sh'
         treeherder:
-            platform: windows10-64-2004-qr/release
+            platform: windows11-64-2009-qr/release
             symbol: WR(wrench)
         when:
             files-changed:
-                - 'build/win64/mozconfig.vs2017'
+                - 'build/win64/mozconfig.vs2019'
                 - 'gfx/wr/**'
                 - 'taskcluster/scripts/misc/wrench-windows-tests.sh'
 
@@ -242,7 +240,7 @@ jobs:
         description: Debug build of wrench for Android
         attributes:
             build_platform: android
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             max-run-time: 5400
             docker-image: {in-tree: webrender}
@@ -287,7 +285,7 @@ jobs:
         description: Release build of wrench for Android
         attributes:
             build_platform: android
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             max-run-time: 5400
             docker-image: {in-tree: webrender}
@@ -332,7 +330,7 @@ jobs:
         description: Run debug wrench reftests on Android emulator
         attributes:
             build_platform: android
-        worker-type: t-linux-metal  # privileged:true doesn't work on b-linux
+        worker-type: t-linux-kvm  # privileged:true doesn't work on b-linux
         worker:
             max-run-time: 5400
             docker-image: {in-tree: ubuntu1804-test}
@@ -379,7 +377,7 @@ jobs:
         description: Run release wrench reftests on Android emulator
         attributes:
             build_platform: android
-        worker-type: t-linux-metal  # privileged:true doesn't work on b-linux
+        worker-type: t-linux-kvm  # privileged:true doesn't work on b-linux
         worker:
             max-run-time: 5400
             docker-image: {in-tree: ubuntu1804-test}
@@ -422,11 +420,11 @@ jobs:
                 - 'testing/mozharness/scripts/android_*.py'
                 - 'testing/mozharness/configs/android/*.py'
 
-    android-hw-p2-debug:
-        description: Run debug wrench reftests on Android Pixel2
+    android-hw-p5-debug:
+        description: Run debug wrench reftests on Android Pixel5
         attributes:
             build_platform: android
-        worker-type: t-bitbar-gw-unit-p2
+        worker-type: t-bitbar-gw-unit-p5
         worker:
             max-run-time: 5400
             artifacts:
@@ -459,7 +457,7 @@ jobs:
                 export PYTHONPATH=$MOZ_FETCHES_DIR/mozdevice:$PYTHONPATH &&
                 python3 ${MOZHARNESS_PATH}/scripts/${MOZHARNESS_SCRIPT} --config-file ${MOZHARNESS_PATH}/configs/${MOZHARNESS_CONFIG}
         treeherder:
-            platform: android-hw-p2-8-0-arm7/debug
+            platform: android-hw-p5-13-0-arm7/debug
             symbol: WR(wrench)
         when:
             files-changed:
@@ -468,11 +466,11 @@ jobs:
                 - 'testing/mozharness/configs/android/*.py'
                 - 'testing/mozbase/mozdevice/**'
 
-    android-hw-p2-opt:
-        description: Run opt wrench reftests on Android Pixel2
+    android-hw-p5-opt:
+        description: Run opt wrench reftests on Android Pixel5
         attributes:
             build_platform: android
-        worker-type: t-bitbar-gw-unit-p2
+        worker-type: t-bitbar-gw-unit-p5
         worker:
             max-run-time: 5400
             artifacts:
@@ -505,7 +503,7 @@ jobs:
                 export PYTHONPATH=$MOZ_FETCHES_DIR/mozdevice:$PYTHONPATH &&
                 python3 ${MOZHARNESS_PATH}/scripts/${MOZHARNESS_SCRIPT} --config-file ${MOZHARNESS_PATH}/configs/${MOZHARNESS_CONFIG}
         treeherder:
-            platform: android-hw-p2-8-0-arm7/opt
+            platform: android-hw-p5-13-0-arm7/opt
             symbol: WR(wrench)
         when:
             files-changed:

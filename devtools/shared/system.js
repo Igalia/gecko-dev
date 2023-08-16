@@ -3,26 +3,20 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Cc, Ci } = require("chrome");
-
-loader.lazyRequireGetter(this, "Services");
 loader.lazyRequireGetter(
   this,
   "DevToolsServer",
-  "devtools/server/devtools-server",
+  "resource://devtools/server/devtools-server.js",
   true
 );
-loader.lazyRequireGetter(
-  this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm",
-  true
-);
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+});
 loader.lazyGetter(this, "hostname", () => {
   try {
     // On some platforms (Linux according to try), this service does not exist and fails.
-    return Cc["@mozilla.org/network/dns-service;1"].getService(Ci.nsIDNSService)
-      .myHostName;
+    return Services.dns.myHostName;
   } catch (e) {
     return "";
   }
@@ -157,7 +151,7 @@ function getSystemInfo() {
     profile: getProfileLocation(),
 
     // Update channel
-    channel: AppConstants.MOZ_UPDATE_CHANNEL,
+    channel: lazy.AppConstants.MOZ_UPDATE_CHANNEL,
 
     dpi,
     useragent,

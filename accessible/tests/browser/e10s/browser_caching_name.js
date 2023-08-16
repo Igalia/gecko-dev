@@ -225,20 +225,6 @@ const markupTests = [
     ],
   },
   {
-    id: "imgemptyalt",
-    ruleset: "HTMLImgEmptyAlt",
-    markup: `
-    <span id="l1">test2</span>
-    <span id="l2">test3</span>
-    <img id="imgemptyalt"
-         aria-label="Logo of Mozilla"
-         aria-labelledby="l1 l2"
-         title="This is a logo"
-         alt=""
-         src="http://example.com/a11y/accessible/tests/mochitest/moz.png"/>`,
-    expected: ["test2 test3", "Logo of Mozilla", "This is a logo", ""],
-  },
-  {
     id: "tc",
     ruleset: "HTMLElm",
     markup: `
@@ -352,6 +338,7 @@ const markupTests = [
     <span id="l1">test2</span>
     <span id="l2">test3</span>
     <a id="a"
+       href=""
        aria-label="test1"
        aria-labelledby="l1 l2"
        title="test4">test5</a>`,
@@ -364,6 +351,7 @@ const markupTests = [
     <span id="l1">test2</span>
     <span id="l2">test3</span>
     <a id="a-img"
+       href=""
        aria-label="test1"
        aria-labelledby="l1 l2"
        title="test4"><img alt="test5"/></a>`,
@@ -486,7 +474,7 @@ async function testNameRule(browser, target, ruleset, expected) {
 markupTests.forEach(({ id, ruleset, markup, expected }) =>
   addAccessibleTask(
     markup,
-    async function(browser, accDoc) {
+    async function (browser, accDoc) {
       const observer = {
         observe(subject, topic, data) {
           const event = subject.QueryInterface(nsIAccessibleEvent);
@@ -509,7 +497,7 @@ markupTests.forEach(({ id, ruleset, markup, expected }) =>
  */
 addAccessibleTask(
   ``,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     let nameChanged = waitForEvent(EVENT_NAME_CHANGE, docAcc);
     await invokeContentTask(browser, [], () => {
       content.document.title = "new title";
@@ -529,7 +517,7 @@ addAccessibleTask(
 <button id="button" aria-labelledby="label">
 <div id="label" hidden>a</div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const button = findAccessibleChildByID(docAcc, "button");
     testName(button, "a");
     info("Changing label textContent");

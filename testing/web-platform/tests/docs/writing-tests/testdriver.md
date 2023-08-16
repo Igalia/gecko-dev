@@ -50,6 +50,8 @@ the global scope.
 ### Cookies ###
 ```eval_rst
 .. js:autofunction:: test_driver.delete_all_cookies
+.. js:autofunction:: test_driver.get_all_cookies
+.. js:autofunction:: test_driver.get_named_cookie
 ```
 
 ### Permissions ###
@@ -85,9 +87,27 @@ the global scope.
 
 ```
 
+### Accessibility ###
+```eval_rst
+.. js:autofunction:: test_driver.get_computed_label
+.. js:autofunction:: test_driver.get_computed_role
+
+```
+
 ### Seure Payment Confirmation ###
 ```eval_rst
 .. js:autofunction:: test_driver.set_spc_transaction_mode
+```
+
+### Federated Credential Management ###
+```eval_rst
+.. js:autofunction:: test_driver.cancel_fedcm_dialog
+.. js:autofunction:: test_driver.select_fedcm_account
+.. js:autofunction:: test_driver.get_fedcm_account_list
+.. js:autofunction:: test_driver.get_fedcm_dialog_title
+.. js:autofunction:: test_driver.get_fedcm_dialog_type
+.. js:autofunction:: test_driver.set_fedcm_delay_enabled
+.. js:autofunction:: test_driver.reset_fedcm_cooldown
 ```
 
 ### Using test_driver in other browsing contexts ###
@@ -129,9 +149,9 @@ function that can be used to send arbitary messages to the test
 window. For example, in an auxillary browsing context:
 
 ```js
-testdriver.set_test_context(window.opener)
-await testdriver.click(document.getElementsByTagName("button")[0])
-testdriver.message_test("click complete")
+test_driver.set_test_context(window.opener)
+await test_driver.click(document.getElementsByTagName("button")[0])
+test_driver.message_test("click complete")
 ```
 
 The requirement to have a handle to the test window does mean it's
@@ -171,7 +191,7 @@ await actions.send();
 ```
 
 Note that if an action uses an element reference, the context will be
-derived from that element, and must match any explictly set
+derived from that element, and must match any explicitly set
 context. Using elements in multiple contexts in a single action chain
 is not supported.
 
@@ -204,15 +224,13 @@ _Note: these special-key codepoints are not necessarily what you would expect. F
 
 ### set_permission
 
-Usage: `test_driver.set_permission(descriptor, state, one_realm=false, context=null)`
+Usage: `test_driver.set_permission(descriptor, state, context=null)`
  * _descriptor_: a
    [PermissionDescriptor](https://w3c.github.io/permissions/#dictdef-permissiondescriptor)
    or derived object
  * _state_: a
    [PermissionState](https://w3c.github.io/permissions/#enumdef-permissionstate)
    value
- * _one_realm_: a boolean that indicates whether the permission settings
-   apply to only one realm
  * context: a WindowProxy for the browsing context in which to perform the call
 
 This function causes permission requests and queries for the status of a
@@ -224,5 +242,5 @@ Example:
 
 ``` js
 await test_driver.set_permission({ name: "background-fetch" }, "denied");
-await test_driver.set_permission({ name: "push", userVisibleOnly: true }, "granted", true);
+await test_driver.set_permission({ name: "push", userVisibleOnly: true }, "granted");
 ```

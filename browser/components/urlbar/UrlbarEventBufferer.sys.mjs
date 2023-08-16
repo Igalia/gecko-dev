@@ -2,31 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.UrlbarUtils.getLogger({ prefix: "EventBufferer" })
 );
-
-// Maximum time events can be deferred for. In automation providers can be quite
-// slow, thus we need a longer timeout to avoid intermittent failures.
-const DEFERRING_TIMEOUT_MS = Cu.isInAutomation ? 1000 : 300;
 
 // Array of keyCodes to defer.
 const DEFERRED_KEY_CODES = new Set([
@@ -39,7 +27,8 @@ const DEFERRED_KEY_CODES = new Set([
 const QUERY_STATUS = {
   UKNOWN: 0,
   RUNNING: 1,
-  COMPLETE: 2,
+  RUNNING_GOT_RESULTS: 2,
+  COMPLETE: 3,
 };
 
 /**
@@ -57,8 +46,15 @@ const QUERY_STATUS = {
  * until more results arrive, at which time they're replayed.
  */
 export class UrlbarEventBufferer {
+  // Maximum time events can be deferred for. In automation providers can be
+  // quite slow, thus we need a longer timeout to avoid intermittent failures.
+  // Note: to avoid handling events too early, this timer should be larger than
+  // UrlbarProvidersManager.CHUNK_HEURISTIC_RESULTS_DELAY_MS.
+  static DEFERRING_TIMEOUT_MS = Cu.isInAutomation ? 1000 : 300;
+
   /**
    * Initialises the class.
+   *
    * @param {UrlbarInput} input The urlbar input object.
    */
   constructor(input) {
@@ -115,6 +111,7 @@ export class UrlbarEventBufferer {
   }
 
   onQueryResults(queryContext) {
+    this._lastQuery.status = QUERY_STATUS.RUNNING_GOT_RESULTS;
     // Ensure this runs after other results handling code.
     Services.tm.dispatchToMainThread(() => {
       this.replayDeferredEvents(true);
@@ -123,6 +120,7 @@ export class UrlbarEventBufferer {
 
   /**
    * Handles DOM events.
+   *
    * @param {Event} event DOM event from the input.
    */
   handleEvent(event) {
@@ -141,6 +139,7 @@ export class UrlbarEventBufferer {
   /**
    * Receives DOM events, eventually queues them up, and calls back when it's
    * the right time to handle the event.
+   *
    * @param {Event} event DOM event from the input.
    * @param {Function} callback to be invoked when it's the right time to handle
    *        the event.
@@ -159,6 +158,7 @@ export class UrlbarEventBufferer {
 
   /**
    * Adds a deferrable event to the deferred event queue.
+   *
    * @param {Event} event The event to defer.
    * @param {Function} callback to be invoked when it's the right time to handle
    *        the event.
@@ -183,7 +183,7 @@ export class UrlbarEventBufferer {
 
     if (!this._deferringTimeout) {
       let elapsed = Cu.now() - this._lastQuery.startDate;
-      let remaining = DEFERRING_TIMEOUT_MS - elapsed;
+      let remaining = UrlbarEventBufferer.DEFERRING_TIMEOUT_MS - elapsed;
       this._deferringTimeout = lazy.setTimeout(() => {
         this.replayDeferredEvents(false);
         this._deferringTimeout = null;
@@ -193,6 +193,7 @@ export class UrlbarEventBufferer {
 
   /**
    * Replays deferred key events.
+   *
    * @param {boolean} onlyIfSafe replays only if it's a safe time to do so.
    *        Setting this to false will replay all the queue events, without any
    *        checks, that is something we want to do only if the deferring
@@ -224,6 +225,7 @@ export class UrlbarEventBufferer {
 
   /**
    * Checks whether a given event should be deferred
+   *
    * @param {Event} event The event that should maybe be deferred.
    * @returns {boolean} Whether the event should be deferred.
    */
@@ -258,7 +260,10 @@ export class UrlbarEventBufferer {
 
     // This is an event that we'd defer, but if enough time has passed since the
     // start of the search, we don't want to block the user's workflow anymore.
-    if (this._lastQuery.startDate + DEFERRING_TIMEOUT_MS <= Cu.now()) {
+    if (
+      this._lastQuery.startDate + UrlbarEventBufferer.DEFERRING_TIMEOUT_MS <=
+      Cu.now()
+    ) {
       return false;
     }
 
@@ -277,6 +282,7 @@ export class UrlbarEventBufferer {
 
   /**
    * Checks if the bufferer is deferring events.
+   *
    * @returns {boolean} Whether the bufferer is deferring events.
    */
   get isDeferringEvents() {
@@ -286,6 +292,7 @@ export class UrlbarEventBufferer {
   /**
    * Checks if any of the current query provider asked to defer user selection
    * events.
+   *
    * @returns {boolean} Whether a provider asked to defer events.
    */
   get waitingDeferUserSelectionProviders() {
@@ -298,19 +305,20 @@ export class UrlbarEventBufferer {
    * and the type of event.
    * Use this method only after determining that the event should be deferred,
    * or after it has been deferred and you want to know if it can be played now.
+   *
    * @param {Event} event The event.
    * @returns {boolean} Whether the event can be played.
    */
   isSafeToPlayDeferredEvent(event) {
-    if (this._lastQuery.status != QUERY_STATUS.RUNNING) {
+    if (
+      this._lastQuery.status != QUERY_STATUS.RUNNING &&
+      this._lastQuery.status != QUERY_STATUS.RUNNING_GOT_RESULTS
+    ) {
       // The view can't get any more results, so there's no need to further
       // defer events.
       return true;
     }
-
-    let waitingFirstResult =
-      this._lastQuery.status == QUERY_STATUS.RUNNING &&
-      !this._lastQuery.context.results.length;
+    let waitingFirstResult = this._lastQuery.status == QUERY_STATUS.RUNNING;
     if (event.keyCode == KeyEvent.DOM_VK_RETURN) {
       // Check if we're waiting for providers that requested deferring.
       if (this.waitingDeferUserSelectionProviders) {

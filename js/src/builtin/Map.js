@@ -53,10 +53,7 @@ function MapForEach(callbackfn, thisArg = undefined) {
   var entries = callFunction(std_Map_entries, M);
 
   // Inlined: MapIteratorNext
-  var mapIterationResultPair = iteratorTemp.mapIterationResultPair;
-  if (!mapIterationResultPair) {
-    mapIterationResultPair = iteratorTemp.mapIterationResultPair = CreateMapIterationResultPair();
-  }
+  var mapIterationResultPair = globalMapIterationResultPair;
 
   while (true) {
     var done = GetNextMapEntryForIterator(entries, mapIterationResultPair);
@@ -73,7 +70,7 @@ function MapForEach(callbackfn, thisArg = undefined) {
   }
 }
 
-var iteratorTemp = { mapIterationResultPair: null };
+var globalMapIterationResultPair = CreateMapIterationResultPair();
 
 function MapIteratorNext() {
   // Step 1.
@@ -91,10 +88,7 @@ function MapIteratorNext() {
   // Steps 4-5 (implemented in GetNextMapEntryForIterator).
   // Steps 8-9 (omitted).
 
-  var mapIterationResultPair = iteratorTemp.mapIterationResultPair;
-  if (!mapIterationResultPair) {
-    mapIterationResultPair = iteratorTemp.mapIterationResultPair = CreateMapIterationResultPair();
-  }
+  var mapIterationResultPair = globalMapIterationResultPair;
 
   var retVal = { value: undefined, done: true };
 
@@ -137,3 +131,70 @@ function $MapSpecies() {
   return this;
 }
 SetCanonicalName($MapSpecies, "get [Symbol.species]");
+
+#ifdef NIGHTLY_BUILD
+// Array Grouping proposal
+//
+// Map.groupBy ( items, callbackfn )
+//
+// https://tc39.es/proposal-array-grouping/#sec-map.groupby
+function MapGroupBy(items, callbackfn) {
+  // Step 1. (Call to GroupBy is inlined.)
+
+  // GroupBy, step 1.
+  if (IsNullOrUndefined(items)) {
+    ThrowTypeError(
+      JSMSG_UNEXPECTED_TYPE,
+      DecompileArg(0, items),
+      items === null ? "null" : "undefined"
+    );
+  }
+
+  // GroupBy, step 2.
+  if (!IsCallable(callbackfn)) {
+    ThrowTypeError(JSMSG_NOT_FUNCTION, DecompileArg(1, callbackfn));
+  }
+
+  // Step 2.
+  var C = GetBuiltinConstructor("Map");
+  var map = new C();
+
+  // GroupBy, step 3. (Not applicable in our implementation.)
+
+  // GroupBy, step 4.
+  var k = 0;
+
+  // GroupBy, steps 4 and 6.
+  for (var value of allowContentIter(items)) {
+    // GroupBy, step 6.a. (Not applicable)
+    assert(k < 2 ** 53 - 1, "out-of-memory happens before k exceeds 2^53 - 1");
+
+    // GroupBy, steps 6.b-d. (Implicit through for-of loop.)
+
+    // GroupBy, step 6.e.
+    var key = callContentFunction(callbackfn, undefined, value, k);
+
+    // GroupBy, step 6.f. (Implicit through for-of loop.)
+
+    // GroupBy, step 6.g. (Not applicable)
+
+    // GroupBy, step 6.h. (Implicit through std_Map_get.)
+
+    // GroupBy, step 6.i. (Inlined call to AddValueToKeyedGroup.)
+    var elements = callFunction(std_Map_get, map, key);
+    if (elements === undefined) {
+      callFunction(std_Map_set, map, key, [value]);
+    } else {
+      DefineDataProperty(elements, elements.length, value);
+    }
+
+    // GroupBy, step 6.j.
+    k += 1;
+  }
+
+  // Step 3. (Result map already populated in the previous loop.)
+
+  // Step 4.
+  return map;
+}
+#endif

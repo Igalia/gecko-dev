@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/naga.svg?label=naga)](https://crates.io/crates/naga)
 [![Docs.rs](https://docs.rs/naga/badge.svg)](https://docs.rs/naga)
 [![Build Status](https://github.com/gfx-rs/naga/workflows/pipeline/badge.svg)](https://github.com/gfx-rs/naga/actions)
-![MSRV](https://img.shields.io/badge/rustc-1.56+-blue.svg)
+![MSRV](https://img.shields.io/badge/rustc-1.63+-blue.svg)
 [![codecov.io](https://codecov.io/gh/gfx-rs/naga/branch/master/graph/badge.svg?token=9VOKYO8BM2)](https://codecov.io/gh/gfx-rs/naga)
 
 The shader translation library for the needs of [wgpu](https://github.com/gfx-rs/wgpu).
@@ -74,14 +74,13 @@ default = ["spv-out"] #TEMP!
 This allows IDE basic checks to report errors there, unless your IDE is sufficiently configurable already.
 
 Finally, when changes to the snapshots are made, we should verify that the produced shaders
-are indeed valid for the target platforms they are compiled for. We automate this with `Makefile`:
+are indeed valid for the target platforms they are compiled for:
 ```bash
-make validate-spv # for Vulkan shaders, requires SPIRV-Tools installed
-make validate-msl # for Metal shaders, requires XCode command-line tools installed
-make validate-glsl # for OpenGL shaders, requires GLSLang installed
-make validate-dot # for dot files, requires GraphViz installed
-make validate-wgsl # for WGSL shaders
-make validate-hlsl-dxc # for HLSL shaders via DXC
-make validate-hlsl-fxc # for HLSL shaders via FXC
-# Note: HLSL Make targets make use of the "sh" shell. This is not the default shell in Windows.
+cargo xtask validate spv # for Vulkan shaders, requires SPIRV-Tools installed
+cargo xtask validate msl # for Metal shaders, requires XCode command-line tools installed
+cargo xtask validate glsl # for OpenGL shaders, requires GLSLang installed
+cargo xtask validate dot # for dot files, requires GraphViz installed
+cargo xtask validate wgsl # for WGSL shaders
+cargo xtask validate hlsl dxc # for HLSL shaders via DXC
+cargo xtask validate hlsl fxc # for HLSL shaders via FXC
 ```

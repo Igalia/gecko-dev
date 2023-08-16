@@ -9,6 +9,7 @@
 #include "nsGkAtoms.h"
 #include "nsAttrValue.h"
 #include "nsAttrValueInlines.h"
+#include "mozilla/dom/BindContext.h"
 #include "mozilla/dom/CustomElementRegistry.h"
 #include "mozilla/dom/ElementInlines.h"
 #include "mozilla/dom/MutationEventBinding.h"
@@ -50,15 +51,11 @@ bool nsStyledElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
                                              aMaybeScriptedPrincipal, aResult);
 }
 
-nsresult nsStyledElement::BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                        const nsAttrValueOrString* aValue,
-                                        bool aNotify) {
-  if (aNamespaceID == kNameSpaceID_None) {
-    if (aName == nsGkAtoms::style) {
-      if (aValue) {
-        SetMayHaveStyle();
-      }
-    }
+void nsStyledElement::BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                                    const nsAttrValue* aValue, bool aNotify) {
+  if (aNamespaceID == kNameSpaceID_None && aName == nsGkAtoms::style &&
+      aValue) {
+    SetMayHaveStyle();
   }
 
   return nsStyledElementBase::BeforeSetAttr(aNamespaceID, aName, aValue,
@@ -86,13 +83,13 @@ void nsStyledElement::InlineStyleDeclarationWillChange(
 
     if (needsOldValue) {
       nsAutoString oldValueStr;
-      modification = GetAttr(kNameSpaceID_None, nsGkAtoms::style, oldValueStr);
+      modification = GetAttr(nsGkAtoms::style, oldValueStr);
       if (modification) {
         aData.mOldValue.emplace();
         aData.mOldValue->SetTo(oldValueStr);
       }
     } else {
-      modification = HasAttr(kNameSpaceID_None, nsGkAtoms::style);
+      modification = HasAttr(nsGkAtoms::style);
     }
   }
 
@@ -207,4 +204,16 @@ void nsStyledElement::ParseStyleAttribute(const nsAString& aValue,
   }
 
   aResult.SetTo(aValue);
+}
+
+nsresult nsStyledElement::BindToTree(BindContext& aContext, nsINode& aParent) {
+  nsresult rv = nsStyledElementBase::BindToTree(aContext, aParent);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  if (HasAttr(nsGkAtoms::autofocus) && aContext.AllowsAutoFocus() &&
+      (!IsSVGElement() || IsFocusable())) {
+    aContext.OwnerDoc().ElementWithAutoFocusInserted(this);
+  }
+
+  return NS_OK;
 }

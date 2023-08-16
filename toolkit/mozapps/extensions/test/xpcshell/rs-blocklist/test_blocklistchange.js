@@ -29,23 +29,6 @@ const URI_EXTENSION_BLOCKLIST_DIALOG =
 // Allow insecure updates
 Services.prefs.setBoolPref("extensions.checkUpdateSecurity", false);
 
-if (AppConstants.platform == "android") {
-  // test_blocklistchange_v2.js tests blocklist v2, so we should flip the pref
-  // to enable the v3 blocklist on Android.
-  Assert.ok(
-    _TEST_NAME.includes("test_blocklistchange"),
-    `Expected _TEST_NAME to be test_blocklistchange{,_v2}.js`
-  );
-  if (_TEST_NAME.includes("test_blocklistchange.js")) {
-    Assert.equal(
-      Services.prefs.getBoolPref("extensions.blocklist.useMLBF"),
-      false,
-      "Blocklist v3 disabled by default on Android"
-    );
-    Services.prefs.setBoolPref("extensions.blocklist.useMLBF", true);
-  }
-}
-
 // TODO bug 1649906: strip blocklist v2-specific parts of this test.
 // All specific logic is already covered by other test files, but the tests
 // here trigger the logic via higher-level methods, so it may make sense to
@@ -275,8 +258,11 @@ if (useMLBF) {
         throw new Error(`Unexpected mock addon ID: ${guid}`);
       }
 
-      const { minVersion = "1", maxVersion = "3", targetApplication } =
-        block.versionRange?.[0] || {};
+      const {
+        minVersion = "1",
+        maxVersion = "3",
+        targetApplication,
+      } = block.versionRange?.[0] || {};
 
       for (let v = minVersion; v <= maxVersion; ++v) {
         BLOCKLIST_DATA[key].push({
@@ -306,7 +292,7 @@ var WindowWatcher = {
 
     // Simulate auto-disabling any softblocks
     var list = openArgs.wrappedJSObject.list;
-    list.forEach(function(aItem) {
+    list.forEach(function (aItem) {
       if (!aItem.blocked) {
         aItem.disable = true;
       }
@@ -326,7 +312,7 @@ MockRegistrar.register(
 
 var InstallConfirm = {
   confirm(aWindow, aUrl, aInstalls) {
-    aInstalls.forEach(function(aInstall) {
+    aInstalls.forEach(function (aInstall) {
       aInstall.install();
     });
   },
@@ -537,8 +523,8 @@ async function promiseStartupManagerWithAppChange(version) {
 add_task(async function setup() {
   createAppInfo("xpcshell@tests.mozilla.org", "XPCShell", "1", "1");
   if (useMLBF) {
-    const { ClientEnvironmentBase } = ChromeUtils.import(
-      "resource://gre/modules/components-utils/ClientEnvironment.jsm"
+    const { ClientEnvironmentBase } = ChromeUtils.importESModule(
+      "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs"
     );
     Object.defineProperty(ClientEnvironmentBase, "appinfo", {
       configurable: true,
@@ -562,7 +548,7 @@ add_task(async function setup() {
         manifest: {
           name: "Test",
           version: `${version}.0`,
-          applications: {
+          browser_specific_settings: {
             gecko: {
               id,
               // This file is generated below, as updateJson.

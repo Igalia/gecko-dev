@@ -120,7 +120,6 @@ char* nsEscape(const char* aStr, size_t aLength, size_t* aOutputLength,
   char* result = (char*)moz_xmalloc(dstSize);
 
   unsigned char* dst = (unsigned char*)result;
-  src = (const unsigned char*)aStr;
   if (aFlags == url_XPAlphas) {
     for (size_t i = 0; i < aLength; ++i) {
       unsigned char c = *src++;
@@ -363,7 +362,6 @@ static nsresult T_EscapeURL(const typename T::char_type* aPart, size_t aPartLen,
   typename T::char_type tempBuffer[100];
   unsigned int tempBufferPos = 0;
 
-  bool previousIsNonASCII = false;
   for (size_t i = 0; i < aPartLen; ++i) {
     unsigned_char_type c = *src++;
 
@@ -391,15 +389,11 @@ static nsresult T_EscapeURL(const typename T::char_type* aPart, size_t aPartLen,
     // not covered by the matrix.
     // ignoreAscii is not honored for control characters (C0 and DEL)
     //
-    // And, we should escape the '|' character when it occurs after any
-    // non-ASCII character as it may be aPart of a multi-byte character.
-    //
     // 0x20..0x7e are the valid ASCII characters.
     if ((dontNeedEscape(c, aFlags) || (c == HEX_ESCAPE && !forced) ||
          (c > 0x7f && ignoreNonAscii) ||
          (c >= 0x20 && c < 0x7f && ignoreAscii)) &&
-        !(c == ':' && colon) && !(c == ' ' && spaces) &&
-        !(previousIsNonASCII && c == '|' && !ignoreNonAscii)) {
+        !(c == ':' && colon) && !(c == ' ' && spaces)) {
       if (writing) {
         tempBuffer[tempBufferPos++] = c;
       }
@@ -423,8 +417,6 @@ static nsresult T_EscapeURL(const typename T::char_type* aPart, size_t aPartLen,
       }
       tempBufferPos = 0;
     }
-
-    previousIsNonASCII = (c > 0x7f);
   }
   if (writing) {
     if (!aResult.Append(tempBuffer, tempBufferPos, mozilla::fallible)) {

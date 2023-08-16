@@ -1,20 +1,17 @@
 const { ASRouter } = ChromeUtils.import(
   "resource://activity-stream/lib/ASRouter.jsm"
 );
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
-const { CFRMessageProvider } = ChromeUtils.import(
-  "resource://activity-stream/lib/CFRMessageProvider.jsm"
-);
-const { CFRPageActions } = ChromeUtils.import(
-  "resource://activity-stream/lib/CFRPageActions.jsm"
+const { CFRMessageProvider } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/CFRMessageProvider.sys.mjs"
 );
 
 /**
  * Load and modify a message for the test.
  */
-add_setup(async function() {
+add_setup(async function () {
   const initialMsgCount = ASRouter.state.messages.length;
   const heartbeatMsg = (await CFRMessageProvider.getMessages()).find(
     m => m.id === "HEARTBEAT_TACTIC_2"
@@ -34,17 +31,18 @@ add_setup(async function() {
     set: [
       [
         "browser.newtabpage.activity-stream.asrouter.providers.cfr",
-        `{"id":"cfr","enabled":true,"type":"remote-settings","bucket":"cfr","updateCycleInMs":0}`,
+        `{"id":"cfr","enabled":true,"type":"remote-settings","collection":"cfr","updateCycleInMs":0}`,
       ],
     ],
   });
 
   // Reload the providers
-  await BrowserTestUtils.waitForCondition(async () => {
-    await ASRouter._updateMessageProviders();
-    await ASRouter.loadMessagesFromAllProviders();
-    return ASRouter.state.messages.length > initialMsgCount;
-  }, "Should load the extra heartbeat message");
+  await ASRouter._updateMessageProviders();
+  await ASRouter.loadMessagesFromAllProviders();
+  await BrowserTestUtils.waitForCondition(
+    () => ASRouter.state.messages.length > initialMsgCount,
+    "Should load the extra heartbeat message"
+  );
 
   BrowserTestUtils.waitForCondition(
     () => ASRouter.state.messages.find(m => m.id === testMessage.id),
@@ -58,11 +56,12 @@ add_setup(async function() {
   registerCleanupFunction(async () => {
     await client.db.clear();
     // Reload the providers
-    await BrowserTestUtils.waitForCondition(async () => {
-      await ASRouter._updateMessageProviders();
-      await ASRouter.loadMessagesFromAllProviders();
-      return ASRouter.state.messages.length === initialMsgCount;
-    }, "Should reset messages");
+    await ASRouter._updateMessageProviders();
+    await ASRouter.loadMessagesFromAllProviders();
+    await BrowserTestUtils.waitForCondition(
+      () => ASRouter.state.messages.length === initialMsgCount,
+      "Should reset messages"
+    );
     await SpecialPowers.popPrefEnv();
   });
 });
@@ -72,6 +71,7 @@ add_setup(async function() {
  * Group is enabled if both user preferences are enabled.
  */
 add_task(async function test_heartbeat_tactic_2() {
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   const TEST_URL = "http://example.com";
   const msg = ASRouter.state.messages.find(m =>
     m.groups.includes("messaging-experiments")
@@ -91,7 +91,7 @@ add_task(async function test_heartbeat_tactic_2() {
     set: [
       [
         "browser.newtabpage.activity-stream.asrouter.providers.message-groups",
-        `{"id":"message-groups","enabled":true,"type":"remote-settings","bucket":"message-groups","updateCycleInMs":0}`,
+        `{"id":"message-groups","enabled":true,"type":"remote-settings","collection":"message-groups","updateCycleInMs":0}`,
       ],
       ["browser.userPreference.messaging-experiments", true],
     ],
@@ -115,7 +115,7 @@ add_task(async function test_heartbeat_tactic_2() {
   Assert.ok(ASRouter.isUnblockedMessage(msg), "Message is unblocked");
 
   let tab1 = await BrowserTestUtils.openNewForegroundTab(gBrowser, TEST_URL);
-  BrowserTestUtils.loadURI(tab1.linkedBrowser, TEST_URL);
+  BrowserTestUtils.loadURIString(tab1.linkedBrowser, TEST_URL);
 
   let chiclet = document.getElementById("contextual-feature-recommendation");
   Assert.ok(chiclet, "CFR chiclet element found");
@@ -137,7 +137,7 @@ add_task(async function test_heartbeat_tactic_2() {
   );
 
   let tab2 = await BrowserTestUtils.openNewForegroundTab(gBrowser, TEST_URL);
-  BrowserTestUtils.loadURI(tab2.linkedBrowser, TEST_URL);
+  BrowserTestUtils.loadURIString(tab2.linkedBrowser, TEST_URL);
 
   await BrowserTestUtils.waitForCondition(
     () => chiclet.hidden,

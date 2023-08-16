@@ -20,7 +20,6 @@ EXPORTS += [
     "ImageContainer.h",
     "ImageTypes.h",
     "IMFYCbCrImage.h",
-    "Layers.h",
     "LayersTypes.h",
     "LayerUserData.h",
     "opengl/OGLShaderConfig.h",
@@ -51,6 +50,13 @@ if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
         SOURCES += [
             "d3d11/CompositorD3D11.cpp",
             "d3d11/DeviceAttachmentsD3D11.cpp",
+        ]
+    if CONFIG["MOZ_WMF_MEDIA_ENGINE"]:
+        EXPORTS.mozilla.layers += [
+            "DcompSurfaceImage.h",
+        ]
+        UNIFIED_SOURCES += [
+            "DcompSurfaceImage.cpp",
         ]
 
 EXPORTS.gfxipc += [
@@ -121,6 +127,7 @@ EXPORTS.mozilla.layers += [
     "composite/FrameUniformityData.h",
     "composite/GPUVideoTextureHost.h",
     "composite/ImageComposite.h",
+    "composite/RemoteTextureHostWrapper.h",
     "composite/TextureHost.h",
     "CompositionRecorder.h",
     "Compositor.h",
@@ -142,7 +149,6 @@ EXPORTS.mozilla.layers += [
     "ipc/CanvasThread.h",
     "ipc/CanvasTranslator.h",
     "ipc/CompositableForwarder.h",
-    "ipc/CompositableInProcessManager.h",
     "ipc/CompositableTransactionParent.h",
     "ipc/CompositorBridgeChild.h",
     "ipc/CompositorBridgeParent.h",
@@ -173,7 +179,6 @@ EXPORTS.mozilla.layers += [
     "ipc/VideoBridgeChild.h",
     "ipc/VideoBridgeParent.h",
     "ipc/VideoBridgeUtils.h",
-    "LayerAttributes.h",
     "LayersTypes.h",
     "MemoryPressureObserver.h",
     "NativeLayer.h",
@@ -191,6 +196,7 @@ EXPORTS.mozilla.layers += [
     "SampleTime.h",
     "ScreenshotGrabber.h",
     "ScrollableLayerGuid.h",
+    "ScrollbarData.h",
     "ShareableCanvasRenderer.h",
     "SourceSurfaceSharedData.h",
     "SurfacePool.h",
@@ -225,17 +231,11 @@ EXPORTS.mozilla.layers += [
     "ZoomConstraints.h",
 ]
 
-if CONFIG["MOZ_WAYLAND"]:
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     EXPORTS.mozilla.layers += [
         "DMABUFSurfaceImage.h",
-        "NativeLayerWayland.h",
         "opengl/DMABUFTextureClientOGL.h",
         "opengl/DMABUFTextureHostOGL.h",
-        "SurfacePoolWayland.h",
-    ]
-    UNIFIED_SOURCES += [
-        "NativeLayerWayland.cpp",
-        "SurfacePoolWayland.cpp",
     ]
     SOURCES += [
         "DMABUFSurfaceImage.cpp",
@@ -243,8 +243,17 @@ if CONFIG["MOZ_WAYLAND"]:
         "opengl/DMABUFTextureHostOGL.cpp",
     ]
 
+if CONFIG["MOZ_WAYLAND"]:
+    EXPORTS.mozilla.layers += [
+        "NativeLayerWayland.h",
+        "SurfacePoolWayland.h",
+    ]
+    UNIFIED_SOURCES += [
+        "NativeLayerWayland.cpp",
+        "SurfacePoolWayland.cpp",
+    ]
+
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "cocoa":
-    REQUIRES_UNIFIED_BUILD = True
     EXPORTS.mozilla.layers += [
         "NativeLayerCA.h",
         "SurfacePoolCA.h",
@@ -303,6 +312,7 @@ UNIFIED_SOURCES += [
     "apz/src/KeyboardMap.cpp",
     "apz/src/KeyboardScrollAction.cpp",
     "apz/src/OverscrollHandoffState.cpp",
+    "apz/src/OvershootDetector.cpp",
     "apz/src/PotentialCheckerboardDurationTracker.cpp",
     "apz/src/QueuedInput.cpp",
     "apz/src/SampledAPZCState.cpp",
@@ -345,6 +355,7 @@ UNIFIED_SOURCES += [
     "composite/FrameUniformityData.cpp",
     "composite/GPUVideoTextureHost.cpp",
     "composite/ImageComposite.cpp",
+    "composite/RemoteTextureHostWrapper.cpp",
     "CompositionRecorder.cpp",
     "Compositor.cpp",
     "CompositorAnimationStorage.cpp",
@@ -362,7 +373,6 @@ UNIFIED_SOURCES += [
     "ipc/CanvasThread.cpp",
     "ipc/CanvasTranslator.cpp",
     "ipc/CompositableForwarder.cpp",
-    "ipc/CompositableInProcessManager.cpp",
     "ipc/CompositableTransactionParent.cpp",
     "ipc/CompositorBench.cpp",
     "ipc/CompositorBridgeChild.cpp",
@@ -387,7 +397,6 @@ UNIFIED_SOURCES += [
     "ipc/UiCompositorControllerParent.cpp",
     "ipc/VideoBridgeChild.cpp",
     "ipc/VideoBridgeParent.cpp",
-    "Layers.cpp",
     "LayersTypes.cpp",
     "MemoryPressureObserver.cpp",
     "opengl/CompositingRenderTargetOGL.cpp",
@@ -511,9 +520,6 @@ if CONFIG["CC_TYPE"] == "gcc":
     CXXFLAGS += ["-Wno-maybe-uninitialized"]
 
 UNIFIED_SOURCES += []
-
-if CONFIG["FUZZING"] and CONFIG["FUZZING_INTERFACES"]:
-    TEST_DIRS += ["ipc/fuzztest"]
 
 # Add libFuzzer configuration directives
 include("/tools/fuzzing/libfuzzer-config.mozbuild")

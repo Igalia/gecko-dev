@@ -268,7 +268,7 @@ DOMException* IDBRequest::GetError(ErrorResult& aRv) {
   return mError;
 }
 
-NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS(IDBRequest)
+NS_IMPL_CYCLE_COLLECTION_CLASS(IDBRequest)
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(IDBRequest,
                                                   DOMEventTargetHelper)
@@ -312,11 +312,9 @@ void IDBRequest::GetEventTargetParent(EventChainPreVisitor& aVisitor) {
 }
 
 IDBOpenDBRequest::IDBOpenDBRequest(SafeRefPtr<IDBFactory> aFactory,
-                                   nsIGlobalObject* aGlobal,
-                                   bool aFileHandleDisabled)
+                                   nsIGlobalObject* aGlobal)
     : IDBRequest(aGlobal),
       mFactory(std::move(aFactory)),
-      mFileHandleDisabled(aFileHandleDisabled),
       mIncreasedActiveDatabaseCount(false) {
   AssertIsOnOwningThread();
   MOZ_ASSERT(mFactory);
@@ -335,10 +333,8 @@ RefPtr<IDBOpenDBRequest> IDBOpenDBRequest::Create(
   aFactory->AssertIsOnOwningThread();
   MOZ_ASSERT(aGlobal);
 
-  bool fileHandleDisabled = !StaticPrefs::dom_fileHandle_enabled();
-
   RefPtr<IDBOpenDBRequest> request =
-      new IDBOpenDBRequest(std::move(aFactory), aGlobal, fileHandleDisabled);
+      new IDBOpenDBRequest(std::move(aFactory), aGlobal);
   CaptureCaller(aCx, request->mFilename, &request->mLineNo, &request->mColumn);
 
   if (!NS_IsMainThread()) {

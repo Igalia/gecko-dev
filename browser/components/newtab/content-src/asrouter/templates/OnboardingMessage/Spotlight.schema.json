@@ -3,9 +3,7 @@
   "$id": "file:///Spotlight.schema.json",
   "title": "Spotlight",
   "description": "A template with an image, title, content and two buttons.",
-  "allOf": [
-    { "$ref": "file:///FxMSCommon.schema.json#/$defs/Message" }
-  ],
+  "allOf": [{ "$ref": "file:///FxMSCommon.schema.json#/$defs/Message" }],
   "type": "object",
   "properties": {
     "content": {
@@ -14,16 +12,11 @@
         "template": {
           "type": "string",
           "description": "Specify the layout template for the Spotlight",
-          "enum": ["logo-and-content", "multistage"]
+          "const": "multistage"
         },
         "backdrop": {
           "type": "string",
           "description": "Background css behind modal content"
-        },
-        "logoImageURL": {
-          "type": "string",
-          "format": "uri",
-          "description": "(Deprecated by logo.imageURL)"
         },
         "logo": {
           "type": "object",
@@ -43,83 +36,6 @@
           },
           "additionalProperties": true
         },
-        "body": {
-          "type": "object",
-          "properties": {
-            "title": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "$ref": "file:///FxMSCommon.schema.json#/$defs/localizableText",
-                  "description": "The title shown in the Spotlight message"
-                }
-              },
-              "required": ["label"]
-            },
-            "text": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "$ref": "file:///FxMSCommon.schema.json#/$defs/localizableText",
-                  "description": "The content shown in the Spotlight message"
-                }
-              },
-              "required": ["label"]
-            },
-            "primary": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "$ref": "file:///FxMSCommon.schema.json#/$defs/localizableText",
-                  "description": "The label for the primary button"
-                },
-                "action": {
-                  "type": "object",
-                  "properties": {
-                    "type": {
-                      "type": "string",
-                      "description": "Action dispatched by the button."
-                    },
-                    "data": {
-                      "type": "object"
-                    }
-                  },
-                  "required": ["type"],
-                  "additionalProperties": true
-                }
-              },
-              "required": ["label", "action"]
-            },
-            "secondary": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "$ref": "file:///FxMSCommon.schema.json#/$defs/localizableText",
-                  "description": "The label for the secondary button"
-                }
-              },
-              "required": ["label", "action"]
-            }
-          },
-          "additionalProperties": true,
-          "required": ["title", "text", "primary", "secondary"]
-        },
-        "extra": {
-          "type": "object",
-          "properties": {
-            "expanded": {
-              "type": "object",
-              "properties": {
-                "label": {
-                  "$ref": "file:///FxMSCommon.schema.json#/$defs/localizableText",
-                  "description": "The label for the secondary button"
-                }
-              },
-              "required": ["label"]
-            }
-          },
-          "additionalProperties": true
-        },
         "screens": {
           "type": "array",
           "description": "Collection of individual screen content"
@@ -131,33 +47,18 @@
         "disableHistoryUpdates": {
           "type": "boolean",
           "description": "Don't alter the browser session's history stack - used with messaging surfaces like Feature Callouts"
+        },
+        "startScreen": {
+          "type": "integer",
+          "description": "Index of first screen to show from message, defaulting to 0"
         }
       },
-      "additionalProperties": true,
-      "if": {
-        "properties": {
-          "logoImageURL": { "type": "null" }
-        }
-      },
-      "then": {
-        "properties": {
-          "logo": {
-            "oneOf": [
-              {
-                "required": ["imageURL"]
-              },
-              {
-                "required": ["imageId"]
-              }
-            ]
-          }
-        }
-      },
-      "required": ["template"]
+      "additionalProperties": true
     },
     "template": {
       "type": "string",
-      "const": "spotlight"
+      "description": "Specify whether the surface is shown as a Spotlight modal or an in-surface Feature Callout dialog",
+      "enum": ["spotlight", "feature_callout"]
     }
   },
   "additionalProperties": true,

@@ -1,4 +1,4 @@
-# Copyright (c) 2020 The WebRTC project authors. All Rights Reserved.
+# Copyright (c) 2023 The WebRTC project authors. All Rights Reserved.
 #
 # Use of this source code is governed by a BSD-style license
 # that can be found in the LICENSE file in the root of the source
@@ -8,27 +8,104 @@
 
 import("../../../webrtc.gni")
 
-rtc_library("nack_module") {
-  sources = [
-    "nack_module.cc",
-    "nack_module.h",
-  ]
+visibility = [
+  ":*",
+  "../:video_coding_legacy",
+  "../:video_coding_unittests",
+]
 
+rtc_library("deprecated_decoding_state") {
+  sources = [
+    "decoding_state.cc",
+    "decoding_state.h",
+  ]
   deps = [
-    "..:nack_module",
-    "../..:module_api",
-    "../../../api/units:time_delta",
-    "../../../api/units:timestamp",
-    "../../../rtc_base:checks",
-    "../../../rtc_base:criticalsection",
-    "../../../rtc_base:deprecation",
+    ":deprecated_frame_buffer",
+    ":deprecated_jitter_buffer_common",
+    ":deprecated_packet",
+    "../../../common_video",
+    "../../../modules:module_api_public",
     "../../../rtc_base:logging",
-    "../../../rtc_base:macromagic",
-    "../../../rtc_base:rtc_numerics",
-    "../../../rtc_base/experiments:field_trial_parser",
-    "../../../rtc_base/synchronization:mutex",
-    "../../../system_wrappers",
-    "../../../system_wrappers:field_trial",
-    "../../utility",
+  ]
+}
+
+rtc_library("deprecated_event_wrapper") {
+  sources = [
+    "event_wrapper.cc",
+    "event_wrapper.h",
+  ]
+  deps = [ "../../../rtc_base:rtc_event" ]
+}
+
+rtc_library("deprecated_jitter_buffer_common") {
+  sources = [ "jitter_buffer_common.h" ]
+}
+
+rtc_library("deprecated_frame_buffer") {
+  sources = [
+    "frame_buffer.cc",
+    "frame_buffer.h",
+  ]
+  deps = [
+    ":deprecated_jitter_buffer_common",
+    ":deprecated_packet",
+    ":deprecated_session_info",
+    "../../../api/video:encoded_image",
+    "../../../api/video:video_rtp_headers",
+    "../../../modules/video_coding:codec_globals_headers",
+    "../../../modules/video_coding:encoded_frame",
+    "../../../rtc_base:checks",
+    "../../../rtc_base:event_tracer",
+    "../../../rtc_base:logging",
+  ]
+}
+
+rtc_library("deprecated_packet") {
+  sources = [
+    "packet.cc",
+    "packet.h",
+  ]
+  deps = [
+    "../../../api:rtp_headers",
+    "../../../api:rtp_packet_info",
+    "../../../api/units:timestamp",
+    "../../../api/video:video_frame_type",
+    "../../../modules/rtp_rtcp:rtp_rtcp_format",
+    "../../../modules/rtp_rtcp:rtp_video_header",
+  ]
+  absl_deps = [ "//third_party/abseil-cpp/absl/types:optional" ]
+}
+
+rtc_library("deprecated_session_info") {
+  deps = [
+    ":deprecated_jitter_buffer_common",
+    ":deprecated_packet",
+    "../../../modules:module_api",
+    "../../../modules:module_api_public",
+    "../../../modules/video_coding:codec_globals_headers",
+    "../../../rtc_base:logging",
+  ]
+  sources = [
+    "session_info.cc",
+    "session_info.h",
+  ]
+  absl_deps = [ "//third_party/abseil-cpp/absl/types:variant" ]
+}
+
+rtc_library("deprecated_unittests") {
+  testonly = true
+  sources = [
+    "decoding_state_unittest.cc",
+    "session_info_unittest.cc",
+  ]
+  visibility += [ "../../../modules/*" ]
+  deps = [
+    ":deprecated_decoding_state",
+    ":deprecated_frame_buffer",
+    ":deprecated_packet",
+    ":deprecated_session_info",
+    "../../../modules/rtp_rtcp:rtp_video_header",
+    "../../../modules/video_coding:codec_globals_headers",
+    "../../../test:test_support",
   ]
 }

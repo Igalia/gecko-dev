@@ -2,12 +2,20 @@ name: validation-macos
 on:
   pull_request:
     paths:
-    - 'tests/out/msl/*.msl'
+      - '.github/workflows/validation-macos.yml'
+      - 'tests/out/msl/*.msl'
+      - 'xtask/**'
 
 jobs:
   validate-macos:
     name: MSL
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v2
-      - run: make validate-msl
+      - uses: actions/checkout@v3
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            xtask -> target
+
+      - run: cargo xtask validate msl

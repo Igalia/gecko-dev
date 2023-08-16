@@ -11,7 +11,7 @@ const TEST_URI =
   "http://example.com/browser/devtools/client/webconsole/" +
   "test/browser/test-eval-in-stackframe.html";
 
-add_task(async function() {
+add_task(async function () {
   // TODO: Remove this pref change when middleware for terminating requests
   // when closing a panel is implemented
   await pushPref("devtools.debugger.features.inline-preview", false);
@@ -66,7 +66,7 @@ add_task(async function() {
   );
 
   info("Resuming the thread");
-  dbg.actions.resume(dbg.selectors.getThreadContext());
+  dbg.actions.resume();
 
   await onFirstCallMessageReceived;
   ok(

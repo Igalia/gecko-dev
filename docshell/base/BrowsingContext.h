@@ -15,7 +15,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/Span.h"
-#include "mozilla/Tuple.h"
+
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/LocationBase.h"
 #include "mozilla/dom/MaybeDiscarded.h"
@@ -54,6 +54,7 @@ class LogModule;
 
 namespace ipc {
 class IProtocol;
+class IPCResult;
 
 template <typename T>
 struct IPDLParamTraits;
@@ -75,6 +76,7 @@ class SessionHistoryInfo;
 class SessionStorageManager;
 class StructuredCloneHolder;
 class WindowContext;
+class WindowGlobalChild;
 struct WindowPostMessageOptions;
 class WindowProxyHolder;
 
@@ -83,6 +85,19 @@ enum class ExplicitActiveStatus : uint8_t {
   Active,
   Inactive,
   EndGuard_,
+};
+
+struct EmbedderColorSchemes {
+  PrefersColorSchemeOverride mUsed{};
+  PrefersColorSchemeOverride mPreferred{};
+
+  bool operator==(const EmbedderColorSchemes& aOther) const {
+    return mUsed == aOther.mUsed && mPreferred == aOther.mPreferred;
+  }
+
+  bool operator!=(const EmbedderColorSchemes& aOther) const {
+    return !(*this == aOther);
+  }
 };
 
 // Fields are, by default, settable by any process and readable by any process.
@@ -123,6 +138,13 @@ enum class ExplicitActiveStatus : uint8_t {
   /* Hold the audio muted state and should be used on top level browsing      \
    * contexts only */                                                         \
   FIELD(Muted, bool)                                                          \
+  /* Hold the pinned/app-tab state and should be used on top level browsing   \
+   * contexts only */                                                         \
+  FIELD(IsAppTab, bool)                                                       \
+  /* Whether there's more than 1 tab / toplevel browsing context in this      \
+   * parent window. Used to determine if a given BC is allowed to resize      \
+   * and/or move the window or not. */                                        \
+  FIELD(HasSiblings, bool)                                                    \
   /* Indicate that whether we should delay media playback, which would only   \
      be done on an unvisited tab. And this should only be used on the top     \
      level browsing contexts */                                               \
@@ -161,6 +183,7 @@ enum class ExplicitActiveStatus : uint8_t {
   FIELD(UseGlobalHistory, bool)                                               \
   FIELD(TargetTopLevelLinkClicksToBlankInternal, bool)                        \
   FIELD(FullscreenAllowedByOwner, bool)                                       \
+  FIELD(ForceDesktopViewport, bool)                                           \
   /*                                                                          \
    * "is popup" in the spec.                                                  \
    * Set only on top browsing contexts.                                       \
@@ -215,7 +238,7 @@ enum class ExplicitActiveStatus : uint8_t {
   FIELD(PrefersColorSchemeOverride, dom::PrefersColorSchemeOverride)          \
   /* prefers-color-scheme override based on the color-scheme style of our     \
    * <browser> embedder element. */                                           \
-  FIELD(EmbedderColorScheme, dom::PrefersColorSchemeOverride)                 \
+  FIELD(EmbedderColorSchemes, EmbedderColorSchemes)                           \
   FIELD(DisplayMode, dom::DisplayMode)                                        \
   /* The number of entries added to the session history because of this       \
    * browsing context. */                                                     \
@@ -234,7 +257,16 @@ enum class ExplicitActiveStatus : uint8_t {
   /* This field only gets incrememented when we start navigations in the      \
    * parent process. This is used for keeping track of the racing navigations \
    * between the parent and content processes. */                             \
-  FIELD(ParentInitiatedNavigationEpoch, uint64_t)
+  FIELD(ParentInitiatedNavigationEpoch, uint64_t)                             \
+  /* This browsing context is for a synthetic image document wrapping an      \
+   * image embedded in <object> or <embed>. */                                \
+  FIELD(SyntheticDocumentContainer, bool)                                     \
+  /* If true, this document is embedded within a content document,  either    \
+   * loaded in the parent (e.g. about:addons or the devtools toolbox), or in  \
+   * a content process. */                                                    \
+  FIELD(EmbeddedInContentDocument, bool)                                      \
+  /* If true, this browsing context is within a hidden embedded document. */  \
+  FIELD(IsUnderHiddenEmbedderElement, bool)
 
 // BrowsingContext, in this context, is the cross process replicated
 // environment in which information about documents is stored. In
@@ -366,6 +398,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Element* GetEmbedderElement() const { return mEmbedderElement; }
   void SetEmbedderElement(Element* aEmbedder);
 
+  // Return true if the type of the embedder element is either object
+  // or embed, false otherwise.
+  bool IsEmbedderTypeObjectOrEmbed();
+
   // Called after the BrowingContext has been embedded in a FrameLoader. This
   // happens after `SetEmbedderElement` is called on the BrowsingContext and
   // after the BrowsingContext has been set on the FrameLoader.
@@ -488,6 +524,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   Span<RefPtr<BrowsingContext>> Children() const;
   void GetChildren(nsTArray<RefPtr<BrowsingContext>>& aChildren);
 
+  Span<RefPtr<BrowsingContext>> NonSyntheticChildren() const;
+
   const nsTArray<RefPtr<WindowContext>>& GetWindowContexts() {
     return mWindowContexts;
   }
@@ -578,6 +616,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                       aRv);
   }
 
+  bool ForceDesktopViewport() const { return GetForceDesktopViewport(); }
+
   bool AuthorStyleDisabledDefault() const {
     return GetAuthorStyleDisabledDefault();
   }
@@ -630,32 +670,26 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     }
   }
 
-  // Using the rules for choosing a browsing context we try to find
-  // the browsing context with the given name in the set of
-  // transitively reachable browsing contexts. Performs access control
-  // checks with regard to this.
-  // See
-  // https://html.spec.whatwg.org/multipage/browsers.html#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name.
-  //
-  // BrowsingContext::FindWithName(const nsAString&) is equivalent to
-  // calling nsIDocShellTreeItem::FindItemWithName(aName, nullptr,
-  // nullptr, false, <return value>).
-  BrowsingContext* FindWithName(const nsAString& aName,
-                                bool aUseEntryGlobalForAccessCheck = true);
-
   // Find a browsing context in this context's list of
   // children. Doesn't consider the special names, '_self', '_parent',
   // '_top', or '_blank'. Performs access control checks with regard to
   // 'this'.
   BrowsingContext* FindChildWithName(const nsAString& aName,
-                                     BrowsingContext& aRequestingContext);
+                                     WindowGlobalChild& aRequestingWindow);
 
   // Find a browsing context in the subtree rooted at 'this' Doesn't
   // consider the special names, '_self', '_parent', '_top', or
-  // '_blank'. Performs access control checks with regard to
-  // 'aRequestingContext'.
+  // '_blank'.
+  //
+  // If passed, performs access control checks with regard to
+  // 'aRequestingContext', otherwise performs no access checks.
   BrowsingContext* FindWithNameInSubtree(const nsAString& aName,
-                                         BrowsingContext& aRequestingContext);
+                                         WindowGlobalChild* aRequestingWindow);
+
+  // Find the special browsing context if aName is '_self', '_parent',
+  // '_top', but not '_blank'. The latter is handled in FindWithName
+  BrowsingContext* FindWithSpecialName(const nsAString& aName,
+                                       WindowGlobalChild& aRequestingWindow);
 
   nsISupports* GetParentObject() const;
   JSObject* WrapObject(JSContext* aCx,
@@ -739,7 +773,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     already_AddRefed<WindowContext> GetParent();
     already_AddRefed<BrowsingContext> GetOpener();
 
-    uint64_t GetOpenerId() const { return mFields.mOpenerId; }
+    uint64_t GetOpenerId() const { return mFields.Get<IDX_OpenerId>(); }
 
     bool mWindowless = false;
     bool mUseRemoteTabs = false;
@@ -758,12 +792,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   IPCInitializer GetIPCInitializer();
 
   // Create a BrowsingContext object from over IPC.
-  static void CreateFromIPC(IPCInitializer&& aInitializer,
-                            BrowsingContextGroup* aGroup,
-                            ContentParent* aOriginProcess);
-
-  // Performs access control to check that 'this' can access 'aTarget'.
-  bool CanAccess(BrowsingContext* aTarget, bool aConsiderOpener = true);
+  static mozilla::ipc::IPCResult CreateFromIPC(IPCInitializer&& aInitializer,
+                                               BrowsingContextGroup* aGroup,
+                                               ContentParent* aOriginProcess);
 
   bool IsSandboxedFrom(BrowsingContext* aTarget);
 
@@ -816,9 +847,9 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // the current URI.
   void SessionHistoryCommit(const LoadingSessionHistoryInfo& aInfo,
                             uint32_t aLoadType, nsIURI* aCurrentURI,
-                            bool aHadActiveEntry, bool aPersist,
-                            bool aCloneEntryChildren, bool aChannelExpired,
-                            uint32_t aCacheKey);
+                            SessionHistoryInfo* aPreviousActiveEntry,
+                            bool aPersist, bool aCloneEntryChildren,
+                            bool aChannelExpired, uint32_t aCacheKey);
 
   // Set a new active entry on this browsing context. This is used for
   // implementing history.pushState/replaceState and same document navigations.
@@ -850,12 +881,12 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   // Return mTriggeringPrincipal and mPrincipalToInherit if the load id
   // saved with the principal matches the current load identifier of this BC.
-  Tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
+  std::tuple<nsCOMPtr<nsIPrincipal>, nsCOMPtr<nsIPrincipal>>
   GetTriggeringAndInheritPrincipalsForCurrentLoad();
 
   void HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
                  bool aRequireUserInteraction, bool aUserActivation,
-                 std::function<void(int32_t&&)>&& aResolver);
+                 std::function<void(Maybe<int32_t>&&)>&& aResolver);
 
   bool ShouldUpdateSessionHistory(uint32_t aLoadType);
 
@@ -910,6 +941,13 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void AddDiscardListener(std::function<void(uint64_t)>&& aListener);
 
+  bool IsAppTab() { return GetIsAppTab(); }
+  bool HasSiblings() { return GetHasSiblings(); }
+
+  bool IsUnderHiddenEmbedderElement() const {
+    return GetIsUnderHiddenEmbedderElement();
+  }
+
  protected:
   virtual ~BrowsingContext();
   BrowsingContext(WindowContext* aParentWindow, BrowsingContextGroup* aGroup,
@@ -927,18 +965,13 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                                        bool aHasPostData);
 
  private:
-  void Attach(bool aFromIPC, ContentParent* aOriginProcess);
+  mozilla::ipc::IPCResult Attach(bool aFromIPC, ContentParent* aOriginProcess);
 
   // Recomputes whether we can execute scripts in this BrowsingContext based on
   // the value of AllowJavascript() and whether scripts are allowed in the
   // parent WindowContext. Called whenever the AllowJavascript() flag or the
   // parent WC changes.
   void RecomputeCanExecuteScripts();
-
-  // Find the special browsing context if aName is '_self', '_parent',
-  // '_top', but not '_blank'. The latter is handled in FindWithName
-  BrowsingContext* FindWithSpecialName(const nsAString& aName,
-                                       BrowsingContext& aRequestingContext);
 
   // Is it early enough in the BrowsingContext's lifecycle that it is still
   // OK to set OriginAttributes?
@@ -1030,8 +1063,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
     return IsTop();
   }
 
-  bool CanSet(FieldIndex<IDX_EmbedderColorScheme>,
-              dom::PrefersColorSchemeOverride, ContentParent* aSource) {
+  bool CanSet(FieldIndex<IDX_EmbedderColorSchemes>, const EmbedderColorSchemes&,
+              ContentParent* aSource) {
     return CheckOnlyEmbedderCanSet(aSource);
   }
 
@@ -1042,12 +1075,14 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
 
   void DidSet(FieldIndex<IDX_InRDMPane>, bool aOldValue);
 
-  void DidSet(FieldIndex<IDX_EmbedderColorScheme>,
-              dom::PrefersColorSchemeOverride aOldValue);
+  void DidSet(FieldIndex<IDX_EmbedderColorSchemes>,
+              EmbedderColorSchemes&& aOldValue);
 
   void DidSet(FieldIndex<IDX_PrefersColorSchemeOverride>,
               dom::PrefersColorSchemeOverride aOldValue);
 
+  template <typename Callback>
+  void WalkPresContexts(Callback&&);
   void PresContextAffectingFieldChanged();
 
   void DidSet(FieldIndex<IDX_MediumOverride>, nsString&& aOldValue);
@@ -1059,6 +1094,8 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_TouchEventsOverrideInternal>,
               dom::TouchEventsOverride aTouchEventsOverride,
               ContentParent* aSource);
+  void DidSet(FieldIndex<IDX_TouchEventsOverrideInternal>,
+              dom::TouchEventsOverride&& aOldValue);
 
   bool CanSet(FieldIndex<IDX_DisplayMode>, const enum DisplayMode& aDisplayMode,
               ContentParent* aSource) {
@@ -1077,6 +1114,12 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   // And then, we do a pre-order walk in the tree to refresh the
   // volume of all media elements.
   void DidSet(FieldIndex<IDX_Muted>);
+
+  bool CanSet(FieldIndex<IDX_IsAppTab>, const bool& aValue,
+              ContentParent* aSource);
+
+  bool CanSet(FieldIndex<IDX_HasSiblings>, const bool& aValue,
+              ContentParent* aSource);
 
   bool CanSet(FieldIndex<IDX_ShouldDelayMediaFromStart>, const bool& aValue,
               ContentParent* aSource);
@@ -1171,8 +1214,27 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
                       ContentParent* aSource);
   void DidSet(FieldIndex<IDX_AllowJavascript>, bool aOldValue);
 
+  bool CanSet(FieldIndex<IDX_ForceDesktopViewport>, bool aValue,
+              ContentParent* aSource) {
+    return IsTop() && XRE_IsParentProcess();
+  }
+
+  // TODO(emilio): Maybe handle the flag being set dynamically without
+  // navigating? The previous code didn't do it tho, and a reload is probably
+  // worth it regardless.
+  // void DidSet(FieldIndex<IDX_ForceDesktopViewport>, bool aOldValue);
+
   bool CanSet(FieldIndex<IDX_HasRestoreData>, bool aNewValue,
               ContentParent* aSource);
+
+  bool CanSet(FieldIndex<IDX_IsUnderHiddenEmbedderElement>,
+              const bool& aIsUnderHiddenEmbedderElement,
+              ContentParent* aSource);
+
+  bool CanSet(FieldIndex<IDX_EmbeddedInContentDocument>, bool,
+              ContentParent* aSource) {
+    return CheckOnlyEmbedderCanSet(aSource);
+  }
 
   template <size_t I, typename T>
   bool CanSet(FieldIndex<I>, const T&, ContentParent*) {
@@ -1194,6 +1256,10 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   bool CanSet(FieldIndex<IDX_IsInBFCache>, bool, ContentParent* aSource);
   void DidSet(FieldIndex<IDX_IsInBFCache>);
 
+  void DidSet(FieldIndex<IDX_SyntheticDocumentContainer>);
+
+  void DidSet(FieldIndex<IDX_IsUnderHiddenEmbedderElement>, bool aOldValue);
+
   // Allow if the process attemping to set field is the same as the owning
   // process. Deprecated. New code that might use this should generally be moved
   // to WindowContext or be settable only by the parent process.
@@ -1206,7 +1272,7 @@ class BrowsingContext : public nsILoadContext, public nsWrapperCache {
   void CreateChildSHistory();
 
   using PrincipalWithLoadIdentifierTuple =
-      Tuple<nsCOMPtr<nsIPrincipal>, uint64_t>;
+      std::tuple<nsCOMPtr<nsIPrincipal>, uint64_t>;
 
   nsIPrincipal* GetSavedPrincipal(
       Maybe<PrincipalWithLoadIdentifierTuple> aPrincipalTuple);

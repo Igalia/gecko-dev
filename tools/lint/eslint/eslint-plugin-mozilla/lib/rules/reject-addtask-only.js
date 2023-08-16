@@ -11,10 +11,10 @@
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-addtask-only.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-addtask-only.html",
     },
     hasSuggestions: true,
+    schema: [],
     type: "suggestion",
   },
 
@@ -22,13 +22,10 @@ module.exports = {
     return {
       CallExpression(node) {
         if (
-          node.callee.object &&
-          node.callee.object.callee &&
           ["add_task", "decorate_task"].includes(
-            node.callee.object.callee.name
+            node.callee.object?.callee?.name
           ) &&
-          node.callee.property &&
-          node.callee.property.name == "only"
+          node.callee.property?.name == "only"
         ) {
           context.report({
             node,

@@ -19,7 +19,7 @@ const {
 
 const TEST_URL = PAGES_BASE_URL + "custom/console/index.html";
 
-module.exports = async function() {
+module.exports = async function () {
   // These numbers controls the number of console api calls we do in the test
   const sync = 500,
     stream = 250,
@@ -63,7 +63,7 @@ module.exports = async function() {
     const infoMessages = consoleOutput.querySelectorAll(
       ".message.info .message-body"
     );
-    return infoMessages[infoMessages.length - 1].textContent.includes(
+    return infoMessages[infoMessages.length - 1]?.textContent.includes(
       "expression log " + (TOTAL_MESSAGES - 1)
     );
   });

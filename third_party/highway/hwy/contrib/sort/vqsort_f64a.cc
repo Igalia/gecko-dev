@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,12 +13,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include "hwy/contrib/sort/disabled_targets.h"
 #include "hwy/contrib/sort/vqsort.h"
 
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "hwy/contrib/sort/vqsort_f64a.cc"
-#include "hwy/foreach_target.h"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
 
 // After foreach_target
 #include "hwy/contrib/sort/traits-inl.h"
@@ -27,16 +27,14 @@ HWY_BEFORE_NAMESPACE();
 namespace hwy {
 namespace HWY_NAMESPACE {
 
-void SortF64Asc(double* HWY_RESTRICT keys, size_t num,
-                double* HWY_RESTRICT buf) {
+void SortF64Asc(double* HWY_RESTRICT keys, size_t num) {
 #if HWY_HAVE_FLOAT64
   SortTag<double> d;
-  detail::SharedTraits<detail::LaneTraits<detail::OrderAscending>> st;
-  Sort(d, st, keys, num, buf);
+  detail::SharedTraits<detail::TraitsLane<detail::OrderAscending<double>>> st;
+  Sort(d, st, keys, num);
 #else
   (void)keys;
   (void)num;
-  (void)buf;
   HWY_ASSERT(0);
 #endif
 }
@@ -52,9 +50,8 @@ namespace {
 HWY_EXPORT(SortF64Asc);
 }  // namespace
 
-void Sorter::operator()(double* HWY_RESTRICT keys, size_t n,
-                        SortAscending) const {
-  HWY_DYNAMIC_DISPATCH(SortF64Asc)(keys, n, Get<double>());
+void VQSort(double* HWY_RESTRICT keys, size_t n, SortAscending) {
+  HWY_DYNAMIC_DISPATCH(SortF64Asc)(keys, n);
 }
 
 }  // namespace hwy

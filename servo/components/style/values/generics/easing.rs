@@ -21,7 +21,6 @@ use crate::parser::ParserContext;
 )]
 #[value_info(ty = "TIMING_FUNCTION")]
 #[repr(u8, C)]
-/// cbindgen:private-default-tagged-enum-constructor=false
 pub enum TimingFunction<Integer, Number, LinearStops> {
     /// `linear | ease | ease-in | ease-out | ease-in-out`
     Keyword(TimingKeyword),
@@ -85,7 +84,7 @@ pub enum BeforeFlag {
 
 #[cfg(feature = "gecko")]
 fn step_position_jump_enabled(_context: &ParserContext) -> bool {
-    static_prefs::pref!("layout.css.step-position-jump.enabled")
+    true
 }
 
 #[cfg(feature = "servo")]

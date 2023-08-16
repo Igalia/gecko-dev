@@ -6,8 +6,8 @@
 
 #include "DataStorage.h"
 
-#include "mozilla/Assertions.h"
 #include "mozilla/AppShutdown.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/ClearOnShutdown.h"
 #include "mozilla/FileUtils.h"
 #include "mozilla/Preferences.h"
@@ -20,11 +20,11 @@
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsDirectoryServiceUtils.h"
 #include "nsIFileStreams.h"
-#include "nsIMemoryReporter.h"
 #include "nsIObserverService.h"
+#include "nsISafeOutputStream.h"
 #include "nsISerialEventTarget.h"
-#include "nsITimer.h"
 #include "nsIThread.h"
+#include "nsITimer.h"
 #include "nsNetUtil.h"
 #include "nsPrintfCString.h"
 #include "nsStreamUtils.h"
@@ -48,83 +48,83 @@ static const int64_t sOneDayInMicroseconds =
 
 namespace mozilla {
 
-class DataStorageMemoryReporter final : public nsIMemoryReporter {
-  MOZ_DEFINE_MALLOC_SIZE_OF(MallocSizeOf)
-  ~DataStorageMemoryReporter() = default;
+NS_IMPL_ISUPPORTS(DataStorageManager, nsIDataStorageManager)
+NS_IMPL_ISUPPORTS(DataStorageItem, nsIDataStorageItem)
+NS_IMPL_ISUPPORTS(DataStorage, nsIDataStorage, nsIMemoryReporter, nsIObserver)
 
- public:
-  NS_DECL_ISUPPORTS
-
-  NS_IMETHOD CollectReports(nsIHandleReportCallback* aHandleReport,
-                            nsISupports* aData, bool aAnonymize) final {
-    nsTArray<nsString> fileNames;
-#define DATA_STORAGE(_) \
-  fileNames.AppendElement(NS_LITERAL_STRING_FROM_CSTRING(#_ ".txt"));
-#include "mozilla/DataStorageList.h"
-#undef DATA_STORAGE
-    for (const auto& file : fileNames) {
-      RefPtr<DataStorage> ds = DataStorage::GetFromRawFileName(file);
-      size_t amount = ds->SizeOfIncludingThis(MallocSizeOf);
-      nsPrintfCString path("explicit/data-storage/%s",
-                           NS_ConvertUTF16toUTF8(file).get());
-      Unused << aHandleReport->Callback(
-          ""_ns, path, KIND_HEAP, UNITS_BYTES, amount,
-          "Memory used by PSM data storage cache."_ns, aData);
-    }
-    return NS_OK;
+NS_IMETHODIMP
+DataStorageManager::Get(nsIDataStorageManager::DataStorage aDataStorage,
+                        nsIDataStorage** aResult) {
+  if (!NS_IsMainThread()) {
+    return NS_ERROR_NOT_SAME_THREAD;
   }
-};
+  nsAutoString filename;
+  switch (aDataStorage) {
+    case nsIDataStorageManager::AlternateServices:
+      if (mAlternateServicesCreated) {
+        return NS_ERROR_ALREADY_INITIALIZED;
+      }
+      mAlternateServicesCreated = true;
+      filename.Assign(u"AlternateServices.txt"_ns);
+      break;
+    case nsIDataStorageManager::ClientAuthRememberList:
+      if (mClientAuthRememberListCreated) {
+        return NS_ERROR_ALREADY_INITIALIZED;
+      }
+      mClientAuthRememberListCreated = true;
+      filename.Assign(u"ClientAuthRememberList.txt"_ns);
+      break;
+    case nsIDataStorageManager::SiteSecurityServiceState:
+      if (mSiteSecurityServiceStateCreated) {
+        return NS_ERROR_ALREADY_INITIALIZED;
+      }
+      mSiteSecurityServiceStateCreated = true;
+      filename.Assign(u"SiteSecurityServiceState.txt"_ns);
+      break;
+    default:
+      return NS_ERROR_INVALID_ARG;
+  }
+  RefPtr<mozilla::DataStorage> dataStorage(new mozilla::DataStorage(filename));
+  nsresult rv = dataStorage->Init();
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+  nsCOMPtr<nsIMemoryReporter> memoryReporter(dataStorage.get());
+  RegisterStrongMemoryReporter(memoryReporter);
+  *aResult = dataStorage.forget().take();
+  return NS_OK;
+}
 
-NS_IMPL_ISUPPORTS(DataStorageMemoryReporter, nsIMemoryReporter)
+NS_IMETHODIMP
+DataStorageItem::GetKey(nsACString& aKey) {
+  aKey.Assign(key);
+  return NS_OK;
+}
 
-NS_IMPL_ISUPPORTS(DataStorage, nsIObserver)
+NS_IMETHODIMP
+DataStorageItem::GetValue(nsACString& aValue) {
+  aValue.Assign(value);
+  return NS_OK;
+}
 
-mozilla::StaticAutoPtr<DataStorage::DataStorages> DataStorage::sDataStorages;
+NS_IMETHODIMP
+DataStorageItem::GetType(nsIDataStorage::DataType* aType) {
+  if (!aType) {
+    return NS_ERROR_INVALID_ARG;
+  }
+  *aType = type;
+  return NS_OK;
+}
 
 DataStorage::DataStorage(const nsString& aFilename)
     : mMutex("DataStorage::mMutex"),
       mPendingWrite(false),
+      mTimerArmed(false),
       mShuttingDown(false),
       mInitCalled(false),
       mReadyMonitor("DataStorage::mReadyMonitor"),
       mReady(false),
       mFilename(aFilename) {}
-
-// static
-already_AddRefed<DataStorage> DataStorage::Get(DataStorageClass aFilename) {
-  switch (aFilename) {
-#define DATA_STORAGE(_)     \
-  case DataStorageClass::_: \
-    return GetFromRawFileName(NS_LITERAL_STRING_FROM_CSTRING(#_ ".txt"));
-#include "mozilla/DataStorageList.h"
-#undef DATA_STORAGE
-    default:
-      MOZ_ASSERT_UNREACHABLE("Invalid DataStorage type passed?");
-      return nullptr;
-  }
-}
-
-// static
-already_AddRefed<DataStorage> DataStorage::GetFromRawFileName(
-    const nsString& aFilename) {
-  MOZ_ASSERT(NS_IsMainThread());
-  if (!sDataStorages) {
-    sDataStorages = new DataStorages();
-    ClearOnShutdown(&sDataStorages);
-  }
-  return do_AddRef(sDataStorages->LookupOrInsertWith(
-      aFilename, [&] { return RefPtr{new DataStorage(aFilename)}; }));
-}
-
-size_t DataStorage::SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) {
-  MutexAutoLock lock(mMutex);
-  size_t sizeOfExcludingThis =
-      mPersistentDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +
-      mTemporaryDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +
-      mPrivateDataTable.ShallowSizeOfExcludingThis(aMallocSizeOf) +
-      mFilename.SizeOfExcludingThisIfUnshared(aMallocSizeOf);
-  return aMallocSizeOf(this) + sizeOfExcludingThis;
-}
 
 nsresult DataStorage::Init() {
   // Don't access the observer service or preferences off the main thread.
@@ -155,15 +155,6 @@ nsresult DataStorage::Init() {
 
   mInitCalled = true;
 
-  static bool memoryReporterRegistered = false;
-  if (!memoryReporterRegistered) {
-    nsresult rv = RegisterStrongMemoryReporter(new DataStorageMemoryReporter());
-    if (NS_WARN_IF(NS_FAILED(rv))) {
-      return rv;
-    }
-    memoryReporterRegistered = true;
-  }
-
   nsCOMPtr<nsISerialEventTarget> target;
   nsresult rv = NS_CreateBackgroundTaskQueue(
       "DataStorage::mBackgroundTaskQueue", getter_AddRefs(target));
@@ -173,15 +164,8 @@ nsresult DataStorage::Init() {
   mBackgroundTaskQueue = TaskQueue::Create(target.forget(), "PSM DataStorage");
 
   // For test purposes, we can set the write timer to be very fast.
-  uint32_t timerDelayMS = Preferences::GetInt("test.datastorage.write_timer_ms",
-                                              sDataStorageDefaultTimerDelay);
-  rv = NS_NewTimerWithFuncCallback(
-      getter_AddRefs(mTimer), DataStorage::TimerCallback, this, timerDelayMS,
-      nsITimer::TYPE_REPEATING_SLACK_LOW_PRIORITY, "DataStorageTimer",
-      mBackgroundTaskQueue);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  mTimerDelayMS = Preferences::GetInt("test.datastorage.write_timer_ms",
+                                      sDataStorageDefaultTimerDelay);
 
   rv = AsyncReadData(lock);
   if (NS_FAILED(rv)) {
@@ -321,8 +305,8 @@ DataStorage::Reader::Run() {
 // The value must not contain '\n' and must have a length no more than 1024.
 // The length limits are to prevent unbounded memory and disk usage.
 /* static */
-nsresult DataStorage::ValidateKeyAndValue(const nsCString& aKey,
-                                          const nsCString& aValue) {
+nsresult DataStorage::ValidateKeyAndValue(const nsACString& aKey,
+                                          const nsACString& aValue) {
   if (aKey.IsEmpty()) {
     return NS_ERROR_INVALID_ARG;
   }
@@ -444,9 +428,14 @@ nsresult DataStorage::AsyncReadData(const MutexAutoLock& /*aProofOfLock*/) {
   return NS_OK;
 }
 
-bool DataStorage::IsReady() {
+NS_IMETHODIMP
+DataStorage::IsReady(bool* aReady) {
+  if (!aReady) {
+    return NS_ERROR_INVALID_ARG;
+  }
   MonitorAutoLock readyLock(mReadyMonitor);
-  return mReady;
+  *aReady = mReady;
+  return NS_OK;
 }
 
 void DataStorage::WaitForReady() {
@@ -459,14 +448,16 @@ void DataStorage::WaitForReady() {
   MOZ_ASSERT(mReady);
 }
 
-nsCString DataStorage::Get(const nsCString& aKey, DataStorageType aType) {
+NS_IMETHODIMP
+DataStorage::Get(const nsACString& aKey, nsIDataStorage::DataType aType,
+                 nsACString& aValue) {
   WaitForReady();
   MutexAutoLock lock(mMutex);
 
   Entry entry;
   bool foundValue = GetInternal(aKey, &entry, aType, lock);
   if (!foundValue) {
-    return ""_ns;
+    return NS_ERROR_NOT_AVAILABLE;
   }
 
   // If we're here, we found a value. Maybe update its score.
@@ -474,11 +465,12 @@ nsCString DataStorage::Get(const nsCString& aKey, DataStorageType aType) {
     PutInternal(aKey, entry, aType, lock);
   }
 
-  return entry.mValue;
+  aValue.Assign(entry.mValue);
+  return NS_OK;
 }
 
-bool DataStorage::GetInternal(const nsCString& aKey, Entry* aEntry,
-                              DataStorageType aType,
+bool DataStorage::GetInternal(const nsACString& aKey, Entry* aEntry,
+                              nsIDataStorage::DataType aType,
                               const MutexAutoLock& aProofOfLock) {
   DataStorageTable& table = GetTableForType(aType, aProofOfLock);
   bool foundValue = table.Get(aKey, aEntry);
@@ -486,40 +478,41 @@ bool DataStorage::GetInternal(const nsCString& aKey, Entry* aEntry,
 }
 
 DataStorage::DataStorageTable& DataStorage::GetTableForType(
-    DataStorageType aType, const MutexAutoLock& /*aProofOfLock*/) {
+    nsIDataStorage::DataType aType, const MutexAutoLock& /*aProofOfLock*/) {
   switch (aType) {
-    case DataStorage_Persistent:
+    case nsIDataStorage::DataType::Persistent:
       return mPersistentDataTable;
-    case DataStorage_Temporary:
+    case nsIDataStorage::DataType::Temporary:
       return mTemporaryDataTable;
-    case DataStorage_Private:
+    case nsIDataStorage::DataType::Private:
       return mPrivateDataTable;
   }
 
   MOZ_CRASH("given bad DataStorage storage type");
 }
 
-void DataStorage::ReadAllFromTable(DataStorageType aType,
-                                   nsTArray<DataStorageItem>* aItems,
+void DataStorage::ReadAllFromTable(nsIDataStorage::DataType aType,
+                                   nsTArray<RefPtr<nsIDataStorageItem>>& aItems,
                                    const MutexAutoLock& aProofOfLock) {
   for (auto iter = GetTableForType(aType, aProofOfLock).Iter(); !iter.Done();
        iter.Next()) {
-    DataStorageItem* item = aItems->AppendElement();
-    item->key = iter.Key();
-    item->value = iter.Data().mValue;
-    item->type = aType;
+    nsCOMPtr<nsIDataStorageItem> item(
+        new DataStorageItem(iter.Key(), iter.Data().mValue, aType));
+    aItems.AppendElement(item);
   }
 }
 
-void DataStorage::GetAll(nsTArray<DataStorageItem>* aItems) {
+NS_IMETHODIMP
+DataStorage::GetAll(nsTArray<RefPtr<nsIDataStorageItem>>& aItems) {
   WaitForReady();
   MutexAutoLock lock(mMutex);
 
-  aItems->SetCapacity(mPersistentDataTable.Count() +
-                      mTemporaryDataTable.Count() + mPrivateDataTable.Count());
-  ReadAllFromTable(DataStorage_Persistent, aItems, lock);
-  ReadAllFromTable(DataStorage_Temporary, aItems, lock);
-  ReadAllFromTable(DataStorage_Private, aItems, lock);
+  aItems.SetCapacity(mPersistentDataTable.Count() +
+                     mTemporaryDataTable.Count() + mPrivateDataTable.Count());
+  ReadAllFromTable(nsIDataStorage::DataType::Persistent, aItems, lock);
+  ReadAllFromTable(nsIDataStorage::DataType::Temporary, aItems, lock);
+  ReadAllFromTable(nsIDataStorage::DataType::Private, aItems, lock);
+  return NS_OK;
 }
 
 // Limit the number of entries per table. This is to prevent unbounded
@@ -529,7 +522,7 @@ void DataStorage::GetAll(nsTArray<DataStorageItem>* aItems) {
 //   (this is the same as saying evict the entry with the lowest score,
 //    except for when there are multiple entries with the lowest score,
 //    in which case one of them is evicted - which one is not specified).
-void DataStorage::MaybeEvictOneEntry(DataStorageType aType,
+void DataStorage::MaybeEvictOneEntry(nsIDataStorage::DataType aType,
                                      const MutexAutoLock& aProofOfLock) {
   DataStorageTable& table = GetTableForType(aType, aProofOfLock);
   if (table.Count() >= sMaxDataEntries) {
@@ -557,8 +550,9 @@ void DataStorage::MaybeEvictOneEntry(DataStorageType aType,
   }
 }
 
-nsresult DataStorage::Put(const nsCString& aKey, const nsCString& aValue,
-                          DataStorageType aType) {
+NS_IMETHODIMP
+DataStorage::Put(const nsACString& aKey, const nsACString& aValue,
+                 nsIDataStorage::DataType aType) {
   WaitForReady();
   MutexAutoLock lock(mMutex);
 
@@ -579,30 +573,34 @@ nsresult DataStorage::Put(const nsCString& aKey, const nsCString& aValue,
   return PutInternal(aKey, entry, aType, lock);
 }
 
-nsresult DataStorage::PutInternal(const nsCString& aKey, Entry& aEntry,
-                                  DataStorageType aType,
+nsresult DataStorage::PutInternal(const nsACString& aKey, Entry& aEntry,
+                                  nsIDataStorage::DataType aType,
                                   const MutexAutoLock& aProofOfLock) {
   mMutex.AssertCurrentThreadOwns();
   DataStorageTable& table = GetTableForType(aType, aProofOfLock);
   table.InsertOrUpdate(aKey, aEntry);
 
-  if (aType == DataStorage_Persistent) {
+  if (aType == nsIDataStorage::DataType::Persistent) {
     mPendingWrite = true;
+    ArmTimer(aProofOfLock);
   }
 
   return NS_OK;
 }
 
-void DataStorage::Remove(const nsCString& aKey, DataStorageType aType) {
+NS_IMETHODIMP
+DataStorage::Remove(const nsACString& aKey, nsIDataStorage::DataType aType) {
   WaitForReady();
   MutexAutoLock lock(mMutex);
 
   DataStorageTable& table = GetTableForType(aType, lock);
   table.Remove(aKey);
 
-  if (aType == DataStorage_Persistent) {
+  if (aType == nsIDataStorage::DataType::Persistent) {
     mPendingWrite = true;
+    ArmTimer(lock);
   }
+  return NS_OK;
 }
 
 class DataStorage::Writer final : public Runnable {
@@ -706,6 +704,11 @@ nsresult DataStorage::AsyncWriteData(const MutexAutoLock& /*aProofOfLock*/) {
   nsCOMPtr<nsIRunnable> job(new Writer(output, this));
   nsresult rv = mBackgroundTaskQueue->Dispatch(job.forget());
   mPendingWrite = false;
+  if (mTimerArmed) {
+    rv = mTimer->Cancel();
+    Unused << NS_WARN_IF(NS_FAILED(rv));
+    mTimerArmed = false;
+  }
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
@@ -713,7 +716,8 @@ nsresult DataStorage::AsyncWriteData(const MutexAutoLock& /*aProofOfLock*/) {
   return NS_OK;
 }
 
-nsresult DataStorage::Clear() {
+NS_IMETHODIMP
+DataStorage::Clear() {
   WaitForReady();
   MutexAutoLock lock(mMutex);
   mPersistentDataTable.Clear();
@@ -731,6 +735,7 @@ nsresult DataStorage::Clear() {
 void DataStorage::TimerCallback(nsITimer* aTimer, void* aClosure) {
   RefPtr<DataStorage> aDataStorage = (DataStorage*)aClosure;
   MutexAutoLock lock(aDataStorage->mMutex);
+  aDataStorage->mTimerArmed = false;
   Unused << aDataStorage->AsyncWriteData(lock);
 }
 
@@ -748,6 +753,27 @@ void DataStorage::NotifyObservers(const char* aTopic) {
   }
 }
 
+void DataStorage::ArmTimer(const MutexAutoLock& /*aProofOfLock*/) {
+  mMutex.AssertCurrentThreadOwns();
+  if (mTimerArmed) {
+    return;
+  }
+
+  if (!mTimer) {
+    mTimer = NS_NewTimer(mBackgroundTaskQueue);
+    if (NS_WARN_IF(!mTimer)) {
+      return;
+    }
+  }
+
+  nsresult rv = mTimer->InitWithNamedFuncCallback(
+      DataStorage::TimerCallback, this, mTimerDelayMS, nsITimer::TYPE_ONE_SHOT,
+      "DataStorageTimer");
+  Unused << NS_WARN_IF(NS_FAILED(rv));
+
+  mTimerArmed = true;
+}
+
 void DataStorage::ShutdownTimer() {
   MOZ_ASSERT(NS_IsMainThread());
   if (mTimer) {
@@ -755,6 +781,27 @@ void DataStorage::ShutdownTimer() {
     Unused << NS_WARN_IF(NS_FAILED(rv));
     mTimer = nullptr;
   }
+}
+
+//------------------------------------------------------------
+// DataStorage::nsIMemoryReporter
+//------------------------------------------------------------
+
+NS_IMETHODIMP
+DataStorage::CollectReports(nsIHandleReportCallback* aHandleReport,
+                            nsISupports* aData, bool aAnonymize) {
+  MutexAutoLock lock(mMutex);
+  size_t sizeOfExcludingThis =
+      mPersistentDataTable.ShallowSizeOfExcludingThis(MallocSizeOf) +
+      mTemporaryDataTable.ShallowSizeOfExcludingThis(MallocSizeOf) +
+      mPrivateDataTable.ShallowSizeOfExcludingThis(MallocSizeOf) +
+      mFilename.SizeOfExcludingThisIfUnshared(MallocSizeOf);
+  size_t amount = MallocSizeOf(this) + sizeOfExcludingThis;
+  nsPrintfCString path("explicit/data-storage/%s",
+                       NS_ConvertUTF16toUTF8(mFilename).get());
+  return aHandleReport->Callback(""_ns, path, KIND_HEAP, UNITS_BYTES, amount,
+                                 "Memory used by PSM data storage cache."_ns,
+                                 aData);
 }
 
 //------------------------------------------------------------

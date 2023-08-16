@@ -147,7 +147,7 @@ impl BufferManager {
         assert!(input_channel_count >= input_channels_to_ignore + output_channel_count);
         // 8 times the expected callback size, to handle the input callback being caled multiple
         //   times in a row correctly.
-        let buffer_element_count = output_channel_count * buffer_size_frames as usize * 8;
+        let buffer_element_count = output_channel_count * buffer_size_frames * 8;
         match format {
             SampleFormat::S16LE | SampleFormat::S16BE | SampleFormat::S16NE => {
                 let ring = RingBuffer::<i16>::new(buffer_element_count);
@@ -208,7 +208,7 @@ impl BufferManager {
         };
         assert!(pushed <= to_push, "We don't support upmix");
         if pushed != to_push {
-            cubeb_log!(
+            cubeb_alog!(
                 "Input ringbuffer full, could only push {} instead of {}",
                 pushed,
                 to_push
@@ -222,6 +222,11 @@ impl BufferManager {
                     unsafe { slice::from_raw_parts_mut::<i16>(data as *mut i16, needed_samples) };
                 let read = p.pop_slice(input);
                 if read < needed_samples {
+                    cubeb_alog!(
+                        "Underrun during input data pull: (needed: {}, available: {})",
+                        needed_samples,
+                        read
+                    );
                     for i in 0..(needed_samples - read) {
                         input[read + i] = 0;
                     }
@@ -232,6 +237,11 @@ impl BufferManager {
                     unsafe { slice::from_raw_parts_mut::<f32>(data as *mut f32, needed_samples) };
                 let read = p.pop_slice(input);
                 if read < needed_samples {
+                    cubeb_alog!(
+                        "Underrun during input data pull: (needed: {}, available: {})",
+                        needed_samples,
+                        read
+                    );
                     for i in 0..(needed_samples - read) {
                         input[read + i] = 0.0;
                     }

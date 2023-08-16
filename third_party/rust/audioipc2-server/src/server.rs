@@ -20,7 +20,7 @@ use std::ffi::CStr;
 use std::mem::size_of;
 use std::os::raw::{c_long, c_void};
 use std::rc::Rc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::{cell::RefCell, sync::Mutex};
 use std::{panic, slice};
 
@@ -215,6 +215,10 @@ struct ServerStreamCallbacks {
     state_callback_rpc: rpccore::Proxy<CallbackReq, CallbackResp>,
     /// RPC interface for device_change_callback (on any thread) to server callback thread
     device_change_callback_rpc: rpccore::Proxy<CallbackReq, CallbackResp>,
+    /// Indicates stream is connected to client side.  Callbacks received before
+    /// the stream is in the connected state cannot be sent to the client side, so
+    /// are logged and otherwise ignored.
+    connected: AtomicBool,
 }
 
 impl ServerStreamCallbacks {
@@ -225,6 +229,10 @@ impl ServerStreamCallbacks {
             input.len(),
             output.len()
         );
+        if !self.connected.load(Ordering::Acquire) {
+            warn!("Stream data callback triggered before stream connected");
+            return cubeb::ffi::CUBEB_ERROR.try_into().unwrap();
+        }
 
         if self.input_frame_size != 0 {
             if input.len() > self.shm.get_size() {
@@ -252,14 +260,11 @@ impl ServerStreamCallbacks {
             return cubeb::ffi::CUBEB_ERROR.try_into().unwrap();
         }
 
-        let r = self
-            .data_callback_rpc
-            .call(CallbackReq::Data {
-                nframes,
-                input_frame_size: self.input_frame_size as usize,
-                output_frame_size: self.output_frame_size as usize,
-            })
-            .wait();
+        let r = self.data_callback_rpc.call(CallbackReq::Data {
+            nframes,
+            input_frame_size: self.input_frame_size as usize,
+            output_frame_size: self.output_frame_size as usize,
+        });
 
         match r {
             Ok(CallbackResp::Data(frames)) => {
@@ -280,10 +285,14 @@ impl ServerStreamCallbacks {
 
     fn state_callback(&self, state: cubeb::State) {
         trace!("Stream state callback: {:?}", state);
+        if !self.connected.load(Ordering::Acquire) {
+            warn!("Stream state callback triggered before stream connected");
+            return;
+        }
+
         let r = self
             .state_callback_rpc
-            .call(CallbackReq::State(state.into()))
-            .wait();
+            .call(CallbackReq::State(state.into()));
         match r {
             Ok(CallbackResp::State) => {}
             _ => {
@@ -294,10 +303,13 @@ impl ServerStreamCallbacks {
 
     fn device_change_callback(&self) {
         trace!("Stream device change callback");
+        if !self.connected.load(Ordering::Acquire) {
+            warn!("Stream device_change callback triggered before stream connected");
+            return;
+        }
         let r = self
             .device_change_callback_rpc
-            .call(CallbackReq::DeviceChange)
-            .wait();
+            .call(CallbackReq::DeviceChange);
         match r {
             Ok(CallbackResp::DeviceChange) => {}
             _ => {
@@ -347,8 +359,7 @@ impl DeviceCollectionChangeCallback {
         );
         let _ = self
             .rpc
-            .call(DeviceCollectionReq::DeviceChange(device_type))
-            .wait();
+            .call(DeviceCollectionReq::DeviceChange(device_type));
     }
 }
 
@@ -373,13 +384,15 @@ impl Drop for CubebServer {
                     context: Ok(context),
                 }) = state.as_mut()
                 {
-                    let r = manager.unregister(
-                        context,
-                        device_collection_change_callbacks,
-                        cubeb::DeviceType::all(),
-                    );
-                    if r.is_err() {
-                        debug!("CubebServer: unregister failed: {:?}", r);
+                    for devtype in [cubeb::DeviceType::INPUT, cubeb::DeviceType::OUTPUT] {
+                        let r = manager.unregister(
+                            context,
+                            device_collection_change_callbacks,
+                            devtype,
+                        );
+                        if r.is_err() {
+                            debug!("CubebServer: unregister failed: {:?}", r);
+                        }
                     }
                 }
             })
@@ -634,7 +647,7 @@ impl CubebServer {
             #[cfg(target_os = "linux")]
             ServerMessage::PromoteThreadToRealTime(thread_info) => {
                 let info = RtPriorityThreadInfo::deserialize(thread_info);
-                match promote_thread_to_real_time(info, 256, 48000) {
+                match promote_thread_to_real_time(info, 0, 48000) {
                     Ok(_) => {
                         info!("Promotion of content process thread to real-time OK");
                     }
@@ -731,6 +744,7 @@ impl CubebServer {
             state_callback_rpc: rpc.clone(),
             device_change_callback_rpc: rpc.clone(),
             data_callback_rpc: rpc,
+            connected: AtomicBool::new(false),
         });
 
         let entry = self.streams.vacant_entry();
@@ -788,7 +802,7 @@ impl CubebServer {
         let min_latency = round_up_pow2(5 * rate / 1000);
         // Note: maximum latency is restricted by the SharedMem size.
         let max_latency = rate;
-        let latency = params.latency_frames.max(min_latency).min(max_latency);
+        let latency = params.latency_frames.clamp(min_latency, max_latency);
         trace!(
             "stream rate={} latency requested={} calculated={}",
             rate,
@@ -828,6 +842,7 @@ impl CubebServer {
             .client_pipe
             .take()
             .expect("invalid state after StreamCreated");
+        server_stream.cbs.connected.store(true, Ordering::Release);
         Ok(ClientMessage::StreamInitialized(SerializableHandle::new(
             client_pipe,
             self.remote_pid.unwrap(),

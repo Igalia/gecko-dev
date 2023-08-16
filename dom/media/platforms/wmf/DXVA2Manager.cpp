@@ -35,12 +35,6 @@
 #include "nsPrintfCString.h"
 #include "nsThreadUtils.h"
 
-const CLSID CLSID_VideoProcessorMFT = {
-    0x88753b26,
-    0x5b24,
-    0x49bd,
-    {0xb2, 0xe7, 0xc, 0x44, 0x5c, 0x78, 0xc9, 0x82}};
-
 const GUID MF_XVP_PLAYBACK_MODE = {
     0x3c5d293f,
     0xad67,
@@ -482,6 +476,12 @@ D3D9DXVA2Manager::Init(layers::KnowsCompositor* aKnowsCompositor,
         break;
       }
     }
+    if (StaticPrefs::media_wmf_dxva_d3d9_amd_pre_uvd4_disabled() &&
+        mIsAMDPreUVD4) {
+      aFailureReason.AssignLiteral(
+          "D3D9DXVA2Manager is disabled on AMDPreUVD4");
+      return E_FAIL;
+    }
   }
 
   RefPtr<IDirect3DSurface9> syncSurf;
@@ -616,6 +616,10 @@ already_AddRefed<IDirectXVideoDecoder> D3D9DXVA2Manager::CreateDecoder(
     hr = mDecoderService->CreateVideoDecoder(mDecoderGUID, &aDesc, &configs[i],
                                              &surfaces, 1,
                                              decoder.StartAssignment());
+    if (FAILED(hr)) {
+      continue;
+    }
+
     CoTaskMemFree(configs);
     return decoder.forget();
   }
@@ -1047,8 +1051,9 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
   NS_ENSURE_TRUE(aOutImage, E_POINTER);
   MOZ_ASSERT(mTextureClientAllocator);
 
-  RefPtr<D3D11ShareHandleImage> image = new D3D11ShareHandleImage(
-      gfx::IntSize(mWidth, mHeight), aRegion, mYUVColorSpace, mColorRange);
+  RefPtr<D3D11ShareHandleImage> image =
+      new D3D11ShareHandleImage(gfx::IntSize(mWidth, mHeight), aRegion,
+                                ToColorSpace2(mYUVColorSpace), mColorRange);
 
   // Retrieve the DXGI_FORMAT for the current video sample.
   RefPtr<IMFMediaBuffer> buffer;
@@ -1091,9 +1096,8 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
     }
 
     UINT height = std::min(inDesc.Height, outDesc.Height);
-    PerformanceRecorder perfRecorder(
-        PerformanceRecorder::Stage::CopyDecodedVideo, height);
-    perfRecorder.Start();
+    PerformanceRecorder<PlaybackStage> perfRecorder(
+        MediaStage::CopyDecodedVideo, height);
     // The D3D11TextureClientAllocator may return a different texture format
     // than preferred. In which case the destination texture will be BGRA32.
     if (outDesc.Format == inDesc.Format) {
@@ -1122,7 +1126,7 @@ D3D11DXVA2Manager::CopyToImage(IMFSample* aVideoSample,
           [&]() -> void { hr = mTransform->Output(&sample); });
       NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
     }
-    perfRecorder.End();
+    perfRecorder.Record();
   }
 
   if (!mutex && mDevice != DeviceManagerDx::Get()->GetCompositorDevice() &&
@@ -1173,7 +1177,7 @@ HRESULT D3D11DXVA2Manager::WrapTextureWithImage(IMFSample* aVideoSample,
 
   RefPtr<D3D11TextureIMFSampleImage> image = new D3D11TextureIMFSampleImage(
       aVideoSample, texture, arrayIndex, gfx::IntSize(mWidth, mHeight), aRegion,
-      mYUVColorSpace, mColorRange);
+      ToColorSpace2(mYUVColorSpace), mColorRange);
   image->AllocateTextureClient(mKnowsCompositor, mIMFSampleUsageInfo);
 
   RefPtr<IMFSampleWrapper> wrapper = image->GetIMFSampleWrapper();

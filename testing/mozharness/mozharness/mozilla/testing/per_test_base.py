@@ -5,15 +5,14 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 # ***** END LICENSE BLOCK *****
 
-from __future__ import absolute_import
 import itertools
 import json
 import math
 import os
 import posixpath
 import sys
+
 import mozinfo
-from manifestparser import TestManifest
 
 
 class SingleTestMixin(object):
@@ -69,6 +68,9 @@ class SingleTestMixin(object):
         is_fission = "fission.autostart=true" in self.config.get("extra_prefs", [])
         tests_by_path = {}
         all_disabled = []
+        #  HACK: import here so we don't need import for rest of class
+        from manifestparser import TestManifest
+
         for (path, suite) in manifests:
             if os.path.exists(path):
                 man = TestManifest([path], strict=False)
@@ -198,7 +200,7 @@ class SingleTestMixin(object):
                 )
                 continue
 
-            if entry[2] is not None:
+            if entry[2] is not None and "about:" not in entry[2]:
                 # Test name substitution, for reftest reference file handling:
                 #  - if both test and reference modified, run the test file
                 #  - if only reference modified, run the test file
@@ -219,6 +221,11 @@ class SingleTestMixin(object):
                     "a11y",
                     None,
                 ): "mochitest-browser-a11y",
+                (
+                    "mochitest-browser-chrome",
+                    "media-bc",
+                    None,
+                ): "mochitest-browser-media",
                 (
                     "mochitest-browser-chrome",
                     "devtools",
@@ -338,7 +345,6 @@ class SingleTestMixin(object):
             mozinfo.update(
                 {"android_version": str(self.config.get("android_version", 24))}
             )
-            mozinfo.update({"is_fennec": self.config.get("is_fennec", False)})
             mozinfo.update({"is_emulator": self.config.get("is_emulator", True)})
         mozinfo.update({"verify": True})
         self.info("Per-test run using mozinfo: %s" % str(mozinfo.info))

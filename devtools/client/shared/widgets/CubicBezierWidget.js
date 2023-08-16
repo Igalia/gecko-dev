@@ -25,13 +25,13 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const {
   PREDEFINED,
   PRESETS,
   DEFAULT_PRESET_CATEGORY,
-} = require("devtools/client/shared/widgets/CubicBezierPresets");
-const { getCSSLexer } = require("devtools/shared/css/lexer");
+} = require("resource://devtools/client/shared/widgets/CubicBezierPresets.js");
+const { getCSSLexer } = require("resource://devtools/shared/css/lexer.js");
 const XHTML_NS = "http://www.w3.org/1999/xhtml";
 
 /**
@@ -53,7 +53,7 @@ function CubicBezier(coordinates) {
     }
   }
 
-  this.coordinates.toString = function() {
+  this.coordinates.toString = function () {
     return (
       this.map(n => {
         return (Math.round(n * 100) / 100 + "").replace(/^0\./, ".");
@@ -256,9 +256,8 @@ function CubicBezierWidget(
   this._onPointKeyDown = this._onPointKeyDown.bind(this);
   this._onCurveClick = this._onCurveClick.bind(this);
   this._onNewCoordinates = this._onNewCoordinates.bind(this);
-  this.onPrefersReducedMotionChange = this.onPrefersReducedMotionChange.bind(
-    this
-  );
+  this.onPrefersReducedMotionChange =
+    this.onPrefersReducedMotionChange.bind(this);
 
   // Add preset preview menu
   this.presets = new CubicBezierPresetWidget(parent);
@@ -387,7 +386,7 @@ CubicBezierWidget.prototype = {
       self._updateFromPoints();
     };
 
-    doc.onmouseup = function() {
+    doc.onmouseup = function () {
       point.focus();
       doc.onmousemove = doc.onmouseup = null;
     };

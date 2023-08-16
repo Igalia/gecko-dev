@@ -169,7 +169,7 @@ class EventTargetDispatcher : public ChannelEvent {
   already_AddRefed<nsIEventTarget> GetEventTarget() override {
     nsCOMPtr<nsIEventTarget> target = mEventTarget;
     if (!target) {
-      target = GetMainThreadEventTarget();
+      target = GetMainThreadSerialEventTarget();
     }
     return target.forget();
   }
@@ -495,7 +495,7 @@ WebSocketChannelChild::AsyncOpenNative(
 
   nsCOMPtr<nsIURI> uri;
   Maybe<LoadInfoArgs> loadInfoArgs;
-  Maybe<PTransportProviderChild*> transportProvider;
+  Maybe<NotNull<PTransportProviderChild*>> transportProvider;
 
   if (!mIsServerSide) {
     uri = aURI;
@@ -509,7 +509,7 @@ WebSocketChannelChild::AsyncOpenNative(
     nsresult rv = mServerTransportProvider->GetIPCChild(&ipcChild);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    transportProvider = Some(ipcChild);
+    transportProvider = Some(WrapNotNull(ipcChild));
   }
 
   // This must be called before sending constructor message.
@@ -721,7 +721,8 @@ WebSocketChannelChild::SendBinaryStream(nsIInputStream* aStream,
 }
 
 NS_IMETHODIMP
-WebSocketChannelChild::GetSecurityInfo(nsISupports** aSecurityInfo) {
+WebSocketChannelChild::GetSecurityInfo(
+    nsITransportSecurityInfo** aSecurityInfo) {
   LOG(("WebSocketChannelChild::GetSecurityInfo() %p\n", this));
   return NS_ERROR_NOT_AVAILABLE;
 }

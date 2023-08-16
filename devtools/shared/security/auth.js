@@ -4,8 +4,11 @@
 
 "use strict";
 
-var Services = require("Services");
-loader.lazyRequireGetter(this, "prompt", "devtools/shared/security/prompt");
+loader.lazyRequireGetter(
+  this,
+  "prompt",
+  "resource://devtools/shared/security/prompt.js"
+);
 
 /**
  * A simple enum-like object with keys mirrored to values.
@@ -77,7 +80,7 @@ var Prompt = (Authenticators.Prompt = {});
 
 Prompt.mode = "PROMPT";
 
-Prompt.Client = function() {};
+Prompt.Client = function () {};
 Prompt.Client.prototype = {
   mode: Prompt.mode,
 
@@ -126,7 +129,7 @@ Prompt.Client.prototype = {
   authenticate() {},
 };
 
-Prompt.Server = function() {};
+Prompt.Server = function () {};
 Prompt.Server.prototype = {
   mode: Prompt.mode,
 

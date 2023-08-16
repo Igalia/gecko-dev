@@ -6,7 +6,7 @@
 /* import-globals-from helper_diff.js */
 "use strict";
 
-const beautify = require("devtools/shared/jsbeautify/beautify");
+const beautify = require("resource://devtools/shared/jsbeautify/beautify.js");
 
 loadHelperScript("helper_diff.js");
 
@@ -77,7 +77,11 @@ async function checkEventsForNode(test, inspector) {
 
   // Click button to show tooltip
   info("Clicking evHolder");
-  evHolder.scrollIntoView();
+  evHolder.scrollIntoView({
+    block: "center",
+    inline: "end",
+    behavior: "instant",
+  });
   EventUtils.synthesizeMouseAtCenter(
     evHolder,
     {},

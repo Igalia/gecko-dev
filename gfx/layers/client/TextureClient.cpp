@@ -11,7 +11,6 @@
 #include "BufferTexture.h"
 #include "IPDLActor.h"
 #include "ImageContainer.h"  // for PlanarYCbCrData, etc
-#include "Layers.h"          // for Layer, etc
 #include "MainThreadUtils.h"
 #include "gfx2DGlue.h"
 #include "gfxPlatform.h"  // for gfxPlatform
@@ -47,11 +46,13 @@
 #  include "mozilla/gfx/DeviceManagerDx.h"
 #  include "mozilla/layers/TextureD3D11.h"
 #endif
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
 #  include <gtk/gtkx.h>
-
 #  include "gfxPlatformGtk.h"
 #  include "mozilla/layers/DMABUFTextureClientOGL.h"
+#  include "mozilla/widget/DMABufLibWrapper.h"
+#endif
+#ifdef MOZ_WAYLAND
 #  include "mozilla/widget/nsWaylandDisplay.h"
 #endif
 
@@ -268,15 +269,15 @@ static TextureType GetTextureType(gfx::SurfaceFormat aFormat,
       (moz2DBackend == gfx::BackendType::DIRECT2D ||
        moz2DBackend == gfx::BackendType::DIRECT2D1_1) &&
       aSize.width <= maxTextureSize && aSize.height <= maxTextureSize &&
-      !(aAllocFlags & ALLOC_UPDATE_FROM_SURFACE)) {
+      !(aAllocFlags & (ALLOC_UPDATE_FROM_SURFACE | ALLOC_DO_NOT_ACCELERATE))) {
     return TextureType::D3D11;
   }
 #endif
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   if ((layersBackend == LayersBackend::LAYERS_WR &&
        !aKnowsCompositor->UsingSoftwareWebRender()) &&
-      widget::GetDMABufDevice()->IsDMABufTexturesEnabled() &&
+      widget::DMABufDevice::IsDMABufTexturesEnabled() &&
       aFormat != SurfaceFormat::A8) {
     return TextureType::DMABUF;
   }
@@ -289,10 +290,6 @@ static TextureType GetTextureType(gfx::SurfaceFormat aFormat,
 #endif
 
 #ifdef MOZ_WIDGET_ANDROID
-  if (gfxVars::UseAHardwareBufferContent() &&
-      aSelector == BackendSelector::Content) {
-    return TextureType::AndroidHardwareBuffer;
-  }
   if (StaticPrefs::gfx_use_surfacetexture_textures_AtStartup()) {
     return TextureType::AndroidNativeWindow;
   }
@@ -343,7 +340,7 @@ TextureData* TextureData::Create(TextureForwarder* aAllocator,
     textureType = TextureType::Unknown;
   }
 
-#if defined(XP_MACOSX) || defined(MOZ_WAYLAND)
+#if defined(XP_MACOSX) || defined(MOZ_WIDGET_GTK)
   gfx::BackendType moz2DBackend = BackendTypeForBackendSelector(
       aKnowsCompositor->GetCompositorBackendType(), aSelector);
 #endif
@@ -354,7 +351,7 @@ TextureData* TextureData::Create(TextureForwarder* aAllocator,
       return D3D11TextureData::Create(aSize, aFormat, aAllocFlags);
 #endif
 
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
     case TextureType::DMABUF:
       return DMABUFTextureData::Create(aSize, aFormat, moz2DBackend);
 #endif
@@ -364,8 +361,6 @@ TextureData* TextureData::Create(TextureForwarder* aAllocator,
       return MacIOSurfaceTextureData::Create(aSize, aFormat, moz2DBackend);
 #endif
 #ifdef MOZ_WIDGET_ANDROID
-    case TextureType::AndroidHardwareBuffer:
-      return AndroidHardwareBufferTextureData::Create(aSize, aFormat);
     case TextureType::AndroidNativeWindow:
       return AndroidNativeWindowTextureData::Create(aSize, aFormat);
 #endif

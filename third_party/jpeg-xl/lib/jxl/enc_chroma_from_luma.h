@@ -14,8 +14,6 @@
 
 #include <vector>
 
-#include "lib/jxl/aux_out.h"
-#include "lib/jxl/aux_out_fwd.h"
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
 #include "lib/jxl/base/status.h"
@@ -34,6 +32,9 @@
 
 namespace jxl {
 
+struct AuxOut;
+class Quantizer;
+
 void ColorCorrelationMapEncodeDC(ColorCorrelationMap* map, BitWriter* writer,
                                  size_t layer, AuxOut* aux_out);
 
@@ -47,8 +48,8 @@ struct CfLHeuristics {
   void ComputeTile(const Rect& r, const Image3F& opsin,
                    const DequantMatrices& dequant,
                    const AcStrategyImage* ac_strategy,
-                   const Quantizer* quantizer, bool fast, size_t thread,
-                   ColorCorrelationMap* cmap);
+                   const ImageI* raw_quant_field, const Quantizer* quantizer,
+                   bool fast, size_t thread, ColorCorrelationMap* cmap);
 
   void ComputeDC(bool fast, ColorCorrelationMap* cmap);
 

@@ -5,26 +5,35 @@
 
   ### This moz.build was AUTOMATICALLY GENERATED from a GN config,  ###
   ### DO NOT edit it by hand.                                       ###
+if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
+    CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
 
 COMPILE_FLAGS["OS_INCLUDES"] = []
 AllowCompilerWarnings()
 
 DEFINES["ABSL_ALLOCATOR_NOTHROW"] = "1"
+DEFINES["RTC_DAV1D_IN_INTERNAL_DECODER_FACTORY"] = True
 DEFINES["RTC_ENABLE_VP9"] = True
 DEFINES["WEBRTC_ENABLE_PROTOBUF"] = "0"
 DEFINES["WEBRTC_LIBRARY_IMPL"] = True
 DEFINES["WEBRTC_MOZILLA_BUILD"] = True
 DEFINES["WEBRTC_NON_STATIC_TRACE_EVENT_HANDLERS"] = "0"
+DEFINES["WEBRTC_STRICT_FIELD_TRIALS"] = "0"
 
 FINAL_LIBRARY = "webrtc"
 
 
 LOCAL_INCLUDES += [
     "!/ipc/ipdl/_ipdlheaders",
+    "!/third_party/libwebrtc/gen",
     "/ipc/chromium/src",
     "/third_party/libwebrtc/",
     "/third_party/libwebrtc/third_party/abseil-cpp/",
     "/tools/profiler/public"
+]
+
+UNIFIED_SOURCES += [
+    "/third_party/libwebrtc/modules/video_capture/video_capture_options.cc"
 ]
 
 if not CONFIG["MOZ_DEBUG"]:
@@ -40,7 +49,7 @@ if CONFIG["MOZ_DEBUG"] == "1":
 if CONFIG["OS_TARGET"] == "Android":
 
     DEFINES["ANDROID"] = True
-    DEFINES["ANDROID_NDK_VERSION_ROLL"] = "r20_1"
+    DEFINES["ANDROID_NDK_VERSION_ROLL"] = "r22_1"
     DEFINES["HAVE_SYS_UIO_H"] = True
     DEFINES["WEBRTC_ANDROID"] = True
     DEFINES["WEBRTC_ANDROID_OPENSLES"] = True
@@ -80,18 +89,20 @@ if CONFIG["OS_TARGET"] == "Linux":
     DEFINES["__STDC_FORMAT_MACROS"] = True
 
     OS_LIBS += [
-        "dl",
         "rt"
     ]
 
     UNIFIED_SOURCES += [
         "/third_party/libwebrtc/modules/video_capture/linux/device_info_linux.cc",
-        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_linux.cc"
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_v4l2.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_linux.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_v4l2.cc"
     ]
 
 if CONFIG["OS_TARGET"] == "OpenBSD":
 
     DEFINES["USE_GLIB"] = "1"
+    DEFINES["USE_OZONE"] = "1"
     DEFINES["USE_X11"] = "1"
     DEFINES["WEBRTC_BSD"] = True
     DEFINES["WEBRTC_POSIX"] = True
@@ -103,7 +114,9 @@ if CONFIG["OS_TARGET"] == "OpenBSD":
 
     UNIFIED_SOURCES += [
         "/third_party/libwebrtc/modules/video_capture/linux/device_info_linux.cc",
-        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_linux.cc"
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_v4l2.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_linux.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_v4l2.cc"
     ]
 
 if CONFIG["OS_TARGET"] == "WINNT":
@@ -161,9 +174,67 @@ if CONFIG["CPU_ARCH"] == "aarch64":
 
 if CONFIG["CPU_ARCH"] == "arm":
 
+    CXXFLAGS += [
+        "-mfpu=neon"
+    ]
+
     DEFINES["WEBRTC_ARCH_ARM"] = True
     DEFINES["WEBRTC_ARCH_ARM_V7"] = True
     DEFINES["WEBRTC_HAS_NEON"] = True
+
+if CONFIG["CPU_ARCH"] == "mips32":
+
+    DEFINES["MIPS32_LE"] = True
+    DEFINES["MIPS_FPU_LE"] = True
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
+    DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
+    ]
+
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
+
+if CONFIG["CPU_ARCH"] == "mips64":
+
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
+    DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
+    ]
+
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
+
+if CONFIG["CPU_ARCH"] == "x86":
+
+    DEFINES["WEBRTC_ENABLE_AVX2"] = True
+
+if CONFIG["CPU_ARCH"] == "x86_64":
+
+    DEFINES["WEBRTC_ENABLE_AVX2"] = True
 
 if CONFIG["MOZ_DEBUG"] == "1" and CONFIG["OS_TARGET"] == "Android":
 
@@ -198,21 +269,57 @@ if CONFIG["CPU_ARCH"] == "arm" and CONFIG["OS_TARGET"] == "Android":
 
 if CONFIG["CPU_ARCH"] == "x86" and CONFIG["OS_TARGET"] == "Android":
 
+    CXXFLAGS += [
+        "-msse2"
+    ]
+
     OS_LIBS += [
         "android_support"
     ]
 
 if CONFIG["CPU_ARCH"] == "aarch64" and CONFIG["OS_TARGET"] == "Linux":
 
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
     DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
+    ]
+
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
 
 if CONFIG["CPU_ARCH"] == "arm" and CONFIG["OS_TARGET"] == "Linux":
 
-    CXXFLAGS += [
-        "-mfpu=neon"
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
+    DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
     ]
 
-    DEFINES["_GNU_SOURCE"] = True
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
 
 if CONFIG["CPU_ARCH"] == "x86" and CONFIG["OS_TARGET"] == "Linux":
 
@@ -220,10 +327,46 @@ if CONFIG["CPU_ARCH"] == "x86" and CONFIG["OS_TARGET"] == "Linux":
         "-msse2"
     ]
 
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
     DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
+    ]
+
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
 
 if CONFIG["CPU_ARCH"] == "x86_64" and CONFIG["OS_TARGET"] == "Linux":
 
+    DEFINES["WEBRTC_USE_PIPEWIRE"] = True
     DEFINES["_GNU_SOURCE"] = True
+
+    LOCAL_INCLUDES += [
+        "/gfx/angle/checkout/include/",
+        "/third_party/drm/drm/",
+        "/third_party/drm/drm/include/",
+        "/third_party/drm/drm/include/libdrm/",
+        "/third_party/gbm/gbm/",
+        "/third_party/libepoxy/libepoxy/include/",
+        "/third_party/pipewire/"
+    ]
+
+    UNIFIED_SOURCES += [
+        "/third_party/libwebrtc/modules/video_capture/linux/camera_portal.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/device_info_pipewire.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/pipewire_session.cc",
+        "/third_party/libwebrtc/modules/video_capture/linux/video_capture_pipewire.cc"
+    ]
 
 Library("video_capture_internal_impl_gn")

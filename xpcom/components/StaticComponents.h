@@ -32,6 +32,8 @@ struct StaticModule;
 struct StaticCategoryEntry;
 struct StaticCategory;
 
+struct StaticProtocolHandler;
+
 extern const StaticModule gStaticModules[kStaticModuleCount];
 
 extern const ContractEntry gContractEntries[kContractCount];
@@ -39,6 +41,9 @@ extern uint8_t gInvalidContracts[kContractCount / 8 + 1];
 
 extern const StaticCategory gStaticCategories[kStaticCategoryCount];
 extern const StaticCategoryEntry gStaticCategoryEntries[];
+
+extern const StaticProtocolHandler
+    gStaticProtocolHandlers[kStaticProtocolHandlerCount];
 
 template <size_t N>
 static inline bool GetBit(const uint8_t (&aBits)[N], size_t aBit) {
@@ -79,7 +84,7 @@ struct StringOffset final {
  * Represents an offset into the interfaces table.
  */
 struct InterfaceOffset final {
-  uint32_t mOffset;
+  uint16_t mOffset;
 };
 
 /**
@@ -218,6 +223,7 @@ struct JSServiceEntry final {
   ModuleID mModuleID;
 
   InterfaceOffset mInterfaceOffset;
+
   uint8_t mInterfaceCount;
 
   nsCString Name() const;
@@ -227,6 +233,25 @@ struct JSServiceEntry final {
   }
 
   InterfaceList Interfaces() const;
+};
+
+struct StaticProtocolHandler final {
+  static const StaticProtocolHandler* Lookup(const nsACString& aScheme);
+  static const StaticProtocolHandler& Default() {
+    return gStaticProtocolHandlers[kDefaultProtocolHandlerIndex];
+  }
+
+  StringOffset mScheme;
+  uint32_t mProtocolFlags;
+  int32_t mDefaultPort;
+  ModuleID mModuleID;
+  bool mHasDynamicFlags;
+
+  nsCString Scheme() const;
+
+  const StaticModule& Module() const {
+    return gStaticModules[size_t(mModuleID)];
+  }
 };
 
 class StaticComponents final {

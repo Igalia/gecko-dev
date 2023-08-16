@@ -3,64 +3,12 @@
 
 "use strict";
 
-const { ExperimentFakes } = ChromeUtils.import(
-  "resource://testing-common/NimbusTestUtils.jsm"
+const { ExperimentFakes } = ChromeUtils.importESModule(
+  "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 
 const PIP_EXPERIMENT_MESSAGE = "Hello world message";
 const PIP_EXPERIMENT_TITLE = "Hello world title";
-
-/**
- * This function will hover over the middle of the video and then
- * hover over the toggle to reveal the first time PiP message
- * @param browser The current browser
- * @param videoID The video element id
- */
-async function hoverToggle(browser, videoID) {
-  await prepareForToggleClick(browser, videoID);
-
-  // Hover the mouse over the video to reveal the toggle.
-  await BrowserTestUtils.synthesizeMouseAtCenter(
-    `#${videoID}`,
-    {
-      type: "mousemove",
-    },
-    browser
-  );
-  await BrowserTestUtils.synthesizeMouseAtCenter(
-    `#${videoID}`,
-    {
-      type: "mouseover",
-    },
-    browser
-  );
-
-  info("Checking toggle policy");
-  await assertTogglePolicy(browser, videoID, null);
-
-  let toggleClientRect = await getToggleClientRect(browser, videoID);
-
-  info("Hovering the toggle rect now.");
-  let toggleCenterX = toggleClientRect.left + toggleClientRect.width / 2;
-  let toggleCenterY = toggleClientRect.top + toggleClientRect.height / 2;
-
-  await BrowserTestUtils.synthesizeMouseAtPoint(
-    toggleCenterX,
-    toggleCenterY,
-    {
-      type: "mousemove",
-    },
-    browser
-  );
-  await BrowserTestUtils.synthesizeMouseAtPoint(
-    toggleCenterX,
-    toggleCenterY,
-    {
-      type: "mouseover",
-    },
-    browser
-  );
-}
 
 /**
  * This tests that the original DTD string is shown for the PiP toggle
@@ -78,7 +26,7 @@ add_task(async function test_experiment_control() {
       );
 
       let pipExplainerMessage = l10n.formatValueSync(
-        "videocontrols-picture-in-picture-explainer2"
+        "videocontrols-picture-in-picture-explainer3"
       );
 
       await SimpleTest.promiseFocus(browser);
@@ -93,19 +41,21 @@ add_task(async function test_experiment_control() {
       let videoID = "with-controls";
       await hoverToggle(browser, videoID);
 
-      await SpecialPowers.spawn(browser, [pipExplainerMessage], async function(
-        pipExplainerMessage
-      ) {
-        let video = content.document.getElementById("with-controls");
-        let shadowRoot = video.openOrClosedShadowRoot;
-        let pipButton = shadowRoot.querySelector(".pip-explainer");
+      await SpecialPowers.spawn(
+        browser,
+        [pipExplainerMessage],
+        async function (pipExplainerMessage) {
+          let video = content.document.getElementById("with-controls");
+          let shadowRoot = video.openOrClosedShadowRoot;
+          let pipButton = shadowRoot.querySelector(".pip-explainer");
 
-        Assert.equal(
-          pipButton.textContent.trim(),
-          pipExplainerMessage,
-          "The PiP explainer is default"
-        );
-      });
+          Assert.equal(
+            pipButton.textContent.trim(),
+            pipExplainerMessage,
+            "The PiP explainer is default"
+          );
+        }
+      );
     }
   );
 });
@@ -121,7 +71,7 @@ add_task(async function test_experiment_iconOnly() {
     },
   });
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await experimentCleanup();
   });
 
@@ -143,7 +93,7 @@ add_task(async function test_experiment_iconOnly() {
       let videoID = "with-controls";
       await hoverToggle(browser, videoID);
 
-      await SpecialPowers.spawn(browser, [], async function() {
+      await SpecialPowers.spawn(browser, [], async function () {
         let video = content.document.getElementById("with-controls");
         let shadowRoot = video.openOrClosedShadowRoot;
         let pipExpanded = shadowRoot.querySelector(".pip-expanded");

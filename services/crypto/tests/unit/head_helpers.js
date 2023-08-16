@@ -19,8 +19,8 @@ try {
     OS = "Linux";
   }
 
-  const { updateAppInfo } = ChromeUtils.import(
-    "resource://testing-common/AppInfo.jsm"
+  const { updateAppInfo } = ChromeUtils.importESModule(
+    "resource://testing-common/AppInfo.sys.mjs"
   );
   updateAppInfo({
     name: "XPCShell",
@@ -73,6 +73,6 @@ addResourceAlias();
  * @usage _("Hello World") -> prints "Hello World"
  * @usage _(1, 2, 3) -> prints "1 2 3"
  */
-var _ = function(some, debug, text, to) {
+var _ = function (some, debug, text, to) {
   print(Array.from(arguments).join(" "));
 };

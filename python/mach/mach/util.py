@@ -2,12 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, unicode_literals
-
 import hashlib
 import os
 import sys
-
 from pathlib import Path, PurePosixPath
 from typing import Optional, Union
 
@@ -86,6 +83,13 @@ def get_state_dir(
             fh.write(str(topsrcdir))
 
     return str(state_dir)
+
+
+def get_virtualenv_base_dir(topsrcdir):
+    return os.path.join(
+        get_state_dir(specific_to_topsrcdir=True, topsrcdir=topsrcdir),
+        "_virtualenvs",
+    )
 
 
 def win_to_msys_path(path: Path):

@@ -14,7 +14,7 @@ const TEST_URI = `
   <div></div>
 `;
 
-add_task(async function() {
+add_task(async function () {
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
   const { inspector, view: ruleView } = await openRuleView();
   const { document: doc, store } = selectChangesView(inspector);
@@ -58,11 +58,11 @@ add_task(async function() {
   await onTrackChange;
 
   await waitFor(
-    () => getRemovedDeclarations(doc).length == 0,
+    () => !getRemovedDeclarations(doc).length,
     "No declaration tracked as removed"
   );
   await waitFor(
-    () => getAddedDeclarations(doc).length == 0,
+    () => !getAddedDeclarations(doc).length,
     "No declaration tracked as added"
   );
 });

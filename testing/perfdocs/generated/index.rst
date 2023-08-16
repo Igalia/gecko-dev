@@ -10,7 +10,9 @@ Performance Testing
   DAMP
   awsy
   fxrecord
+  mach-try-perf
   mozperftest
+  perf-sheriffing
   raptor
   talos
 
@@ -18,12 +20,14 @@ Performance tests are designed to catch performance regressions before they reac
 end users. At this time, there is no unified approach for these types of tests,
 but `mozperftest </testing/perfdocs/mozperftest.html>`_ aims to provide this in the future.
 
-For more detailed information about each test suite, see each projects' documentation:
+For more detailed information about each test suite and project, see their documentation:
 
   * :doc:`DAMP`
   * :doc:`awsy`
   * :doc:`fxrecord`
+  * :doc:`mach-try-perf`
   * :doc:`mozperftest`
+  * :doc:`perf-sheriffing`
   * :doc:`raptor`
   * :doc:`talos`
 

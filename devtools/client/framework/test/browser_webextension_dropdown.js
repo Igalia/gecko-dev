@@ -15,7 +15,9 @@ add_task(async function runTest() {
   const toolbox = await gDevTools.showToolboxForTab(tab, {
     toolId: "webconsole",
   });
-  const { Toolbox } = require("devtools/client/framework/toolbox");
+  const {
+    Toolbox,
+  } = require("resource://devtools/client/framework/toolbox.js");
   await toolbox.switchHost(Toolbox.HostType.WINDOW);
 
   await extension.awaitMessage("devtools_page_loaded");
@@ -38,7 +40,7 @@ add_task(async function runTest() {
 
   const iframe = panel.firstChild;
   const popupShownPromise = BrowserTestUtils.waitForSelectPopupShown(
-    iframe.contentWindow
+    toolbox.win.browsingContext.topChromeWindow
   );
 
   const browser = iframe.contentDocument.getElementById(
@@ -46,14 +48,17 @@ add_task(async function runTest() {
   );
   ok(browser, "found extension panel browser");
 
-  await ContentTask.spawn(browser, null, async function() {
+  info("Waiting for menu");
+  await ContentTask.spawn(browser, null, async function () {
     const menu = content.document.getElementById("menu");
     const event = new content.MouseEvent("mousedown");
     menu.dispatchEvent(event);
   });
 
-  await popupShownPromise;
+  const popup = await popupShownPromise;
   info("popup is shown");
+
+  popup.hidePopup();
 
   await toolbox.destroy();
 

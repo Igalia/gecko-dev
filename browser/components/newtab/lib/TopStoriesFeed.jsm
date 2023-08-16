@@ -3,12 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { NewTabUtils } = ChromeUtils.import(
-  "resource://gre/modules/NewTabUtils.jsm"
-);
-
-const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at, actionCreators: ac } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 const { Prefs } = ChromeUtils.import(
   "resource://activity-stream/lib/ActivityStreamPrefs.jsm"
@@ -19,16 +15,16 @@ const { shortURL } = ChromeUtils.import(
 const { SectionsManager } = ChromeUtils.import(
   "resource://activity-stream/lib/SectionsManager.jsm"
 );
-const { PersistentCache } = ChromeUtils.import(
-  "resource://activity-stream/lib/PersistentCache.jsm"
+const { PersistentCache } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/PersistentCache.sys.mjs"
 );
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "pktApi",
-  "chrome://pocket/content/pktApi.jsm"
-);
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  pktApi: "chrome://pocket/content/pktApi.sys.mjs",
+});
 
 const STORIES_UPDATE_TIME = 30 * 60 * 1000; // 30 minutes
 const TOPICS_UPDATE_TIME = 3 * 60 * 60 * 1000; // 3 hours
@@ -112,7 +108,7 @@ class TopStoriesFeed {
         update()
       );
     } catch (e) {
-      Cu.reportError(`Problem initializing top stories feed: ${e.message}`);
+      console.error(`Problem initializing top stories feed: ${e.message}`);
     }
   }
 
@@ -216,7 +212,7 @@ class TopStoriesFeed {
       body._timestamp = this.storiesLastUpdated;
       this.cache.set("stories", body);
     } catch (error) {
-      Cu.reportError(`Failed to fetch content: ${error.message}`);
+      console.error(`Failed to fetch content: ${error.message}`);
     }
     return this.stories;
   }
@@ -252,7 +248,7 @@ class TopStoriesFeed {
     }
 
     const calcResult = items
-      .filter(s => !NewTabUtils.blockedLinks.isBlocked({ url: s.url }))
+      .filter(s => !lazy.NewTabUtils.blockedLinks.isBlocked({ url: s.url }))
       .map(s => {
         let mapped = {
           guid: s.id,
@@ -308,7 +304,7 @@ class TopStoriesFeed {
         this.cache.set("topics", body);
       }
     } catch (error) {
-      Cu.reportError(`Failed to fetch topics: ${error.message}`);
+      console.error(`Failed to fetch topics: ${error.message}`);
     }
     return this.topics;
   }

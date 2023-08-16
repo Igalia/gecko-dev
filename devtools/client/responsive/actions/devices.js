@@ -4,8 +4,7 @@
 
 "use strict";
 
-const Services = require("Services");
-const asyncStorage = require("devtools/shared/async-storage");
+const asyncStorage = require("resource://devtools/shared/async-storage.js");
 
 const {
   ADD_DEVICE,
@@ -17,24 +16,26 @@ const {
   REMOVE_DEVICE,
   UPDATE_DEVICE_DISPLAYED,
   UPDATE_DEVICE_MODAL,
-} = require("devtools/client/responsive/actions/index");
-const { post } = require("devtools/client/responsive/utils/message");
+} = require("resource://devtools/client/responsive/actions/index.js");
+const {
+  post,
+} = require("resource://devtools/client/responsive/utils/message.js");
 
 const {
   addDevice,
   editDevice,
   getDevices,
   removeDevice,
-} = require("devtools/client/shared/devices");
+} = require("resource://devtools/client/shared/devices.js");
 const {
   changeUserAgent,
   toggleTouchSimulation,
-} = require("devtools/client/responsive/actions/ui");
+} = require("resource://devtools/client/responsive/actions/ui.js");
 const {
   changeDevice,
   changePixelRatio,
   changeViewportAngle,
-} = require("devtools/client/responsive/actions/viewports");
+} = require("resource://devtools/client/responsive/actions/viewports.js");
 
 const DISPLAYED_DEVICES_PREF = "devtools.responsive.html.displayedDeviceList";
 
@@ -90,7 +91,7 @@ module.exports = {
   updatePreferredDevices,
 
   addCustomDevice(device) {
-    return async function({ dispatch }) {
+    return async function ({ dispatch }) {
       // Add custom device to device storage
       await addDevice(device, "custom");
       dispatch({
@@ -117,7 +118,7 @@ module.exports = {
   },
 
   editCustomDevice(viewport, oldDevice, newDevice) {
-    return async function({ dispatch }) {
+    return async function ({ dispatch }) {
       // Edit custom device in storage
       await editDevice(oldDevice, newDevice, "custom");
       // Notify the window that the device should be updated in the device selector.
@@ -144,7 +145,7 @@ module.exports = {
   },
 
   removeCustomDevice(device) {
-    return async function({ dispatch }) {
+    return async function ({ dispatch }) {
       // Remove custom device from device storage
       await removeDevice(device, "custom");
       dispatch({
@@ -165,7 +166,7 @@ module.exports = {
   },
 
   loadDevices() {
-    return async function({ dispatch }) {
+    return async function ({ dispatch }) {
       dispatch({ type: LOAD_DEVICE_LIST_START });
       const preferredDevices = loadPreferredDevices();
       let deviceByTypes;
@@ -205,7 +206,7 @@ module.exports = {
   },
 
   restoreDeviceState() {
-    return async function({ dispatch, getState }) {
+    return async function ({ dispatch, getState }) {
       const deviceState = await asyncStorage.getItem(
         "devtools.responsive.deviceState"
       );

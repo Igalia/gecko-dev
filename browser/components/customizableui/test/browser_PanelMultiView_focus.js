@@ -7,10 +7,6 @@
  * Test the focus behavior when opening PanelViews.
  */
 
-const { PanelMultiView } = ChromeUtils.import(
-  "resource:///modules/PanelMultiView.jsm"
-);
-
 let gAnchor;
 let gPanel;
 let gPanelMultiView;
@@ -28,7 +24,7 @@ function createWith(doc, tag, props) {
   return el;
 }
 
-add_setup(async function() {
+add_setup(async function () {
   let navBar = document.getElementById("nav-bar");
   gAnchor = document.createXULElement("toolbarbutton");
   // Must be focusable in order for key presses to work.

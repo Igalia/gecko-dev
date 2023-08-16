@@ -4,11 +4,11 @@
 
 :root {
   --addon-icon-size: 32px;
+  --card-border-zap-gradient: linear-gradient(90deg, #9059FF 0%, #FF4AA2 52.08%, #FFBD4F 100%);
   --main-margin-start: 28px;
   --section-width: 664px;
   --sidebar-width: var(--in-content-sidebar-width);
   --z-index-sticky-container: 5;
-  --z-index-card-banner-text: 1;
   --z-index-popup: 10;
 }
 
@@ -76,7 +76,7 @@ body {
   display: inline-block;
   min-width: 20px;
   background-color: var(--in-content-accent-color);
-  color: #fff;
+  color: var(--in-content-primary-button-text-color);
   font-weight: bold;
   /* Use a large border-radius to get semi-circles on the sides. */
   border-radius: 1000px;
@@ -358,7 +358,6 @@ addon-card[expanded] .update-postponed-bar + .addon-card-message {
 
 .theme-enable-button {
   min-width: auto;
-  height: auto;
   font-size: 13px;
   min-height: auto;
   height: 24px;
@@ -370,7 +369,7 @@ addon-card[expanded] .update-postponed-bar + .addon-card-message {
 .addon-description {
   font-size: 14px;
   line-height: 20px;
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
   font-weight: 400;
 }
 
@@ -480,7 +479,7 @@ recommended-addon-card .addon-description:not(:empty) {
 }
 
 addon-details {
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
 }
 
 .addon-detail-description-wrapper {
@@ -559,7 +558,7 @@ button.addon-detail-description-toggle {
 
 .addon-detail-row.addon-detail-help-row {
   display: block;
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
   padding-top: 4px;
   padding-bottom: var(--card-padding);
   border: none;
@@ -614,32 +613,19 @@ button.addon-detail-description-toggle {
   width: 5px;
   height: 5px;
   border-radius: 50%;
-  background: var(--in-content-accent-color);;
+  background-color: var(--in-content-accent-color);;
 }
 
-panel-item {
-  -moz-context-properties: fill;
-  fill: currentColor;
+panel-item[action="remove"]::part(button) {
+  background-image: url("chrome://global/skin/icons/delete.svg");
 }
 
-panel-item[action="remove"] {
-  --icon: url("chrome://global/skin/icons/delete.svg");
+panel-item[action="install-update"]::part(button) {
+  background-image: url("chrome://global/skin/icons/update-icon.svg");
 }
 
-panel-item[action="install-update"] {
-  --icon: url("chrome://global/skin/icons/update-icon.svg");
-}
-
-panel-item[action="report"] {
-  --icon: url(chrome://global/skin/icons/warning.svg);
-}
-
-panel-item-separator {
-  display: block;
-  height: 1px;
-  background: var(--in-content-box-border-color);
-  padding: 0;
-  margin: 6px 0;
+panel-item[action="report"]::part(button) {
+  background-image: url(chrome://global/skin/icons/warning.svg);
 }
 
 .hide-amo-link .amo-link-container {
@@ -696,13 +682,6 @@ addon-permissions-list > .addon-detail-row {
 
 .addon-permissions-list > li:dir(rtl) {
   background-position-x: right 0;
-}
-
-/* justify the permission toggle */
-li.permission-info > label {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
 }
 
 /* using a list-style-image prevents aligning the image */
@@ -766,10 +745,6 @@ button.tab-button:-moz-focusring {
   box-shadow: none;
 }
 
-panel-list {
-  font: menu;
-}
-
 section:not(:empty) ~ #empty-addons-message {
   display: none;
 }
@@ -788,125 +763,6 @@ section:not(:empty) ~ #empty-addons-message {
   }
 }
 
-/* Colorways Section */
-
-.monochromatic-addon-list section {
-  display: flex;
-  flex-flow: row wrap;
-  justify-content: space-between;
-}
-
-.monochromatic-addon-list .header-name,
-.monochromatic-addon-list .list-section-subheading {
-  flex-basis: 100%;
-}
-
-.monochromatic-addon-list addon-card .card {
-  box-sizing: border-box;
-  height: calc(100% - 16px);
-  overflow: clip;
-  width: calc((var(--section-width) / 3) - 16px);
-}
-
-.monochromatic-addon-list addon-card .card .card-contents {
-  white-space: normal;
-}
-
-/* Remove disabled add-on fade */
-.monochromatic-addon-list addon-card:not([expanded]) > .addon.card[active="false"] {
-  opacity: unset;
-}
-
-.monochromatic-addon-list .addon-name-container {
-  align-items: start;
-  display: grid;
-  grid-template-columns: auto 1fr;
-  grid-template-rows: 3em 1fr;
-  row-gap: 16px;
-}
-
-.monochromatic-addon-list .addon-name-container .addon-name {
-  grid-column-end: span 2;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-}
-
-.monochromatic-addon-list .addon-name-container .spacer {
-  display: none;
-}
-
 .permission-header > .addon-sitepermissions-host {
   font-weight: bolder;
-}
-
-.colorways-section > .list-section-heading {
-  margin-bottom: 0;
-}
-
-#colorways-expiry-date-container {
-  display: flex;
-  flex-grow: 1;
-  flex-direction: row;
-}
-
-#colorways-expiry-date {
-  display: inline-block;
-  background: linear-gradient(to right, purple, pink, orange);
-  background-origin: border-box;
-  border-radius: 1.5em;
-  padding: 1px;
-}
-
-#colorways-expiry-date > span {
-  display: inline-block;
-  color: var(--in-content-page-color);
-  background: var(--in-content-page-background);
-  border-radius: 1.5em;
-  padding: .3em 1em;
-}
-
-#colorways-button {
-  flex-shrink: 0;
-  flex-grow: 0;
-  align-self: baseline;
-  margin-inline-end: 0;
-}
-
-#colorways-preview-text-container {
-  z-index: var(--z-index-card-banner-text);
-  position: absolute;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  align-items: center;
-  /* Make sure text fits within addon card dimensions */
-  width: var(--section-width);
-  height: calc(var(--section-width) * 92 / 680);
-  margin: -16px -16px;
-}
-
-#colorways-preview-text-container > h3,
-#colorways-preview-text-container > p {
-  margin: 0;
-}
-
-#colorways-preview-text-container > h3 {
-  font-size: 2.6em;
-}
-
-#colorways-preview-text-container > p {
-  font-size: 1.1em;
-}
-
-#colorways-preview-text-container + .card-heading-image {
-  background-color: var(--in-content-box-background-odd);
-}
-
-@media (prefers-color-scheme: dark) {
-  #colorways-preview-text-container + .card-heading-image {
-    background-color: var(--in-content-page-background);
-  }
 }

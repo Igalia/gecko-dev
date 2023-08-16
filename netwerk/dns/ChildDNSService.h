@@ -35,31 +35,41 @@ class ChildDNSService final : public DNSServiceBase, public nsPIDNSService {
 
   void NotifyRequestDone(DNSRequestSender* aDnsRequest);
 
+  void SetTRRDomain(const nsACString& aTRRDomain);
+  void SetTRRModeInChild(nsIDNSService::ResolverMode mode,
+                         nsIDNSService::ResolverMode modeFromPref);
+
  private:
   virtual ~ChildDNSService() = default;
 
   void MOZ_ALWAYS_INLINE GetDNSRecordHashKey(
       const nsACString& aHost, const nsACString& aTrrServer, int32_t aPort,
       uint16_t aType, const OriginAttributes& aOriginAttributes,
-      uint32_t aFlags, uintptr_t aListenerAddr, nsACString& aHashKey);
+      nsIDNSService::DNSFlags aFlags, uintptr_t aListenerAddr,
+      nsACString& aHashKey);
   nsresult AsyncResolveInternal(const nsACString& hostname, uint16_t type,
-                                uint32_t flags, nsIDNSAdditionalInfo* aInfo,
+                                nsIDNSService::DNSFlags flags,
+                                nsIDNSAdditionalInfo* aInfo,
                                 nsIDNSListener* listener,
                                 nsIEventTarget* target_,
                                 const OriginAttributes& aOriginAttributes,
                                 nsICancelable** result);
   nsresult CancelAsyncResolveInternal(
-      const nsACString& aHostname, uint16_t aType, uint32_t aFlags,
-      nsIDNSAdditionalInfo* aInfo, nsIDNSListener* aListener, nsresult aReason,
+      const nsACString& aHostname, uint16_t aType,
+      nsIDNSService::DNSFlags aFlags, nsIDNSAdditionalInfo* aInfo,
+      nsIDNSListener* aListener, nsresult aReason,
       const OriginAttributes& aOriginAttributes);
-
-  bool mODoHActivated = false;
 
   // We need to remember pending dns requests to be able to cancel them.
   nsClassHashtable<nsCStringHashKey, nsTArray<RefPtr<DNSRequestSender>>>
       mPendingRequests;
   Mutex mPendingRequestsLock MOZ_UNANNOTATED{"DNSPendingRequestsLock"};
   RefPtr<TRRServiceParent> mTRRServiceParent;
+
+  nsCString mTRRDomain;
+  // Only set in the content process.
+  nsIDNSService::ResolverMode mTRRMode =
+      nsIDNSService::ResolverMode::MODE_NATIVEONLY;
 };
 
 }  // namespace net

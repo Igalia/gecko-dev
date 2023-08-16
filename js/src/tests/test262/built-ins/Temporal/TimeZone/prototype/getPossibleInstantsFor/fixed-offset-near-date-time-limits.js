@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 André Bargull. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -6,7 +6,7 @@
 esid: sec-temporal.timezone.prototype.getpossibleinstantsfor
 description: >
   Call getPossibleInstantsFor with values near the date/time limit and a fixed offset.
-features: [Temporal]
+features: [Temporal, exponentiation]
 ---*/
 
 const oneHour = 1n * 60n * 60n * 1000n**3n;

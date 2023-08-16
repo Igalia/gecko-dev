@@ -5,7 +5,6 @@
 
 // Tests for the FxA push service.
 
-/* eslint-disable no-shadow */
 /* eslint-disable mozilla/use-chromeutils-generateqi */
 
 const {
@@ -22,16 +21,13 @@ const {
   log,
 } = ChromeUtils.import("resource://gre/modules/FxAccountsCommon.js");
 
-let importScope = {};
-Services.scriptloader.loadSubScript(
-  "resource://gre/modules/FxAccountsPush.jsm",
-  importScope
+const { FxAccountsPushService } = ChromeUtils.importESModule(
+  "resource://gre/modules/FxAccountsPush.sys.mjs"
 );
-const FxAccountsPushService = importScope.FxAccountsPushService;
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
-  "pushService",
+  "PushService",
   "@mozilla.org/push/Service;1",
   "nsIPushService"
 );
@@ -43,8 +39,8 @@ const MOCK_ENDPOINT = "http://mochi.test:8888";
 
 // tests do not allow external connections, mock the PushService
 let mockPushService = {
-  pushTopic: pushService.pushTopic,
-  subscriptionChangeTopic: pushService.subscriptionChangeTopic,
+  pushTopic: PushService.pushTopic,
+  subscriptionChangeTopic: PushService.subscriptionChangeTopic,
   subscribe(scope, principal, cb) {
     cb(Cr.NS_OK, {
       endpoint: MOCK_ENDPOINT,
@@ -216,8 +212,8 @@ add_task(async function observePushTopicDeviceDisconnected_current_device() {
   };
 
   let signoutCalled = false;
-  let { FxAccounts } = ChromeUtils.import(
-    "resource://gre/modules/FxAccounts.jsm"
+  let { FxAccounts } = ChromeUtils.importESModule(
+    "resource://gre/modules/FxAccounts.sys.mjs"
   );
   const fxAccountsMock = new FxAccounts({
     newAccountState() {
@@ -272,8 +268,8 @@ add_task(async function observePushTopicDeviceDisconnected_another_device() {
   };
 
   let signoutCalled = false;
-  let { FxAccounts } = ChromeUtils.import(
-    "resource://gre/modules/FxAccounts.jsm"
+  let { FxAccounts } = ChromeUtils.importESModule(
+    "resource://gre/modules/FxAccounts.sys.mjs"
   );
   const fxAccountsMock = new FxAccounts({
     newAccountState() {
@@ -428,7 +424,7 @@ add_test(function observePushTopicPasswordChanged() {
     pushService: mockPushService,
   });
 
-  pushService._onPasswordChanged = function() {
+  pushService._onPasswordChanged = function () {
     run_next_test();
   };
 
@@ -455,7 +451,7 @@ add_test(function observePushTopicPasswordReset() {
     pushService: mockPushService,
   });
 
-  pushService._onPasswordChanged = function() {
+  pushService._onPasswordChanged = function () {
     run_next_test();
   };
 
@@ -472,8 +468,7 @@ add_task(async function commandReceived() {
       json: () => ({
         command: "fxaccounts:command_received",
         data: {
-          url:
-            "https://api.accounts.firefox.com/auth/v1/account/device/commands?index=42&limit=1",
+          url: "https://api.accounts.firefox.com/auth/v1/account/device/commands?index=42&limit=1",
         },
       }),
     },

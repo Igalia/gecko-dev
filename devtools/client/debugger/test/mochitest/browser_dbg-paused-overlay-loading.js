@@ -7,13 +7,13 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebuggerWithAbsoluteURL(
     "data:text/html,<meta charset=utf8><script>debugger;</script>"
   );
 
   info("Reload the page to hit the debugger statement while loading");
-  reload(dbg);
+  const onReloaded = reload(dbg);
   await waitForPaused(dbg);
   ok(true, "We're paused");
 
@@ -42,4 +42,7 @@ add_task(async function() {
   });
 
   ok(true, "The overlay is now hidden");
+
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 });

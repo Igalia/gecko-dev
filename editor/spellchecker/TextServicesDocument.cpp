@@ -5,14 +5,15 @@
 
 #include "TextServicesDocument.h"
 
+#include "EditorBase.h"               // for EditorBase
+#include "EditorUtils.h"              // for AutoTransactionBatchExternal
 #include "FilteredContentIterator.h"  // for FilteredContentIterator
-#include "mozilla/Assertions.h"       // for MOZ_ASSERT, etc
-#include "mozilla/EditorBase.h"       // for EditorBase
-#include "mozilla/EditorUtils.h"      // for AutoTransactionBatchExternal
-#include "mozilla/HTMLEditHelpers.h"  // for JoinNodesDirection
-#include "mozilla/HTMLEditUtils.h"    // for HTMLEditUtils
-#include "mozilla/IntegerRange.h"     // for IntegerRange
-#include "mozilla/mozalloc.h"         // for operator new, etc
+#include "HTMLEditUtils.h"            // for HTMLEditUtils
+#include "JoinSplitNodeDirection.h"   // for JoinNodesDirection
+
+#include "mozilla/Assertions.h"    // for MOZ_ASSERT, etc
+#include "mozilla/IntegerRange.h"  // for IntegerRange
+#include "mozilla/mozalloc.h"      // for operator new, etc
 #include "mozilla/OwningNonNull.h"
 #include "mozilla/UniquePtr.h"          // for UniquePtr
 #include "mozilla/dom/AbstractRange.h"  // for AbstractRange
@@ -21,8 +22,9 @@
 #include "mozilla/dom/StaticRange.h"  // for StaticRange
 #include "mozilla/dom/Text.h"
 #include "mozilla/intl/WordBreaker.h"  // for WordRange, WordBreaker
-#include "nsAString.h"                 // for nsAString::Length, etc
-#include "nsContentUtils.h"            // for nsContentUtils
+
+#include "nsAString.h"       // for nsAString::Length, etc
+#include "nsContentUtils.h"  // for nsContentUtils
 #include "nsComposeTxtSrvFilter.h"
 #include "nsDebug.h"                 // for NS_ENSURE_TRUE, etc
 #include "nsDependentSubstring.h"    // for Substring
@@ -34,7 +36,7 @@
 #include "nsIEditorSpellCheck.h"     // for nsIEditorSpellCheck, etc
 #include "nsINode.h"                 // for nsINode
 #include "nsISelectionController.h"  // for nsISelectionController, etc
-#include "nsISupportsBase.h"         // for nsISupports
+#include "nsISupports.h"             // for nsISupports
 #include "nsISupportsUtils.h"        // for NS_IF_ADDREF, NS_ADDREF, etc
 #include "nsRange.h"                 // for nsRange
 #include "nsString.h"                // for nsString, nsAutoString
@@ -2692,11 +2694,10 @@ TextServicesDocument::OffsetEntryArray::FindWordRange(
 
   const char16_t* str = aAllTextInBlock.BeginReading();
   uint32_t strLen = aAllTextInBlock.Length();
+  MOZ_ASSERT(strOffset <= strLen,
+             "The string offset shouldn't be greater than the string length!");
 
   intl::WordRange res = intl::WordBreaker::FindWord(str, strLen, strOffset);
-  if (res.mBegin == res.mEnd) {
-    return Err(str ? NS_ERROR_ILLEGAL_VALUE : NS_ERROR_NULL_POINTER);
-  }
 
   // Strip out the NBSPs at the ends
   while (res.mBegin <= res.mEnd && IS_NBSP_CHAR(str[res.mBegin])) {

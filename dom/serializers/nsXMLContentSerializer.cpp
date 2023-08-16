@@ -589,6 +589,13 @@ bool nsXMLContentSerializer::SerializeAttr(const nsAString& aPrefix,
                                            const nsAString& aValue,
                                            nsAString& aStr,
                                            bool aDoEscapeEntities) {
+  // Because this method can short-circuit AppendToString for raw output, we
+  // need to make sure that we're not inappropriately serializing attributes
+  // from outside the body
+  if (mBodyOnly && !mInBody) {
+    return true;
+  }
+
   nsAutoString attrString_;
   // For innerHTML we can do faster appending without
   // temporary strings.
@@ -665,12 +672,17 @@ bool nsXMLContentSerializer::SerializeAttr(const nsAString& aPrefix,
     NS_ENSURE_TRUE(attrString.Append(sValue, mozilla::fallible), false);
     NS_ENSURE_TRUE(attrString.Append(cDelimiter, mozilla::fallible), false);
   }
-  if (mDoRaw || PreLevel() > 0) {
-    NS_ENSURE_TRUE(AppendToStringConvertLF(attrString, aStr), false);
-  } else if (mDoFormat) {
-    NS_ENSURE_TRUE(AppendToStringFormatedWrapped(attrString, aStr), false);
-  } else if (mDoWrap) {
-    NS_ENSURE_TRUE(AppendToStringWrapped(attrString, aStr), false);
+
+  if (mDoWrap && mColPos + attrString.Length() > mMaxColumn) {
+    // Attr would cause us to overrun the max width, so begin a new line.
+    NS_ENSURE_TRUE(AppendNewLineToString(aStr), false);
+
+    // Chomp the leading space.
+    nsDependentSubstring chomped(attrString, 1);
+    if (mDoFormat && mIndent.Length() + chomped.Length() <= mMaxColumn) {
+      NS_ENSURE_TRUE(AppendIndentation(aStr), false);
+    }
+    NS_ENSURE_TRUE(AppendToStringConvertLF(chomped, aStr), false);
   } else {
     NS_ENSURE_TRUE(AppendToStringConvertLF(attrString, aStr), false);
   }
@@ -1790,7 +1802,7 @@ bool nsXMLContentSerializer::MaybeSerializeIsValue(Element* aElement,
   CustomElementData* ceData = aElement->GetCustomElementData();
   if (ceData) {
     nsAtom* isAttr = ceData->GetIs(aElement);
-    if (isAttr && !aElement->HasAttr(kNameSpaceID_None, nsGkAtoms::is)) {
+    if (isAttr && !aElement->HasAttr(nsGkAtoms::is)) {
       NS_ENSURE_TRUE(aStr.AppendLiteral(" is=\"", mozilla::fallible), false);
       NS_ENSURE_TRUE(
           aStr.Append(nsDependentAtomString(isAttr), mozilla::fallible), false);

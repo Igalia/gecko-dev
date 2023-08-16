@@ -7,13 +7,9 @@ var gTestTab;
 var gContentAPI;
 add_task(setup_UITourTest);
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
-);
-
 // Tests assume there's at least 1 builtin theme with colorway id.
-const { BuiltInThemes } = ChromeUtils.import(
-  "resource:///modules/BuiltInThemes.jsm"
+const { BuiltInThemes } = ChromeUtils.importESModule(
+  "resource:///modules/BuiltInThemes.sys.mjs"
 );
 const COLORWAY_IDS = [...BuiltInThemes.builtInThemeMap.keys()].filter(
   id =>

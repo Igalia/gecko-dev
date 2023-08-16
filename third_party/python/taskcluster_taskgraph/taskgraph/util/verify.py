@@ -6,27 +6,28 @@
 import logging
 import sys
 from abc import ABC, abstractmethod
-
-import attr
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Union
 
 from taskgraph.config import GraphConfig
 from taskgraph.parameters import Parameters
 from taskgraph.taskgraph import TaskGraph
 from taskgraph.util.attributes import match_run_on_projects
+from taskgraph.util.treeherder import join_symbol
 
 logger = logging.getLogger(__name__)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class Verification(ABC):
-    func = attr.ib()
+    func: Callable
 
     @abstractmethod
     def verify(self, **kwargs) -> None:
         pass
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class InitialVerification(Verification):
     """Verification that doesn't depend on any generation state."""
 
@@ -34,11 +35,11 @@ class InitialVerification(Verification):
         self.func()
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class GraphVerification(Verification):
     """Verification for a TaskGraph object."""
 
-    run_on_projects = attr.ib(default=None)
+    run_on_projects: Union[List, None] = field(default=None)
 
     def verify(
         self, graph: TaskGraph, graph_config: GraphConfig, parameters: Parameters
@@ -64,7 +65,7 @@ class GraphVerification(Verification):
         )
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class ParametersVerification(Verification):
     """Verification for a set of parameters."""
 
@@ -72,7 +73,7 @@ class ParametersVerification(Verification):
         self.func(parameters)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class KindsVerification(Verification):
     """Verification for kinds."""
 
@@ -80,7 +81,7 @@ class KindsVerification(Verification):
         self.func(kinds)
 
 
-@attr.s(frozen=True)
+@dataclass(frozen=True)
 class VerificationSequence:
     """
     Container for a sequence of verifications over a TaskGraph. Each
@@ -90,7 +91,7 @@ class VerificationSequence:
     that was passed for each task.
     """
 
-    _verifications = attr.ib(factory=dict)
+    _verifications: Dict = field(default_factory=dict)
     _verification_types = {
         "graph": GraphVerification,
         "initial": InitialVerification,
@@ -131,15 +132,26 @@ def verify_task_graph_symbol(task, taskgraph, scratch_pad, graph_config, paramet
             treeherder = extra["treeherder"]
 
             collection_keys = tuple(sorted(treeherder.get("collection", {}).keys()))
+            if len(collection_keys) != 1:
+                raise Exception(
+                    "Task {} can't be in multiple treeherder collections "
+                    "(the part of the platform after `/`): {}".format(
+                        task.label, collection_keys
+                    )
+                )
             platform = treeherder.get("machine", {}).get("platform")
             group_symbol = treeherder.get("groupSymbol")
             symbol = treeherder.get("symbol")
 
-            key = (collection_keys, platform, group_symbol, symbol)
+            key = (platform, collection_keys[0], group_symbol, symbol)
             if key in scratch_pad:
                 raise Exception(
-                    "conflict between `{}`:`{}` for values `{}`".format(
-                        task.label, scratch_pad[key], key
+                    "Duplicate treeherder platform and symbol in tasks "
+                    "`{}`and `{}`: {} {}".format(
+                        task.label,
+                        scratch_pad[key],
+                        f"{platform}/{collection_keys[0]}",
+                        join_symbol(group_symbol, symbol),
                     )
                 )
             else:

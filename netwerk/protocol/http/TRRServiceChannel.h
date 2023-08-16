@@ -52,6 +52,10 @@ class TRRServiceChannel : public HttpBaseChannel,
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_TRRSERVICECHANNEL_IID)
 
   // nsIRequest
+  NS_IMETHOD SetCanceledReason(const nsACString& aReason) override;
+  NS_IMETHOD GetCanceledReason(nsACString& aReason) override;
+  NS_IMETHOD CancelWithReason(nsresult status,
+                              const nsACString& reason) override;
   NS_IMETHOD Cancel(nsresult status) override;
   NS_IMETHOD Suspend() override;
   NS_IMETHOD Resume() override;
@@ -63,11 +67,12 @@ class TRRServiceChannel : public HttpBaseChannel,
   NS_IMETHOD GetLoadGroup(nsILoadGroup** aLoadGroup) override;
   NS_IMETHOD GetRequestMethod(nsACString& aMethod) override;
   // nsIChannel
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override;
+  NS_IMETHOD GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) override;
   NS_IMETHOD AsyncOpen(nsIStreamListener* aListener) override;
 
   NS_IMETHOD LogBlockedCORSRequest(const nsAString& aMessage,
-                                   const nsACString& aCategory) override;
+                                   const nsACString& aCategory,
+                                   bool aIsWarning) override;
   NS_IMETHOD LogMimeTypeMismatch(const nsACString& aMessageName, bool aWarning,
                                  const nsAString& aURL,
                                  const nsAString& aContentType) override;
@@ -86,6 +91,10 @@ class TRRServiceChannel : public HttpBaseChannel,
   // nsIResumableChannel
   NS_IMETHOD ResumeAt(uint64_t startPos, const nsACString& entityID) override;
   NS_IMETHOD SetEarlyHintObserver(nsIEarlyHintObserver* aObserver) override {
+    return NS_OK;
+  }
+  NS_IMETHOD SetWebTransportSessionEventListener(
+      WebTransportSessionEventListener* aListener) override {
     return NS_OK;
   }
 
@@ -137,7 +146,11 @@ class TRRServiceChannel : public HttpBaseChannel,
   [[nodiscard]] virtual nsresult SetupReplacementChannel(
       nsIURI* aNewURI, nsIChannel* aNewChannel, bool aPreserveMethod,
       uint32_t aRedirectFlags) override;
-
+  // Skip this check for TRRServiceChannel.
+  virtual bool ShouldTaintReplacementChannelOrigin(
+      nsIChannel* aNewChannel, uint32_t aRedirectFlags) override {
+    return false;
+  }
   virtual bool SameOriginWithOriginalUri(nsIURI* aURI) override;
   bool DispatchRelease();
 

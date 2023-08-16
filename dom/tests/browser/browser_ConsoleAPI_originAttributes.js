@@ -6,7 +6,7 @@ const ConsoleAPIStorage = Cc["@mozilla.org/consoleAPI-storage;1"].getService(
 );
 
 const { WebExtensionPolicy } = Cu.getGlobalForObject(
-  ChromeUtils.import("resource://gre/modules/AppConstants.jsm")
+  ChromeUtils.importESModule("resource://gre/modules/AppConstants.sys.mjs")
 );
 
 const FAKE_ADDON_ID = "test-webext-addon@mozilla.org";
@@ -90,7 +90,7 @@ function test() {
 
   info("fake webextension docShell created");
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     policy.active = false;
     if (chromeWebNav) {
       chromeWebNav.close();

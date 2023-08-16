@@ -10,6 +10,8 @@
 #include "js/loader/LoadContextBase.h"
 #include "js/loader/ModuleLoaderBase.h"
 
+#include "SkipCheckForBrokenURLOrZeroSized.h"
+
 class mozJSModuleLoader;
 
 namespace mozilla {
@@ -17,8 +19,7 @@ namespace loader {
 
 class ComponentScriptLoader : public JS::loader::ScriptLoaderInterface {
  public:
-  NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_CLASS(ComponentScriptLoader)
+  NS_DECL_ISUPPORTS
 
  private:
   ~ComponentScriptLoader() = default;
@@ -102,6 +103,8 @@ class ComponentLoadContext : public JS::loader::LoadContextBase {
   // The result of compiling a module script. These fields are used temporarily
   // before being passed to the module loader.
   nsresult mRv;
+
+  SkipCheckForBrokenURLOrZeroSized mSkipCheck;
 
   // The exception thrown during compiling a module script. These fields are
   // used temporarily before being passed to the module loader.

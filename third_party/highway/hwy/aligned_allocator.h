@@ -1,4 +1,5 @@
 // Copyright 2020 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -17,11 +18,10 @@
 
 // Memory allocator with support for alignment and offsets.
 
-#include <stddef.h>
-
 #include <memory>
+#include <utility>
 
-#include "hwy/highway_export.h"
+#include "hwy/base.h"
 
 namespace hwy {
 

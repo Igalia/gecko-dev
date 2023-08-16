@@ -203,15 +203,22 @@ def new_label(label, tasks):
     For instance, we try to backfill chunk #3, however, a previous push does not contain such
     chunk, thus, we try to reuse another task/label.
     """
+    logger.info(f"Extracting new label for {label}")
+
+    if "-" not in label:
+        raise Exception(
+            f"Expected '-' was not found in label {label}, cannot extract new label."
+        )
+
     begining_label, ending = label.rsplit("-", 1)
+
     if ending.isdigit():
         # We assume that the taskgraph has chunk #1 OR unnumbered chunk and we hijack it
         if begining_label in tasks:
             return begining_label
-        elif begining_label + "-1" in tasks:
+        if begining_label + "-1" in tasks:
             return begining_label + "-1"
-        else:
-            raise Exception(f"New label ({label}) was not found in the task-graph")
+        raise Exception(f"New label ({label}) was not found in the task-graph")
     else:
         raise Exception(f"{label} was not found in the task-graph")
 
@@ -369,6 +376,9 @@ def filter_raptor_jobs(full_task_graph, label_to_taskid):
         if "browsertime" not in entry.attributes.get("raptor_try_name", ""):
             continue
         if not entry.attributes.get("test_platform", "").endswith("shippable-qr/opt"):
+            continue
+        if "android" in entry.attributes.get("test_platform", ""):
+            # Bug 1786254 - The backfill bot is scheduling too many tests atm
             continue
         exceptions = ("live", "profiling", "youtube-playback")
         if any(e in entry.attributes.get("raptor_try_name", "") for e in exceptions):

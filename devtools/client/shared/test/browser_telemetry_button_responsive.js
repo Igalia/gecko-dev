@@ -11,7 +11,7 @@ const TEST_URI =
 // opened we make use of setTimeout() to create tool active times.
 const TOOL_DELAY = 200;
 
-const asyncStorage = require("devtools/shared/async-storage");
+const asyncStorage = require("resource://devtools/shared/async-storage.js");
 
 // Toggling the RDM UI involves several docShell swap operations, which are somewhat slow
 // on debug builds. Usually we are just barely over the limit, so a blanket factor of 2
@@ -28,10 +28,10 @@ registerCleanupFunction(() => {
 loader.lazyRequireGetter(
   this,
   "ResponsiveUIManager",
-  "devtools/client/responsive/manager"
+  "resource://devtools/client/responsive/manager.js"
 );
 
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URI);
   startTelemetry();
 
@@ -71,7 +71,7 @@ function waitForToggle() {
   });
 }
 
-var delayedClicks = async function(tab, node, clicks) {
+var delayedClicks = async function (tab, node, clicks) {
   for (let i = 0; i < clicks; i++) {
     info("Clicking button " + node.id);
     const toggled = waitForToggle();

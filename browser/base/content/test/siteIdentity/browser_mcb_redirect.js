@@ -62,6 +62,7 @@ const HTTPS_TEST_ROOT = getRootDirectory(gTestPath).replace(
 );
 const HTTP_TEST_ROOT = getRootDirectory(gTestPath).replace(
   "chrome://mochitests/content",
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://example.com"
 );
 const PREF_INSECURE_ICON = "security.insecure_connection_icon.enabled";
@@ -74,7 +75,7 @@ var gTestBrowser = null;
 
 // ------------------------ Helper Functions ---------------------
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   // Set preferences back to their original values
   Services.prefs.setBoolPref(PREF_ACTIVE, origBlockActive);
   Services.prefs.setBoolPref(PREF_DISPLAY, origBlockDisplay);
@@ -100,7 +101,7 @@ function test1() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkUIForTest1
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function testInsecure1() {
@@ -110,7 +111,7 @@ function testInsecure1() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkUIForTest1
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 async function checkUIForTest1() {
@@ -120,7 +121,7 @@ async function checkUIForTest1() {
     passiveLoaded: false,
   });
 
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "script blocked";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -136,7 +137,7 @@ function test2() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkUIForTest2
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 async function checkUIForTest2() {
@@ -146,7 +147,7 @@ async function checkUIForTest2() {
     passiveLoaded: false,
   });
 
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "script executed";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -163,11 +164,11 @@ function test3() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest3
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest3() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image blocked";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -184,11 +185,11 @@ function test4() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest4
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest4() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image loaded";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -210,11 +211,11 @@ function test5() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest5
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest5() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image loaded";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -240,11 +241,11 @@ function test6() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest6
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest6() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image blocked";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -264,11 +265,11 @@ function test7() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest7
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest7() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image loaded";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -289,11 +290,11 @@ function test8() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest8
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest8() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image loaded";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,
@@ -318,11 +319,11 @@ function test9() {
   BrowserTestUtils.browserLoaded(gTestBrowser, false, url).then(
     checkLoadEventForTest9
   );
-  BrowserTestUtils.loadURI(gTestBrowser, url);
+  BrowserTestUtils.loadURIString(gTestBrowser, url);
 }
 
 function checkLoadEventForTest9() {
-  SpecialPowers.spawn(gTestBrowser, [], async function() {
+  SpecialPowers.spawn(gTestBrowser, [], async function () {
     var expected = "image blocked";
     await ContentTaskUtils.waitForCondition(
       () => content.document.getElementById("mctestdiv").innerHTML == expected,

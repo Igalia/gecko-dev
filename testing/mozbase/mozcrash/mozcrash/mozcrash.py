@@ -2,24 +2,24 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
 import glob
 import json
 import os
 import re
 import shutil
 import signal
-import six
 import subprocess
 import sys
 import tempfile
+import traceback
 import zipfile
 from collections import namedtuple
 
 import mozfile
 import mozinfo
 import mozlog
+import six
+from redo import retriable
 
 __all__ = [
     "check_for_crashes",
@@ -40,6 +40,8 @@ StackInfo = namedtuple(
         "stackwalk_retcode",
         "stackwalk_errors",
         "extra",
+        "process_type",
+        "pid",
         "reason",
         "java_stack",
     ],
@@ -116,11 +118,13 @@ def check_for_crashes(
         crash_count += 1
         output = None
         if info.java_stack:
-            output = u"PROCESS-CRASH | {name} | {stack}".format(
+            output = "PROCESS-CRASH | {name} | {stack}".format(
                 name=test_name, stack=info.java_stack
             )
         elif not quiet:
-            stackwalk_output = [u"Crash dump filename: {}".format(info.minidump_path)]
+            stackwalk_output = ["Crash dump filename: {}".format(info.minidump_path)]
+            stackwalk_output.append("Process type: {}".format(info.process_type))
+            stackwalk_output.append("Process pid: {}".format(info.pid or "unknown"))
             if info.reason:
                 stackwalk_output.append("Mozilla crash reason: %s" % info.reason)
             if info.stackwalk_stderr:
@@ -136,7 +140,8 @@ def check_for_crashes(
                 )
             signature = info.signature if info.signature else "unknown top frame"
 
-            output = u"PROCESS-CRASH | {name} | application crashed [{sig}]\n{out}\n{err}".format(
+            output = "PROCESS-CRASH | {reason} [{sig}] | {name}\n{out}\n{err}".format(
+                reason=info.reason,
                 name=test_name,
                 sig=signature,
                 out="\n".join(stackwalk_output),
@@ -194,6 +199,9 @@ ABORT_SIGNATURES = (
     "static void Abort(const char *)",
     "std::sys_common::backtrace::__rust_end_short_backtrace",
     "rust_begin_unwind",
+    # This started showing up when we enabled dumping inlined functions
+    "MOZ_Crash(char const*, int, char const*)",
+    "<alloc::boxed::Box<F,A> as core::ops::function::Fn<Args>>::call",
 )
 
 # Similar to above, but matches if the substring appears anywhere in the
@@ -250,35 +258,27 @@ class CrashInfo(object):
             stackwalk_binary = os.environ.get("MINIDUMP_STACKWALK", None)
         if stackwalk_binary is None:
             # Location of minidump-stackwalk installed by "mach bootstrap".
-            #
-            # In the transition to rust-minidump, the binary name was changed
-            # from minidump_stackwalk to minidump-stackwalk, but if the user
-            # hasn't run mach bootstrap yet, then they'll still have the old
-            # binary. So we try both names (but prefer the new one).
-            #
-            # If neither exists, then we intentionally leave a junk path
-            # in stackwalk_binary, as later checks will handle this properly
-            # when our actual error reporting is setup.
-            possible_names = ["minidump-stackwalk", "minidump_stackwalk"]
-            for possible_name in possible_names:
-                stackwalk_binary = os.path.expanduser(
-                    "~/.mozbuild/{name}/{name}".format(name=possible_name)
-                )
-                if mozinfo.isWin and not stackwalk_binary.endswith(".exe"):
-                    stackwalk_binary += ".exe"
-                if os.path.exists(stackwalk_binary):
-                    # If we reach this point, then we're almost certainly
-                    # running on a local user's machine. Full minidump-stackwalk
-                    # output is a bit noisy and verbose for that use-case,
-                    # so we should use the --brief output.
-                    self.brief_output = True
-                    break
+            executable_name = "minidump-stackwalk"
+            state_dir = os.environ.get(
+                "MOZBUILD_STATE_PATH",
+                os.path.expanduser(os.path.join("~", ".mozbuild")),
+            )
+            stackwalk_binary = os.path.join(state_dir, executable_name, executable_name)
+            if mozinfo.isWin and not stackwalk_binary.endswith(".exe"):
+                stackwalk_binary += ".exe"
+            if os.path.exists(stackwalk_binary):
+                # If we reach this point, then we're almost certainly
+                # running on a local user's machine. Full minidump-stackwalk
+                # output is a bit noisy and verbose for that use-case,
+                # so we should use the --brief output.
+                self.brief_output = True
 
         self.stackwalk_binary = stackwalk_binary
 
         self.logger = get_logger()
         self._dump_files = None
 
+    @retriable(attempts=5, sleeptime=5, sleepscale=2)
     def _get_symbols(self):
         if not self.symbols_path:
             self.logger.warning(
@@ -349,60 +349,28 @@ class CrashInfo(object):
                    stackwalk_retcode: Return code from stackwalk
                    stackwalk_errors: List of errors in human-readable form that prevented
                                      stackwalk being launched.
+                   reason: The reason provided by a MOZ_CRASH() invokation (optional)
+                   java_stack: The stack trace of a Java exception (optional)
+                   process_type: The type of process that crashed
+                   pid: The PID of the crashed process
         """
         self._get_symbols()
 
         errors = []
         signature = None
-        include_stderr = False
         out = None
         err = None
         retcode = None
         reason = None
         java_stack = None
+        annotations = None
+        pid = None
+        process_type = "unknown"
         if (
             self.stackwalk_binary
             and os.path.exists(self.stackwalk_binary)
             and os.access(self.stackwalk_binary, os.X_OK)
         ):
-            # If minidump-stackwalk -V fails, then we're using the old breakpad version,
-            # (minidump_stackwalk) which is implicitly "human" output and doesn't
-            # support the --human flag.
-            #
-            # Otherwise we're using rust-minidump's minidump-stackwalk. Before 0.9.6
-            # --human had to be passed explicitly to get human output, but now it's
-            # the default (to behave more similarly to breakpad). But since we've
-            # already filtered out breakpad as an option, we can explicitly pass
-            # --human.
-            #
-            # In the future we would also like to use rust-minidump's --cyborg
-            # (introduced in 0.9.5), which outputs both human-readable *and*
-            # machine-readable (JSON) output, so we can output something nice to the
-            # CLI, but more reliably parse all the details we care about.
-            # The machine-readable output is also exactly what socorro (crash-stats)
-            # consumes, so in theory using it will make the two more compatible.
-            stackwalk_version_check = subprocess.Popen(
-                [self.stackwalk_binary, "-V"],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-            )
-            stackwalk_version_check.wait()
-
-            # Right now we don't have any rust-minidump-version-specific handling,
-            # so we don't need to bother parsing the output at all. But when we
-            # want to start using newer features (like --cyborg) we should parse
-            # the version string, so here's some notes on that:
-            #
-            # Example outputs:
-            # minidump_stackwalk 0.9.2
-            # minidump-stackwalk 0.9.5
-            #
-            # Either `_` or `-` may be used in the name, so be careful of that
-            # (newer versions should use `-`). Otherwise the actual version number
-            # is the usual `<major>.<minor>.<patch>` that can be parsed with
-            # `distutils.version.LooseVersion`.
-            rust_minidump = stackwalk_version_check.returncode == 0
-
             # Now build up the actual command
             command = [self.stackwalk_binary]
 
@@ -411,63 +379,37 @@ class CrashInfo(object):
             if "MOZ_AUTOMATION" in os.environ:
                 command.append("--symbols-url=https://symbols.mozilla.org/")
 
-            # Specify the kind of output
-            if rust_minidump:
-                command.append("--human")
+            with tempfile.TemporaryDirectory() as json_dir:
+                crash_id = os.path.basename(path)[:-4]
+                json_output = os.path.join(json_dir, "{}.trace".format(crash_id))
+                # Specify the kind of output
+                command.append("--cyborg={}".format(json_output))
                 if self.brief_output:
                     command.append("--brief")
 
-            # The minidump path and symbols_path values are positional and come last
-            # (in practice the CLI parsers are more permissive, but best not to
-            # unecessarily play with fire).
-            command.append(path)
+                # The minidump path and symbols_path values are positional and come last
+                # (in practice the CLI parsers are more permissive, but best not to
+                # unecessarily play with fire).
+                command.append(path)
 
-            if self.symbols_path:
-                command.append(self.symbols_path)
+                if self.symbols_path:
+                    command.append(self.symbols_path)
 
-            self.logger.info(u"Copy/paste: {}".format(" ".join(command)))
-            # run minidump-stackwalk
-            p = subprocess.Popen(
-                command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
-            )
-            (out, err) = p.communicate()
-            retcode = p.returncode
-            if six.PY3:
-                out = six.ensure_str(out)
-                err = six.ensure_str(err)
+                self.logger.info("Copy/paste: {}".format(" ".join(command)))
+                # run minidump-stackwalk
+                p = subprocess.Popen(
+                    command, stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+                (out, err) = p.communicate()
+                retcode = p.returncode
+                if six.PY3:
+                    out = six.ensure_str(out)
+                    err = six.ensure_str(err)
 
-            if len(out) > 3:
-                # minidump-stackwalk is chatty,
-                # so ignore stderr when it succeeds.
-                # The top frame of the crash is always the line after "Thread N (crashed)"
-                # Examples:
-                #  0  libc.so + 0xa888
-                #  0  libnss3.so!nssCertificate_Destroy [certificate.c : 102 + 0x0]
-                #  0  mozjs.dll!js::GlobalObject::getDebuggers() [GlobalObject.cpp:89df18f9b6da : 580 + 0x0] # noqa
-                # 0  libxul.so!void js::gc::MarkInternal<JSObject>(JSTracer*, JSObject**)
-                # [Marking.cpp : 92 + 0x28]
-                lines = out.splitlines()
-                for i, line in enumerate(lines):
-                    if "(crashed)" in line:
-                        # Try to find the first frame that isn't an abort
-                        # function to use as the signature.
-                        for line in lines[i + 1 :]:
-                            if not line.startswith(" "):
-                                break
-
-                            match = re.search(r"^ \d  (?:.*!)?(?:void )?([^\[]+)", line)
-                            if match:
-                                func = match.group(1).strip()
-                                signature = "@ %s" % func
-
-                                if not (
-                                    func in ABORT_SIGNATURES
-                                    or any(pat in func for pat in ABORT_SUBSTRINGS)
-                                ):
-                                    break
-                        break
-            else:
-                include_stderr = True
+                if retcode == 0:
+                    processed_crash = self._process_json_output(json_output)
+                    signature = processed_crash.get("signature")
+                    pid = processed_crash.get("pid")
 
         else:
             if not self.stackwalk_binary:
@@ -486,9 +428,12 @@ class CrashInfo(object):
                 errors.append("This user cannot execute the MINIDUMP_STACKWALK binary.")
 
         if os.path.exists(extra):
-            crash_dict = self._parse_extra_file(extra)
-            reason = crash_dict.get("MozCrashReason")
-            java_stack = crash_dict.get("JavaStackTrace")
+            annotations = self._parse_extra_file(extra)
+
+            if annotations:
+                reason = annotations.get("MozCrashReason")
+                java_stack = annotations.get("JavaStackTrace")
+                process_type = annotations.get("ProcessType") or "main"
 
         if self.dump_save_path:
             self._save_dump_file(path, extra)
@@ -502,13 +447,76 @@ class CrashInfo(object):
             path,
             signature,
             out,
-            err if include_stderr else None,
+            err,
             retcode,
             errors,
             extra,
+            process_type,
+            pid,
             reason,
             java_stack,
         )
+
+    def _process_json_output(self, json_path):
+        signature = None
+        pid = None
+
+        try:
+            json_file = open(json_path, "r")
+            crash_json = json.load(json_file)
+            json_file.close()
+
+            signature = self._generate_signature(crash_json)
+            pid = crash_json.get("pid")
+
+        except Exception as e:
+            traceback.print_exc()
+            signature = "an error occurred while processing JSON output: {}".format(e)
+
+        return {
+            "pid": pid,
+            "signature": signature,
+        }
+
+    def _generate_signature(self, crash_json):
+        signature = None
+
+        try:
+            crashing_thread = crash_json.get("crashing_thread") or {}
+            frames = crashing_thread.get("frames") or []
+
+            flattened_frames = []
+            for frame in frames:
+                for inline in frame.get("inlines") or []:
+                    flattened_frames.append(inline.get("function"))
+
+                flattened_frames.append(
+                    frame.get("function")
+                    or "{} + {}".format(frame.get("module"), frame.get("module_offset"))
+                )
+
+            for func in flattened_frames:
+                if not func:
+                    continue
+
+                signature = "@ %s" % func
+
+                if not (
+                    func in ABORT_SIGNATURES
+                    or any(pat in func for pat in ABORT_SUBSTRINGS)
+                ):
+                    break
+        except Exception as e:
+            traceback.print_exc()
+            signature = "an error occurred while generating the signature: {}".format(e)
+
+        # Strip parameters from signature
+        if signature:
+            pmatch = re.search(r"(.*)\(.*\)", signature)
+            if pmatch:
+                signature = pmatch.group(1)
+
+        return signature
 
     def _parse_extra_file(self, path):
         with open(path) as file:
@@ -516,7 +524,7 @@ class CrashInfo(object):
                 return json.load(file)
             except ValueError:
                 self.logger.warning(".extra file does not contain proper json")
-                return {}
+                return None
 
     def _save_dump_file(self, path, extra):
         if os.path.isfile(self.dump_save_path):
@@ -529,7 +537,7 @@ class CrashInfo(object):
 
         shutil.move(path, self.dump_save_path)
         self.logger.info(
-            u"Saved minidump as {}".format(
+            "Saved minidump as {}".format(
                 os.path.join(self.dump_save_path, os.path.basename(path))
             )
         )
@@ -537,7 +545,7 @@ class CrashInfo(object):
         if os.path.isfile(extra):
             shutil.move(extra, self.dump_save_path)
             self.logger.info(
-                u"Saved app info as {}".format(
+                "Saved app info as {}".format(
                     os.path.join(self.dump_save_path, os.path.basename(extra))
                 )
             )
@@ -597,14 +605,14 @@ def check_for_java_exception(logcat, test_name=None, quiet=False):
                     exception_location = m.group(1)
                 if not quiet:
                     output = (
-                        u"PROCESS-CRASH | {name} | java-exception {type} {loc}".format(
+                        "PROCESS-CRASH | {name} | java-exception {type} {loc}".format(
                             name=test_name, type=exception_type, loc=exception_location
                         )
                     )
                     print(output.encode("utf-8"))
             else:
                 print(
-                    u"Automation Error: java exception in logcat at line "
+                    "Automation Error: java exception in logcat at line "
                     "{0} of {1}: {2}".format(i, len(logcat), line)
                 )
             break
@@ -652,12 +660,12 @@ if mozinfo.isWin:
                 os.path.join(utility_path, "minidumpwriter.exe")
             )
             log.info(
-                u"Using {} to write a dump to {} for [{}]".format(
+                "Using {} to write a dump to {} for [{}]".format(
                     minidumpwriter, file_name, pid
                 )
             )
             if not os.path.exists(minidumpwriter):
-                log.error(u"minidumpwriter not found in {}".format(utility_path))
+                log.error("minidumpwriter not found in {}".format(utility_path))
                 return
 
             status = subprocess.Popen([minidumpwriter, str(pid), file_name]).wait()
@@ -665,7 +673,7 @@ if mozinfo.isWin:
                 log.error("minidumpwriter exited with status: %d" % status)
             return
 
-        log.info(u"Writing a dump to {} for [{}]".format(file_name, pid))
+        log.info("Writing a dump to {} for [{}]".format(file_name, pid))
 
         proc_handle = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid)
         if not proc_handle:

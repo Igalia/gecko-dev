@@ -242,7 +242,7 @@ void CanvasTranslator::Deactivate() {
 bool CanvasTranslator::TranslateRecording() {
   MOZ_ASSERT(CanvasThreadHolder::IsInCanvasWorker());
 
-  int32_t eventType = mStream->ReadNextEvent();
+  uint8_t eventType = mStream->ReadNextEvent();
   while (mStream->good()) {
     bool success = RecordedEvent::DoWithEventFromStream(
         *mStream, static_cast<RecordedEvent::EventType>(eventType),
@@ -405,7 +405,7 @@ bool CanvasTranslator::CheckForFreshCanvasDevice(int aLineNumber) {
 
   // It is safe to wait here because only the Compositor thread waits on us and
   // the main thread doesn't wait on the compositor thread in the GPU process.
-  SyncRunnable::DispatchToThread(GetMainThreadEventTarget(), runnable,
+  SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(), runnable,
                                  /*aForceDispatch*/ true);
 
   mDevice = gfx::DeviceManagerDx::Get()->GetCanvasDevice();

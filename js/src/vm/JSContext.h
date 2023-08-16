@@ -14,11 +14,12 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
+#include "builtin/AtomicsObject.h"
 #include "ds/TraceableFifo.h"
 #include "frontend/NameCollections.h"
 #include "gc/Memory.h"
 #include "irregexp/RegExpTypes.h"
-#include "js/CharacterEncoding.h"
+#include "jit/PcScriptCache.h"
 #include "js/ContextOptions.h"  // JS::ContextOptions
 #include "js/Exception.h"
 #include "js/GCVector.h"
@@ -31,10 +32,8 @@
 #include "threading/ProtectedData.h"
 #include "util/StructuredSpewer.h"
 #include "vm/Activation.h"  // js::Activation
-#include "vm/ErrorReporting.h"
 #include "vm/MallocProvider.h"
 #include "vm/Runtime.h"
-#include "vm/SharedStencil.h"  // js::SharedImmutableScriptDataTable
 #include "wasm/WasmContext.h"
 
 struct JS_PUBLIC_API JSContext;
@@ -47,20 +46,12 @@ class AutoAllocInAtomsZone;
 class AutoMaybeLeaveAtomsZone;
 class AutoRealm;
 
-namespace frontend {
-class WellKnownParserAtoms;
-}  // namespace frontend
-
 namespace jit {
 class ICScript;
 class JitActivation;
 class JitContext;
 class DebugModeOSRVolatileJitFrameIter;
 }  // namespace jit
-
-namespace gc {
-class AutoSuppressNurseryCellAlloc;
-}  // namespace gc
 
 /* Detects cycles when traversing an object graph. */
 class MOZ_RAII AutoCycleDetector {
@@ -83,8 +74,6 @@ class MOZ_RAII AutoCycleDetector {
 };
 
 struct AutoResolving;
-
-struct OffThreadFrontendErrors;  // vm/HelperThreadState.h
 
 class InternalJobQueue : public JS::JobQueue {
  public:
@@ -134,26 +123,16 @@ class AutoLockScriptData;
 /* Thread Local Storage slot for storing the context for a thread. */
 extern MOZ_THREAD_LOCAL(JSContext*) TlsContext;
 
-enum class ContextKind {
-  Uninitialized,
-
-  // Context for the main thread of a JSRuntime.
-  MainThread,
-
-  // Context for a helper thread.
-  HelperThread
-};
-
 #ifdef DEBUG
 JSContext* MaybeGetJSContext();
-bool CurrentThreadIsParseThread();
 #endif
 
 enum class InterruptReason : uint32_t {
-  GC = 1 << 0,
-  AttachIonCompilations = 1 << 1,
-  CallbackUrgent = 1 << 2,
-  CallbackCanWait = 1 << 3,
+  MinorGC = 1 << 0,
+  MajorGC = 1 << 1,
+  AttachIonCompilations = 1 << 2,
+  CallbackUrgent = 1 << 3,
+  CallbackCanWait = 1 << 4,
 };
 
 enum class ShouldCaptureStack { Maybe, Always };
@@ -169,25 +148,19 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   JSContext(JSRuntime* runtime, const JS::ContextOptions& options);
   ~JSContext();
 
-  bool init(js::ContextKind kind);
+  bool init();
+
+  static JSContext* from(JS::RootingContext* rcx) {
+    return static_cast<JSContext*>(rcx);
+  }
 
  private:
   js::UnprotectedData<JSRuntime*> runtime_;
-  js::WriteOnceData<js::ContextKind> kind_;
-
-  friend class js::gc::AutoSuppressNurseryCellAlloc;
-  js::ContextData<size_t> nurserySuppressions_;
+#ifdef DEBUG
+  js::WriteOnceData<bool> initialized_;
+#endif
 
   js::ContextData<JS::ContextOptions> options_;
-
-  // Thread that the JSContext is currently running on, if in use.
-  js::ThreadId currentThread_;
-
-  js::OffThreadFrontendErrors* errors_;
-
-  // When a helper thread is using a context, it may need to periodically
-  // free unused memory.
-  mozilla::Atomic<bool, mozilla::ReleaseAcquire> freeUnusedMemory;
 
   // Are we currently timing execution? This flag ensures that we do not
   // double-count execution time in reentrant situations.
@@ -201,21 +174,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // This is used by helper threads to change the runtime their context is
   // currently operating on.
   void setRuntime(JSRuntime* rt);
-
-  void setHelperThread(const JS::ContextOptions& options,
-                       const js::AutoLockHelperThreadState& locked);
-  void clearHelperThread(const js::AutoLockHelperThreadState& locked);
-
-  bool contextAvailable(js::AutoLockHelperThreadState& locked) {
-    MOZ_ASSERT(kind_ == js::ContextKind::HelperThread);
-    return currentThread_ == js::ThreadId();
-  }
-
-  void setFreeUnusedMemory(bool shouldFree) { freeUnusedMemory = shouldFree; }
-
-  bool shouldFreeUnusedMemory() const {
-    return kind_ == js::ContextKind::HelperThread && freeUnusedMemory;
-  }
 
   bool isMeasuringExecutionTime() const { return measuringExecutionTime_; }
   void setIsMeasuringExecutionTime(bool value) {
@@ -232,16 +190,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   void setIsExecuting(bool value) { isExecuting_ = value; }
 
 #ifdef DEBUG
-  bool isInitialized() const { return kind_ != js::ContextKind::Uninitialized; }
+  bool isInitialized() const { return initialized_; }
 #endif
-
-  bool isMainThreadContext() const {
-    return kind_ == js::ContextKind::MainThread;
-  }
-
-  bool isHelperThreadContext() const {
-    return kind_ == js::ContextKind::HelperThread;
-  }
 
   template <typename T>
   bool isInsideCurrentZone(T thing) const {
@@ -253,21 +203,25 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
     return thing->compartment() == compartment();
   }
 
+  void onOutOfMemory();
   void* onOutOfMemory(js::AllocFunction allocFunc, arena_id_t arena,
                       size_t nbytes, void* reallocPtr = nullptr) {
-    if (isHelperThreadContext()) {
-      addPendingOutOfMemory();
-      return nullptr;
-    }
     return runtime_->onOutOfMemory(allocFunc, arena, nbytes, reallocPtr, this);
   }
 
   void onOverRecursed();
 
+  // Allocate a GC thing.
+  template <typename T, js::AllowGC allowGC = js::CanGC, typename... Args>
+  T* newCell(Args&&... args) {
+    return js::gc::CellAllocator::template NewCell<T, allowGC>(
+        this, std::forward<Args>(args)...);
+  }
+
   /* Clear the pending exception (if any) due to OOM. */
   void recoverFromOutOfMemory();
 
-  void reportAllocationOverflow() { js::ReportAllocationOverflow(this); }
+  void reportAllocationOverflow();
 
   // Accessors for immutable runtime data.
   JSAtomState& names() { return *runtime_->commonNames; }
@@ -325,15 +279,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   inline void leaveRealm(JS::Realm* oldRealm);
 
-  void setOffThreadFrontendErrors(js::OffThreadFrontendErrors* errors) {
-    errors_ = errors;
-  }
-  js::OffThreadFrontendErrors* offThreadFrontendErrors() const {
-    return errors_;
-  }
-
-  bool isNurseryAllocSuppressed() const { return nurserySuppressions_; }
-
   // Threads may freely access any data in their realm, compartment and zone.
   JS::Compartment* compartment() const {
     return realm_ ? JS::GetCompartmentForRealm(realm_) : nullptr;
@@ -348,12 +293,8 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   JS::Zone* zone() const {
     MOZ_ASSERT_IF(!realm() && zone_, inAtomsZone());
     MOZ_ASSERT_IF(realm(), js::GetRealmZone(realm()) == zone_);
-    return zoneRaw();
+    return zoneUnchecked();
   }
-
-  // For use when the context's zone is being read by another thread and the
-  // compartment and zone pointers might not be in sync.
-  JS::Zone* zoneRaw() const { return zone_; }
 
   // For JIT use.
   static size_t offsetOfZone() { return offsetof(JSContext, zone_); }
@@ -364,15 +305,7 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
 
   js::AtomsTable& atoms() { return runtime_->atoms(); }
 
-  const JS::Zone* atomsZone() { return runtime_->atomsZone(); }
-
   js::SymbolRegistry& symbolRegistry() { return runtime_->symbolRegistry(); }
-
-  // Methods to access runtime data that must be protected by locks.
-  js::SharedImmutableScriptDataTable& scriptDataTable(
-      js::AutoLockScriptData& lock) {
-    return runtime_->scriptDataTable(lock);
-  }
 
   // Methods to access other runtime data that checks locking internally.
   js::gc::AtomMarkingRuntime& atomMarking() { return runtime_->gc.atomMarking; }
@@ -386,10 +319,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   // Interface for recording telemetry metrics.
   js::Metrics metrics() { return js::Metrics(runtime_); }
 
-  // Methods specific to any HelperThread for the context.
-  void addPendingOverRecursed();
-  void addPendingOutOfMemory();
-
   JSRuntime* runtime() { return runtime_; }
   const JSRuntime* runtime() const { return runtime_; }
 
@@ -402,8 +331,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   friend void js::ReportOversizedAllocation(JSContext*, const unsigned);
 
  public:
-  inline JS::Result<> boolToResult(bool ok);
-
   /**
    * Intentionally awkward signpost method that is stationed on the
    * boundary between Result-using and non-Result-using code.
@@ -516,6 +443,11 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
    */
   js::ContextData<int32_t> suppressGC;
 
+#ifdef FUZZING_JS_FUZZILLI
+  uint32_t executionHash;
+  uint32_t executionHashInputs;
+#endif
+
 #ifdef DEBUG
   js::ContextData<size_t> noNurseryAllocationCheck;
 
@@ -580,6 +512,18 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
                           "[AutoAssertNoGC] possible GC in GC-unsafe region");
   }
 
+  bool isInUnsafeRegion() const { return bool(inUnsafeRegion); }
+
+  // For JIT use.
+  void resetInUnsafeRegion() {
+    MOZ_ASSERT(inUnsafeRegion >= 0);
+    inUnsafeRegion = 0;
+  }
+
+  static constexpr size_t offsetOfInUnsafeRegion() {
+    return offsetof(JSContext, inUnsafeRegion);
+  }
+
   /* Whether sampling should be enabled or not. */
  private:
   mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
@@ -605,7 +549,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
  public:
   js::LifoAlloc& tempLifoAlloc() { return tempLifoAlloc_.ref(); }
   const js::LifoAlloc& tempLifoAlloc() const { return tempLifoAlloc_.ref(); }
-  js::LifoAlloc& tempLifoAllocNoCheck() { return tempLifoAlloc_.refNoCheck(); }
 
   js::ContextData<uint32_t> debuggerMutations;
 
@@ -635,18 +578,26 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
 
 #ifdef DEBUG
-  // True if this context has ever called ReportOverRecursed,
-  // ReportOutOfMemory, or ReportOversizedAllocation.
-  js::ContextData<bool> hadNondeterministicException_;
+  // True if this context has ever thrown an exception because of an exceeded
+  // limit: stack space (ReportOverRecursed), memory (ReportOutOfMemory), or
+  // some other self-imposed limit (eg ReportOversizedAllocation). Used when
+  // detecting bailout loops in WarpOracle: bailout loops involving resource
+  // exhaustion are generally not interesting.
+  js::ContextData<bool> hadResourceExhaustion_;
 
  public:
-  bool hadNondeterministicException() const {
-    return hadNondeterministicException_ ||
-           js::oom::simulator.isThreadSimulatingAny();
+  bool hadResourceExhaustion() const {
+    return hadResourceExhaustion_ || js::oom::simulator.isThreadSimulatingAny();
   }
 #endif
 
  public:
+  void reportResourceExhaustion() {
+#ifdef DEBUG
+    hadResourceExhaustion_ = true;
+#endif
+  }
+
   js::ContextData<int32_t> reportGranularity; /* see vm/Probes.h */
 
   js::ContextData<js::AutoResolving*> resolvingList;
@@ -668,17 +619,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   }
   const js::AutoCycleDetector::Vector& cycleDetectorVector() const {
     return cycleDetectorVector_.ref();
-  }
-
- private:
-  js::ContextData<JS::PersistentRooted<JSFunction*>> watchtowerTestingCallback_;
-
- public:
-  JSFunction*& watchtowerTestingCallbackRef() {
-    if (!watchtowerTestingCallback_.ref().initialized()) {
-      watchtowerTestingCallback_.ref().init(this);
-    }
-    return watchtowerTestingCallback_.ref().get();
   }
 
   /* Client opaque pointer. */
@@ -746,7 +686,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
       jsbytecode** pc = nullptr,
       AllowCrossRealm allowCrossRealm = AllowCrossRealm::DontAllow) const;
 
-  inline js::Nursery& nursery();
   inline void minorGC(JS::GCReason reason);
 
  public:
@@ -854,12 +793,21 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   bool hasPendingInterrupt(js::InterruptReason reason) const {
     return interruptBits_ & uint32_t(reason);
   }
+  void clearPendingInterrupt(js::InterruptReason reason);
 
   // For JIT use. Points to the inlined ICScript for a baseline script
   // being invoked as part of a trial inlining.  Contains nullptr at
   // all times except for the brief moment between being set in the
   // caller and read in the callee's prologue.
   js::ContextData<js::jit::ICScript*> inlinedICScript_;
+
+  // The following two fields are a pair of associated scripts. If they are
+  // non-null, the child has been inlined into the parent, and we have bailed
+  // out due to a MonomorphicInlinedStubFolding bailout. If it wasn't
+  // trial-inlined, we need to track for the parent if we attach a new case to
+  // the corresponding folded stub which belongs to the child.
+  js::ContextData<JSScript*> lastStubFoldingBailoutChild_;
+  js::ContextData<JSScript*> lastStubFoldingBailoutParent_;
 
  public:
   void* addressOfInterruptBits() { return &interruptBits_; }
@@ -947,15 +895,6 @@ struct JS_PUBLIC_API JSContext : public JS::RootingContext,
   js::ContextData<js::Debugger*> insideDebuggerEvaluationWithOnNativeCallHook;
 
 }; /* struct JSContext */
-
-inline JS::Result<> JSContext::boolToResult(bool ok) {
-  if (MOZ_LIKELY(ok)) {
-    MOZ_ASSERT(!isExceptionPending());
-    MOZ_ASSERT(!isPropagatingForcedReturn());
-    return JS::Ok();
-  }
-  return JS::Result<>(JS::Error());
-}
 
 inline JSContext* JSRuntime::mainContextFromOwnThread() {
   MOZ_ASSERT(mainContextFromAnyThread() == js::TlsContext.get());
@@ -1074,35 +1013,6 @@ class AutoAssertNoPendingException {
 #endif
 };
 
-class MOZ_RAII AutoLockScriptData {
-  JSRuntime* runtime;
-
- public:
-  explicit AutoLockScriptData(JSRuntime* rt) {
-    MOZ_ASSERT(CurrentThreadCanAccessRuntime(rt) ||
-               CurrentThreadIsParseThread());
-    runtime = rt;
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.lock();
-    } else {
-      MOZ_ASSERT(!runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = true;
-#endif
-    }
-  }
-  ~AutoLockScriptData() {
-    if (runtime->hasParseTasks()) {
-      runtime->scriptDataLock.unlock();
-    } else {
-      MOZ_ASSERT(runtime->activeThreadHasScriptDataAccess);
-#ifdef DEBUG
-      runtime->activeThreadHasScriptDataAccess = false;
-#endif
-    }
-  }
-};
-
 class MOZ_RAII AutoNoteDebuggerEvaluationWithOnNativeCallHook {
   JSContext* cx;
   Debugger* oldValue;
@@ -1155,26 +1065,69 @@ class MOZ_RAII AutoUnsafeCallWithABI {
 #endif
 };
 
-namespace gc {
-
-// Note that this class does not suppress buffer allocation/reallocation in the
-// nursery, only Cells themselves.
-class MOZ_RAII AutoSuppressNurseryCellAlloc {
-  JSContext* cx_;
-
- public:
-  explicit AutoSuppressNurseryCellAlloc(JSContext* cx) : cx_(cx) {
-    cx_->nurserySuppressions_++;
-  }
-  ~AutoSuppressNurseryCellAlloc() { cx_->nurserySuppressions_--; }
-};
-
-}  // namespace gc
-
 } /* namespace js */
 
-#define CHECK_THREAD(cx)                            \
-  MOZ_ASSERT_IF(cx, !cx->isHelperThreadContext() && \
-                        js::CurrentThreadCanAccessRuntime(cx->runtime()))
+#define CHECK_THREAD(cx) \
+  MOZ_ASSERT_IF(cx, js::CurrentThreadCanAccessRuntime(cx->runtime()))
+
+/**
+ * [SMDOC] JS::Result transitional macros
+ *
+ * ## Checking Results when your return type is not Result
+ *
+ * This header defines alternatives to MOZ_TRY and MOZ_TRY_VAR for when you
+ * need to call a `Result` function from a function that uses false or nullptr
+ * to indicate errors:
+ *
+ *     JS_TRY_OR_RETURN_FALSE(cx, DefenestrateObject(cx, obj));
+ *     JS_TRY_VAR_OR_RETURN_FALSE(cx, v, GetObjectThrug(cx, obj));
+ *
+ *     JS_TRY_VAR_OR_RETURN_NULL(cx, v, GetObjectThrug(cx, obj));
+ *
+ * When TRY is not what you want, because you need to do some cleanup or
+ * recovery on error, use this idiom:
+ *
+ *     if (!cx->resultToBool(expr_that_is_a_Result)) {
+ *         ... your recovery code here ...
+ *     }
+ *
+ * In place of a tail call, you can use one of these methods:
+ *
+ *     return cx->resultToBool(expr);  // false on error
+ *     return cx->resultToPtr(expr);  // null on error
+ *
+ * Once we are using `Result` everywhere, including in public APIs, all of
+ * these will go away.
+ */
+
+/**
+ * JS_TRY_OR_RETURN_FALSE(cx, expr) runs expr to compute a Result value.
+ * On success, nothing happens; on error, it returns false immediately.
+ *
+ * Implementation note: this involves cx because this may eventually
+ * do the work of setting a pending exception or reporting OOM.
+ */
+#define JS_TRY_OR_RETURN_FALSE(cx, expr)                           \
+  do {                                                             \
+    auto tmpResult_ = (expr);                                      \
+    if (tmpResult_.isErr()) return (cx)->resultToBool(tmpResult_); \
+  } while (0)
+
+#define JS_TRY_VAR_OR_RETURN_FALSE(cx, target, expr)               \
+  do {                                                             \
+    auto tmpResult_ = (expr);                                      \
+    if (tmpResult_.isErr()) return (cx)->resultToBool(tmpResult_); \
+    (target) = tmpResult_.unwrap();                                \
+  } while (0)
+
+#define JS_TRY_VAR_OR_RETURN_NULL(cx, target, expr)     \
+  do {                                                  \
+    auto tmpResult_ = (expr);                           \
+    if (tmpResult_.isErr()) {                           \
+      MOZ_ALWAYS_FALSE((cx)->resultToBool(tmpResult_)); \
+      return nullptr;                                   \
+    }                                                   \
+    (target) = tmpResult_.unwrap();                     \
+  } while (0)
 
 #endif /* vm_JSContext_h */

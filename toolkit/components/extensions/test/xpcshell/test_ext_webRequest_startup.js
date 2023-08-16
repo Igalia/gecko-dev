@@ -1,11 +1,9 @@
 "use strict";
 
 // Delay loading until createAppInfo is called and setup.
-ChromeUtils.defineModuleGetter(
-  this,
-  "AddonManager",
-  "resource://gre/modules/AddonManager.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+});
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
@@ -19,11 +17,8 @@ AddonTestUtils.createAppInfo(
   "42"
 );
 
-let {
-  promiseShutdownManager,
-  promiseStartupManager,
-  promiseRestartManager,
-} = AddonTestUtils;
+let { promiseShutdownManager, promiseStartupManager, promiseRestartManager } =
+  AddonTestUtils;
 
 const server = createHttpServer({ hosts: ["example.com"] });
 server.registerDirectory("/data/", do_get_file("data"));
@@ -42,9 +37,10 @@ function trackEvents(wrapper) {
 
 /**
  * That that we get the expected events
+ *
  * @param {Extension} extension
  * @param {Map} events
- * @param {Object} expect
+ * @param {object} expect
  * @param {boolean} expect.background   delayed startup event expected
  * @param {boolean} expect.started      background has already started
  * @param {boolean} expect.delayedStart startup is delayed, notify start and
@@ -160,7 +156,7 @@ add_task(async function test_eventpage_nonblocking() {
   let extension = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
       permissions: ["webRequest", "http://example.com/"],
       background: { persistent: false },
     },
@@ -288,7 +284,7 @@ add_task(async function test_persistent_listener_after_sideload_upgrade() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
       permissions: ["webRequest", "webRequestBlocking", "http://example.com/"],
     },
 
@@ -395,7 +391,7 @@ add_task(
       useAddonManager: "permanent",
       manifest: {
         version: "1.0",
-        applications: { gecko: { id } },
+        browser_specific_settings: { gecko: { id } },
         permissions: [
           "webRequest",
           "webRequestBlocking",
@@ -496,7 +492,7 @@ add_task(async function test_persistent_listener_after_staged_upgrade() {
     useAddonManager: "permanent",
     manifest: {
       version: "2.0",
-      applications: {
+      browser_specific_settings: {
         gecko: { id, update_url: `http://example.com/test_update.json` },
       },
       permissions: ["http://example.com/"],
@@ -542,7 +538,7 @@ add_task(async function test_persistent_listener_after_staged_upgrade() {
     "http://example.com/",
   ];
   delete extensionData.manifest.optional_permissions;
-  extensionData.background = function() {
+  extensionData.background = function () {
     browser.webRequest.onBeforeRequest.addListener(
       details => {
         browser.test.sendMessage("got-request");
@@ -662,7 +658,7 @@ add_task(async function test_persistent_listener_after_permission_removal() {
     useAddonManager: "permanent",
     manifest: {
       version: "2.0",
-      applications: {
+      browser_specific_settings: {
         gecko: { id, update_url: `http://example.com/test_remove.json` },
       },
       permissions: ["tabs", "http://example.com/"],
@@ -684,7 +680,7 @@ add_task(async function test_persistent_listener_after_permission_removal() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: { id, update_url: `http://example.com/test_remove.json` },
       },
       permissions: ["webRequest", "webRequestBlocking", "http://example.com/"],

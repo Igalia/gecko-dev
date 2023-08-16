@@ -15,7 +15,7 @@ use crate::frame_builder::FrameBuilderConfig;
 use crate::scene_building::SceneBuilder;
 use crate::clip::{ClipIntern, PolygonIntern};
 use crate::filterdata::FilterDataIntern;
-use crate::glyph_rasterizer::SharedFontResources;
+use glyph_rasterizer::SharedFontResources;
 use crate::intern::{Internable, Interner, UpdateList};
 use crate::internal_types::{FastHashMap, FastHashSet};
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
@@ -28,10 +28,11 @@ use crate::prim_store::picture::Picture;
 use crate::prim_store::text_run::TextRun;
 use crate::profiler::{self, TransactionProfile};
 use crate::render_backend::SceneView;
-use crate::renderer::{FullFrameStats, PipelineInfo, SceneBuilderHooks};
+use crate::renderer::{FullFrameStats, PipelineInfo};
 use crate::scene::{Scene, BuiltScene, SceneStats};
 use crate::spatial_tree::{SceneSpatialTree, SpatialTreeUpdates};
 use crate::telemetry::Telemetry;
+use crate::SceneBuilderHooks;
 use std::iter;
 use time::precise_time_ns;
 use crate::util::drain_filter;
@@ -537,8 +538,6 @@ impl SceneBuilderThread {
                 SceneMsg::SetDisplayList {
                     epoch,
                     pipeline_id,
-                    background,
-                    viewport_size,
                     display_list,
                 } => {
                     let (builder_start_time_ns, builder_end_time_ns, send_time_ns) =
@@ -567,8 +566,6 @@ impl SceneBuilderThread {
                         pipeline_id,
                         epoch,
                         display_list,
-                        background,
-                        viewport_size,
                     );
                 }
                 SceneMsg::SetRootPipeline(pipeline_id) => {
@@ -725,14 +722,15 @@ impl SceneBuilderThread {
             if let Ok(SceneSwapResult::Complete(resume_tx)) = swap_result {
                 resume_tx.send(()).ok();
             }
-        } else if !have_resources_updates.is_empty() {
+        } else {
             Telemetry::cancel_sceneswap_time(timer_id);
-            if let Some(ref hooks) = self.hooks {
-                hooks.post_resource_update(&have_resources_updates);
+            if !have_resources_updates.is_empty() {
+                if let Some(ref hooks) = self.hooks {
+                    hooks.post_resource_update(&have_resources_updates);
+                }
+            } else if let Some(ref hooks) = self.hooks {
+                hooks.post_empty_scene_build();
             }
-        } else if let Some(ref hooks) = self.hooks {
-            Telemetry::cancel_sceneswap_time(timer_id);
-            hooks.post_empty_scene_build();
         }
     }
 

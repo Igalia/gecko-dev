@@ -30,7 +30,7 @@
 #include "mozilla/StaticPrefs_intl.h"
 #include "mozilla/TaskCategory.h"
 #include "mozilla/TextUtils.h"
-#include "mozilla/Tuple.h"
+
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/BindingDeclarations.h"
@@ -234,7 +234,7 @@ nsHtml5StreamParser::nsHtml5StreamParser(nsHtml5TreeOpExecutor* aExecutor,
       mNumBytesBuffered(0),
       mTerminated(false),
       mInterrupted(false),
-      mEventTarget(nsHtml5Module::GetStreamParserThread()->SerialEventTarget()),
+      mEventTarget(nsHtml5Module::GetStreamParserEventTarget()),
       mExecutorFlusher(new nsHtml5ExecutorFlusher(aExecutor)),
       mLoadFlusher(new nsHtml5LoadFlusher(aExecutor)),
       mInitialEncodingWasFromParentFrame(false),
@@ -334,7 +334,8 @@ nsHtml5StreamParser::GuessEncoding(bool aInitial) {
     } else if (ifHadBeenForced == UTF_8_ENCODING) {
       MOZ_ASSERT(mCharsetSource == kCharsetFromInitialAutoDetectionASCII ||
                  mCharsetSource ==
-                     kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8);
+                     kCharsetFromInitialAutoDetectionWouldHaveBeenUTF8 ||
+                 mEncoding == ISO_2022_JP_ENCODING);
       source = kCharsetFromFinalAutoDetectionWouldHaveBeenUTF8InitialWasASCII;
     } else if (encoding != ifHadBeenForced) {
       if (mCharsetSource == kCharsetFromInitialAutoDetectionASCII) {
@@ -790,7 +791,7 @@ nsresult nsHtml5StreamParser::SniffStreamBytes(Span<const uint8_t> aFromSegment,
       mozilla::MutexAutoLock speculationAutoLock(mSpeculationMutex);
       nsHtml5Speculation* speculation = new nsHtml5Speculation(
           mFirstBuffer, mFirstBuffer->getStart(), mTokenizer->getLineNumber(),
-          mTreeBuilder->newSnapshot());
+          mTokenizer->getColumnNumber(), mTreeBuilder->newSnapshot());
       MOZ_ASSERT(!mFlushTimerArmed, "How did we end up arming the timer?");
       if (mMode == VIEW_SOURCE_HTML) {
         mTokenizer->SetViewSourceOpSink(speculation);
@@ -1778,7 +1779,8 @@ void nsHtml5StreamParser::PostLoadFlusher() {
   // that need flushing may have been flushed earlier even if the
   // flush right above here did nothing. (Is this still true?)
   nsCOMPtr<nsIRunnable> runnable(mLoadFlusher);
-  if (NS_FAILED(DispatchToMain(runnable.forget()))) {
+  if (NS_FAILED(
+          DispatchToMain(CreateRenderBlockingRunnable(runnable.forget())))) {
     NS_WARNING("failed to dispatch load flush event");
   }
 
@@ -1997,7 +1999,7 @@ void nsHtml5StreamParser::DiscardMetaSpeculation() {
 
   nsHtml5Speculation* speculation = new nsHtml5Speculation(
       mFirstBuffer, mFirstBuffer->getStart(), mTokenizer->getLineNumber(),
-      mTreeBuilder->newSnapshot());
+      mTokenizer->getColumnNumber(), mTreeBuilder->newSnapshot());
   MOZ_ASSERT(!mFlushTimerArmed, "How did we end up arming the timer?");
   if (mMode == VIEW_SOURCE_HTML) {
     mTokenizer->SetViewSourceOpSink(speculation);
@@ -2484,7 +2486,7 @@ void nsHtml5StreamParser::ParseAvailableData() {
         mozilla::MutexAutoLock speculationAutoLock(mSpeculationMutex);
         nsHtml5Speculation* speculation = new nsHtml5Speculation(
             mFirstBuffer, mFirstBuffer->getStart(), mTokenizer->getLineNumber(),
-            mTreeBuilder->newSnapshot());
+            mTokenizer->getColumnNumber(), mTreeBuilder->newSnapshot());
         mTreeBuilder->AddSnapshotToScript(speculation->GetSnapshot(),
                                           speculation->GetStartLineNumber());
         if (mLookingForMetaCharset) {
@@ -2647,12 +2649,15 @@ void nsHtml5StreamParser::ContinueAfterScriptsOrEncodingCommitment(
       mFirstBuffer = speculation->GetBuffer();
       mFirstBuffer->setStart(speculation->GetStart());
       mTokenizer->setLineNumber(speculation->GetStartLineNumber());
+      mTokenizer->setColumnNumberAndResetNextLine(
+          speculation->GetStartColumnNumber());
 
       nsContentUtils::ReportToConsole(
           nsIScriptError::warningFlag, "DOM Events"_ns,
           mExecutor->GetDocument(), nsContentUtils::eDOM_PROPERTIES,
           "SpeculationFailed2", nsTArray<nsString>(), nullptr, u""_ns,
-          speculation->GetStartLineNumber());
+          speculation->GetStartLineNumber(),
+          speculation->GetStartColumnNumber());
 
       nsHtml5OwningUTF16Buffer* buffer = mFirstBuffer->next;
       while (buffer) {
@@ -2855,6 +2860,5 @@ nsresult nsHtml5StreamParser::DispatchToMain(
   if (mNetworkEventTarget) {
     return mNetworkEventTarget->Dispatch(std::move(aRunnable));
   }
-  return SchedulerGroup::UnlabeledDispatch(TaskCategory::Network,
-                                           std::move(aRunnable));
+  return SchedulerGroup::Dispatch(TaskCategory::Network, std::move(aRunnable));
 }

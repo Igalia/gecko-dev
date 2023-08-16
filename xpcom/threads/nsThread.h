@@ -17,7 +17,6 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/Mutex.h"
 #include "mozilla/NotNull.h"
-#include "mozilla/PerformanceCounter.h"
 #include "mozilla/RefPtr.h"
 #include "mozilla/TaskDispatcher.h"
 #include "mozilla/TimeStamp.h"
@@ -44,12 +43,14 @@ class Array;
 using mozilla::NotNull;
 
 class nsIRunnable;
-class nsLocalExecutionRecord;
 class nsThreadEnumerator;
 class nsThreadShutdownContext;
 
 // See https://www.w3.org/TR/longtasks
 #define LONGTASK_BUSY_WINDOW_MS 50
+
+// Time a Runnable executes before we accumulate telemetry on it
+#define LONGTASK_TELEMETRY_MS 30
 
 // A class for managing performance counter state.
 namespace mozilla {
@@ -66,10 +67,8 @@ class PerformanceCounterState {
 
   class Snapshot {
    public:
-    Snapshot(uint32_t aOldEventLoopDepth, PerformanceCounter* aCounter,
-             bool aOldIsIdleRunnable)
+    Snapshot(uint32_t aOldEventLoopDepth, bool aOldIsIdleRunnable)
         : mOldEventLoopDepth(aOldEventLoopDepth),
-          mOldPerformanceCounter(aCounter),
           mOldIsIdleRunnable(aOldIsIdleRunnable) {}
 
     Snapshot(const Snapshot&) = default;
@@ -79,8 +78,6 @@ class PerformanceCounterState {
     friend class PerformanceCounterState;
 
     const uint32_t mOldEventLoopDepth;
-    // Non-const so we can move out of it and avoid the extra refcounting.
-    RefPtr<PerformanceCounter> mOldPerformanceCounter;
     const bool mOldIsIdleRunnable;
   };
 
@@ -90,14 +87,13 @@ class PerformanceCounterState {
   // runnable execution.  The performance counter passed in should be the one
   // for the relevant runnable and may be null.  aIsIdleRunnable should be true
   // if and only if the runnable has idle priority.
-  Snapshot RunnableWillRun(PerformanceCounter* Counter, TimeStamp aNow,
-                           bool aIsIdleRunnable);
+  Snapshot RunnableWillRun(TimeStamp aNow, bool aIsIdleRunnable);
 
   // Notification that a runnable finished executing.  This must be passed the
   // snapshot that RunnableWillRun returned for the same runnable.  This must be
   // called before mNestedEventLoopDepth is decremented after the runnable's
   // execution.
-  void RunnableDidRun(Snapshot&& aSnapshot);
+  void RunnableDidRun(const nsCString& aName, Snapshot&& aSnapshot);
 
   const TimeStamp& LastLongTaskEnd() const { return mLastLongTaskEnd; }
   const TimeStamp& LastLongNonIdleTaskEnd() const {
@@ -107,7 +103,7 @@ class PerformanceCounterState {
  private:
   // Called to report accumulated time, as needed, when we're about to run a
   // runnable or just finished running one.
-  void MaybeReportAccumulatedTime(TimeStamp aNow);
+  void MaybeReportAccumulatedTime(const nsCString& aName, TimeStamp aNow);
 
   // Whether the runnable we are about to run, or just ran, is a nested
   // runnable, in the sense that there is some other runnable up the stack
@@ -143,12 +139,6 @@ class PerformanceCounterState {
   // Information about when long tasks last ended.
   TimeStamp mLastLongTaskEnd;
   TimeStamp mLastLongNonIdleTaskEnd;
-
-  // The performance counter to use for accumulating the runtime of
-  // the currently running event.  May be null, in which case the
-  // event's running time should not be accounted to any performance
-  // counters.
-  RefPtr<PerformanceCounter> mCurrentPerformanceCounter;
 };
 }  // namespace mozilla
 
@@ -171,7 +161,8 @@ class nsThread : public nsIThreadInternal,
   enum MainThreadFlag { MAIN_THREAD, NOT_MAIN_THREAD };
 
   nsThread(NotNull<mozilla::SynchronizedEventQueue*> aQueue,
-           MainThreadFlag aMainThread, uint32_t aStackSize);
+           MainThreadFlag aMainThread,
+           nsIThreadManager::ThreadCreationOptions aOptions);
 
  private:
   nsThread();
@@ -229,15 +220,6 @@ class nsThread : public nsIThreadInternal,
 
   bool ShuttingDown() const { return mShutdownContext != nullptr; }
 
-  static bool GetLabeledRunnableName(nsIRunnable* aEvent, nsACString& aName,
-                                     mozilla::EventQueuePriority aPriority);
-
-  virtual mozilla::PerformanceCounter* GetPerformanceCounter(
-      nsIRunnable* aEvent) const;
-
-  static mozilla::PerformanceCounter* GetPerformanceCounterBase(
-      nsIRunnable* aEvent);
-
   size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   // Returns the size of this object, its PRThread, and its shutdown contexts,
@@ -247,21 +229,6 @@ class nsThread : public nsIThreadInternal,
   size_t SizeOfEventQueues(mozilla::MallocSizeOf aMallocSizeOf) const;
 
   static nsThreadEnumerator Enumerate();
-
-  // When entering local execution mode a new event queue is created and used as
-  // an event source. This queue is only accessible through an
-  // nsLocalExecutionGuard constructed from the nsLocalExecutionRecord returned
-  // by this function, effectively restricting the events that get run while in
-  // local execution mode to those dispatched by the owner of the guard object.
-  //
-  // Local execution is not nestable. When the nsLocalExecutionGuard is
-  // destructed, the thread exits the local execution mode.
-  //
-  // Note that code run in local execution mode is not considered a task in the
-  // spec sense. Events from the local queue are considered part of the
-  // enclosing task and as such do not trigger profiling hooks, observer
-  // notifications, etc.
-  nsLocalExecutionRecord EnterLocalExecution();
 
   void SetUseHangMonitor(bool aValue) {
     MOZ_ASSERT(IsOnCurrentThread());
@@ -330,6 +297,7 @@ class nsThread : public nsIThreadInternal,
 
   const bool mIsMainThread;
   bool mUseHangMonitor;
+  const bool mIsUiThread;
   mozilla::Atomic<bool, mozilla::Relaxed>* mIsAPoolThreadFree;
 
   // Set to true if this thread creates a JSRuntime.
@@ -348,8 +316,6 @@ class nsThread : public nsIThreadInternal,
 #endif
 
   mozilla::PerformanceCounterState mPerformanceCounterState;
-
-  bool mIsInLocalExecutionMode = false;
 
   mozilla::SimpleTaskQueue mDirectTasks;
 };
@@ -390,48 +356,6 @@ class nsThreadShutdownContext final : public nsIThreadShutdown {
   mozilla::Mutex mJoiningThreadMutex;
   RefPtr<nsThread> mJoiningThread MOZ_GUARDED_BY(mJoiningThreadMutex);
   bool mThreadLeaked MOZ_GUARDED_BY(mJoiningThreadMutex) = false;
-};
-
-// This RAII class controls the duration of the associated nsThread's local
-// execution mode and provides access to the local event target. (See
-// nsThread::EnterLocalExecution() for details.) It is constructed from an
-// nsLocalExecutionRecord, which can only be constructed by nsThread.
-class MOZ_RAII nsLocalExecutionGuard final {
- public:
-  MOZ_IMPLICIT nsLocalExecutionGuard(
-      nsLocalExecutionRecord&& aLocalExecutionRecord);
-  nsLocalExecutionGuard(const nsLocalExecutionGuard&) = delete;
-  nsLocalExecutionGuard(nsLocalExecutionGuard&&) = delete;
-  ~nsLocalExecutionGuard();
-
-  nsCOMPtr<nsISerialEventTarget> GetEventTarget() const {
-    return mLocalEventTarget;
-  }
-
- private:
-  mozilla::SynchronizedEventQueue& mEventQueueStack;
-  nsCOMPtr<nsISerialEventTarget> mLocalEventTarget;
-  bool& mLocalExecutionFlag;
-};
-
-class MOZ_TEMPORARY_CLASS nsLocalExecutionRecord final {
- private:
-  friend class nsThread;
-  friend class nsLocalExecutionGuard;
-
-  nsLocalExecutionRecord(mozilla::SynchronizedEventQueue& aEventQueueStack,
-                         bool& aLocalExecutionFlag)
-      : mEventQueueStack(aEventQueueStack),
-        mLocalExecutionFlag(aLocalExecutionFlag) {}
-
-  nsLocalExecutionRecord(nsLocalExecutionRecord&&) = default;
-
- public:
-  nsLocalExecutionRecord(const nsLocalExecutionRecord&) = delete;
-
- private:
-  mozilla::SynchronizedEventQueue& mEventQueueStack;
-  bool& mLocalExecutionFlag;
 };
 
 class MOZ_STACK_CLASS nsThreadEnumerator final {

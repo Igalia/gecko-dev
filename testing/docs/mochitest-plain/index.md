@@ -223,7 +223,7 @@ test log.
 In addition to mochitest assertions, mochitest supports the
 [CommonJS standard assertions](http://wiki.commonjs.org/wiki/Unit_Testing/1.1),
 like [nodejs' assert module](https://nodejs.org/api/assert.html#assert) but
-implemented in `Assert.jsm`. These are auto-imported in the browser flavor, but
+implemented in `Assert.sys.mjs`. These are auto-imported in the browser flavor, but
 need to be imported manually in other flavors.
 
 ### Helper functions
@@ -233,8 +233,8 @@ Right now, useful helpers derived from MochiKit are available in
 
 Although all of Mochikit is available at `testing/mochitest/MochiKit`, only
 include files that you require to minimize test load times. Bug 367569 added
-`sendChar`, `sendKey`, and `sendString` helpers. These are available in
-`testing/mochitest/tests/SimpleTest/EventUtils.js`.
+`sendChar`, `sendKey`, and `sendString` helpers.
+These are available in [`testing/mochitest/tests/SimpleTest/EventUtils.js`](https://searchfox.org/mozilla-central/source/testing/mochitest/tests/SimpleTest/EventUtils.js).
 
 If you need to access some data files from your Mochitest, you can get an URI
 for them by using `SimpleTest.getTestFileURL("relative/path/to/data.file")`.

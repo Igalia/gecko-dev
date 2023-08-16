@@ -530,7 +530,9 @@ class nsStreamCopierIB final : public nsAStreamCopier {
     uint32_t n;
     *aSourceCondition =
         mSource->ReadSegments(ConsumeInputBuffer, &state, mChunkSize, &n);
-    *aSinkCondition = state.mSinkCondition;
+    *aSinkCondition = NS_SUCCEEDED(state.mSinkCondition) && n == 0
+                          ? mSink->StreamStatus()
+                          : state.mSinkCondition;
     return n;
   }
 
@@ -572,7 +574,9 @@ class nsStreamCopierOB final : public nsAStreamCopier {
     uint32_t n;
     *aSinkCondition =
         mSink->WriteSegments(FillOutputBuffer, &state, mChunkSize, &n);
-    *aSourceCondition = state.mSourceCondition;
+    *aSourceCondition = NS_SUCCEEDED(state.mSourceCondition) && n == 0
+                            ? mSource->StreamStatus()
+                            : state.mSourceCondition;
     return n;
   }
 
@@ -876,12 +880,9 @@ nsresult NS_CloneInputStream(nsIInputStream* aSource,
   nsCOMPtr<nsIInputStream> readerClone;
   nsCOMPtr<nsIOutputStream> writer;
 
-  nsresult rv = NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer), 0,
-                           0,            // default segment size and max size
-                           true, true);  // non-blocking
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
+  NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer), 0,
+             0,            // default segment size and max size
+             true, true);  // non-blocking
 
   // Propagate length information provided by nsIInputStreamLength. We don't use
   // InputStreamLengthHelper::GetSyncLength to avoid the risk of blocking when
@@ -896,7 +897,7 @@ nsresult NS_CloneInputStream(nsIInputStream* aSource,
   cloneable = do_QueryInterface(reader);
   MOZ_ASSERT(cloneable && cloneable->GetCloneable());
 
-  rv = cloneable->Clone(getter_AddRefs(readerClone));
+  nsresult rv = cloneable->Clone(getter_AddRefs(readerClone));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }

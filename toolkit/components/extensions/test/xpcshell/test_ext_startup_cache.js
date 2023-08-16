@@ -2,15 +2,15 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
 
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 AddonTestUtils.init(this);
@@ -31,7 +31,7 @@ function makeExtension(opts) {
 
     manifest: {
       version: opts.version,
-      applications: { gecko: { id: ADDON_ID } },
+      browser_specific_settings: { gecko: { id: ADDON_ID } },
 
       name: "__MSG_name__",
 
@@ -73,7 +73,7 @@ add_task(async function test_langpack_startup_cache() {
       name: "test Language Pack",
       version: "1.0",
       manifest_version: 2,
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "@test-langpack",
           strict_min_version: "42.0",

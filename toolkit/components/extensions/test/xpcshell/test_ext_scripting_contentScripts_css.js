@@ -20,6 +20,7 @@ const makeExtension = ({ manifest: manifestProps, ...otherProps }) => {
       granted_host_permissions: true,
       ...manifestProps,
     },
+    allowInsecureRequests: true,
     temporarilyInstalled: true,
     ...otherProps,
   });
@@ -65,7 +66,8 @@ add_task(async function test_registerContentScripts_css() {
               undefined,
               `${title} - expected no result`
             );
-            const scripts = await browser.scripting.getRegisteredContentScripts();
+            const scripts =
+              await browser.scripting.getRegisteredContentScripts();
             browser.test.assertEq(
               expectedScripts.length,
               scripts.length,

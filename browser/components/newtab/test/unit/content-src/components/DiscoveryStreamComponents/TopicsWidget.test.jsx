@@ -1,12 +1,15 @@
 import { combineReducers, createStore } from "redux";
-import { INITIAL_STATE, reducers } from "common/Reducers.jsm";
+import { INITIAL_STATE, reducers } from "common/Reducers.sys.mjs";
 import { Provider } from "react-redux";
 import {
   _TopicsWidget as TopicsWidgetBase,
   TopicsWidget,
 } from "content-src/components/DiscoveryStreamComponents/TopicsWidget/TopicsWidget";
 import { SafeAnchor } from "content-src/components/DiscoveryStreamComponents/SafeAnchor/SafeAnchor";
-import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
+import {
+  actionCreators as ac,
+  actionTypes as at,
+} from "common/Actions.sys.mjs";
 import { mount } from "enzyme";
 import React from "react";
 
@@ -48,7 +51,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
 
   it("should render", () => {
     assert.ok(wrapper.exists());
-    assert.ok(wrapper.find(".ds-topics-widget"));
+    assert.ok(wrapper.find(".ds-topics-widget").exists());
   });
 
   it("should connect with DiscoveryStream store", () => {
@@ -88,10 +91,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
 
     it("should dispatch click event for technology", () => {
       // Click technology topic.
-      wrapper
-        .find(SafeAnchor)
-        .at(0)
-        .simulate("click");
+      wrapper.find(SafeAnchor).at(0).simulate("click");
 
       // First call is DiscoveryStreamLoadedContent, which is already tested.
       const [second, third, fourth] = dispatch.getCalls().slice(1, 4);
@@ -110,8 +110,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
               shiftKey: undefined,
             },
             referrer: "https://getpocket.com/recommendations",
-            url:
-              "https://getpocket.com/explore/technology?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
+            url: "https://getpocket.com/explore/technology?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
           },
         })
       );
@@ -142,10 +141,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
 
     it("should dispatch click event for must reads", () => {
       // Click must reads topic.
-      wrapper
-        .find(SafeAnchor)
-        .at(8)
-        .simulate("click");
+      wrapper.find(SafeAnchor).at(8).simulate("click");
 
       // First call is DiscoveryStreamLoadedContent, which is already tested.
       const [second, third, fourth] = dispatch.getCalls().slice(1, 4);
@@ -164,8 +160,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
               shiftKey: undefined,
             },
             referrer: "https://getpocket.com/recommendations",
-            url:
-              "https://getpocket.com/collections?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
+            url: "https://getpocket.com/collections?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
           },
         })
       );
@@ -196,10 +191,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
 
     it("should dispatch click event for more topics", () => {
       // Click more-topics.
-      wrapper
-        .find(SafeAnchor)
-        .at(9)
-        .simulate("click");
+      wrapper.find(SafeAnchor).at(9).simulate("click");
 
       // First call is DiscoveryStreamLoadedContent, which is already tested.
       const [second, third, fourth] = dispatch.getCalls().slice(1, 4);
@@ -218,8 +210,7 @@ describe("Discovery Stream <TopicsWidget>", () => {
               shiftKey: undefined,
             },
             referrer: "https://getpocket.com/recommendations",
-            url:
-              "https://getpocket.com/?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
+            url: "https://getpocket.com/?utm_source=utmSource&utm_content=utmContent&utm_campaign=utmCampaign",
           },
         })
       );

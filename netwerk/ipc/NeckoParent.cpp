@@ -26,7 +26,6 @@
 #include "mozilla/Unused.h"
 #include "mozilla/net/FileChannelParent.h"
 #include "mozilla/net/DNSRequestParent.h"
-#include "mozilla/net/ClassifierDummyChannelParent.h"
 #include "mozilla/net/IPCTransportProvider.h"
 #include "mozilla/net/RemoteStreamGetter.h"
 #include "mozilla/net/RequestContextService.h"
@@ -505,7 +504,7 @@ bool NeckoParent::DeallocPUDPSocketParent(PUDPSocketParent* actor) {
 already_AddRefed<PDNSRequestParent> NeckoParent::AllocPDNSRequestParent(
     const nsACString& aHost, const nsACString& aTrrServer, const int32_t& aPort,
     const uint16_t& aType, const OriginAttributes& aOriginAttributes,
-    const uint32_t& aFlags) {
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestHandler> handler = new DNSRequestHandler();
   RefPtr<DNSRequestParent> actor = new DNSRequestParent(handler);
   return actor.forget();
@@ -514,7 +513,8 @@ already_AddRefed<PDNSRequestParent> NeckoParent::AllocPDNSRequestParent(
 mozilla::ipc::IPCResult NeckoParent::RecvPDNSRequestConstructor(
     PDNSRequestParent* aActor, const nsACString& aHost,
     const nsACString& aTrrServer, const int32_t& aPort, const uint16_t& aType,
-    const OriginAttributes& aOriginAttributes, const uint32_t& aFlags) {
+    const OriginAttributes& aOriginAttributes,
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestParent> actor = static_cast<DNSRequestParent*>(aActor);
   RefPtr<DNSRequestHandler> handler =
       actor->GetDNSRequest()->AsDNSRequestHandler();
@@ -524,17 +524,19 @@ mozilla::ipc::IPCResult NeckoParent::RecvPDNSRequestConstructor(
 }
 
 mozilla::ipc::IPCResult NeckoParent::RecvSpeculativeConnect(
-    nsIURI* aURI, nsIPrincipal* aPrincipal, const bool& aAnonymous) {
+    nsIURI* aURI, nsIPrincipal* aPrincipal,
+    Maybe<OriginAttributes>&& aOriginAttributes, const bool& aAnonymous) {
   nsCOMPtr<nsISpeculativeConnect> speculator(gIOService);
   nsCOMPtr<nsIPrincipal> principal(aPrincipal);
   if (!aURI) {
     return IPC_FAIL(this, "aURI must not be null");
   }
   if (aURI && speculator) {
-    if (aAnonymous) {
-      speculator->SpeculativeAnonymousConnect(aURI, principal, nullptr);
+    if (aOriginAttributes) {
+      speculator->SpeculativeConnectWithOriginAttributesNative(
+          aURI, std::move(aOriginAttributes.ref()), nullptr, aAnonymous);
     } else {
-      speculator->SpeculativeConnect(aURI, principal, nullptr);
+      speculator->SpeculativeConnect(aURI, principal, nullptr, aAnonymous);
     }
   }
   return IPC_OK();
@@ -542,15 +544,16 @@ mozilla::ipc::IPCResult NeckoParent::RecvSpeculativeConnect(
 
 mozilla::ipc::IPCResult NeckoParent::RecvHTMLDNSPrefetch(
     const nsAString& hostname, const bool& isHttps,
-    const OriginAttributes& aOriginAttributes, const uint32_t& flags) {
+    const OriginAttributes& aOriginAttributes,
+    const nsIDNSService::DNSFlags& flags) {
   dom::HTMLDNSPrefetch::Prefetch(hostname, isHttps, aOriginAttributes, flags);
   return IPC_OK();
 }
 
 mozilla::ipc::IPCResult NeckoParent::RecvCancelHTMLDNSPrefetch(
     const nsAString& hostname, const bool& isHttps,
-    const OriginAttributes& aOriginAttributes, const uint32_t& flags,
-    const nsresult& reason) {
+    const OriginAttributes& aOriginAttributes,
+    const nsIDNSService::DNSFlags& flags, const nsresult& reason) {
   dom::HTMLDNSPrefetch::CancelPrefetch(hostname, isHttps, aOriginAttributes,
                                        flags, reason);
   return IPC_OK();
@@ -723,41 +726,6 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetExtensionFD(
   return IPC_OK();
 }
 
-PClassifierDummyChannelParent* NeckoParent::AllocPClassifierDummyChannelParent(
-    nsIURI* aURI, nsIURI* aTopWindowURI, const nsresult& aTopWindowURIResult,
-    const Maybe<LoadInfoArgs>& aLoadInfo) {
-  RefPtr<ClassifierDummyChannelParent> c = new ClassifierDummyChannelParent();
-  return c.forget().take();
-}
-
-mozilla::ipc::IPCResult NeckoParent::RecvPClassifierDummyChannelConstructor(
-    PClassifierDummyChannelParent* aActor, nsIURI* aURI, nsIURI* aTopWindowURI,
-    const nsresult& aTopWindowURIResult, const Maybe<LoadInfoArgs>& aLoadInfo) {
-  ClassifierDummyChannelParent* p =
-      static_cast<ClassifierDummyChannelParent*>(aActor);
-
-  if (NS_WARN_IF(!aURI)) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-
-  nsCOMPtr<nsILoadInfo> loadInfo;
-  nsresult rv = LoadInfoArgsToLoadInfo(aLoadInfo, getter_AddRefs(loadInfo));
-  if (NS_WARN_IF(NS_FAILED(rv)) || !loadInfo) {
-    return IPC_FAIL_NO_REASON(this);
-  }
-
-  p->Init(aURI, aTopWindowURI, aTopWindowURIResult, loadInfo);
-  return IPC_OK();
-}
-
-bool NeckoParent::DeallocPClassifierDummyChannelParent(
-    PClassifierDummyChannelParent* aActor) {
-  RefPtr<ClassifierDummyChannelParent> c =
-      dont_AddRef(static_cast<ClassifierDummyChannelParent*>(aActor));
-  MOZ_ASSERT(c);
-  return true;
-}
-
 mozilla::ipc::IPCResult NeckoParent::RecvInitSocketProcessBridge(
     InitSocketProcessBridgeResolver&& aResolver) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -874,14 +842,16 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetPageIconStream(
     nsIURI* aURI, const Maybe<LoadInfoArgs>& aLoadInfoArgs,
     GetPageIconStreamResolver&& aResolver) {
 #ifdef MOZ_PLACES
+  const nsACString& remoteType =
+      ContentParent::Cast(Manager())->GetRemoteType();
+
   // Only the privileged about content process is allowed to access
   // things over the page-icon protocol. Any other content process
   // that tries to send this should have been blocked via the
   // ScriptSecurityManager, but if somehow the process has been tricked into
   // sending this message, we send IPC_FAIL in order to crash that
   // likely-compromised content process.
-  if (static_cast<ContentParent*>(Manager())->GetRemoteType() !=
-      PRIVILEGEDABOUT_REMOTE_TYPE) {
+  if (remoteType != PRIVILEGEDABOUT_REMOTE_TYPE) {
     return IPC_FAIL(this, "Wrong process type");
   }
 
@@ -890,7 +860,7 @@ mozilla::ipc::IPCResult NeckoParent::RecvGetPageIconStream(
   }
 
   nsCOMPtr<nsILoadInfo> loadInfo;
-  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(aLoadInfoArgs,
+  nsresult rv = mozilla::ipc::LoadInfoArgsToLoadInfo(aLoadInfoArgs, remoteType,
                                                      getter_AddRefs(loadInfo));
   if (NS_FAILED(rv)) {
     return IPC_FAIL(this, "Page-icon request must include loadInfo");

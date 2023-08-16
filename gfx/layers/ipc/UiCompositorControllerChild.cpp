@@ -77,7 +77,8 @@ bool UiCompositorControllerChild::Resume() {
   if (!mIsOpen) {
     return false;
   }
-  return SendResume();
+  bool resumed = false;
+  return SendResume(&resumed) && resumed;
 }
 
 bool UiCompositorControllerChild::ResumeAndResize(const int32_t& aX,
@@ -89,7 +90,8 @@ bool UiCompositorControllerChild::ResumeAndResize(const int32_t& aX,
     // Since we are caching these values, pretend the call succeeded.
     return true;
   }
-  return SendResumeAndResize(aX, aY, aWidth, aHeight);
+  bool resumed = false;
+  return SendResumeAndResize(aX, aY, aWidth, aHeight, &resumed) && resumed;
 }
 
 bool UiCompositorControllerChild::InvalidateAndRender() {
@@ -200,13 +202,6 @@ void UiCompositorControllerChild::ActorDestroy(ActorDestroyReason aWhy) {
   }
 }
 
-void UiCompositorControllerChild::ActorDealloc() {
-  if (mParent) {
-    mParent = nullptr;
-  }
-  Release();
-}
-
 void UiCompositorControllerChild::ProcessingError(Result aCode,
                                                   const char* aReason) {
   if (aCode != MsgDropped) {
@@ -215,7 +210,7 @@ void UiCompositorControllerChild::ProcessingError(Result aCode,
   }
 }
 
-void UiCompositorControllerChild::HandleFatalError(const char* aMsg) const {
+void UiCompositorControllerChild::HandleFatalError(const char* aMsg) {
   dom::ContentChild::FatalErrorIfNotUsingGPUProcess(aMsg, OtherPid());
 }
 
@@ -272,7 +267,6 @@ void UiCompositorControllerChild::OpenForSameProcess() {
   }
 
   mParent->InitializeForSameProcess();
-  AddRef();
   SendCachedValues();
   // Let Ui thread know the connection is open;
   RecvToolbarAnimatorMessageFromCompositor(COMPOSITOR_CONTROLLER_OPEN);
@@ -293,7 +287,6 @@ void UiCompositorControllerChild::OpenForGPUProcess(
     return;
   }
 
-  AddRef();
   SendCachedValues();
   // Let Ui thread know the connection is open;
   RecvToolbarAnimatorMessageFromCompositor(COMPOSITOR_CONTROLLER_OPEN);
@@ -302,8 +295,9 @@ void UiCompositorControllerChild::OpenForGPUProcess(
 void UiCompositorControllerChild::SendCachedValues() {
   MOZ_ASSERT(mIsOpen);
   if (mResize) {
+    bool resumed;
     SendResumeAndResize(mResize.ref().x, mResize.ref().y, mResize.ref().width,
-                        mResize.ref().height);
+                        mResize.ref().height, &resumed);
     mResize.reset();
   }
   if (mMaxToolbarHeight) {

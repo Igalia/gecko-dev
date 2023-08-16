@@ -51,6 +51,9 @@ class VideoSink : public MediaSink {
 
   void SetPlaying(bool aPlaying) override;
 
+  RefPtr<GenericPromise> SetAudioDevice(
+      RefPtr<AudioDeviceInfo> aDevice) override;
+
   double PlaybackRate() const override;
 
   void Redraw(const VideoInfo& aInfo) override;
@@ -69,6 +72,8 @@ class VideoSink : public MediaSink {
   void SetSecondaryVideoContainer(VideoFrameContainer* aSecondary) override;
 
   void GetDebugInfo(dom::MediaSinkDebugInfo& aInfo) override;
+
+  void EnableTreatAudioUnderrunAsSilence(bool aEnabled) override;
 
  private:
   virtual ~VideoSink();
@@ -110,7 +115,7 @@ class VideoSink : public MediaSink {
   MediaQueue<VideoData>& VideoQueue() const { return mVideoQueue; }
 
   const RefPtr<AbstractThread> mOwnerThread;
-  RefPtr<MediaSink> mAudioSink;
+  const RefPtr<MediaSink> mAudioSink;
   MediaQueue<VideoData>& mVideoQueue;
   VideoFrameContainer* mContainer;
   RefPtr<VideoFrameContainer> mSecondaryContainer;

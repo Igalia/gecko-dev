@@ -48,6 +48,7 @@ class ConnectionEntry {
   nsresult CloseIdleConnection(nsHttpConnection* conn);
   void CloseIdleConnections();
   void CloseIdleConnections(uint32_t maxToClose);
+  void CloseH2WebsocketConnections();
   nsresult RemoveIdleConnection(nsHttpConnection* conn);
   bool IsInIdleConnections(HttpConnectionBase* conn);
   size_t IdleConnectionsLength() const { return mIdleConns.Length(); }
@@ -64,6 +65,10 @@ class ConnectionEntry {
   bool FindConnToClaim(PendingTransactionInfo* pendingTransInfo);
   void CloseActiveConnections();
   void CloseAllActiveConnsWithNullTransactcion(nsresult aCloseCode);
+
+  bool IsInH2WebsocketConns(HttpConnectionBase* conn);
+  void InsertIntoH2WebsocketConns(HttpConnectionBase* conn);
+  void RemoveH2WebsocketConns(HttpConnectionBase* conn);
 
   HttpConnectionBase* GetH2orH3ActiveConn();
   // Make an active spdy connection DontReuse.
@@ -190,6 +195,9 @@ class ConnectionEntry {
 
   void MaybeUpdateEchConfig(nsHttpConnectionInfo* aConnInfo);
 
+  bool AllowToRetryDifferentIPFamilyForHttp3(nsresult aError);
+  void SetRetryDifferentIPFamilyForHttp3(uint16_t aIPFamily);
+
  private:
   void InsertIntoIdleConnections_internal(nsHttpConnection* conn);
   void RemoveFromIdleConnectionsIndex(size_t inx);
@@ -198,11 +206,16 @@ class ConnectionEntry {
   nsTArray<RefPtr<nsHttpConnection>> mIdleConns;  // idle persistent connections
   nsTArray<RefPtr<HttpConnectionBase>> mActiveConns;  // active connections
 
+  // "fake" http2 websocket connections that needs to be cleaned up on shutdown
+  nsTArray<RefPtr<HttpConnectionBase>> mH2WebsocketConns;
+
   nsTArray<RefPtr<DnsAndConnectSocket>>
       mDnsAndConnectSockets;  // dns resolution and half open connections
 
   PendingTransactionQueue mPendingQ;
   ~ConnectionEntry();
+
+  bool mRetriedDifferentIPFamilyForHttp3 = false;
 };
 
 }  // namespace net

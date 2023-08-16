@@ -55,7 +55,6 @@ class nsIPrincipal;
 
 #ifdef XP_WIN
 #  include "WindowsLocationProvider.h"
-#  include "mozilla/WindowsVersion.h"
 #endif
 
 // Some limit to the number of get or watch geolocation requests
@@ -303,19 +302,24 @@ nsGeolocationRequest::Allow(JS::Handle<JS::Value> aChoices) {
     }
   }
 
+  // Non-cached location request
+  bool allowedRequest = mIsWatchPositionRequest || !canUseCache;
+  if (allowedRequest) {
+    // let the locator know we're pending
+    // we will now be owned by the locator
+    mLocator->NotifyAllowedRequest(this);
+  }
+
   // Kick off the geo device, if it isn't already running
   nsresult rv = gs->StartDevice();
 
   if (NS_FAILED(rv)) {
+    if (allowedRequest) {
+      mLocator->RemoveRequest(this);
+    }
     // Location provider error
     NotifyError(GeolocationPositionError_Binding::POSITION_UNAVAILABLE);
     return NS_OK;
-  }
-
-  if (mIsWatchPositionRequest || !canUseCache) {
-    // let the locator know we're pending
-    // we will now be owned by the locator
-    mLocator->NotifyAllowedRequest(this);
   }
 
   SetTimeoutTimer();
@@ -523,8 +527,7 @@ nsresult nsGeolocationService::Init() {
 #endif
 
 #ifdef XP_WIN
-  if (Preferences::GetBool("geo.provider.ms-windows-location", false) &&
-      IsWin8OrLater()) {
+  if (Preferences::GetBool("geo.provider.ms-windows-location", false)) {
     mProvider = new WindowsLocationProvider();
   }
 #endif
@@ -1012,7 +1015,7 @@ void Geolocation::GetCurrentPosition(PositionCallback& aCallback,
 static nsIEventTarget* MainThreadTarget(Geolocation* geo) {
   nsCOMPtr<nsPIDOMWindowInner> window = do_QueryReferent(geo->GetOwner());
   if (!window) {
-    return GetMainThreadEventTarget();
+    return GetMainThreadSerialEventTarget();
   }
   return nsGlobalWindowInner::Cast(window)->EventTargetFor(
       mozilla::TaskCategory::Other);

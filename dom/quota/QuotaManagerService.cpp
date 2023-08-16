@@ -48,6 +48,7 @@
 #include "nsIUserIdleService.h"
 #include "nsServiceManagerUtils.h"
 #include "nsStringFwd.h"
+#include "nsVariant.h"
 #include "nsXULAppAPI.h"
 #include "nscore.h"
 
@@ -711,6 +712,47 @@ QuotaManagerService::Clear(nsIQuotaRequest** _retval) {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
+
+  request.forget(_retval);
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+QuotaManagerService::ClearStoragesForPrivateBrowsing(
+    nsIQuotaRequest** _retval) {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  QM_TRY(MOZ_TO_RESULT(EnsureBackgroundActor()));
+
+  RefPtr<Request> request = new Request();
+
+  mBackgroundActor->SendClearStoragesForPrivateBrowsing()->Then(
+      GetCurrentSerialEventTarget(), __func__,
+      [request](const PQuotaChild::ClearStoragesForPrivateBrowsingPromise::
+                    ResolveOrRejectValue& aValue) {
+        if (aValue.IsResolve()) {
+          const BoolResponse& response = aValue.ResolveValue();
+
+          switch (response.type()) {
+            case BoolResponse::Tnsresult:
+              request->SetError(response.get_nsresult());
+              break;
+
+            case BoolResponse::Tbool: {
+              RefPtr<nsVariant> variant = new nsVariant();
+              variant->SetAsBool(response.get_bool());
+
+              request->SetResult(variant);
+              break;
+            }
+            default:
+              MOZ_CRASH("Unknown response type!");
+          }
+
+        } else {
+          request->SetError(NS_ERROR_FAILURE);
+        }
+      });
 
   request.forget(_retval);
   return NS_OK;

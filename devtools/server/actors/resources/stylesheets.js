@@ -6,19 +6,18 @@
 
 const {
   TYPES: { STYLESHEET },
-} = require("devtools/server/actors/resources/index");
+} = require("resource://devtools/server/actors/resources/index.js");
 
 loader.lazyRequireGetter(
   this,
   "CssLogic",
-  "devtools/shared/inspector/css-logic"
+  "resource://devtools/shared/inspector/css-logic.js"
 );
 
 class StyleSheetWatcher {
   constructor() {
-    this._onApplicableStylesheetAdded = this._onApplicableStylesheetAdded.bind(
-      this
-    );
+    this._onApplicableStylesheetAdded =
+      this._onApplicableStylesheetAdded.bind(this);
     this._onStylesheetUpdated = this._onStylesheetUpdated.bind(this);
   }
 
@@ -37,7 +36,7 @@ class StyleSheetWatcher {
     this._onAvailable = onAvailable;
     this._onUpdated = onUpdated;
 
-    this._styleSheetsManager = targetActor.getStyleSheetManager();
+    this._styleSheetsManager = targetActor.getStyleSheetsManager();
 
     // Add event listener for new additions and updates
     this._styleSheetsManager.on(
@@ -65,6 +64,9 @@ class StyleSheetWatcher {
     styleSheet,
     { isCreatedByDevTools = false, fileName = null, resourceId } = {}
   ) {
+    const { atRules, ruleCount } =
+      this._styleSheetsManager.getStyleSheetRuleCountAndAtRules(styleSheet);
+
     const resource = {
       resourceId,
       resourceType: STYLESHEET,
@@ -73,12 +75,11 @@ class StyleSheetWatcher {
       fileName,
       href: styleSheet.href,
       isNew: isCreatedByDevTools,
-      mediaRules: await this._styleSheetsManager._getMediaRules(styleSheet),
+      atRules,
       nodeHref: this._styleSheetsManager._getNodeHref(styleSheet),
-      ruleCount: styleSheet.cssRules.length,
-      sourceMapBaseURL: this._styleSheetsManager._getSourcemapBaseURL(
-        styleSheet
-      ),
+      ruleCount,
+      sourceMapBaseURL:
+        this._styleSheetsManager._getSourcemapBaseURL(styleSheet),
       sourceMapURL: styleSheet.sourceMapURL,
       styleSheetIndex: this._styleSheetsManager._getStyleSheetIndex(styleSheet),
       system: CssLogic.isAgentStylesheet(styleSheet),

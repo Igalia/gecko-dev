@@ -12,7 +12,7 @@ Opening the about:debugging page
 There are two ways to open ``about:debugging``:
 
 - Type ``about:debugging`` in the Firefox URL bar.
-- In the **Tools** > **Web Developer** menu, click **Remote Debugging**.
+- In the **Tools** > **Browser Tools** menu, click **Remote Debugging**.
 
 
 When about:debugging opens, on the left-hand side, you'll see a sidebar with two options and information about your remote debugging setup:
@@ -136,7 +136,7 @@ Extensions
 Loading a temporary extension
 -----------------------------
 
-With the **Load Temporary Add-on** button you can temporarily load a web extension from a directory on disk. Click the button, navigate to the directory containing the add-on and select its manifest file. The temporary extension is then displayed under the **Temporary Extensions** header.
+With the **Load Temporary Add-on** button you can temporarily load a WebExtension from a directory on disk. Click the button, navigate to the directory containing the add-on and select its manifest file. The temporary extension is then displayed under the **Temporary Extensions** header.
 
 You don't have to package or sign the extension before loading it, and it stays installed until you restart Firefox.
 
@@ -211,7 +211,7 @@ Just as it does with temporarily loaded extensions, the link next to **Manifest 
   It's recommended that you use the Browser Toolbox, not the Add-on Debugger, for debugging WebExtensions. See `Debugging WebExtensions <https://extensionworkshop.com/documentation/develop/debugging/>`_ for all the details.
 
 
-The Add-ons section in about:debugging lists all web extensions that are currently installed. Next to each entry is a button labeled **Inspect**.
+The Add-ons section in about:debugging lists all WebExtensions that are currently installed. Next to each entry is a button labeled **Inspect**.
 
 .. note::
 
@@ -288,7 +288,25 @@ A warning message is displayed at the top of the **This Firefox** tab if service
   :class: center
 
 
-Service workers can be unavailable if the ``dom.serviceWorkers.enable`` preference is set to false in ``about:config``.
+Service workers can be unavailable if:
+
+- ``dom.serviceWorkers.enable`` preference is set to false in ``about:config``.
+- ``browser.privatebrowsing.autostart`` preference is set to true in ``about:config`` or through Firefox preferences UI.
+
+
+The ``browser.privatebrowsing.autostart`` preference is set to true if the user selects **Never remember history** option or enables **Always use private browsing mode** in preferences UI, see about:preferences#privacy
+
+
+Always use private browsing mode:
+
+.. image:: always_use_private_browsing_mode.png
+  :class: center
+
+
+Never remember history:
+
+.. image:: never_remember_history.png
+  :class: center
 
 
 Connection to Firefox for Android 68

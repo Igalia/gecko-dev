@@ -163,7 +163,7 @@ dictionary JsonWebKey {
 
 [Serializable,
  SecureContext,
- Exposed=Window]
+ Exposed=(Window,Worker)]
 interface CryptoKey {
   readonly attribute KeyType type;
   readonly attribute boolean extractable;
@@ -243,4 +243,3 @@ interface SubtleCrypto {
                          boolean extractable,
                          sequence<KeyUsage> keyUsages );
 };
-

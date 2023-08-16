@@ -7,11 +7,9 @@
 // corresponding DOM nodes mutate
 
 // Have to use the same timer functions used by the inspector.
-const { clearTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
+// eslint-disable-next-line mozilla/no-redeclare-with-import-autofix
+const { clearTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
 );
 
 const TEST_URL = URL_ROOT + "doc_markup_flashing.html";
@@ -117,13 +115,8 @@ const TEST_DATA = [
   },
 ];
 
-add_task(async function() {
-  const timerPrecision = Preferences.get("privacy.reduceTimerPrecision");
-  Preferences.set("privacy.reduceTimerPrecision", false);
-
-  registerCleanupFunction(function() {
-    Preferences.set("privacy.reduceTimerPrecision", timerPrecision);
-  });
+add_task(async function () {
+  await pushPref("privacy.reduceTimerPrecision", false);
 
   const { inspector } = await openInspectorForURL(TEST_URL);
 

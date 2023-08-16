@@ -1,4 +1,4 @@
-use crate::arena::{Arena, BadHandle, Handle, UniqueArena};
+use crate::arena::Handle;
 use std::{fmt::Display, num::NonZeroU32, ops};
 
 /// A newtype struct where its only valid values are powers of 2
@@ -130,8 +130,6 @@ pub enum LayoutErrorInner {
     InvalidStructMemberType(u32, Handle<crate::Type>),
     #[error("Type width must be a power of two")]
     NonPowerOfTwoWidth,
-    #[error("Array size is a bad handle")]
-    BadHandle(#[from] BadHandle),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, thiserror::Error)]
@@ -167,18 +165,11 @@ impl Layouter {
     /// constant arenas, and then assume that layouts are available for all
     /// types.
     #[allow(clippy::or_fun_call)]
-    pub fn update(
-        &mut self,
-        types: &UniqueArena<crate::Type>,
-        constants: &Arena<crate::Constant>,
-    ) -> Result<(), LayoutError> {
+    pub fn update(&mut self, gctx: super::GlobalCtx) -> Result<(), LayoutError> {
         use crate::TypeInner as Ti;
 
-        for (ty_handle, ty) in types.iter().skip(self.layouts.len()) {
-            let size = ty
-                .inner
-                .try_size(constants)
-                .map_err(|error| LayoutErrorInner::BadHandle(error).with(ty_handle))?;
+        for (ty_handle, ty) in gctx.types.iter().skip(self.layouts.len()) {
+            let size = ty.inner.size(gctx);
             let layout = match ty.inner {
                 Ti::Scalar { width, .. } | Ti::Atomic { width, .. } => {
                     let alignment = Alignment::new(width as u32)
@@ -243,7 +234,11 @@ impl Layouter {
                         alignment,
                     }
                 }
-                Ti::Image { .. } | Ti::Sampler { .. } | Ti::BindingArray { .. } => TypeLayout {
+                Ti::Image { .. }
+                | Ti::Sampler { .. }
+                | Ti::AccelerationStructure
+                | Ti::RayQuery
+                | Ti::BindingArray { .. } => TypeLayout {
                     size,
                     alignment: Alignment::ONE,
                 },

@@ -7,8 +7,8 @@ server.registerDirectory("/data/", do_get_file("data"));
 
 const HOSTS = ["http://example.com/*", "http://example.net/*"];
 
-const { ExtensionPermissions } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionPermissions.jsm"
+const { ExtensionPermissions } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionPermissions.sys.mjs"
 );
 
 function grantOptional({ extension: ext }, origins) {
@@ -24,7 +24,7 @@ function makeExtension(id, content_scripts) {
     manifest: {
       manifest_version: 3,
 
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
       content_scripts,
 
       permissions: ["scripting"],

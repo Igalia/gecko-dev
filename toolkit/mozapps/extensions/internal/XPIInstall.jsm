@@ -26,33 +26,43 @@ var EXPORTED_SYMBOLS = [
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { computeSha256HashAsString, getHashStringForCrypto } =
+  ChromeUtils.importESModule(
+    "resource://gre/modules/addons/crypto-utils.sys.mjs"
+  );
+
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { AddonManager, AddonManagerPrivate } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager, AddonManagerPrivate } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
-  AddonSettings: "resource://gre/modules/addons/AddonSettings.jsm",
-  CertUtils: "resource://gre/modules/CertUtils.jsm",
-  ExtensionData: "resource://gre/modules/Extension.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
-  ProductAddonChecker: "resource://gre/modules/addons/ProductAddonChecker.jsm",
-  UpdateUtils: "resource://gre/modules/UpdateUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
+  AddonSettings: "resource://gre/modules/addons/AddonSettings.sys.mjs",
+  CertUtils: "resource://gre/modules/CertUtils.sys.mjs",
+  ExtensionData: "resource://gre/modules/Extension.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  ProductAddonChecker:
+    "resource://gre/modules/addons/ProductAddonChecker.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  UpdateUtils: "resource://gre/modules/UpdateUtils.sys.mjs",
+});
 
+XPCOMUtils.defineLazyModuleGetters(lazy, {
+  BuiltInThemesHelpers: "resource://gre/modules/addons/XPIDatabase.jsm",
   AddonInternal: "resource://gre/modules/addons/XPIDatabase.jsm",
   XPIDatabase: "resource://gre/modules/addons/XPIDatabase.jsm",
   XPIInternal: "resource://gre/modules/addons/XPIProvider.jsm",
 });
 
 XPCOMUtils.defineLazyGetter(lazy, "IconDetails", () => {
-  return ChromeUtils.import("resource://gre/modules/ExtensionParent.jsm")
-    .ExtensionParent.IconDetails;
+  return ChromeUtils.importESModule(
+    "resource://gre/modules/ExtensionParent.sys.mjs"
+  ).ExtensionParent.IconDetails;
 });
 
 const { nsIBlocklistService } = Ci;
@@ -167,9 +177,12 @@ const MSG_JAR_FLUSH = "Extension:FlushJarCache";
 /**
  * Valid IDs fit this pattern.
  */
-var gIDTest = /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
+var gIDTest =
+  /^(\{[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\}|[a-z0-9-\._]*\@[a-z0-9-\._]+)$/i;
 
-const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
+const { Log } = ChromeUtils.importESModule(
+  "resource://gre/modules/Log.sys.mjs"
+);
 const LOGGER_ID = "addons.xpi";
 
 // Create a new logger for use by all objects in this Addons XPI Provider module
@@ -457,6 +470,9 @@ async function loadManifestFromWebManifest(aPackage, aLocation) {
     throw error;
   }
 
+  // Internally, we use the `applications` key but it is because we assign the value
+  // of `browser_specific_settings` to `applications` in `ExtensionData.parseManifest()`.
+  // Yet, as of MV3, only `browser_specific_settings` is accepted in manifest.json files.
   let bss = manifest.applications?.gecko || {};
 
   // A * is illegal in strict_min_version
@@ -487,7 +503,8 @@ async function loadManifestFromWebManifest(aPackage, aLocation) {
     addon.previewImage = "preview.png";
   }
 
-  if (addon.type == "sitepermission") {
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  if (addon.type == "sitepermission-deprecated") {
     addon.sitePermissions = manifest.site_permissions;
     addon.siteOrigin = manifest.install_origins[0];
   }
@@ -640,7 +657,7 @@ function generateTemporaryInstallID(aFile) {
   return id;
 }
 
-var loadManifest = async function(aPackage, aLocation, aOldAddon) {
+var loadManifest = async function (aPackage, aLocation, aOldAddon) {
   let addon;
   let verifiedSignedState;
   if (await aPackage.hasResource("manifest.json")) {
@@ -732,7 +749,7 @@ var loadManifest = async function(aPackage, aLocation, aOldAddon) {
  * @returns {AddonInternal}
  *        The parsed Addon object for the file's manifest.
  */
-var loadManifestFromFile = async function(aFile, aLocation, aOldAddon) {
+var loadManifestFromFile = async function (aFile, aLocation, aOldAddon) {
   let pkg = Package.get(aFile);
   try {
     let addon = await loadManifest(pkg, aLocation, aOldAddon);
@@ -781,21 +798,6 @@ function getTemporaryFile() {
   file.append(`tmp-${random}.xpi`);
   file.createUnique(Ci.nsIFile.NORMAL_FILE_TYPE, lazy.FileUtils.PERMS_FILE);
   return file;
-}
-
-/**
- * Returns the string representation (hex) of the SHA256 hash of `input`.
- *
- * @param {string} input
- *        The value to hash.
- * @returns {string}
- *          The hex representation of a SHA256 hash.
- */
-function computeSha256HashAsString(input) {
-  const data = new Uint8Array(new TextEncoder().encode(input));
-  const crypto = CryptoHash("sha256");
-  crypto.update(data, data.length);
-  return getHashStringForCrypto(crypto);
 }
 
 function getHashForFile(file, algorithm) {
@@ -906,7 +908,7 @@ function shouldVerifySignedState(aAddonType, aLocation) {
  * @returns {Promise<number>}
  *        A Promise that resolves to an AddonManager.SIGNEDSTATE_* constant.
  */
-var verifyBundleSignedState = async function(aBundle, aAddon) {
+var verifyBundleSignedState = async function (aBundle, aAddon) {
   let pkg = Package.get(aBundle);
   try {
     let { signedState } = await pkg.verifySignedState(
@@ -1220,16 +1222,6 @@ SafeInstallOperation.prototype = {
   },
 };
 
-function getHashStringForCrypto(aCrypto) {
-  // return the two-digit hexadecimal code for a byte
-  let toHexString = charCode => ("0" + charCode.toString(16)).slice(-2);
-
-  // convert the binary hash data to a hex string.
-  let binary = aCrypto.finish(/* base64 */ false);
-  let hash = Array.from(binary, c => toHexString(c.charCodeAt(0)));
-  return hash.join("").toLowerCase();
-}
-
 // A hash algorithm if the caller of AddonInstall did not specify one.
 const DEFAULT_HASH_ALGO = "sha256";
 
@@ -1434,7 +1426,10 @@ class AddonInstall {
         logger.debug(`Cancelling postponed install of ${this.addon.id}`);
         this.state = AddonManager.STATE_CANCELLED;
         this._cleanup();
-        this._callInstallListeners("onInstallCancelled");
+        this._callInstallListeners(
+          "onInstallCancelled",
+          /* aCancelledByUser */ false
+        );
         this.removeTemporaryFile();
 
         let stagingDir = this.location.installer.getStagingDir();
@@ -1462,7 +1457,7 @@ class AddonInstall {
    */
   addListener(aListener) {
     if (
-      !this.listeners.some(function(i) {
+      !this.listeners.some(function (i) {
         return i == aListener;
       })
     ) {
@@ -1477,7 +1472,7 @@ class AddonInstall {
    *        The InstallListener to remove
    */
   removeListener(aListener) {
-    this.listeners = this.listeners.filter(function(i) {
+    this.listeners = this.listeners.filter(function (i) {
       return i != aListener;
     });
   }
@@ -1711,7 +1706,10 @@ class AddonInstall {
             logger.info(`Install of ${this.addon.id} cancelled by user`);
             this.state = AddonManager.STATE_CANCELLED;
             this._cleanup();
-            this._callInstallListeners("onInstallCancelled");
+            this._callInstallListeners(
+              "onInstallCancelled",
+              /* aCancelledByUser */ true
+            );
           }
           return;
         }
@@ -1754,7 +1752,10 @@ class AddonInstall {
       this.state = AddonManager.STATE_DOWNLOADED;
       this.removeTemporaryFile();
       this._cleanup();
-      this._callInstallListeners("onInstallCancelled");
+      this._callInstallListeners(
+        "onInstallCancelled",
+        /* aCancelledByUser */ false
+      );
       return;
     }
 
@@ -1870,6 +1871,18 @@ class AddonInstall {
             this.addon.type
           );
         }
+
+        // Clear the colorways builtins migrated to a non-builtin themes
+        // form the list of the retained themes.
+        if (
+          this.existingAddon?.isBuiltinColorwayTheme &&
+          !this.addon.isBuiltin &&
+          lazy.BuiltInThemesHelpers.isColorwayMigrationEnabled
+        ) {
+          lazy.BuiltInThemesHelpers.unretainMigratedColorwayTheme(
+            this.addon.id
+          );
+        }
       };
 
       this._startupPromise = (async () => {
@@ -1954,9 +1967,6 @@ class AddonInstall {
       // Point the add-on to its extracted files as the xpi may get deleted
       this.addon.sourceBundle = stagedAddon;
 
-      // Cache the AddonInternal as it may have updated compatibility info
-      this.location.stageAddon(this.addon.id, this.addon.toJSON());
-
       logger.debug(
         `Staged install of ${this.addon.id} from ${this.sourceURI.spec} ready; waiting for restart.`
       );
@@ -1964,6 +1974,14 @@ class AddonInstall {
         delete this.existingAddon.pendingUpgrade;
         this.existingAddon.pendingUpgrade = this.addon;
       }
+    }
+
+    if (this.state === AddonManager.STATE_POSTPONED) {
+      // Cache the AddonInternal as it may have updated compatibility info. We
+      // do that unconditionally in case the staged install isn't finalized in
+      // the same session. That way, on the next app startup, the add-on will
+      // be installed.
+      this.location.stageAddon(this.addon.id, this.addon.toJSON());
     }
   }
 
@@ -1986,8 +2004,10 @@ class AddonInstall {
    *
    * @param {function} resumeFn
    *        A function for the add-on to run when resuming.
+   * @param {boolean} requiresRestart
+   *        Whether this add-on requires restart.
    */
-  async postpone(resumeFn) {
+  async postpone(resumeFn, requiresRestart = true) {
     this.state = AddonManager.STATE_POSTPONED;
 
     let stagingDir = this.location.installer.getStagingDir();
@@ -1998,7 +2018,7 @@ class AddonInstall {
 
       let stagedAddon = getFile(`${this.addon.id}.xpi`, stagingDir);
 
-      await this.stageInstall(true, stagedAddon, true);
+      await this.stageInstall(requiresRestart, stagedAddon, true);
     } catch (e) {
       logger.warn(`Failed to postpone install of ${this.addon.id}`, e);
       this.state = AddonManager.STATE_INSTALL_FAILED;
@@ -2674,7 +2694,7 @@ var DownloadAddonInstall = class extends AddonInstall {
 function createUpdate(aCallback, aAddon, aUpdate, isUserRequested) {
   let url = Services.io.newURI(aUpdate.updateURL);
 
-  (async function() {
+  (async function () {
     let opts = {
       hash: aUpdate.updateHash,
       existingAddon: aAddon,
@@ -2700,7 +2720,22 @@ function createUpdate(aCallback, aAddon, aUpdate, isUserRequested) {
       install = new LocalAddonInstall(aAddon.location, url, opts);
       await install.init();
     } else {
-      install = new DownloadAddonInstall(aAddon.location, url, opts);
+      let loc = aAddon.location;
+      if (
+        aAddon.isBuiltinColorwayTheme &&
+        lazy.BuiltInThemesHelpers.isColorwayMigrationEnabled
+      ) {
+        // Builtin colorways theme needs to be updated by installing the version
+        // got from AMO into the profile location and not using the location
+        // where the builtin addon is currently installed.
+        logger.info(
+          `Overriding location to APP_PROFILE on builtin colorway theme update for "${aAddon.id}"`
+        );
+        loc = lazy.XPIInternal.XPIStates.getLocation(
+          lazy.XPIInternal.KEY_APP_PROFILE
+        );
+      }
+      install = new DownloadAddonInstall(loc, url, opts);
     }
 
     aCallback(install);
@@ -2795,8 +2830,8 @@ AddonInstallWrapper.prototype = {
     return installFor(this).install();
   },
 
-  postpone(returnFn) {
-    return installFor(this).postpone(returnFn);
+  postpone(returnFn, requiresRestart) {
+    return installFor(this).postpone(returnFn, requiresRestart);
   },
 
   cancel() {
@@ -2825,7 +2860,7 @@ AddonInstallWrapper.prototype = {
   "state",
   "progress",
   "maxProgress",
-].forEach(function(aProp) {
+].forEach(function (aProp) {
   Object.defineProperty(AddonInstallWrapper.prototype, aProp, {
     get() {
       return installFor(this)[aProp];
@@ -2850,7 +2885,7 @@ AddonInstallWrapper.prototype = {
  * @throws if the aListener or aReason arguments are not valid
  */
 var AddonUpdateChecker;
-var UpdateChecker = function(
+var UpdateChecker = function (
   aAddon,
   aListener,
   aReason,
@@ -2861,8 +2896,8 @@ var UpdateChecker = function(
     throw Components.Exception("", Cr.NS_ERROR_INVALID_ARG);
   }
 
-  ({ AddonUpdateChecker } = ChromeUtils.import(
-    "resource://gre/modules/addons/AddonUpdateChecker.jsm"
+  ({ AddonUpdateChecker } = ChromeUtils.importESModule(
+    "resource://gre/modules/addons/AddonUpdateChecker.sys.mjs"
   ));
 
   this.addon = aAddon;
@@ -3212,6 +3247,12 @@ class DirectoryInstaller {
    */
   cleanStagingDir(aLeafNames = []) {
     let dir = this.getStagingDir();
+
+    // SystemAddonInstaller getStatingDir may return null if there isn't
+    // any addon set directory returned by SystemAddonInstaller._loadAddonSet.
+    if (!dir) {
+      return;
+    }
 
     for (let name of aLeafNames) {
       let file = getFile(name, dir);
@@ -4717,20 +4758,36 @@ var XPIInstall = {
         AddonManagerPrivate.callAddonListeners("onUninstalled", wrapper);
 
         if (existing) {
-          lazy.XPIDatabase.makeAddonVisible(existing);
-          AddonManagerPrivate.callAddonListeners(
-            "onInstalling",
-            existing.wrapper,
-            false
-          );
+          // Migrate back to the existing addon, unless it was a builtin colorway theme,
+          // in that case we also make sure to remove the addon from the builtin location.
+          if (
+            existing.isBuiltinColorwayTheme &&
+            lazy.BuiltInThemesHelpers.isColorwayMigrationEnabled
+          ) {
+            existing.location.removeAddon(existing.id);
+          } else {
+            lazy.XPIDatabase.makeAddonVisible(existing);
+            AddonManagerPrivate.callAddonListeners(
+              "onInstalling",
+              existing.wrapper,
+              false
+            );
 
-          if (!existing.disabled) {
-            lazy.XPIDatabase.updateAddonActive(existing, true);
+            if (!existing.disabled) {
+              lazy.XPIDatabase.updateAddonActive(existing, true);
+            }
           }
         }
       };
 
-      if (existing) {
+      // Migrate back to the existing addon, unless it was a builtin colorway theme.
+      if (
+        existing &&
+        !(
+          existing.isBuiltinColorwayTheme &&
+          lazy.BuiltInThemesHelpers.isColorwayMigrationEnabled
+        )
+      ) {
         await bootstrap.update(existing, !existing.disabled, uninstall);
 
         AddonManagerPrivate.callAddonListeners("onInstalled", existing.wrapper);

@@ -45,7 +45,7 @@ class nsFilePicker : public nsBaseWinFilePicker {
   nsFilePicker();
 
   NS_IMETHOD Init(mozIDOMWindowProxy* aParent, const nsAString& aTitle,
-                  int16_t aMode) override;
+                  nsIFilePicker::Mode aMode) override;
 
   NS_DECL_ISUPPORTS
 
@@ -61,8 +61,8 @@ class nsFilePicker : public nsBaseWinFilePicker {
  protected:
   /* method from nsBaseFilePicker */
   virtual void InitNative(nsIWidget* aParent, const nsAString& aTitle) override;
-  nsresult Show(int16_t* aReturnVal) override;
-  nsresult ShowW(int16_t* aReturnVal);
+  nsresult Show(nsIFilePicker::ResultCode* aReturnVal) override;
+  nsresult ShowW(nsIFilePicker::ResultCode* aReturnVal);
   void GetFilterListArray(nsString& aFilterList);
   bool ShowFolderPicker(const nsString& aInitialDir);
   bool ShowFilePicker(const nsString& aInitialDir);
@@ -75,8 +75,7 @@ class nsFilePicker : public nsBaseWinFilePicker {
   nsCOMPtr<nsIWidget> mParentWidget;
   nsString mTitle;
   nsCString mFile;
-  nsString mFilterList;
-  int16_t mSelectedType;
+  int32_t mSelectedType;
   nsCOMArray<nsIFile> mFiles;
   nsString mUnicodeFile;
 
@@ -85,25 +84,11 @@ class nsFilePicker : public nsBaseWinFilePicker {
   };
   static mozilla::UniquePtr<char16_t[], FreeDeleter> sLastUsedUnicodeDirectory;
 
-  class ComDlgFilterSpec {
-   public:
-    ComDlgFilterSpec() {}
-    ~ComDlgFilterSpec() {}
-
-    uint32_t Length() { return mSpecList.Length(); }
-
-    bool IsEmpty() { return (mSpecList.Length() == 0); }
-
-    const COMDLG_FILTERSPEC* get() { return mSpecList.Elements(); }
-
-    void Append(const nsAString& aTitle, const nsAString& aFilter);
-
-   private:
-    AutoTArray<COMDLG_FILTERSPEC, 1> mSpecList;
-    AutoTArray<nsString, 2> mStrings;
+  struct Filter {
+    nsString title;
+    nsString filter;
   };
-
-  ComDlgFilterSpec mComFilterList;
+  AutoTArray<Filter, 1> mFilterList;
 };
 
 #endif  // nsFilePicker_h__

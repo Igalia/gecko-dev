@@ -1,6 +1,8 @@
+'use strict';
+
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'trunc_shrink', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('1234567890');
   await stream.truncate(5);
@@ -12,7 +14,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'trunc_grow', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('abc');
   await stream.truncate(5);
@@ -28,33 +30,13 @@ directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, file_name, dir);
 
   await root.removeEntry('parent_dir', {recursive: true});
-  await promise_rejects_dom(t, 'NotFoundError', handle.createWritable());
+  await promise_rejects_dom(t, 'NotFoundError', cleanup_writable(t, handle.createWritable()));
 }, 'createWritable() fails when parent directory is removed');
-
-directory_test(async (t, root) => {
-  const dir = await createDirectory(t, 'parent_dir', root);
-  const file_name = 'write_fails_when_dir_removed.txt';
-  const handle = await createEmptyFile(t, file_name, dir);
-  const stream = await handle.createWritable();
-
-  await root.removeEntry('parent_dir', {recursive: true});
-  await promise_rejects_dom(t, 'NotFoundError', stream.write('foo'));
-}, 'write() fails when parent directory is removed');
-
-directory_test(async (t, root) => {
-  const dir = await createDirectory(t, 'parent_dir', root);
-  const file_name = 'truncate_fails_when_dir_removed.txt';
-  const handle = await createEmptyFile(t, file_name, dir);
-  const stream = await handle.createWritable();
-
-  await root.removeEntry('parent_dir', {recursive: true});
-  await promise_rejects_dom(t, 'NotFoundError', stream.truncate(0));
-}, 'truncate() fails when parent directory is removed');
 
 directory_test(async (t, root) => {
   const handle = await createFileWithContents(
       t, 'atomic_file_is_copied.txt', 'fooks', root);
-  const stream = await handle.createWritable({keepExistingData: true});
+  const stream = await cleanup_writable(t, await handle.createWritable({keepExistingData: true}));
 
   await stream.write('bar');
   await stream.close();
@@ -65,7 +47,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle = await createFileWithContents(
       t, 'atomic_file_is_not_copied.txt', 'very long string', root);
-  const stream = await handle.createWritable({keepExistingData: false});
+  const stream = await cleanup_writable(t, await handle.createWritable({keepExistingData: false}));
 
   await stream.write('bar');
   assert_equals(await getFileContents(handle), 'very long string');
@@ -77,7 +59,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle = await createFileWithContents(
       t, 'trunc_smaller_offset.txt', '1234567890', root);
-  const stream = await handle.createWritable({keepExistingData: true});
+  const stream = await cleanup_writable(t, await handle.createWritable({keepExistingData: true}));
 
   await stream.truncate(5);
   await stream.write('abc');
@@ -90,7 +72,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle = await createFileWithContents(
       t, 'trunc_bigger_offset.txt', '1234567890', root);
-  const stream = await handle.createWritable({keepExistingData: true});
+  const stream = await cleanup_writable(t, await handle.createWritable({keepExistingData: true}));
 
   await stream.seek(6);
   await stream.truncate(5);
@@ -103,7 +85,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'contents', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   assert_false(stream.locked);
 
   stream.write('abc');

@@ -15,6 +15,28 @@
       div {
         outline: 1px solid tomato;
       }
+
+      @supports (display: flex) {
+        @media (1px < height < 10000px) {
+          div {
+            display: flex;
+          }
+        }
+      }
+    }
+
+    @layer myLayer {}
+    @container (min-width: 1px) {
+      body {
+        div {
+          color: gold;
+          @supports selector(&) {
+            &:hover {
+              color: yellowgreen;
+            }
+          }
+        }
+      }
     }
   </style>
 </head>

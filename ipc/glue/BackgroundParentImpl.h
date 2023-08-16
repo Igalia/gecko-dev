@@ -28,10 +28,6 @@ class BackgroundParentImpl : public PBackgroundParent {
 
   bool DeallocPBackgroundTestParent(PBackgroundTestParent* aActor) override;
 
-  already_AddRefed<PBackgroundFileSystemParent>
-  AllocPBackgroundFileSystemParent(
-      const PrincipalInfo& aPrincipalInfo) override;
-
   already_AddRefed<PBackgroundIDBFactoryParent>
   AllocPBackgroundIDBFactoryParent(const LoggingInfo& aLoggingInfo) override;
 
@@ -104,8 +100,6 @@ class BackgroundParentImpl : public PBackgroundParent {
   bool DeallocPBackgroundLSSimpleRequestParent(
       PBackgroundLSSimpleRequestParent* aActor) override;
 
-  mozilla::ipc::IPCResult RecvLSClearPrivateBrowsing() override;
-
   PBackgroundLocalStorageCacheParent* AllocPBackgroundLocalStorageCacheParent(
       const PrincipalInfo& aPrincipalInfo, const nsACString& aOriginKey,
       const uint32_t& aPrivateBrowsingId) override;
@@ -136,6 +130,19 @@ class BackgroundParentImpl : public PBackgroundParent {
   already_AddRefed<PBackgroundSessionStorageServiceParent>
   AllocPBackgroundSessionStorageServiceParent() override;
 
+  mozilla::ipc::IPCResult RecvCreateFileSystemManagerParent(
+      const PrincipalInfo& aPrincipalInfo,
+      Endpoint<mozilla::dom::PFileSystemManagerParent>&& aParentEndpoint,
+      CreateFileSystemManagerParentResolver&& aResolver) override;
+
+  mozilla::ipc::IPCResult RecvCreateWebTransportParent(
+      const nsAString& aURL, nsIPrincipal* aPrincipal,
+      const mozilla::Maybe<IPCClientInfo>& aClientInfo, const bool& aDedicated,
+      const bool& aRequireUnreliable, const uint32_t& aCongestionControl,
+      // Sequence<WebTransportHash>* aServerCertHashes,
+      Endpoint<PWebTransportParent>&& aParentEndpoint,
+      CreateWebTransportParentResolver&& aResolver) override;
+
   already_AddRefed<PIdleSchedulerParent> AllocPIdleSchedulerParent() override;
 
   PTemporaryIPCBlobParent* AllocPTemporaryIPCBlobParent() override;
@@ -158,11 +165,6 @@ class BackgroundParentImpl : public PBackgroundParent {
 
   bool DeallocPFileCreatorParent(PFileCreatorParent* aActor) override;
 
-  mozilla::dom::PRemoteWorkerParent* AllocPRemoteWorkerParent(
-      const RemoteWorkerData& aData) override;
-
-  bool DeallocPRemoteWorkerParent(PRemoteWorkerParent* aActor) override;
-
   mozilla::dom::PRemoteWorkerControllerParent*
   AllocPRemoteWorkerControllerParent(
       const mozilla::dom::RemoteWorkerData& aRemoteWorkerData) override;
@@ -174,13 +176,10 @@ class BackgroundParentImpl : public PBackgroundParent {
   bool DeallocPRemoteWorkerControllerParent(
       mozilla::dom::PRemoteWorkerControllerParent* aActor) override;
 
-  mozilla::dom::PRemoteWorkerServiceParent* AllocPRemoteWorkerServiceParent()
+  already_AddRefed<PRemoteWorkerServiceParent> AllocPRemoteWorkerServiceParent()
       override;
 
   mozilla::ipc::IPCResult RecvPRemoteWorkerServiceConstructor(
-      PRemoteWorkerServiceParent* aActor) override;
-
-  bool DeallocPRemoteWorkerServiceParent(
       PRemoteWorkerServiceParent* aActor) override;
 
   mozilla::dom::PSharedWorkerParent* AllocPSharedWorkerParent(
@@ -337,14 +336,15 @@ class BackgroundParentImpl : public PBackgroundParent {
   mozilla::ipc::IPCResult RecvPClientManagerConstructor(
       PClientManagerParent* aActor) override;
 
-  PMIDIPortParent* AllocPMIDIPortParent(const MIDIPortInfo& aPortInfo,
-                                        const bool& aSysexEnabled) override;
+  mozilla::ipc::IPCResult RecvCreateMIDIPort(
+      Endpoint<PMIDIPortParent>&& aEndpoint, const MIDIPortInfo& aPortInfo,
+      const bool& aSysexEnabled) override;
 
-  bool DeallocPMIDIPortParent(PMIDIPortParent* aActor) override;
+  mozilla::ipc::IPCResult RecvCreateMIDIManager(
+      Endpoint<PMIDIManagerParent>&& aEndpoint) override;
 
-  PMIDIManagerParent* AllocPMIDIManagerParent() override;
-
-  bool DeallocPMIDIManagerParent(PMIDIManagerParent* aActor) override;
+  mozilla::ipc::IPCResult RecvHasMIDIDevice(
+      HasMIDIDeviceResolver&& aResolver) override;
 
   mozilla::ipc::IPCResult RecvStorageActivity(
       const PrincipalInfo& aPrincipalInfo) override;
@@ -385,7 +385,11 @@ class BackgroundParentImpl : public PBackgroundParent {
       EnsureRDDProcessAndCreateBridgeResolver&& aResolver) override;
 
   mozilla::ipc::IPCResult RecvEnsureUtilityProcessAndCreateBridge(
+      const RemoteDecodeIn& aLocation,
       EnsureUtilityProcessAndCreateBridgeResolver&& aResolver) override;
+
+  mozilla::ipc::IPCResult RecvRequestCameraAccess(
+      RequestCameraAccessResolver&& aResolver) override;
 
   bool DeallocPEndpointForReportParent(
       PEndpointForReportParent* aActor) override;
@@ -404,7 +408,9 @@ class BackgroundParentImpl : public PBackgroundParent {
       PWebSocketConnectionParent* actor, const uint32_t& aListenerId) override;
 
   already_AddRefed<PLockManagerParent> AllocPLockManagerParent(
-      const ContentPrincipalInfo& aPrincipalInfo, const nsID& aClientId) final;
+      NotNull<nsIPrincipal*> aPrincipal, const nsID& aClientId) final;
+
+  already_AddRefed<PFetchParent> AllocPFetchParent() override;
 };
 
 }  // namespace mozilla::ipc

@@ -7,7 +7,6 @@
 #include "nsObjCExceptions.h"
 
 #include "plbase64.h"
-#include "plstr.h"
 
 #include "nsCocoaUtils.h"
 #include "nsXULAppAPI.h"
@@ -106,15 +105,18 @@ NSPrintInfo* nsPrintSettingsX::CreateOrCopyPrintInfo(bool aWithScaling) {
 
   NSSize paperSize;
   if (GetSheetOrientation() == kPortraitOrientation) {
-    [printInfo setOrientation:NSPaperOrientationPortrait];
     paperSize.width = CocoaPointsFromPaperSize(mPaperWidth);
     paperSize.height = CocoaPointsFromPaperSize(mPaperHeight);
-    [printInfo setPaperSize:paperSize];
   } else {
-    [printInfo setOrientation:NSPaperOrientationLandscape];
     paperSize.width = CocoaPointsFromPaperSize(mPaperHeight);
     paperSize.height = CocoaPointsFromPaperSize(mPaperWidth);
-    [printInfo setPaperSize:paperSize];
+  }
+  [printInfo setPaperSize:paperSize];
+
+  if (paperSize.width > paperSize.height) {
+    [printInfo setOrientation:NSPaperOrientationLandscape];
+  } else {
+    [printInfo setOrientation:NSPaperOrientationPortrait];
   }
 
   [printInfo setTopMargin:mUnwriteableMargin.top];
@@ -252,10 +254,10 @@ void nsPrintSettingsX::SetFromPrintInfo(NSPrintInfo* aPrintInfo, bool aAdoptPrin
     SetPaperHeight(PaperSizeFromCocoaPoints(paperSize.width));
   }
 
-  mUnwriteableMargin.top = [aPrintInfo topMargin];
-  mUnwriteableMargin.right = [aPrintInfo rightMargin];
-  mUnwriteableMargin.bottom = [aPrintInfo bottomMargin];
-  mUnwriteableMargin.left = [aPrintInfo leftMargin];
+  mUnwriteableMargin.top = static_cast<int32_t>([aPrintInfo topMargin]);
+  mUnwriteableMargin.right = static_cast<int32_t>([aPrintInfo rightMargin]);
+  mUnwriteableMargin.bottom = static_cast<int32_t>([aPrintInfo bottomMargin]);
+  mUnwriteableMargin.left = static_cast<int32_t>([aPrintInfo leftMargin]);
 
   if (aAdoptPrintInfo) {
     // Keep a reference to the printInfo; it may have settings that we don't know how to handle

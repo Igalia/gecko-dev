@@ -211,8 +211,12 @@ void MediaEngineWebRTCMicrophoneSource::ApplySettings(
 
   mAudioProcessingConfig.high_pass_filter.enabled = aPrefs.mHPFOn;
 
-  mAudioProcessingConfig.residual_echo_detector.enabled =
-      aPrefs.mResidualEchoOn;
+  // See https://bugs.chromium.org/p/webrtc/issues/detail?id=11539 for more
+  // info.  Our pref defaults to false, and if this is truly as unhelpful
+  // as the upstream bug claim, we could delete the pref that drive this:
+  // media.getusermedia.residual_echo_enabled.  See Bug 1779498.
+  // mAudioProcessingConfig.residual_echo_detector.enabled =
+  //    aPrefs.mResidualEchoOn;
 
   RefPtr<MediaEngineWebRTCMicrophoneSource> that = this;
   CubebUtils::AudioDeviceID deviceID = mDeviceInfo->DeviceID();
@@ -467,7 +471,7 @@ void MediaEngineWebRTCMicrophoneSource::GetSettings(
 }
 
 AudioInputProcessing::AudioInputProcessing(uint32_t aMaxChannelCount)
-    : mAudioProcessing(AudioProcessingBuilder().Create()),
+    : mAudioProcessing(AudioProcessingBuilder().Create().release()),
       mRequestedInputChannelCount(aMaxChannelCount),
       mSkipProcessing(false),
       mInputDownmixBuffer(MAX_SAMPLING_FREQ * MAX_CHANNELS / 100),
@@ -819,7 +823,7 @@ void AudioInputProcessing::ProcessOutputData(MediaTrackGraphImpl* aGraph,
 
     // Having the same config for input and output means we potentially save
     // some CPU.
-    StreamConfig inputConfig(aRate, channelCountFarend, false);
+    StreamConfig inputConfig(aRate, channelCountFarend);
     StreamConfig outputConfig = inputConfig;
 
     // Passing the same pointers here saves a copy inside this function.
@@ -901,11 +905,7 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
     mPacketizerInput->Output(packet);
 
     // Downmix from mPacketizerInput->mChannels to mono if needed. We always
-    // have floats here, the packetizer performed the conversion. This handles
-    // sound cards with multiple physical jacks exposed as a single device with
-    // _n_ discrete channels, where only a single mic is plugged in. Those
-    // channels are not correlated temporaly since they are discrete channels,
-    // mixing is just a sum.
+    // have floats here, the packetizer performed the conversion.
     AutoTArray<float*, 8> deinterleavedPacketizedInputDataChannelPointers;
     uint32_t channelCountInput = 0;
     if (mPacketizerInput->mChannels > MAX_CHANNELS) {
@@ -915,12 +915,14 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
       deinterleavedPacketizedInputDataChannelPointers[0] =
           mDeinterleavedBuffer.Data();
       // Downmix to mono (and effectively have a planar buffer) by summing all
-      // channels in the first channel.
+      // channels in the first channel, and scaling by the number of channels to
+      // avoid clipping.
+      float gain = 1.f / mPacketizerInput->mChannels;
       size_t readIndex = 0;
       for (size_t i = 0; i < mPacketizerInput->mPacketSize; i++) {
         mDeinterleavedBuffer.Data()[i] = 0.;
         for (size_t j = 0; j < mPacketizerInput->mChannels; j++) {
-          mDeinterleavedBuffer.Data()[i] += packet[readIndex++];
+          mDeinterleavedBuffer.Data()[i] += gain * packet[readIndex++];
         }
       }
     } else {
@@ -941,8 +943,7 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
                    deinterleavedPacketizedInputDataChannelPointers.Elements());
     }
 
-    StreamConfig inputConfig(aGraph->GraphRate(), channelCountInput,
-                             false /* we don't use typing detection*/);
+    StreamConfig inputConfig(aGraph->GraphRate(), channelCountInput);
     StreamConfig outputConfig = inputConfig;
 
     // Bug 1404965: Get the right delay here, it saves some work down the line.
@@ -984,7 +985,6 @@ void AudioInputProcessing::PacketizeAndProcess(MediaTrackGraphImpl* aGraph,
     offset += SprintfBuf(msg + offset, sizeof(msg) - offset,             \
                          #member ":" format ", ", stats.member.value()); \
   }
-      AddIfValue("%d", output_rms_dbfs);
       AddIfValue("%d", voice_detected);
       AddIfValue("%lf", echo_return_loss);
       AddIfValue("%lf", echo_return_loss_enhancement);

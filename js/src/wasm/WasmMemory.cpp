@@ -19,6 +19,9 @@
 #include "wasm/WasmMemory.h"
 
 #include "mozilla/MathAlgorithms.h"
+
+#include "js/Conversions.h"
+#include "js/ErrorReport.h"
 #include "vm/ArrayBufferObject.h"
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmProcess.h"
@@ -206,8 +209,9 @@ static_assert(MaxMemoryAccessSize <= HugeUnalignedGuardPage,
 static_assert(HugeOffsetGuardLimit < UINT32_MAX,
               "checking for overflow against OffsetGuardLimit is enough.");
 
-// We have only tested huge memory on x64 and arm64.
-#  if !(defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM64))
+// We have only tested huge memory on x64, arm64 and riscv64.
+#  if !(defined(JS_CODEGEN_X64) || defined(JS_CODEGEN_ARM64) || \
+        defined(JS_CODEGEN_RISCV64))
 #    error "Not an expected configuration"
 #  endif
 
@@ -246,7 +250,7 @@ static_assert(MaxInlineMemoryFillLength < MinOffsetGuardLimit, "precondition");
 wasm::Pages wasm::MaxMemoryPages(IndexType t) {
   MOZ_ASSERT_IF(t == IndexType::I64, !IsHugeMemoryEnabled(t));
   size_t desired = MaxMemoryLimitField(t);
-  size_t actual = ArrayBufferObject::maxBufferByteLength() / PageSize;
+  constexpr size_t actual = ArrayBufferObject::MaxByteLength / PageSize;
   return wasm::Pages(std::min(desired, actual));
 }
 
@@ -259,7 +263,7 @@ size_t wasm::MaxMemoryBoundsCheckLimit(IndexType t) {
 // range of an int32_t, which means the maximum heap size as observed by wasm
 // code is one wasm page less than 2GB.
 wasm::Pages wasm::MaxMemoryPages(IndexType t) {
-  MOZ_ASSERT(ArrayBufferObject::maxBufferByteLength() >= INT32_MAX / PageSize);
+  static_assert(ArrayBufferObject::MaxByteLength >= INT32_MAX / PageSize);
   return wasm::Pages(INT32_MAX / PageSize);
 }
 

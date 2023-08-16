@@ -2,7 +2,7 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-add_setup(async function() {
+add_setup(async function () {
   // The page action button is hidden by default.
   // This tests the use of pageAction when the button is visible.
   //
@@ -134,7 +134,9 @@ async function test_clickData(testAsNonPersistent = false) {
 async function test_clickData_reset(testAsNonPersistent = false) {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      browser_action: {},
+      browser_action: {
+        default_area: "navbar",
+      },
       page_action: {},
       background: {
         persistent: !testAsNonPersistent,

@@ -3,8 +3,10 @@
 
 "use strict";
 
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const TEST_PAGE_LONG = TEST_ROOT + "test-video-selection.html";
+
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 const EXPECTED_EVENT_CREATE = [
@@ -28,22 +30,39 @@ const EXPECTED_EVENT_CREATE_WITH_TEXT_TRACKS = [
 ];
 
 const EXPECTED_EVENT_CLOSED_METHOD_CLOSE_BUTTON = [
-  [
-    "pictureinpicture",
-    "closed_method",
-    "method",
-    null,
-    { reason: "close-button" },
-  ],
+  {
+    category: "pictureinpicture",
+    method: "closed_method",
+    object: "closeButton",
+  },
 ];
 
 const videoID = "with-controls";
 
 const EXPECTED_EVENT_CLOSED_METHOD_UNPIP = [
-  ["pictureinpicture", "closed_method", "method", null, { reason: "unpip" }],
+  {
+    category: "pictureinpicture",
+    method: "closed_method",
+    object: "unpip",
+  },
 ];
 
-add_task(async () => {
+const FULLSCREEN_EVENTS = [
+  {
+    category: "pictureinpicture",
+    method: "fullscreen",
+    object: "player",
+    extraKey: { enter: "true" },
+  },
+  {
+    category: "pictureinpicture",
+    method: "fullscreen",
+    object: "player",
+    extraKey: { enter: "true" },
+  },
+];
+
+add_task(async function testCreateAndCloseButtonTelemetry() {
   await BrowserTestUtils.withNewTab(
     {
       gBrowser,
@@ -57,64 +76,41 @@ add_task(async () => {
       let pipWin = await triggerPictureInPicture(browser, videoID);
       ok(pipWin, "Got Picture-in-Picture window.");
 
-      let events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).parent;
-
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).parent;
-          return events && events.length >= 1;
-        },
-        "Waiting for one create pictureinpicture telemetry event.",
-        200,
-        100
+      let filter = {
+        category: "pictureinpicture",
+        method: "create",
+        object: "player",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        EXPECTED_EVENT_CREATE.length,
+        "parent"
       );
 
-      TelemetryTestUtils.assertEvents(
-        EXPECTED_EVENT_CREATE,
-        {
-          category: "pictureinpicture",
-          method: "create",
-          object: "player",
-        },
-        { clear: true, process: "parent" }
-      );
+      TelemetryTestUtils.assertEvents(EXPECTED_EVENT_CREATE, filter, {
+        clear: true,
+        process: "parent",
+      });
 
       let pipClosed = BrowserTestUtils.domWindowClosed(pipWin);
       let closeButton = pipWin.document.getElementById("close");
       EventUtils.synthesizeMouseAtCenter(closeButton, {}, pipWin);
       await pipClosed;
 
-      events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).parent;
-
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).parent;
-          return events && events.length >= 1;
-        },
-        "Waiting for one closed_method pictureinpicture telemetry event.",
-        200,
-        100
+      filter = {
+        category: "pictureinpicture",
+        method: "closed_method",
+        object: "closeButton",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        EXPECTED_EVENT_CLOSED_METHOD_CLOSE_BUTTON.length,
+        "parent"
       );
 
       TelemetryTestUtils.assertEvents(
         EXPECTED_EVENT_CLOSED_METHOD_CLOSE_BUTTON,
-        {
-          category: "pictureinpicture",
-          method: "closed_method",
-          object: "method",
-        },
+        filter,
         { clear: true, process: "parent" }
       );
 
@@ -127,7 +123,7 @@ add_task(async () => {
   );
 });
 
-add_task(async function() {
+add_task(async function textTextTracksAndUnpipTelemetry() {
   await SpecialPowers.pushPrefEnv({
     set: [
       [
@@ -150,31 +146,20 @@ add_task(async function() {
       let pipWin = await triggerPictureInPicture(browser, videoID);
       ok(pipWin, "Got Picture-in-Picture window.");
 
-      let events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).parent;
-
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).parent;
-          return events && events.length >= 1;
-        },
-        "Waiting for one create pictureinpicture telemetry event.",
-        200,
-        100
+      let filter = {
+        category: "pictureinpicture",
+        method: "create",
+        object: "player",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        EXPECTED_EVENT_CREATE_WITH_TEXT_TRACKS.length,
+        "parent"
       );
 
       TelemetryTestUtils.assertEvents(
         EXPECTED_EVENT_CREATE_WITH_TEXT_TRACKS,
-        {
-          category: "pictureinpicture",
-          method: "create",
-          object: "player",
-        },
+        filter,
         { clear: true, process: "parent" }
       );
 
@@ -183,33 +168,63 @@ add_task(async function() {
       EventUtils.synthesizeMouseAtCenter(unpipButton, {}, pipWin);
       await pipClosed;
 
-      events = Services.telemetry.snapshotEvents(
-        Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-        false
-      ).parent;
-
-      await TestUtils.waitForCondition(
-        () => {
-          events = Services.telemetry.snapshotEvents(
-            Ci.nsITelemetry.DATASET_PRERELEASE_CHANNELS,
-            false
-          ).parent;
-          return events && events.length >= 1;
-        },
-        "Waiting for one closed_method pictureinpicture telemetry event.",
-        200,
-        100
+      filter = {
+        category: "pictureinpicture",
+        method: "closed_method",
+        object: "unpip",
+      };
+      await waitForTelemeryEvents(
+        filter,
+        EXPECTED_EVENT_CLOSED_METHOD_UNPIP.length,
+        "parent"
       );
 
       TelemetryTestUtils.assertEvents(
         EXPECTED_EVENT_CLOSED_METHOD_UNPIP,
-        {
-          category: "pictureinpicture",
-          method: "closed_method",
-          object: "method",
-        },
+        filter,
         { clear: true, process: "parent" }
       );
+    }
+  );
+});
+
+add_task(async function test_fullscreen_events() {
+  await BrowserTestUtils.withNewTab(
+    {
+      url: TEST_PAGE,
+      gBrowser,
+    },
+    async browser => {
+      Services.telemetry.clearEvents();
+
+      await ensureVideosReady(browser);
+
+      let pipWin = await triggerPictureInPicture(browser, videoID);
+      ok(pipWin, "Got Picture-in-Picture window.");
+
+      let fullscreenBtn = pipWin.document.getElementById("fullscreen");
+
+      await promiseFullscreenEntered(pipWin, () => {
+        fullscreenBtn.click();
+      });
+
+      await promiseFullscreenExited(pipWin, () => {
+        fullscreenBtn.click();
+      });
+
+      let filter = {
+        category: "pictureinpicture",
+        method: "fullscreen",
+        object: "player",
+      };
+      await waitForTelemeryEvents(filter, FULLSCREEN_EVENTS.length, "parent");
+
+      TelemetryTestUtils.assertEvents(FULLSCREEN_EVENTS, filter, {
+        clear: true,
+        process: "parent",
+      });
+
+      await ensureMessageAndClosePiP(browser, videoID, pipWin, false);
     }
   );
 });

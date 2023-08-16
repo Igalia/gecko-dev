@@ -13,8 +13,8 @@ const SELECTORS = {
   reauthCheckbox: "#creditCardReauthenticate checkbox",
 };
 
-const { FormAutofill } = ChromeUtils.import(
-  "resource://autofill/FormAutofill.jsm"
+const { FormAutofill } = ChromeUtils.importESModule(
+  "resource://autofill/FormAutofill.sys.mjs"
 );
 
 // Visibility of form autofill group should be hidden when opening
@@ -26,7 +26,7 @@ add_task(async function test_aboutPreferences() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PREFS },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -48,7 +48,7 @@ add_task(async function test_aboutPreferencesPrivacy() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -92,7 +92,7 @@ add_task(async function test_openManageAutofillDialogs() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       const args = [
         SELECTORS,
@@ -135,7 +135,7 @@ add_task(async function test_autofillCheckboxes() {
   // Checkbox should be unchecked when form autofill addresses and credit cards are disabled.
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -201,7 +201,7 @@ add_task(async function test_creditCardNotAvailable() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -216,45 +216,14 @@ add_task(async function test_creditCardNotAvailable() {
       });
     }
   );
-});
-
-add_task(async function test_creditCardHiddenUI() {
-  const AUTOFILL_CREDITCARDS_HIDE_UI_PREF =
-    "extensions.formautofill.creditCards.hideui";
-
-  await SpecialPowers.pushPrefEnv({
-    set: [[AUTOFILL_CREDITCARDS_HIDE_UI_PREF, true]],
-  });
-  let finalPrefPaneLoaded = TestUtils.topicObserved(
-    "sync-pane-loaded",
-    () => true
-  );
-  await BrowserTestUtils.withNewTab(
-    { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
-      await finalPrefPaneLoaded;
-      await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
-        is(
-          content.document.querySelector(selectors.group).hidden,
-          false,
-          "Form Autofill group should be visible"
-        );
-        ok(
-          !content.document.querySelector(selectors.creditCardAutofillCheckbox),
-          "Autofill credit cards checkbox should not exist"
-        );
-      });
-    }
-  );
-  SpecialPowers.clearUserPref(AUTOFILL_CREDITCARDS_HIDE_UI_PREF);
 });
 
 add_task(async function test_reauth() {
   await SpecialPowers.pushPrefEnv({
     set: [[AUTOFILL_CREDITCARDS_AVAILABLE_PREF, "on"]],
   });
-  let { OSKeyStore } = ChromeUtils.import(
-    "resource://gre/modules/OSKeyStore.jsm"
+  let { OSKeyStore } = ChromeUtils.importESModule(
+    "resource://gre/modules/OSKeyStore.sys.mjs"
   );
 
   let finalPrefPaneLoaded = TestUtils.topicObserved(
@@ -263,7 +232,7 @@ add_task(async function test_reauth() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(
         browser,
@@ -294,7 +263,7 @@ add_task(async function test_addressAutofillNotAvailable() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -375,7 +344,7 @@ add_task(async function test_addressAutofillNotAvailableViaRegion() {
   );
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: PAGE_PRIVACY },
-    async function(browser) {
+    async function (browser) {
       await finalPrefPaneLoaded;
       await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
         is(
@@ -433,4 +402,38 @@ add_task(async function test_addressAutofillNotAvailableViaRegion() {
   );
 
   await SpecialPowers.popPrefEnv();
+});
+
+// Checkboxes should be disabled based on whether or not they are locked.
+add_task(async function test_aboutPreferencesPrivacy() {
+  Services.prefs.lockPref(ENABLED_AUTOFILL_ADDRESSES_PREF);
+  Services.prefs.lockPref(ENABLED_AUTOFILL_CREDITCARDS_PREF);
+  registerCleanupFunction(function () {
+    Services.prefs.unlockPref(ENABLED_AUTOFILL_ADDRESSES_PREF);
+    Services.prefs.unlockPref(ENABLED_AUTOFILL_CREDITCARDS_PREF);
+  });
+  let finalPrefPaneLoaded = TestUtils.topicObserved(
+    "sync-pane-loaded",
+    () => true
+  );
+  await BrowserTestUtils.withNewTab(
+    { gBrowser, url: PAGE_PRIVACY },
+    async function (browser) {
+      await finalPrefPaneLoaded;
+      await SpecialPowers.spawn(browser, [SELECTORS], selectors => {
+        is(
+          content.document.querySelector(selectors.addressAutofillCheckbox)
+            .disabled,
+          true,
+          "Autofill addresses checkbox should be disabled"
+        );
+        is(
+          content.document.querySelector(selectors.creditCardAutofillCheckbox)
+            .disabled,
+          true,
+          "Autofill credit cards checkbox should be disabled"
+        );
+      });
+    }
+  );
 });

@@ -5,7 +5,6 @@
 // Test for error icon and the error count displayed at right of the
 // toolbox toolbar
 
-/* import-globals-from ../../webconsole/test/browser/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
   this
@@ -20,9 +19,9 @@ const TEST_URI = `https://example.com/document-builder.sjs?html=<meta charset=ut
   cache.unknown.access
 </script><body>`;
 
-const { Toolbox } = require("devtools/client/framework/toolbox");
+const { Toolbox } = require("resource://devtools/client/framework/toolbox.js");
 
-add_task(async function() {
+add_task(async function () {
   // Make sure we start the test with the split console disabled.
   await pushPref("devtools.toolbox.splitconsoleEnabled", false);
   const tab = await addTab(TEST_URI);
@@ -50,7 +49,7 @@ add_task(async function() {
   );
 
   info("Check that calling console.clear clears the error count");
-  ContentTask.spawn(tab.linkedBrowser, null, function() {
+  ContentTask.spawn(tab.linkedBrowser, null, function () {
     content.console.clear();
   });
   await waitFor(
@@ -60,7 +59,7 @@ add_task(async function() {
   ok(true, "The button was hidden after calling console.clear()");
 
   info("Check that realtime errors increase the counter");
-  ContentTask.spawn(tab.linkedBrowser, null, function() {
+  ContentTask.spawn(tab.linkedBrowser, null, function () {
     content.console.error("Live Error1");
     content.console.error("Live Error2");
     content.console.exception("Live Exception");
@@ -107,7 +106,7 @@ add_task(async function() {
 
   info("Check that the error count is capped at 99");
   expectedErrorCount = 100;
-  ContentTask.spawn(tab.linkedBrowser, expectedErrorCount, function(count) {
+  ContentTask.spawn(tab.linkedBrowser, expectedErrorCount, function (count) {
     for (let i = 0; i < count; i++) {
       content.console.error(i);
     }
@@ -149,7 +148,7 @@ add_task(async function() {
   ok(true, "The error icon hides when disabling it from the settings panel");
 
   info("Check that emitting new errors don't show the icon");
-  ContentTask.spawn(tab.linkedBrowser, null, function() {
+  ContentTask.spawn(tab.linkedBrowser, null, function () {
     content.console.error("Live Error1 while disabled");
     content.console.error("Live Error2 while disabled");
   });

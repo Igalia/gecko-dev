@@ -20,12 +20,16 @@ pub enum ContextualParseError<'a> {
     UnsupportedPropertyDeclaration(
         &'a str,
         ParseError<'a>,
-        Option<&'a SelectorList<SelectorImpl>>,
+        &'a [SelectorList<SelectorImpl>],
     ),
+    /// A property descriptor was not recognized.
+    UnsupportedPropertyDescriptor(&'a str, ParseError<'a>),
     /// A font face descriptor was not recognized.
     UnsupportedFontFaceDescriptor(&'a str, ParseError<'a>),
     /// A font feature values descriptor was not recognized.
     UnsupportedFontFeatureValuesDescriptor(&'a str, ParseError<'a>),
+    /// A font palette values descriptor was not recognized.
+    UnsupportedFontPaletteValuesDescriptor(&'a str, ParseError<'a>),
     /// A keyframe rule was not valid.
     InvalidKeyframeRule(&'a str, ParseError<'a>),
     /// A font feature values rule was not valid.
@@ -133,6 +137,14 @@ impl<'a> fmt::Display for ContextualParseError<'a> {
                 write!(f, "Unsupported property declaration: '{}', ", decl)?;
                 parse_error_to_str(err, f)
             },
+            ContextualParseError::UnsupportedPropertyDescriptor(decl, ref err) => {
+                write!(
+                    f,
+                    "Unsupported @property descriptor declaration: '{}', ",
+                    decl
+                )?;
+                parse_error_to_str(err, f)
+            },
             ContextualParseError::UnsupportedFontFaceDescriptor(decl, ref err) => {
                 write!(
                     f,
@@ -145,6 +157,14 @@ impl<'a> fmt::Display for ContextualParseError<'a> {
                 write!(
                     f,
                     "Unsupported @font-feature-values descriptor declaration: '{}', ",
+                    decl
+                )?;
+                parse_error_to_str(err, f)
+            },
+            ContextualParseError::UnsupportedFontPaletteValuesDescriptor(decl, ref err) => {
+                write!(
+                    f,
+                    "Unsupported @font-palette-values descriptor declaration: '{}', ",
                     decl
                 )?;
                 parse_error_to_str(err, f)

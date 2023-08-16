@@ -4,10 +4,9 @@
 
 "use strict";
 
-const Services = require("Services");
 const {
   getLongStringFullText,
-} = require("devtools/client/shared/string-utils");
+} = require("resource://devtools/client/shared/string-utils.js");
 
 // Helper tracer. Should be generic sharable by other modules (bug 1171927)
 const trace = {

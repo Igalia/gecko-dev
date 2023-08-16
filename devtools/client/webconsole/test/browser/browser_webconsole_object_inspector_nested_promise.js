@@ -11,7 +11,7 @@ const TEST_URI =
 add_task(async function testExpandNestedPromise() {
   const hud = await openNewTabAndConsole(TEST_URI);
 
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     let nestedPromise = Promise.resolve({});
     for (let i = 5; i > 0; --i) {
       nestedPromise[i] = i;
@@ -32,14 +32,14 @@ add_task(async function testExpandNestedPromise() {
 
   const valueNode = findObjectInspectorNode(oi, "<value>");
   expandObjectInspectorNode(valueNode);
-  await waitFor(() => getObjectInspectorChildrenNodes(valueNode).length > 0);
+  await waitFor(() => !!getObjectInspectorChildrenNodes(valueNode).length);
   checkChildren(valueNode, [`1`, `<state>`, `<value>`]);
 });
 
 add_task(async function testExpandCyclicPromise() {
   const hud = await openNewTabAndConsole(TEST_URI);
 
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     let resolve;
     const cyclicPromise = new Promise(r => {
       resolve = r;
@@ -64,12 +64,12 @@ add_task(async function testExpandCyclicPromise() {
 
   const valueNode = findObjectInspectorNode(oi, "<value>");
   expandObjectInspectorNode(valueNode);
-  await waitFor(() => getObjectInspectorChildrenNodes(valueNode).length > 0);
+  await waitFor(() => !!getObjectInspectorChildrenNodes(valueNode).length);
   checkChildren(valueNode, [`bar`, `<state>`, `<reason>`]);
 
   const reasonNode = findObjectInspectorNode(oi, "<reason>");
   expandObjectInspectorNode(reasonNode);
-  await waitFor(() => getObjectInspectorChildrenNodes(reasonNode).length > 0);
+  await waitFor(() => !!getObjectInspectorChildrenNodes(reasonNode).length);
   checkChildren(reasonNode, [`foo`, `<state>`, `<value>`]);
 });
 

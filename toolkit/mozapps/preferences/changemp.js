@@ -115,7 +115,7 @@ function setPassword() {
           if (passok) {
             token.changePassword(oldpw, pw1.value);
             if (pw1.value == "") {
-              createAlert("pw-change-success-title", "pp-erased-ok");
+              createAlert("pw-change-success-title", "settings-pp-erased-ok");
             } else {
               createAlert("pw-change-success-title", "pp-change-ok");
             }
@@ -127,13 +127,13 @@ function setPassword() {
         createAlert("pw-change-failed-title", "incorrect-pp");
       }
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
       createAlert("pw-change-failed-title", "failed-pp-change");
     }
   } else {
     token.initPassword(pw1.value);
     if (pw1.value == "") {
-      createAlert("pw-change-success-title", "pp-not-wanted");
+      createAlert("pw-change-success-title", "settings-pp-not-wanted");
     }
   }
 }

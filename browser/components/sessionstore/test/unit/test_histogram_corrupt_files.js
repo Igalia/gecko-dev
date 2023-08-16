@@ -14,8 +14,8 @@ const HistogramId = "FX_SESSION_RESTORE_ALL_FILES_CORRUPT";
 
 // Prepare the session file.
 do_get_profile();
-const { SessionFile } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionFile.jsm"
+const { SessionFile } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionFile.sys.mjs"
 );
 
 /**
@@ -23,7 +23,7 @@ const { SessionFile } = ChromeUtils.import(
  * of the backup directory. This will also compress the file using lz4 compression.
  */
 function promise_reset_session(backups = {}) {
-  return (async function() {
+  return (async function () {
     // Reset the histogram.
     Telemetry.getHistogramById(HistogramId).clear();
 

@@ -37,9 +37,10 @@ void SVGImageContext::MaybeStoreContextPaint(SVGImageContext& aContext,
   }
 
   if (StaticPrefs::svg_embedder_prefers_color_scheme_content_enabled() ||
-      aPresContext.Document()->IsDocumentURISchemeChrome()) {
+      aPresContext.Document()->ChromeRulesEnabled()) {
     auto scheme = LookAndFeel::ColorSchemeForStyle(
-        *aPresContext.Document(), aStyle.StyleUI()->mColorScheme.bits);
+        *aPresContext.Document(), aStyle.StyleUI()->mColorScheme.bits,
+        ColorSchemeMode::Preferred);
     aContext.SetColorScheme(Some(scheme));
   }
 

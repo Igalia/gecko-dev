@@ -7,12 +7,16 @@
 
 #include "nsIDeviceContextSpec.h"
 #include "nsCOMPtr.h"
+#include "mozilla/gfx/Point.h"
+#include "mozilla/gfx/PrintPromise.h"
 
 class nsDeviceContextSpecAndroid final : public nsIDeviceContextSpec {
  private:
   virtual ~nsDeviceContextSpecAndroid();
 
  public:
+  using IntSize = mozilla::gfx::IntSize;
+
   NS_DECL_ISUPPORTS
 
   already_AddRefed<PrintTarget> MakePrintTarget() final;
@@ -21,11 +25,12 @@ class nsDeviceContextSpecAndroid final : public nsIDeviceContextSpec {
   NS_IMETHOD BeginDocument(const nsAString& aTitle,
                            const nsAString& aPrintToFileName,
                            int32_t aStartPage, int32_t aEndPage) override;
-  NS_IMETHOD EndDocument() override;
-  NS_IMETHOD BeginPage() override { return NS_OK; }
+  RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocument() override;
+  NS_IMETHOD BeginPage(const IntSize& aSizeInPoints) override { return NS_OK; }
   NS_IMETHOD EndPage() override { return NS_OK; }
 
  private:
+  nsresult DoEndDocument();
   nsCOMPtr<nsIFile> mTempFile;
 };
 #endif  // nsDeviceContextAndroid_h__

@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { PanelTestProvider } = ChromeUtils.import(
-  "resource://activity-stream/lib/PanelTestProvider.jsm"
+const { PanelTestProvider } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/PanelTestProvider.sys.mjs"
 );
 
 const MESSAGE_VALIDATORS = {};
@@ -19,13 +19,13 @@ add_task(async function test_PanelTestProvider() {
   const messages = await PanelTestProvider.getMessages();
 
   const EXPECTED_MESSAGE_COUNTS = {
-    cfr_doorhanger: 2,
+    cfr_doorhanger: 1,
     milestone_message: 0,
     update_action: 1,
     whatsnew_panel_message: 7,
-    spotlight: 5,
+    spotlight: 3,
     pb_newtab: 2,
-    toast_notification: 1,
+    toast_notification: 3,
   };
 
   const EXPECTED_TOTAL_MESSAGE_COUNT = Object.values(

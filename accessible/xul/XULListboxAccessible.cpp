@@ -9,7 +9,7 @@
 #include "nsAccessibilityService.h"
 #include "nsAccUtils.h"
 #include "DocAccessible.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "nsComponentManagerUtils.h"
@@ -309,40 +309,6 @@ void XULListboxAccessible::SelectedRowIndices(nsTArray<uint32_t>* aRows) {
   }
 }
 
-void XULListboxAccessible::SelectRow(uint32_t aRowIdx) {
-  nsCOMPtr<nsIDOMXULMultiSelectControlElement> control =
-      Elm()->AsXULMultiSelectControl();
-  NS_ASSERTION(control,
-               "Doesn't implement nsIDOMXULMultiSelectControlElement.");
-
-  RefPtr<dom::Element> item;
-  control->GetItemAtIndex(aRowIdx, getter_AddRefs(item));
-  if (!item) {
-    return;
-  }
-
-  nsCOMPtr<nsIDOMXULSelectControlItemElement> itemElm =
-      item->AsXULSelectControlItem();
-  control->SelectItem(itemElm);
-}
-
-void XULListboxAccessible::UnselectRow(uint32_t aRowIdx) {
-  nsCOMPtr<nsIDOMXULMultiSelectControlElement> control =
-      Elm()->AsXULMultiSelectControl();
-  NS_ASSERTION(control,
-               "Doesn't implement nsIDOMXULMultiSelectControlElement.");
-
-  RefPtr<dom::Element> item;
-  control->GetItemAtIndex(aRowIdx, getter_AddRefs(item));
-  if (!item) {
-    return;
-  }
-
-  nsCOMPtr<nsIDOMXULSelectControlItemElement> itemElm =
-      item->AsXULSelectControlItem();
-  control->RemoveItemFromSelection(itemElm);
-}
-
 ////////////////////////////////////////////////////////////////////////////////
 // XULListboxAccessible: Widgets
 
@@ -381,22 +347,6 @@ bool XULListboxAccessible::AreItemsOperable() const {
 }
 
 LocalAccessible* XULListboxAccessible::ContainerWidget() const {
-  if (IsAutoCompletePopup() && mContent->GetParent()) {
-    // This works for XUL autocompletes. It doesn't work for HTML forms
-    // autocomplete because of potential crossprocess calls (when autocomplete
-    // lives in content process while popup lives in chrome process). If that's
-    // a problem then rethink Widgets interface.
-    nsCOMPtr<nsIDOMXULMenuListElement> menuListElm =
-        mContent->GetParent()->AsElement()->AsXULMenuList();
-    if (menuListElm) {
-      RefPtr<mozilla::dom::Element> inputElm;
-      menuListElm->GetInputField(getter_AddRefs(inputElm));
-      if (inputElm) {
-        LocalAccessible* input = mDoc->GetAccessible(inputElm);
-        return input ? input->ContainerWidget() : nullptr;
-      }
-    }
-  }
   return nullptr;
 }
 

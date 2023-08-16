@@ -31,16 +31,14 @@ const TEST_URI = `data:text/html,<!DOCTYPE html><meta charset=utf8>
       <div></div>
     </body>`;
 
-const { FileUtils } = ChromeUtils.import(
-  "resource://gre/modules/FileUtils.jsm"
-);
-
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URI);
   const hud = await BrowserConsoleManager.toggleBrowserConsole();
 
   info("Execute :screenshot");
-  const file = FileUtils.getFile("TmpD", ["TestScreenshotFile.png"]);
+  const file = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "TestScreenshotFile.png")
+  );
   // on some machines, such as macOS, dpr is set to 2. This is expected behavior, however
   // to keep tests consistant across OSs we are setting the dpr to 1
   const command = `:screenshot ${file.path} --dpr 1`;

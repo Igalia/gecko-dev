@@ -21,8 +21,8 @@ ChromeUtils.defineESModuleGetters(this, {
 });
 
 // Needed by some test that relies on having an app registered.
-const { updateAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { updateAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 updateAppInfo({
   name: "PlacesTest",
@@ -36,13 +36,13 @@ const DEFAULT_BOOKMARKS_ON_TOOLBAR = 1;
 const DEFAULT_BOOKMARKS_ON_MENU = 1;
 
 function checkItemHasAnnotation(guid, name) {
-  return PlacesUtils.promiseItemId(guid).then(id => {
+  return PlacesTestUtils.promiseItemId(guid).then(id => {
     let hasAnnotation = PlacesUtils.annotations.itemHasAnnotation(id, name);
     Assert.ok(hasAnnotation, `Expected annotation ${name}`);
   });
 }
 
-var createCorruptDB = async function() {
+var createCorruptDB = async function () {
   let dbPath = PathUtils.join(PathUtils.profileDir, "places.sqlite");
   await IOUtils.remove(dbPath);
 
@@ -61,7 +61,7 @@ const NUMBER_OF_TRIES = 30;
  * Similar to waitForConditionPromise, but poll for an asynchronous value
  * every SINGLE_TRY_TIMEOUT ms, for no more than tryCount times.
  *
- * @param {function} promiseFn
+ * @param {Function} promiseFn
  *        A function to generate a promise, which resolves to the expected
  *        asynchronous value.
  * @param {msg} timeoutMsg
@@ -69,11 +69,10 @@ const NUMBER_OF_TRIES = 30;
  * @param {number} [tryCount]
  *        Maximum times to try before rejecting the returned promise with
  *        timeoutMsg, defaults to NUMBER_OF_TRIES.
- * @returns {Promise}
- * @resolves to the asynchronous value being polled.
- * @rejects if the asynchronous value is not available after tryCount attempts.
+ * @returns {Promise} to the asynchronous value being polled.
+ * @throws if the asynchronous value is not available after tryCount attempts.
  */
-var waitForResolvedPromise = async function(
+var waitForResolvedPromise = async function (
   promiseFn,
   timeoutMsg,
   tryCount = NUMBER_OF_TRIES

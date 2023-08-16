@@ -15,7 +15,6 @@
 #include "gc/Barrier.h"
 #include "js/Class.h"
 #include "vm/NativeObject.h"
-#include "vm/Runtime.h"
 
 namespace mozilla::intl {
 class RelativeTimeFormat;
@@ -37,7 +36,7 @@ class RelativeTimeFormatObject : public NativeObject {
                 "object slot");
 
   // Estimated memory use for URelativeDateTimeFormatter (see IcuMemoryUsage).
-  static constexpr size_t EstimatedMemoryUse = 10896;
+  static constexpr size_t EstimatedMemoryUse = 8188;
 
   mozilla::intl::RelativeTimeFormat* getRelativeTimeFormatter() const {
     const auto& slot = getFixedSlot(URELATIVE_TIME_FORMAT_SLOT);

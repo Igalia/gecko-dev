@@ -17,10 +17,8 @@
 #include "frontend/ParseNodeVisitor.h"
 #include "frontend/ParserAtom.h"  // ParserAtomsTable, TaggedParserAtomIndex
 #include "js/Conversions.h"
-#include "js/friend/StackLimits.h"  // js::AutoCheckRecursionLimit
-#include "js/Stack.h"               // JS::NativeStackLimit
-#include "util/StringBuffer.h"      // StringBuffer
-#include "vm/StringType.h"
+#include "js/Stack.h"           // JS::NativeStackLimit
+#include "util/StringBuffer.h"  // StringBuffer
 
 using namespace js;
 using namespace js::frontend;
@@ -28,15 +26,12 @@ using namespace js::frontend;
 using JS::GenericNaN;
 using JS::ToInt32;
 using JS::ToUint32;
-using mozilla::IsNaN;
 using mozilla::IsNegative;
 using mozilla::NegativeInfinity;
 using mozilla::PositiveInfinity;
 
 struct FoldInfo {
-  JSContext* cx;
-  ErrorContext* ec;
-  JS::NativeStackLimit stackLimit;
+  FrontendContext* fc;
   ParserAtomsTable& parserAtoms;
   FullParseHandler* handler;
 };
@@ -84,8 +79,8 @@ static bool ListContainsHoistedDeclaration(FoldInfo& info, ListNode* list,
 // |node| being completely eliminated as dead.
 static bool ContainsHoistedDeclaration(FoldInfo& info, ParseNode* node,
                                        bool* result) {
-  AutoCheckRecursionLimit recursion(info.ec);
-  if (!recursion.check(info.ec, info.stackLimit)) {
+  AutoCheckRecursionLimit recursion(info.fc);
+  if (!recursion.check(info.fc)) {
     return false;
   }
 
@@ -453,10 +448,12 @@ restart:
     case ParseNodeKind::SuperCallExpr:
     case ParseNodeKind::SuperBase:
     case ParseNodeKind::SetThis:
+#ifdef ENABLE_DECORATORS
+    case ParseNodeKind::DecoratorList:
+#endif
       MOZ_CRASH(
           "ContainsHoistedDeclaration should have indicated false on "
           "some parent node without recurring to test this node");
-
     case ParseNodeKind::LastUnused:
     case ParseNodeKind::Limit:
       MOZ_CRASH("unexpected sentinel ParseNodeKind in node");
@@ -493,7 +490,7 @@ static bool FoldType(FoldInfo info, ParseNode** pnp, ParseNodeKind kind) {
       case ParseNodeKind::StringExpr:
         if (pn->isKind(ParseNodeKind::NumberExpr)) {
           TaggedParserAtomIndex atom =
-              pn->as<NumericLiteral>().toAtom(info.cx, info.parserAtoms);
+              pn->as<NumericLiteral>().toAtom(info.fc, info.parserAtoms);
           if (!atom) {
             return false;
           }
@@ -529,7 +526,7 @@ static Truthiness Boolish(ParseNode* pn) {
   switch (pn->getKind()) {
     case ParseNodeKind::NumberExpr:
       return (pn->as<NumericLiteral>().value() != 0 &&
-              !IsNaN(pn->as<NumericLiteral>().value()))
+              !std::isnan(pn->as<NumericLiteral>().value()))
                  ? Truthy
                  : Falsy;
 
@@ -1125,7 +1122,7 @@ static bool FoldElement(FoldInfo info, ParseNode** nodePtr) {
       // Optimization 2: We have something like expr[3.14]. The number
       // isn't an array index, so it converts to a string ("3.14"),
       // enabling optimization 3 below.
-      name = numeric->toAtom(info.cx, info.parserAtoms);
+      name = numeric->toAtom(info.fc, info.parserAtoms);
       if (!name) {
         return false;
       }
@@ -1243,7 +1240,7 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
         }
 
         if (!accum) {
-          accum.emplace(info.cx);
+          accum.emplace(info.fc);
           if (!accum->append(info.parserAtoms, firstAtom)) {
             return false;
           }
@@ -1261,7 +1258,7 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
 
       // Replace with concatenation if we multiple nodes.
       if (accum) {
-        auto combination = accum->finishParserAtom(info.parserAtoms);
+        auto combination = accum->finishParserAtom(info.parserAtoms, info.fc);
         if (!combination) {
           return false;
         }
@@ -1314,19 +1311,15 @@ static bool FoldAdd(FoldInfo info, ParseNode** nodePtr) {
 class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   using Base = RewritingParseNodeVisitor;
 
-  JSContext* cx;
   ParserAtomsTable& parserAtoms;
   FullParseHandler* handler;
 
-  FoldInfo info() const {
-    return FoldInfo{cx, ec_, stackLimit_, parserAtoms, handler};
-  }
+  FoldInfo info() const { return FoldInfo{fc_, parserAtoms, handler}; }
 
  public:
-  FoldVisitor(JSContext* cx, ErrorContext* ec, JS::NativeStackLimit stackLimit,
-              ParserAtomsTable& parserAtoms, FullParseHandler* handler)
-      : RewritingParseNodeVisitor(ec, stackLimit),
-        cx(cx),
+  FoldVisitor(FrontendContext* fc, ParserAtomsTable& parserAtoms,
+              FullParseHandler* handler)
+      : RewritingParseNodeVisitor(fc),
         parserAtoms(parserAtoms),
         handler(handler) {}
 
@@ -1573,20 +1566,16 @@ class FoldVisitor : public RewritingParseNodeVisitor<FoldVisitor> {
   }
 };
 
-static bool Fold(JSContext* cx, ErrorContext* ec,
-                 JS::NativeStackLimit stackLimit, ParserAtomsTable& parserAtoms,
+static bool Fold(FrontendContext* fc, ParserAtomsTable& parserAtoms,
                  FullParseHandler* handler, ParseNode** pnp) {
-  FoldVisitor visitor(cx, ec, stackLimit, parserAtoms, handler);
+  FoldVisitor visitor(fc, parserAtoms, handler);
   return visitor.visit(*pnp);
 }
 static bool Fold(FoldInfo info, ParseNode** pnp) {
-  return Fold(info.cx, info.ec, info.stackLimit, info.parserAtoms, info.handler,
-              pnp);
+  return Fold(info.fc, info.parserAtoms, info.handler, pnp);
 }
 
-bool frontend::FoldConstants(JSContext* cx, ErrorContext* ec,
-                             JS::NativeStackLimit stackLimit,
-                             ParserAtomsTable& parserAtoms, ParseNode** pnp,
-                             FullParseHandler* handler) {
-  return Fold(cx, ec, stackLimit, parserAtoms, handler, pnp);
+bool frontend::FoldConstants(FrontendContext* fc, ParserAtomsTable& parserAtoms,
+                             ParseNode** pnp, FullParseHandler* handler) {
+  return Fold(fc, parserAtoms, handler, pnp);
 }

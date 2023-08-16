@@ -35,9 +35,10 @@
 using mozilla::Telemetry::LABELS_HTTP_CHILD_OMT_STATS;
 
 class nsIEventTarget;
-class nsInputStreamPump;
-class nsISerialEventTarget;
 class nsIInterceptedBodyCallback;
+class nsISerialEventTarget;
+class nsITransportSecurityInfo;
+class nsInputStreamPump;
 
 #define HTTP_CHANNEL_CHILD_IID                       \
   {                                                  \
@@ -79,11 +80,15 @@ class HttpChannelChild final : public PHttpChannelChild,
   // Methods HttpBaseChannel didn't implement for us or that we override.
   //
   // nsIRequest
+  NS_IMETHOD SetCanceledReason(const nsACString& aReason) override;
+  NS_IMETHOD GetCanceledReason(nsACString& aReason) override;
+  NS_IMETHOD CancelWithReason(nsresult status,
+                              const nsACString& reason) override;
   NS_IMETHOD Cancel(nsresult status) override;
   NS_IMETHOD Suspend() override;
   NS_IMETHOD Resume() override;
   // nsIChannel
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override;
+  NS_IMETHOD GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) override;
   NS_IMETHOD AsyncOpen(nsIStreamListener* aListener) override;
 
   // HttpBaseChannel::nsIHttpChannel
@@ -97,6 +102,8 @@ class HttpChannelChild final : public PHttpChannelChild,
   // nsIHttpChannelInternal
   NS_IMETHOD GetIsAuthChannel(bool* aIsAuthChannel) override;
   NS_IMETHOD SetEarlyHintObserver(nsIEarlyHintObserver* aObserver) override;
+  NS_IMETHOD SetWebTransportSessionEventListener(
+      WebTransportSessionEventListener* aListener) override;
   // nsISupportsPriority
   NS_IMETHOD SetPriority(int32_t value) override;
   // nsIClassOfService
@@ -120,18 +127,22 @@ class HttpChannelChild final : public PHttpChannelChild,
 
   nsresult CrossProcessRedirectFinished(nsresult aStatus);
 
+  void RegisterStreamFilter(
+      RefPtr<extensions::StreamFilterParent>& aStreamFilter);
+
  protected:
   mozilla::ipc::IPCResult RecvOnStartRequestSent() override;
   mozilla::ipc::IPCResult RecvFailedAsyncOpen(const nsresult& status) override;
   mozilla::ipc::IPCResult RecvRedirect1Begin(
-      const uint32_t& registrarId, const URIParams& newURI,
+      const uint32_t& registrarId, nsIURI* newOriginalURI,
       const uint32_t& newLoadFlags, const uint32_t& redirectFlags,
       const ParentLoadInfoForwarderArgs& loadInfoForwarder,
       const nsHttpResponseHead& responseHead,
-      const nsACString& securityInfoSerialization, const uint64_t& channelId,
+      nsITransportSecurityInfo* securityInfo, const uint64_t& channelId,
       const NetAddr& oldPeerAddr,
       const ResourceTimingStructArgs& aTiming) override;
   mozilla::ipc::IPCResult RecvRedirect3Complete() override;
+  mozilla::ipc::IPCResult RecvRedirectFailed(const nsresult& status) override;
   mozilla::ipc::IPCResult RecvDeleteSelf() override;
 
   mozilla::ipc::IPCResult RecvReportSecurityMessage(
@@ -162,9 +173,11 @@ class HttpChannelChild final : public PHttpChannelChild,
   already_AddRefed<nsISerialEventTarget> GetNeckoTarget() override;
 
   virtual mozilla::ipc::IPCResult RecvLogBlockedCORSRequest(
-      const nsAString& aMessage, const nsACString& aCategory) override;
+      const nsAString& aMessage, const nsACString& aCategory,
+      const bool& aIsWarning) override;
   NS_IMETHOD LogBlockedCORSRequest(const nsAString& aMessage,
-                                   const nsACString& aCategory) override;
+                                   const nsACString& aCategory,
+                                   bool aIsWarning = false) override;
 
   virtual mozilla::ipc::IPCResult RecvLogMimeTypeMismatch(
       const nsACString& aMessageName, const bool& aWarning,
@@ -226,6 +239,7 @@ class HttpChannelChild final : public PHttpChannelChild,
 
   void ProcessAttachStreamFilter(
       Endpoint<extensions::PStreamFilterParent>&& aEndpoint);
+  void ProcessDetachStreamFilters();
 
   // Return true if we need to tell the parent the size of unreported received
   // data
@@ -249,7 +263,7 @@ class HttpChannelChild final : public PHttpChannelChild,
 
   // Try invoke Cancel if on main thread, or prepend a CancelEvent in mEventQ to
   // ensure Cacnel is processed before any other channel events.
-  void CancelOnMainThread(nsresult aRv);
+  void CancelOnMainThread(nsresult aRv, const nsACString& aReason);
 
   nsresult MaybeLogCOEPError(nsresult aStatus);
 
@@ -284,7 +298,7 @@ class HttpChannelChild final : public PHttpChannelChild,
   void CleanupBackgroundChannel();
 
   // Target thread for delivering ODA.
-  nsCOMPtr<nsIEventTarget> mODATarget MOZ_GUARDED_BY(mEventTargetMutex);
+  nsCOMPtr<nsISerialEventTarget> mODATarget MOZ_GUARDED_BY(mEventTargetMutex);
   // Used to ensure atomicity of mNeckoTarget / mODATarget;
   Mutex mEventTargetMutex{"HttpChannelChild::EventTargetMutex"};
 
@@ -316,6 +330,12 @@ class HttpChannelChild final : public PHttpChannelChild,
       false};
   // True if we need to tell the parent the size of unreported received data
   Atomic<bool, SequentiallyConsistent> mNeedToReportBytesRead{true};
+
+  // Attached StreamFilterParents
+  // Using raw pointer here since StreamFilterParent owns the channel.
+  // Should be only accessed on the main thread.
+  using StreamFilters = nsTArray<extensions::StreamFilterParent*>;
+  StreamFilters mStreamFilters;
 
 #ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   bool mDoDiagnosticAssertWhenOnStopNotCalledOnDestroy = false;
@@ -397,13 +417,12 @@ class HttpChannelChild final : public PHttpChannelChild,
                      const nsHttpHeaderArray& aResponseTrailers);
   void FailedAsyncOpen(const nsresult& status);
   void HandleAsyncAbort();
-  void Redirect1Begin(const uint32_t& registrarId,
-                      const URIParams& newOriginalURI,
+  void Redirect1Begin(const uint32_t& registrarId, nsIURI* newOriginalURI,
                       const uint32_t& newLoadFlags,
                       const uint32_t& redirectFlags,
                       const ParentLoadInfoForwarderArgs& loadInfoForwarder,
                       const nsHttpResponseHead& responseHead,
-                      const nsACString& securityInfoSerialization,
+                      nsITransportSecurityInfo* securityInfo,
                       const uint64_t& channelId,
                       const ResourceTimingStructArgs& timing);
   void Redirect3Complete();
@@ -412,6 +431,7 @@ class HttpChannelChild final : public PHttpChannelChild,
   void ContinueDoNotifyListener();
   void OnAfterLastPart(const nsresult& aStatus);
   void MaybeConnectToSocketProcess();
+  void OnDetachStreamFilters();
 
   // Create a a new channel to be used in a redirection, based on the provided
   // response headers.

@@ -11,14 +11,11 @@ add_task(async function run_test() {
   // within the crasher subprocess.
 
   await do_crash(
-    function() {
+    function () {
       // Delay crashing so that the memory report has time to complete.
       shouldDelay = true;
 
-      let env = Cc["@mozilla.org/process/environment;1"].getService(
-        Ci.nsIEnvironment
-      );
-      let profd = env.get("XPCSHELL_TEST_PROFILE_DIR");
+      let profd = Services.env.get("XPCSHELL_TEST_PROFILE_DIR");
       let file = Cc["@mozilla.org/file/local;1"].createInstance(Ci.nsIFile);
       file.initWithPath(profd);
 
@@ -44,7 +41,7 @@ add_task(async function run_test() {
 
       crashReporter.saveMemoryReport();
     },
-    function(mdump, extra, extrafile, memoryfile) {
+    function (mdump, extra, extrafile, memoryfile) {
       Assert.ok(memoryfile.exists());
     },
     true

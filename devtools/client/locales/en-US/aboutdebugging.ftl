@@ -10,7 +10,8 @@
 about-debugging-page-title-setup-page = Debugging - Setup
 
 # Page title (ie tab title) for the Runtime page
-# { $selectedRuntimeId } is the id of the current runtime, such as "this-firefox", "localhost:6080", ...
+# Variables:
+#   $selectedRuntimeId - ID of the current runtime, such as "this-firefox", "localhost:6080", etc.
 about-debugging-page-title-runtime-page = Debugging - Runtime / { $selectedRuntimeId }
 
 # Sidebar strings
@@ -20,10 +21,12 @@ about-debugging-page-title-runtime-page = Debugging - Runtime / { $selectedRunti
 about-debugging-this-firefox-runtime-name = This { -brand-shorter-name }
 
 # Sidebar heading for selecting the currently running instance of Firefox
+# .name is processed by fluent-react / SidebarFixedItem
 about-debugging-sidebar-this-firefox =
   .name = { about-debugging-this-firefox-runtime-name }
 
 # Sidebar heading for connecting to some remote source
+# .name is processed by fluent-react / SidebarFixedItem
 about-debugging-sidebar-setup =
   .name = Setup
 
@@ -69,10 +72,15 @@ about-debugging-sidebar-runtime-item-waiting-for-browser = Waiting for browser�
 about-debugging-sidebar-runtime-item-unplugged = Unplugged
 
 # Title for runtime sidebar items that are related to a specific device (USB, WiFi).
+# Variables:
+#   $displayName (string) - Displayed name
+#   $deviceName (string) - Name of the device
 about-debugging-sidebar-runtime-item-name =
   .title = { $displayName } ({ $deviceName })
 # Title for runtime sidebar items where we cannot get device information (network
 # locations).
+# Variables:
+#   $displayName (string) - Displayed name
 about-debugging-sidebar-runtime-item-name-no-device =
   .title = { $displayName }
 
@@ -180,24 +188,31 @@ about-debugging-network-location-form-duplicate = The host “{ $host-value }”
 # Below are the titles for the various categories of debug targets that can be found
 # on "runtime" pages of about:debugging.
 # Title of the temporary extensions category (only available for "This Firefox" runtime).
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-temporary-extensions =
   .name = Temporary Extensions
 # Title of the extensions category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-extensions =
   .name = Extensions
 # Title of the tabs category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-tabs =
   .name = Tabs
 # Title of the service workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-service-workers =
   .name = Service Workers
 # Title of the shared workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-shared-workers =
   .name = Shared Workers
 # Title of the other workers category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-other-workers =
   .name = Other Workers
 # Title of the processes category.
+# .name is processed by fluent-react / DebugTargetPane
 about-debugging-runtime-processes =
   .name = Processes
 
@@ -330,10 +345,12 @@ about-debugging-extension-backgroundscript-status-stopped = Stopped
 # to a service worker.
 # Note this relates to the "Push" API, which is normally not localized so it is
 # probably better to not localize it.
+# .disabledTitle is processed by the fluent-react / ActionButton code.
 about-debugging-worker-action-push2 = Push
   .disabledTitle = Service Worker push is currently disabled for multiprocess { -brand-shorter-name }
 
 # This string is displayed as a label of the button that starts a service worker.
+# .disabledTitle is processed by the fluent-react / ActionButton code.
 about-debugging-worker-action-start2 = Start
   .disabledTitle = Service Worker start is currently disabled for multiprocess { -brand-shorter-name }
 
@@ -379,17 +396,10 @@ about-debugging-zombie-tab-inspect-action-disabled =
 
 # Displayed as name for the Main Process debug target in the Processes category. Only for
 # remote runtimes, if `devtools.aboutdebugging.process-debugging` is true.
-about-debugging-main-process-name = Main Process
+about-debugging-multiprocess-toolbox-name = Multiprocess Toolbox
 
 # Displayed as description for the Main Process debug target in the Processes category.
 # Only for remote browsers, if `devtools.aboutdebugging.process-debugging` is true.
-about-debugging-main-process-description2 = Main Process for the target browser
-
-# Displayed instead of the Main Process debug target when the preference
-# `devtools.browsertoolbox.fission` is true.
-about-debugging-multiprocess-toolbox-name = Multiprocess Toolbox
-
-# Description for the Multiprocess Toolbox target.
 about-debugging-multiprocess-toolbox-description = Main Process and Content Processes for the target browser
 
 # Alt text used for the close icon of message component (warnings, errors and notifications).

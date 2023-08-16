@@ -108,7 +108,7 @@ class WebSocketChannel : public BaseWebSocketChannel,
   NS_IMETHOD SendBinaryMsg(const nsACString& aMsg) override;
   NS_IMETHOD SendBinaryStream(nsIInputStream* aStream,
                               uint32_t length) override;
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override;
+  NS_IMETHOD GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) override;
 
   WebSocketChannel();
   static void Shutdown();
@@ -137,7 +137,7 @@ class WebSocketChannel : public BaseWebSocketChannel,
   const static uint8_t kPayloadLengthBitsMask = 0x7F;
 
  protected:
-  virtual ~WebSocketChannel();
+  ~WebSocketChannel() override;
 
  private:
   friend class OutboundEnqueuer;
@@ -207,6 +207,8 @@ class WebSocketChannel : public BaseWebSocketChannel,
       }
     }
   }
+
+  void NotifyOnStart();
 
   nsCOMPtr<nsIEventTarget> mIOThread;
   // Set in AsyncOpenNative and AsyncOnChannelRedirect, modified in

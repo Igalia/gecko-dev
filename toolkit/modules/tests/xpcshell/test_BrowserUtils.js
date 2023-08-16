@@ -1,26 +1,28 @@
 /* Any copyright is dedicated to the Public Domain.
 http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-const { BrowserUtils } = ChromeUtils.import(
-  "resource://gre/modules/BrowserUtils.jsm"
+const { BrowserUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/BrowserUtils.sys.mjs"
 );
 
-const { EnterprisePolicyTesting } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
+const { EnterprisePolicyTesting } = ChromeUtils.importESModule(
+  "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
 );
 
-const { Region } = ChromeUtils.import("resource://gre/modules/Region.jsm");
-
-const { updateAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { Region } = ChromeUtils.importESModule(
+  "resource://gre/modules/Region.sys.mjs"
 );
 
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+const { updateAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
+);
+
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
 
 // Helper to run tests for specific regions
@@ -113,35 +115,6 @@ add_task(async function test_shouldShowVPNPromo() {
   }
 });
 
-add_task(async function test_shouldShowRallyPromo() {
-  const allowedRegion = "US";
-  const disallowedRegion = "CN";
-  const allowedLanguage = "en-US";
-  const disallowedLanguage = "fr";
-
-  // Show promo when region is US and language is en-US
-  setupRegions(allowedRegion, allowedRegion);
-  setLanguage(allowedLanguage);
-  Assert.ok(BrowserUtils.shouldShowRallyPromo());
-
-  // Don't show when home region is not US
-  setupRegions(disallowedRegion);
-  Assert.ok(!BrowserUtils.shouldShowRallyPromo());
-
-  // Don't show when langauge is not en-US, even if region is US
-  setLanguage(disallowedLanguage);
-  setupRegions(allowedRegion);
-  Assert.ok(!BrowserUtils.shouldShowRallyPromo());
-
-  // Don't show when home region is not US, even if language is en-US
-  setupRegions(disallowedRegion);
-  Assert.ok(!BrowserUtils.shouldShowRallyPromo());
-
-  // Don't show when current region is not US, even if home region is US and langague is en-US
-  setupRegions(allowedRegion, disallowedRegion);
-  Assert.ok(!BrowserUtils.shouldShowRallyPromo());
-});
-
 add_task(async function test_sendToDeviceEmailsSupported() {
   const allowedLanguage = "en-US";
   const disallowedLanguage = "ar";
@@ -210,7 +183,46 @@ add_task(async function test_shouldShowPinPromo() {
   Preferences.resetBranch("browser.promo.pin");
 });
 
-add_task(function test_isShareableURL() {
+add_task(async function test_shouldShowRelayPromo() {
+  // This test assumes by default no uri is configured.
+  Preferences.set("identity.fxaccounts.autoconfig.uri", "");
+  Assert.ok(BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.RELAY));
+
+  // Don't show when there is an enterprise policy active
+  if (AppConstants.platform !== "android") {
+    // Services.policies isn't shipped on Android
+    await setupEnterprisePolicy();
+
+    Assert.ok(!BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.RELAY));
+
+    // revert policy changes made earlier
+    await EnterprisePolicyTesting.setupPolicyEngineWithJson("");
+  }
+
+  // Don't show if a custom FxA instance is configured
+  Preferences.set("identity.fxaccounts.autoconfig.uri", "https://x");
+  Assert.ok(!BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.RELAY));
+
+  Preferences.reset("identity.fxaccounts.autoconfig.uri");
+});
+
+add_task(async function test_shouldShowCookieBannersPromo() {
+  Preferences.set("browser.promo.cookiebanners.enabled", true);
+  // Show cookie banners promo type by default when promo is enabled
+  Assert.ok(
+    BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.COOKIE_BANNERS)
+  );
+
+  // Don't show when promo disabled by pref
+  Preferences.set("browser.promo.cookiebanners.enabled", false);
+  Assert.ok(
+    !BrowserUtils.shouldShowPromo(BrowserUtils.PromoType.COOKIE_BANNERS)
+  );
+
+  Preferences.resetBranch("browser.promo.cookiebanners");
+});
+
+add_task(function test_getShareableURL() {
   // Some test suites, specifically android, don't have this setup properly -- so we add it manually
   if (!Preferences.get("services.sync.engine.tabs.filteredSchemes")) {
     Preferences.set(
@@ -219,22 +231,32 @@ add_task(function test_isShareableURL() {
     );
   }
   // Empty shouldn't be sendable
-  Assert.ok(!BrowserUtils.isShareableURL(""));
+  Assert.ok(!BrowserUtils.getShareableURL(""));
   // Valid
-  Assert.ok(
-    BrowserUtils.isShareableURL(Services.io.newURI("https://mozilla.org"))
-  );
+  let good = Services.io.newURI("https://mozilla.org");
+  Assert.ok(BrowserUtils.getShareableURL(good).equals(good));
   // Invalid
   Assert.ok(
-    !BrowserUtils.isShareableURL(Services.io.newURI("file://path/to/pdf.pdf"))
+    !BrowserUtils.getShareableURL(Services.io.newURI("file://path/to/pdf.pdf"))
   );
 
   // Invalid
   Assert.ok(
-    !BrowserUtils.isShareableURL(
+    !BrowserUtils.getShareableURL(
       Services.io.newURI(
         "data:application/json;base64,ewogICJ0eXBlIjogIm1haW4i=="
       )
     )
   );
+
+  // Reader mode:
+  if (AppConstants.platform !== "android") {
+    let readerUrl = Services.io.newURI(
+      "about:reader?url=" + encodeURIComponent("http://foo.com/")
+    );
+    Assert.equal(
+      BrowserUtils.getShareableURL(readerUrl).spec,
+      "http://foo.com/"
+    );
+  }
 });

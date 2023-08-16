@@ -22,19 +22,16 @@ let certDB = Cc["@mozilla.org/security/x509certdb;1"].getService(
 
 // These are not actual server and client certs. The ClientAuthRememberService
 // does not care which certs we store decisions for, as long as they're valid.
-let [serverCert, clientCert] = certDB.getCerts();
+let [clientCert] = certDB.getCerts();
 
 function addSecurityInfo({ host, topLevelBaseDomain, originAttributes = {} }) {
   let attrs = getOAWithPartitionKey({ topLevelBaseDomain }, originAttributes);
 
   let uri = Services.io.newURI(`https://${host}`);
-  let secInfo = Cc[
-    "@mozilla.org/security/transportsecurityinfo;1"
-  ].createInstance(Ci.nsITransportSecurityInfo);
 
-  gSSService.processHeader(uri, "max-age=1000;", secInfo, attrs);
+  gSSService.processHeader(uri, "max-age=1000;", attrs);
 
-  cars.rememberDecisionScriptable(host, attrs, serverCert, clientCert);
+  cars.rememberDecisionScriptable(host, attrs, clientCert);
 }
 
 function addTestSecurityInfo() {
@@ -85,12 +82,7 @@ function testSecurityInfo({
     `HSTS ${expectedHSTS ? "is set" : "is not set"} ${messageSuffix}`
   );
 
-  let hasRemembered = cars.hasRememberedDecisionScriptable(
-    host,
-    attrs,
-    serverCert,
-    {}
-  );
+  let hasRemembered = cars.hasRememberedDecisionScriptable(host, attrs, {});
   // CARS deleteDecisionsByHost does not include subdomains. That means for some
   // test cases we expect a different remembered state.
   Assert.equal(

@@ -50,12 +50,15 @@
 #if defined(JS_CODEGEN_LOONG64)
 #  include "jit/loong64/Assembler-loong64.h"
 #endif
+#if defined(JS_CODEGEN_RISCV64)
+#  include "jit/riscv64/Assembler-riscv64.h"
+#endif
 #include "js/ScalarType.h"
 #include "util/Memory.h"
-#include "wasm/TypedObject.h"
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmDebugFrame.h"
 #include "wasm/WasmGC.h"
+#include "wasm/WasmGcObject.h"
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmInstance.h"
 #include "wasm/WasmOpIter.h"
@@ -175,6 +178,10 @@ enum class RhsDestOp { True = true };
 #endif
 
 #ifdef JS_CODEGEN_LOONG64
+#  define RABALDR_PIN_INSTANCE
+#endif
+
+#ifdef JS_CODEGEN_RISCV64
 #  define RABALDR_PIN_INSTANCE
 #endif
 

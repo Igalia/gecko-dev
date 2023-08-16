@@ -87,7 +87,7 @@ add_task(async function test_windows_events_not_allowed() {
     Management: {
       global: { windowTracker },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let currentWindow = window;
   let currentWindowId = windowTracker.getId(currentWindow);
@@ -155,7 +155,7 @@ add_task(async function test_windows_event_page() {
   let extension = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
-      applications: { gecko: { id: "eventpage@windows" } },
+      browser_specific_settings: { gecko: { id: "eventpage@windows" } },
       background: { persistent: false },
     },
     background() {

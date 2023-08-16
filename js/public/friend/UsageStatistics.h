@@ -25,6 +25,8 @@ class JS_PUBLIC_API JSObject;
 #define FOR_EACH_JS_METRIC(_)                   \
   _(GC_REASON_2, Enumeration)                   \
   _(GC_IS_COMPARTMENTAL, Boolean)               \
+  _(GC_ZONE_COUNT, QuantityDistribution)        \
+  _(GC_ZONES_COLLECTED, QuantityDistribution)   \
   _(GC_MS, TimeDuration_MS)                     \
   _(GC_BUDGET_MS_2, TimeDuration_MS)            \
   _(GC_BUDGET_WAS_INCREASED, Boolean)           \
@@ -61,7 +63,11 @@ class JS_PUBLIC_API JSObject;
   _(DESERIALIZE_BYTES, MemoryDistribution)      \
   _(DESERIALIZE_ITEMS, QuantityDistribution)    \
   _(DESERIALIZE_US, TimeDuration_US)            \
-  _(GC_EFFECTIVENESS, MemoryDistribution)
+  _(GC_EFFECTIVENESS, MemoryDistribution)       \
+  _(GC_PARALLEL_MARK_SPEEDUP, Integer)          \
+  _(GC_PARALLEL_MARK_UTILIZATION, Percentage)   \
+  _(GC_PARALLEL_MARK_INTERRUPTIONS, Integer)    \
+  _(GC_TASK_START_DELAY_US, TimeDuration_US)
 
 // clang-format off
 #define ENUM_DEF(NAME, _) NAME,

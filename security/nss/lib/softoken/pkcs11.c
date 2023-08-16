@@ -258,7 +258,7 @@ static const unsigned char parityTable[256] = {
     /* Odd....0xe0,0xe2,0xe4,0xe6,0xe8,0xea,0xec,0xee */
     /* O */ 0xe0, 0xe3, 0xe5, 0xe6, 0xe9, 0xea, 0xec, 0xef,
     /* Even...0xf0,0xf2,0xf4,0xf6,0xf8,0xfa,0xfc,0xfe */
-    /* E */ 0xf1, 0xf2, 0xf4, 0xf7, 0xf8, 0xfb, 0xfd, 0xfe,
+    /* E */ 0xf1, 0xf2, 0xf4, 0xf7, 0xf8, 0xfb, 0xfd, 0xfe
 };
 
 /* Mechanisms */
@@ -447,6 +447,18 @@ static const struct mechanismList mechanisms[] = {
     { CKM_SHA512, { 0, 0, CKF_DIGEST }, PR_FALSE },
     { CKM_SHA512_HMAC, { 1, 128, CKF_SN_VR }, PR_TRUE },
     { CKM_SHA512_HMAC_GENERAL, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_224, { 0, 0, CKF_DIGEST }, PR_FALSE },
+    { CKM_SHA3_224_HMAC, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_224_HMAC_GENERAL, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_256, { 0, 0, CKF_DIGEST }, PR_FALSE },
+    { CKM_SHA3_256_HMAC, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_256_HMAC_GENERAL, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_384, { 0, 0, CKF_DIGEST }, PR_FALSE },
+    { CKM_SHA3_384_HMAC, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_384_HMAC_GENERAL, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_512, { 0, 0, CKF_DIGEST }, PR_FALSE },
+    { CKM_SHA3_512_HMAC, { 1, 128, CKF_SN_VR }, PR_TRUE },
+    { CKM_SHA3_512_HMAC_GENERAL, { 1, 128, CKF_SN_VR }, PR_TRUE },
     { CKM_TLS_PRF_GENERAL, { 0, 512, CKF_SN_VR }, PR_FALSE },
     { CKM_TLS_MAC, { 0, 512, CKF_SN_VR }, PR_FALSE },
     { CKM_NSS_TLS_PRF_GENERAL_SHA256,
@@ -1714,7 +1726,7 @@ sftk_handleObject(SFTKObject *object, SFTKSession *session)
      * token objects and will have a token object handle assigned to
      * them by a call to sftk_mkHandle in the handler for each object
      * class, invoked below.
-     *  
+     *
      * It may be helpful to note/remember that
      * sftk_narrowToXxxObject uses sftk_isToken,
      * sftk_isToken examines the sign bit of the object's handle, but
@@ -2568,7 +2580,7 @@ sftk_getDefTokName(CK_SLOT_ID slotID)
         default:
             break;
     }
-    sprintf(buf, "NSS Application Token %08x  ", (unsigned int)slotID);
+    snprintf(buf, sizeof(buf), "NSS Application Token %08x  ", (unsigned int)slotID);
     return buf;
 }
 
@@ -2587,9 +2599,9 @@ sftk_getDefSlotName(CK_SLOT_ID slotID)
         default:
             break;
     }
-    sprintf(buf,
-            "NSS Application Slot %08x                                   ",
-            (unsigned int)slotID);
+    snprintf(buf, sizeof(buf),
+             "NSS Application Slot %08x                                   ",
+             (unsigned int)slotID);
     return buf;
 }
 
@@ -2620,7 +2632,7 @@ sftk_SlotFromID(CK_SLOT_ID slotID, PRBool all)
     if (nscSlotHashTable[index] == NULL)
         return NULL;
     slot = (SFTKSlot *)PL_HashTableLookupConst(nscSlotHashTable[index],
-                                               (void *)slotID);
+                                               (void *)(uintptr_t)slotID);
     /* cleared slots shouldn't 'show up' */
     if (slot && !all && !slot->present)
         slot = NULL;
@@ -2690,7 +2702,7 @@ sftk_RegisterSlot(SFTKSlot *slot, unsigned int moduleIndex)
         }
     }
 
-    entry = PL_HashTableAdd(nscSlotHashTable[index], (void *)slot->slotID, slot);
+    entry = PL_HashTableAdd(nscSlotHashTable[index], (void *)(uintptr_t)slot->slotID, slot);
     if (entry == NULL) {
         return CKR_HOST_MEMORY;
     }
@@ -3223,12 +3235,12 @@ nscFreeAllSlots(unsigned int moduleIndex)
         for (i = 0; i < (int)tmpSlotCount; i++) {
             slotID = tmpSlotList[i];
             slot = (SFTKSlot *)
-                PL_HashTableLookup(tmpSlotHashTable, (void *)slotID);
+                PL_HashTableLookup(tmpSlotHashTable, (void *)(uintptr_t)slotID);
             PORT_Assert(slot);
             if (!slot)
                 continue;
             SFTK_DestroySlotData(slot);
-            PL_HashTableRemove(tmpSlotHashTable, (void *)slotID);
+            PL_HashTableRemove(tmpSlotHashTable, (void *)(uintptr_t)slotID);
         }
         PORT_Free(tmpSlotList);
         PL_HashTableDestroy(tmpSlotHashTable);
@@ -3243,7 +3255,7 @@ sftk_closePeer(PRBool isFIPS)
     unsigned int moduleIndex = isFIPS ? NSC_NON_FIPS_MODULE : NSC_FIPS_MODULE;
     PLHashTable *tmpSlotHashTable = nscSlotHashTable[moduleIndex];
 
-    slot = (SFTKSlot *)PL_HashTableLookup(tmpSlotHashTable, (void *)slotID);
+    slot = (SFTKSlot *)PL_HashTableLookup(tmpSlotHashTable, (void *)(uintptr_t)slotID);
     if (slot == NULL) {
         return;
     }

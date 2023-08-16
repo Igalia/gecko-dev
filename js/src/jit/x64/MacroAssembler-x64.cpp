@@ -512,7 +512,7 @@ void MacroAssemblerX64::handleFailureWithHandlerTail(Label* profilerExitTail,
   movq(rsp, rax);
 
   // Call the handler.
-  using Fn = void (*)(ResumeFromException * rfe);
+  using Fn = void (*)(ResumeFromException* rfe);
   asMasm().setupUnalignedABICall(rcx);
   asMasm().passABIArg(rax);
   asMasm().callWithABI<Fn, HandleException>(
@@ -627,6 +627,7 @@ void MacroAssemblerX64::handleFailureWithHandlerTail(Label* profilerExitTail,
   bind(&wasm);
   loadPtr(Address(rsp, ResumeFromException::offsetOfFramePointer()), rbp);
   loadPtr(Address(rsp, ResumeFromException::offsetOfStackPointer()), rsp);
+  movePtr(ImmPtr((const void*)wasm::FailInstanceReg), InstanceReg);
   masm.ret();
 
   // Found a wasm catch handler, restore state and jump to it.
@@ -881,8 +882,8 @@ void MacroAssembler::loadStoreBuffer(Register ptr, Register buffer) {
   if (ptr != buffer) {
     movePtr(ptr, buffer);
   }
-  orPtr(Imm32(gc::ChunkMask), buffer);
-  loadPtr(Address(buffer, gc::ChunkStoreBufferOffsetFromLastByte), buffer);
+  andPtr(Imm32(int32_t(~gc::ChunkMask)), buffer);
+  loadPtr(Address(buffer, gc::ChunkStoreBufferOffset), buffer);
 }
 
 void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
@@ -894,9 +895,8 @@ void MacroAssembler::branchPtrInNurseryChunk(Condition cond, Register ptr,
   MOZ_ASSERT(ptr != scratch);
 
   movePtr(ptr, scratch);
-  orPtr(Imm32(gc::ChunkMask), scratch);
-  branchPtr(InvertCondition(cond),
-            Address(scratch, gc::ChunkStoreBufferOffsetFromLastByte),
+  andPtr(Imm32(int32_t(~gc::ChunkMask)), scratch);
+  branchPtr(InvertCondition(cond), Address(scratch, gc::ChunkStoreBufferOffset),
             ImmWord(0), label);
 }
 
@@ -911,11 +911,9 @@ void MacroAssembler::branchValueIsNurseryCellImpl(Condition cond,
   branchTestGCThing(Assembler::NotEqual, value,
                     cond == Assembler::Equal ? &done : label);
 
-  unboxGCThingForGCBarrier(value, temp);
-  orPtr(Imm32(gc::ChunkMask), temp);
-  branchPtr(InvertCondition(cond),
-            Address(temp, gc::ChunkStoreBufferOffsetFromLastByte), ImmWord(0),
-            label);
+  getGCThingValueChunk(value, temp);
+  branchPtr(InvertCondition(cond), Address(temp, gc::ChunkStoreBufferOffset),
+            ImmWord(0), label);
 
   bind(&done);
 }
@@ -946,27 +944,11 @@ void MacroAssembler::branchTestValue(Condition cond, const ValueOperand& lhs,
 // Memory access primitives.
 template <typename T>
 void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
-                                       MIRType valueType, const T& dest,
-                                       MIRType slotType) {
+                                       MIRType valueType, const T& dest) {
+  MOZ_ASSERT(valueType < MIRType::Value);
+
   if (valueType == MIRType::Double) {
     boxDouble(value.reg().typedReg().fpu(), dest);
-    return;
-  }
-
-  // For known integers and booleans, we can just store the unboxed value if
-  // the slot has the same type.
-  if ((valueType == MIRType::Int32 || valueType == MIRType::Boolean) &&
-      slotType == valueType) {
-    if (value.constant()) {
-      Value val = value.value();
-      if (valueType == MIRType::Int32) {
-        store32(Imm32(val.toInt32()), dest);
-      } else {
-        store32(Imm32(val.toBoolean() ? 1 : 0), dest);
-      }
-    } else {
-      store32(value.reg().typedReg().gpr(), dest);
-    }
     return;
   }
 
@@ -980,11 +962,10 @@ void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
 
 template void MacroAssembler::storeUnboxedValue(const ConstantOrRegister& value,
                                                 MIRType valueType,
-                                                const Address& dest,
-                                                MIRType slotType);
+                                                const Address& dest);
 template void MacroAssembler::storeUnboxedValue(
     const ConstantOrRegister& value, MIRType valueType,
-    const BaseObjectElementIndex& dest, MIRType slotType);
+    const BaseObjectElementIndex& dest);
 
 void MacroAssembler::PushBoxed(FloatRegister reg) {
   subq(Imm32(sizeof(double)), StackPointer);

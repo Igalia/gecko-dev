@@ -9,7 +9,7 @@
 
 #include "mozilla/dom/SVGGraphicsElement.h"
 #include "mozilla/gfx/2D.h"
-#include "SVGAnimatedNumber.h"
+#include "mozilla/dom/SVGAnimatedNumber.h"
 
 namespace mozilla {
 
@@ -52,12 +52,12 @@ class SVGGeometryElement : public SVGGeometryElementBase {
   explicit SVGGeometryElement(
       already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo);
 
-  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aSubjectPrincipal,
-                                bool aNotify) override;
-  bool IsNodeOfType(uint32_t aFlags) const override;
+  NS_IMPL_FROMNODE_HELPER(SVGGeometryElement, IsSVGGeometryElement())
+
+  void AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                    const nsAttrValue* aValue, const nsAttrValue* aOldValue,
+                    nsIPrincipal* aSubjectPrincipal, bool aNotify) override;
+  bool IsSVGGeometryElement() const override { return true; }
 
   /**
    * Causes this element to discard any Path object that GetOrBuildPath may
@@ -235,7 +235,7 @@ class SVGGeometryElement : public SVGGeometryElementBase {
 
  protected:
   // SVGElement method
-  virtual NumberAttributesInfo GetNumberInfo() override;
+  NumberAttributesInfo GetNumberInfo() override;
 
   // d is a presentation attribute, so we would like to make sure style is
   // up-to-date. This function flushes the style if the path attribute is d.

@@ -8,7 +8,7 @@
 const TEST_URI =
   "http://example.com/browser/devtools/client/webconsole/test/browser/test-dynamic-import.html";
 
-add_task(async function() {
+add_task(async function () {
   // Enable dynamic import
   await pushPref("javascript.options.dynamicImport", true);
   // Enable await mapping.
@@ -18,7 +18,7 @@ add_task(async function() {
 
   info("Evaluate an expression with a dynamic import");
   let importAwaitExpression = `
-    var {sum} = await import("./test-dynamic-import.js");
+    var {sum} = await import("./test-dynamic-import.mjs");
     sum(1, 2, 3);
   `;
   await executeAndWaitForResultMessage(
@@ -31,7 +31,7 @@ add_task(async function() {
   info("Import the same module a second time");
   // This used to make the content page crash (See Bug 1523897).
   importAwaitExpression = `
-    var {sum} = await import("./test-dynamic-import.js");
+    var {sum} = await import("./test-dynamic-import.mjs");
     sum(2, 3, 4);
   `;
   await executeAndWaitForResultMessage(

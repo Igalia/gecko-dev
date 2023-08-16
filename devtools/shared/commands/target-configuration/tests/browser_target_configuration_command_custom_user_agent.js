@@ -7,7 +7,7 @@
 const TEST_DOCUMENT = "target_configuration_test_doc.sjs";
 const TEST_URI = URL_ROOT_COM_SSL + TEST_DOCUMENT;
 
-add_task(async function() {
+add_task(async function () {
   const tab = await addTab(TEST_URI);
 
   info("Create commands for the tab");
@@ -91,7 +91,7 @@ add_task(async function() {
     gBrowser.selectedBrowser,
     /* includeSubFrames */ true
   );
-  BrowserTestUtils.loadURI(
+  BrowserTestUtils.loadURIString(
     gBrowser.selectedBrowser,
     URL_ROOT_ORG_SSL + TEST_DOCUMENT + "?crossOriginIsolated=true"
   );

@@ -5,7 +5,7 @@
 
 // Test the ResourceCommand API around NETWORK_EVENT
 
-const ResourceCommand = require("devtools/shared/commands/resource/resource-command");
+const ResourceCommand = require("resource://devtools/shared/commands/resource/resource-command.js");
 
 // We are borrowing tests from the netmonitor frontend
 const NETMONITOR_TEST_FOLDER =
@@ -79,7 +79,7 @@ add_task(async function testCanceledRequest() {
     "https://example.org/document-builder.sjs?delay=1000&html=foo";
   const html =
     "<!DOCTYPE html><script>(" +
-    function(xhrUrl) {
+    function (xhrUrl) {
       const xhr = new XMLHttpRequest();
       xhr.open("GET", xhrUrl);
       xhr.send(null);
@@ -263,16 +263,16 @@ async function assertNetworkResourcesOnPage(
 
   // Load the test page that fires network requests
   const onLoaded = BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
   await onLoaded;
 
   // Make sure we processed all the expected request updates
   await waitFor(
-    () => expectedAvailable.length == 0,
+    () => !expectedAvailable.length,
     "Wait for all expected available notifications"
   );
   await waitFor(
-    () => expectedUpdated.length == 0,
+    () => !expectedUpdated.length,
     "Wait for all expected updated notifications"
   );
 

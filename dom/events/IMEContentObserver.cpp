@@ -126,8 +126,6 @@ NS_IMPL_CYCLE_COLLECTING_RELEASE(IMEContentObserver)
 IMEContentObserver::IMEContentObserver()
     : mESM(nullptr),
       mIMENotificationRequests(nullptr),
-      mSuppressNotifications(0),
-      mPreCharacterDataChangeLength(-1),
       mSendingNotification(NOTIFY_IME_OF_NOTHING),
       mIsObserving(false),
       mIMEHasFocus(false),
@@ -269,7 +267,15 @@ bool IMEContentObserver::InitWithEditor(nsPresContext& aPresContext,
     return false;
   }
 
-  if (const nsRange* selRange = mSelection->GetRangeAt(0)) {
+  if (mEditorBase->IsTextEditor()) {
+    mRootElement = mEditorBase->GetRoot();  // The anonymous <div>
+    MOZ_ASSERT(mRootElement);
+    MOZ_ASSERT(mRootElement->GetFirstChild());
+    if (auto* text = Text::FromNodeOrNull(
+            mRootElement ? mRootElement->GetFirstChild() : nullptr)) {
+      mTextControlValueLength = ContentEventHandler::GetNativeTextLength(*text);
+    }
+  } else if (const nsRange* selRange = mSelection->GetRangeAt(0)) {
     if (NS_WARN_IF(!selRange->GetStartContainer())) {
       return false;
     }
@@ -610,7 +616,7 @@ nsresult IMEContentObserver::HandleQueryContentEvent(
     aEvent->mReply->mContentsRoot = mRootElement;
     aEvent->mReply->mWritingMode = mSelectionData.GetWritingMode();
     // The selection cache in IMEContentObserver must always have been in
-    // an editing host (or an editable annoymous <div> element).  Therefore,
+    // an editing host (or an editable anonymous <div> element).  Therefore,
     // we set mIsEditableContent to true here even though it's already been
     // blurred or changed its editable state but the selection cache has not
     // been invalidated yet.
@@ -674,6 +680,49 @@ nsresult IMEContentObserver::HandleQueryContentEvent(
     aEvent->mReply.reset();
   }
   return rv;
+}
+
+nsresult IMEContentObserver::MaybeHandleSelectionEvent(
+    nsPresContext* aPresContext, WidgetSelectionEvent* aEvent) {
+  MOZ_ASSERT(aEvent);
+  MOZ_ASSERT(aEvent->mMessage == eSetSelection);
+  NS_ASSERTION(!mNeedsToNotifyIMEOfSelectionChange,
+               "Selection cache has not been updated yet");
+
+  MOZ_LOG(
+      sIMECOLog, LogLevel::Debug,
+      ("0x%p MaybeHandleSelectionEvent(aEvent={ "
+       "mMessage=%s, mOffset=%u, mLength=%u, mReversed=%s, "
+       "mExpandToClusterBoundary=%s, mUseNativeLineBreak=%s }), "
+       "mSelectionData=%s",
+       this, ToChar(aEvent->mMessage), aEvent->mOffset, aEvent->mLength,
+       ToChar(aEvent->mReversed), ToChar(aEvent->mExpandToClusterBoundary),
+       ToChar(aEvent->mUseNativeLineBreak), ToString(mSelectionData).c_str()));
+
+  // When we have Selection cache, and the caller wants to set same selection
+  // range, we shouldn't try to compute same range because it may be impossible
+  // if the range boundary is around element boundaries which won't be
+  // serialized with line breaks like close tags of inline elements.  In that
+  // case, inserting new text at different point may be different from intention
+  // of users or web apps which set current selection.
+  // FIXME: We cache only selection data computed with native line breaker
+  // lengths.  Perhaps, we should improve the struct to have both data of
+  // offset and length.  E.g., adding line break counts for both offset and
+  // length.
+  if (!mNeedsToNotifyIMEOfSelectionChange && aEvent->mUseNativeLineBreak &&
+      mSelectionData.IsInitialized() && mSelectionData.HasRange() &&
+      mSelectionData.StartOffset() == aEvent->mOffset &&
+      mSelectionData.Length() == aEvent->mLength) {
+    if (RefPtr<Selection> selection = mSelection) {
+      selection->ScrollIntoView(nsISelectionController::SELECTION_FOCUS_REGION,
+                                ScrollAxis(), ScrollAxis(), 0);
+    }
+    aEvent->mSucceeded = true;
+    return NS_OK;
+  }
+
+  ContentEventHandler handler(aPresContext);
+  return handler.OnSelectionEvent(aEvent);
 }
 
 bool IMEContentObserver::OnMouseButtonEvent(nsPresContext& aPresContext,
@@ -1024,10 +1073,7 @@ bool IMEContentObserver::IsNextNodeOfLastAddedNode(nsINode* aParent,
   // If the parent node isn't changed, we can check that mLastAddedContent has
   // aChild as its next sibling.
   if (aParent == mLastAddedContainer) {
-    if (NS_WARN_IF(mLastAddedContent->GetNextSibling() != aChild)) {
-      return false;
-    }
-    return true;
+    return !NS_WARN_IF(mLastAddedContent->GetNextSibling() != aChild);
   }
 
   // If the parent node is changed, that means that the recorded last added node
@@ -1039,10 +1085,7 @@ bool IMEContentObserver::IsNextNodeOfLastAddedNode(nsINode* aParent,
   // If the node is aParent is a descendant of mLastAddedContainer,
   // aChild should be the first child in the new container.
   if (mLastAddedContainer == aParent->GetParent()) {
-    if (NS_WARN_IF(aChild->GetPreviousSibling())) {
-      return false;
-    }
-    return true;
+    return !NS_WARN_IF(aChild->GetPreviousSibling());
   }
 
   // Otherwise, we need to check it even with slow path.
@@ -1101,6 +1144,15 @@ void IMEContentObserver::MaybeNotifyIMEOfAddedTextDuringDocumentChange() {
                       IsEditorComposing());
   MaybeNotifyIMEOfTextChange(data);
   ClearAddedNodesDuringDocumentChange();
+}
+
+void IMEContentObserver::OnTextControlValueChangedWhileNotObservable(
+    const nsAString& aNewValue) {
+  MOZ_ASSERT(mEditorBase);
+  MOZ_ASSERT(mEditorBase->IsTextEditor());
+  uint32_t newLength = ContentEventHandler::GetNativeTextLength(aNewValue);
+  TextChangeData data(0, mTextControlValueLength, newLength, false, false);
+  MaybeNotifyIMEOfTextChange(data);
 }
 
 void IMEContentObserver::BeginDocumentUpdate() {
@@ -1214,6 +1266,13 @@ void IMEContentObserver::MaybeNotifyIMEOfTextChange(
   MOZ_LOG(sIMECOLog, LogLevel::Debug,
           ("0x%p MaybeNotifyIMEOfTextChange(aTextChangeData=%s)", this,
            ToString(aTextChangeData).c_str()));
+
+  if (mEditorBase && mEditorBase->IsTextEditor()) {
+    MOZ_DIAGNOSTIC_ASSERT(static_cast<int64_t>(mTextControlValueLength) +
+                              aTextChangeData.Difference() >=
+                          0);
+    mTextControlValueLength += aTextChangeData.Difference();
+  }
 
   mTextChangeData += aTextChangeData;
   PostTextChangeNotification();
@@ -1434,7 +1493,7 @@ void IMEContentObserver::FlushMergeableNotifications() {
 
   // If contents in selection range is modified, the selection range still
   // has removed node from the tree.  In such case, ContentIterator won't
-  // work well.  Therefore, we shouldn't use AddScriptRunnder() here since
+  // work well.  Therefore, we shouldn't use AddScriptRunner() here since
   // it may kick runnable event immediately after DOM tree is changed but
   // the selection range isn't modified yet.
   mQueuedSender = new IMENotificationSender(this);

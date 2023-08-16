@@ -35,10 +35,8 @@ label {
 /* Label box */
 
 #label-box[native] {
-  appearance: auto;
-  -moz-default-appearance: menulist-text;
-  -moz-box-align: center;
-  -moz-box-pack: center;
+  align-items: center;
+  justify-content: center;
   color: inherit;
 }
 

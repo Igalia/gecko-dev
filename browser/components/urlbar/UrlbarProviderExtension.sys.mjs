@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a provider class that is used for providers created by
  * extensions.
@@ -23,6 +21,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
 });
+
+// The set of `UrlbarQueryContext` properties that aren't serializable.
+const NONSERIALIZABLE_CONTEXT_PROPERTIES = new Set(["view"]);
 
 /**
  * The browser.urlbar extension API allows extensions to create their own urlbar
@@ -74,6 +75,8 @@ export class UrlbarProviderExtension extends UrlbarProvider {
 
   /**
    * The provider's name.
+   *
+   * @returns {string}
    */
   get name() {
     return this._name;
@@ -82,6 +85,8 @@ export class UrlbarProviderExtension extends UrlbarProvider {
   /**
    * The provider's type.  The type of extension providers is always
    * UrlbarUtils.PROVIDER_TYPE.EXTENSION.
+   *
+   * @returns {UrlbarUtils.PROVIDER_TYPE}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.EXTENSION;
@@ -145,7 +150,7 @@ export class UrlbarProviderExtension extends UrlbarProvider {
    *
    * @param {string} eventName
    *   The name of the event to listen to.
-   * @param {function} listener
+   * @param {Function} listener
    *   The function that will be called when the event is fired.
    */
   setEventListener(eventName, listener) {
@@ -168,7 +173,10 @@ export class UrlbarProviderExtension extends UrlbarProvider {
    *   The query context.
    */
   async updateBehavior(context) {
-    let behavior = await this._notifyListener("behaviorRequested", context);
+    let behavior = await this._notifyListener(
+      "behaviorRequested",
+      makeSerializable(context)
+    );
     if (behavior) {
       this.behavior = behavior;
     }
@@ -195,17 +203,19 @@ export class UrlbarProviderExtension extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} context
    *   The query context.
-   * @param {function} addCallback
+   * @param {Function} addCallback
    *   The callback invoked by this method to add each result.
    */
   async startQuery(context, addCallback) {
-    let extResults = await this._notifyListener("resultsRequested", context);
+    let extResults = await this._notifyListener(
+      "resultsRequested",
+      makeSerializable(context)
+    );
     if (extResults) {
       for (let extResult of extResults) {
-        let result = await this._makeUrlbarResult(
-          context,
-          extResult
-        ).catch(ex => this.logger.error(ex));
+        let result = await this._makeUrlbarResult(context, extResult).catch(
+          ex => this.logger.error(ex)
+        );
         if (result) {
           addCallback(this, result);
         }
@@ -221,20 +231,10 @@ export class UrlbarProviderExtension extends UrlbarProvider {
    *   The query context.
    */
   cancelQuery(context) {
-    this._notifyListener("queryCanceled", context);
+    this._notifyListener("queryCanceled", makeSerializable(context));
   }
 
-  /**
-   * This method is called when a result from the provider without a URL is
-   * picked, but currently only for tip results.  The provider should handle the
-   * pick.
-   *
-   * @param {UrlbarResult} result
-   *   The result that was picked.
-   * @param {Element} element
-   *   The element in the result's view that was picked.
-   */
-  pickResult(result, element) {
+  #pickResult(result, element) {
     let dynamicElementName = "";
     if (element && result.type == UrlbarUtils.RESULT_TYPE.DYNAMIC) {
       dynamicElementName = element.getAttribute("name");
@@ -242,25 +242,15 @@ export class UrlbarProviderExtension extends UrlbarProvider {
     this._notifyListener("resultPicked", result.payload, dynamicElementName);
   }
 
-  /**
-   * Called when the user starts and ends an engagement with the urlbar.  For
-   * details on parameters, see UrlbarProvider.onEngagement().
-   *
-   * @param {boolean} isPrivate
-   *   True if the engagement is in a private context.
-   * @param {string} state
-   *   The state of the engagement, one of: start, engagement, abandonment,
-   *   discard
-   * @param {UrlbarQueryContext} queryContext
-   *   The engagement's query context.  This is *not* guaranteed to be defined
-   *   when `state` is "start".  It will always be defined for "engagement" and
-   *   "abandonment".
-   * @param {object} details
-   *   This is defined only when `state` is "engagement" or "abandonment", and
-   *   it describes the search string and picked result.
-   */
-  onEngagement(isPrivate, state, queryContext, details) {
-    this._notifyListener("engagement", isPrivate, state);
+  onEngagement(state, queryContext, details, controller) {
+    let { result, element } = details;
+    // By design, the "resultPicked" extension event should not be fired when
+    // the picked element has a URL.
+    if (result?.providerName == this.name && !element?.dataset.url) {
+      this.#pickResult(result, element);
+    }
+
+    this._notifyListener("engagement", controller.input.isPrivate, state);
   }
 
   /**
@@ -351,7 +341,12 @@ export class UrlbarProviderExtension extends UrlbarProvider {
 
     let type = UrlbarProviderExtension.RESULT_TYPES[extResult.type];
     if (type == UrlbarUtils.RESULT_TYPE.TIP) {
-      extResult.payload.type = extResult.payload.type || "extension";
+      extResult.payload.type ||= "extension";
+      extResult.payload.helpL10n = {
+        id: lazy.UrlbarPrefs.get("resultMenu")
+          ? "urlbar-result-menu-tip-get-help"
+          : "urlbar-tip-help-icon",
+      };
     }
 
     let result = new lazy.UrlbarResult(
@@ -398,3 +393,23 @@ UrlbarProviderExtension.SOURCE_TYPES = {
   tabs: UrlbarUtils.RESULT_SOURCE.TABS,
   actions: UrlbarUtils.RESULT_SOURCE.ACTIONS,
 };
+
+/**
+ * Returns a copy of a query context stripped of non-serializable properties.
+ * This is necessary because query contexts are passed to extensions where they
+ * become `Query` objects, as defined in the urlbar extensions schema. The
+ * WebExtensions framework automatically excludes serializable properties that
+ * aren't defined in the schema, but it chokes on non-serializable properties.
+ *
+ * @param {UrlbarQueryContext} context
+ *   The query context.
+ * @returns {object}
+ *   A copy of `context` with only serializable properties.
+ */
+function makeSerializable(context) {
+  return Object.fromEntries(
+    Object.entries(context).filter(
+      ([key]) => !NONSERIALIZABLE_CONTEXT_PROPERTIES.has(key)
+    )
+  );
+}

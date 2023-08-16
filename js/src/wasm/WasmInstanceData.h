@@ -23,8 +23,11 @@
 
 #include "NamespaceImports.h"
 
+#include "gc/Allocator.h"
+#include "gc/Pretenuring.h"
 #include "js/Utility.h"
 #include "wasm/WasmInstance.h"
+#include "wasm/WasmMemory.h"
 #include "wasm/WasmTypeDecls.h"
 
 namespace js {
@@ -39,6 +42,54 @@ struct ExportArg {
 };
 
 using ExportFuncPtr = int32_t (*)(ExportArg*, Instance*);
+
+// TypeDefInstanceData describes the runtime information associated with a
+// module's type definition. This is accessed directly from JIT code and the
+// Instance.
+
+struct TypeDefInstanceData {
+  TypeDefInstanceData()
+      : typeDef(nullptr),
+        superTypeVector(nullptr),
+        shape(nullptr),
+        clasp(nullptr),
+        allocKind(gc::AllocKind::LIMIT),
+        unused(0) {}
+
+  // The canonicalized pointer to this type definition. This is kept alive by
+  // the type context associated with the instance.
+  const wasm::TypeDef* typeDef;
+
+  // The supertype vector for this type definition.  This is also kept alive
+  // by the type context associated with the instance.
+  //
+  const wasm::SuperTypeVector* superTypeVector;
+
+  // The next four fields are only meaningful for, and used by, structs and
+  // arrays.
+  GCPtr<Shape*> shape;
+  const JSClass* clasp;
+  // The allocation site for GC types. This is used for pre-tenuring.
+  gc::AllocSite allocSite;
+  gc::AllocKind allocKind;
+
+  // This union is only meaningful for structs and arrays, and should
+  // otherwise be set to zero:
+  //
+  // * if `typeDef` refers to a struct type, then it caches the value of
+  //   `typeDef->structType().size_` (a size in bytes)
+  //
+  // * if `typeDef` refers to an array type, then it caches the value of
+  //   `typeDef->arrayType().elementType_.size()` (also a size in bytes)
+  //
+  // This is so that allocators of structs and arrays don't need to chase from
+  // this TypeDefInstanceData through `typeDef` to find the value.
+  union {
+    uint32_t structTypeSize;
+    uint32_t arrayElemSize;
+    uint32_t unused;
+  };
+};
 
 // FuncImportInstanceData describes the region of wasm global memory allocated
 // in the instance's thread-local storage for a function import. This is
@@ -59,8 +110,26 @@ struct FuncImportInstanceData {
 
   // A GC pointer which keeps the callee alive and is used to recover import
   // values for lazy table initialization.
-  GCPtr<JSFunction*> fun;
-  static_assert(sizeof(GCPtr<JSFunction*>) == sizeof(void*), "for JIT access");
+  GCPtr<JSObject*> callable;
+  static_assert(sizeof(GCPtr<JSObject*>) == sizeof(void*), "for JIT access");
+};
+
+struct MemoryInstanceData {
+  // Pointer the memory object.
+  GCPtr<WasmMemoryObject*> memory;
+
+  // Pointer to the base of the memory.
+  uint8_t* base;
+
+  // Bounds check limit in bytes (or zero if there is no memory).  This is
+  // 64-bits on 64-bit systems so as to allow for heap lengths up to and beyond
+  // 4GB, and 32-bits on 32-bit systems, where heaps are limited to 2GB.
+  //
+  // See "Linear memory addresses and bounds checking" in WasmMemory.cpp.
+  uintptr_t boundsCheckLimit;
+
+  // Whether this memory is shared or not.
+  bool isShared;
 };
 
 // TableInstanceData describes the region of wasm global memory allocated in the
@@ -75,6 +144,12 @@ struct TableInstanceData {
   // For tables of anyref this is null.
   // For tables of functions, this is a pointer to the array of code pointers.
   void* elements;
+};
+
+// TagInstanceData describes the instance state associated with a tag.
+
+struct TagInstanceData {
+  GCPtr<WasmTagObject*> object;
 };
 
 // Table element for TableRepr::Func which carries both the code pointer and

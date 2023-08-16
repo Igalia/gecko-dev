@@ -8,18 +8,21 @@ const {
   FrontClassWithSpec,
   types,
   registerFront,
-} = require("devtools/shared/protocol.js");
-const { nodeSpec, nodeListSpec } = require("devtools/shared/specs/node");
-const { SimpleStringFront } = require("devtools/client/fronts/string");
-const Services = require("Services");
+} = require("resource://devtools/shared/protocol.js");
+const {
+  nodeSpec,
+  nodeListSpec,
+} = require("resource://devtools/shared/specs/node.js");
+const {
+  SimpleStringFront,
+} = require("resource://devtools/client/fronts/string.js");
 
 loader.lazyRequireGetter(
   this,
   "nodeConstants",
-  "devtools/shared/dom-node-constants"
+  "resource://devtools/shared/dom-node-constants.js"
 );
 
-const ChromeUtils = require("ChromeUtils");
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
@@ -30,10 +33,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "devtools.browsertoolbox.scope"
 );
 
-const BROWSER_TOOLBOX_FISSION_ENABLED = Services.prefs.getBoolPref(
-  "devtools.browsertoolbox.fission",
-  false
-);
 const BROWSER_TOOLBOX_SCOPE_EVERYTHING = "everything";
 
 const HIDDEN_CLASS = "__fx-devtools-hide-shortcut__";
@@ -166,14 +165,18 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
       // Get the owner actor for this actor (the walker), and find the
       // parent node of this actor from it, creating a standin node if
       // necessary.
-      const parentNodeFront = ctx
-        .marshallPool()
-        .ensureDOMNodeFront(form.parent);
-      this.reparent(parentNodeFront);
+      const owner = ctx.marshallPool();
+      if (typeof owner.ensureDOMNodeFront === "function") {
+        const parentNodeFront = owner.ensureDOMNodeFront(form.parent);
+        this.reparent(parentNodeFront);
+      }
     }
 
     if (form.host) {
-      this.host = ctx.marshallPool().ensureDOMNodeFront(form.host);
+      const owner = ctx.marshallPool();
+      if (typeof owner.ensureDOMNodeFront === "function") {
+        this.host = owner.ensureDOMNodeFront(form.host);
+      }
     }
 
     if (form.inlineTextChild) {
@@ -345,8 +348,7 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
   get useChildTargetToFetchChildren() {
     if (
       this._hasParentProcessTarget &&
-      (!BROWSER_TOOLBOX_FISSION_ENABLED ||
-        browserToolboxScope != BROWSER_TOOLBOX_SCOPE_EVERYTHING)
+      browserToolboxScope != BROWSER_TOOLBOX_SCOPE_EVERYTHING
     ) {
       return false;
     }
@@ -467,6 +469,10 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
     return this._form.causesOverflow;
   }
 
+  get containerType() {
+    return this._form.containerType;
+  }
+
   get isTreeDisplayed() {
     let parent = this;
     while (parent) {
@@ -584,7 +590,9 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
       console.warn("Tried to use rawNode on a remote connection.");
       return null;
     }
-    const { DevToolsServer } = require("devtools/server/devtools-server");
+    const {
+      DevToolsServer,
+    } = require("resource://devtools/server/devtools-server.js");
     const actor = DevToolsServer.searchAllConnectionsForActor(this.actorID);
     if (!actor) {
       // Can happen if we try to get the raw node for an already-expired
@@ -607,9 +615,10 @@ class NodeFront extends FrontClassWithSpec(nodeSpec) {
     }
 
     // Get the target for this frame element
-    this._childBrowsingContextTarget = await this.targetFront.getWindowGlobalTarget(
-      this._form.browsingContextID
-    );
+    this._childBrowsingContextTarget =
+      await this.targetFront.getWindowGlobalTarget(
+        this._form.browsingContextID
+      );
 
     // Bug 1776250: When the target is destroyed, we need to easily find the
     // parent node front so that we can update its frontend container in the

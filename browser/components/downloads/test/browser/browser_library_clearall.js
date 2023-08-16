@@ -28,7 +28,7 @@ async function waitForChildrenLength(element, length, callback) {
   }
 }
 
-registerCleanupFunction(async function() {
+registerCleanupFunction(async function () {
   await task_resetState();
   await PlacesUtils.history.clear();
 });
@@ -59,8 +59,7 @@ async function testClearingDownloads(clearCallback) {
         }
       }
       return receivedNotifications.length == DOWNLOAD_DATA.length;
-    },
-    "places"
+    }
   );
 
   promiseLength = waitForChildrenLength(listbox, 0);
@@ -76,7 +75,7 @@ async function testClearingDownloads(clearCallback) {
   );
 }
 
-add_setup(async function() {
+add_setup(async function () {
   // Ensure that state is reset in case previous tests didn't finish.
   await task_resetState();
 
@@ -85,7 +84,7 @@ add_setup(async function() {
   startServer();
 
   win = await openLibrary("Downloads");
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     win.close();
   });
 });
@@ -118,6 +117,6 @@ add_task(async function test_clear_downloads_context_menu() {
     let clearDownloadsButton = [...contextMenu.children].find(
       child => child.command == "downloadsCmd_clearDownloads"
     );
-    clearDownloadsButton.click();
+    contextMenu.activateItem(clearDownloadsButton);
   });
 });

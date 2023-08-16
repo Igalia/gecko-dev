@@ -18,12 +18,13 @@ random-if(d2d) fuzzy-if(!useDrawSnapshot,255-255,39-42) == element-paint-transfo
 fuzzy(0-255,0-4) == element-paint-transform-repeated.html element-paint-transform-repeated-ref.html # Bug 1475907
 fuzzy-if(d2d,0-255,0-24) fuzzy-if(!useDrawSnapshot,255-255,50-115) == element-paint-transform-03.html element-paint-transform-03-ref.html
 
-# For !nativeThemePref: element() uses fallback / skia in WebRender, which antialiases differently from WR.
-# For !nativeThemePref+Windows+WebRender: bug 1496542, the scrollframe snaps differently.
+# For element() uses fallback / skia in WebRender, which antialiases differently from WR.
+# For Windows: bug 1496542, the scrollframe snaps differently.
 # For the rest: -ref the scrollframe is active and layerized differently with APZ.
-fuzzy(0-24,0-106) fuzzy-if(winWidget&&!layersGPUAccelerated,149-149,1203-1203) fuzzy-if(!useDrawSnapshot&&!nativeThemePref,1-48,5-68) fuzzy-if(winWidget,47-222,1197-1588) fuzzy-if(Android,0-40,0-81) == element-paint-native-widget.html element-paint-native-widget-ref.html
+fuzzy(0-24,0-106) fuzzy-if(winWidget&&!layersGPUAccelerated,149-149,1203-1203) fuzzy-if(!useDrawSnapshot,1-48,5-68) fuzzy-if(winWidget,47-222,1197-1588) fuzzy-if(Android,0-40,0-81) == element-paint-native-widget.html element-paint-native-widget-ref.html
 
-fails-if(usesRepeatResampling&&!winWidget) == element-paint-subimage-sampling-restriction.html about:blank
+# This fails with CreateSamplingRestrictedDrawable removed
+fails-if(!Android&&!useDrawSnapshot) == element-paint-subimage-sampling-restriction.html about:blank
 == element-paint-clippath.html element-paint-clippath-ref.html
 fuzzy-if(!useDrawSnapshot,1-1,128-128) fuzzy-if(d2d,47-47,650-652) fuzzy-if(!useDrawSnapshot,36-39,704-738) == element-paint-sharpness-01a.html element-paint-sharpness-01b.html
 fuzzy(0-1,0-326) fails-if(useDrawSnapshot) == element-paint-sharpness-01b.html element-paint-sharpness-01c.html
@@ -40,8 +41,8 @@ fuzzy(0-1,0-625) == element-paint-multiple-backgrounds-01c.html element-paint-mu
 random-if(!cocoaWidget) == gradient-html-03.html gradient-html-03-ref.svg
 == gradient-html-04.html gradient-html-04-ref.html
 == gradient-html-05.html gradient-html-05-ref.html
-fuzzy(0-1,0-9674) random-if(!cocoaWidget) fuzzy-if(cocoaWidget,1-1,22500-444200) == gradient-html-06a.html gradient-html-06b.html
-fuzzy(0-1,0-9674) random-if(!cocoaWidget) fuzzy-if(cocoaWidget,1-1,22500-444200) == gradient-html-06b.html gradient-html-06c.html
+fuzzy(0-1,0-9674) random-if(!cocoaWidget) fuzzy-if(cocoaWidget&&!swgl,1-1,21600-444200) == gradient-html-06a.html gradient-html-06b.html
+fuzzy(0-1,0-9674) random-if(!cocoaWidget) fuzzy-if(cocoaWidget&&!swgl,1-1,21600-444200) == gradient-html-06b.html gradient-html-06c.html
 == gradient-html-06c.html gradient-html-06d.html
 == gradient-html-06d.html gradient-html-06e.html
 random-if(!cocoaWidget) fuzzy-if(cocoaWidget,0-2,0-42305) == gradient-html-07a.html gradient-html-07b.html

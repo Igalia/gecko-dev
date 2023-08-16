@@ -10,6 +10,7 @@
 #include "mozilla/EditorDOMPoint.h"  // for EditorDOMPoint, EditorDOMRange, etc
 #include "mozilla/EditorForwards.h"
 #include "mozilla/IntegerRange.h"       // for IntegerRange
+#include "mozilla/Maybe.h"              // for Maybe
 #include "mozilla/Result.h"             // for Result<>
 #include "mozilla/dom/Element.h"        // for dom::Element
 #include "mozilla/dom/HTMLBRElement.h"  // for dom::HTMLBRElement
@@ -28,121 +29,7 @@ class nsITransferable;
 
 namespace mozilla {
 
-/***************************************************************************
- * EditActionResult is useful to return multiple results of an editor
- * action handler without out params.
- * Note that when you return an anonymous instance from a method, you should
- * use EditActionIgnored(), EditActionHandled() or EditActionCanceled() for
- * easier to read.  In other words, EditActionResult should be used when
- * declaring return type of a method, being an argument or defined as a local
- * variable.
- */
-class MOZ_STACK_CLASS EditActionResult final {
- public:
-  bool Succeeded() const { return NS_SUCCEEDED(mRv); }
-  bool Failed() const { return NS_FAILED(mRv); }
-  nsresult Rv() const { return mRv; }
-  bool Canceled() const { return mCanceled; }
-  bool Handled() const { return mHandled; }
-  bool Ignored() const { return !mCanceled && !mHandled; }
-  bool EditorDestroyed() const { return mRv == NS_ERROR_EDITOR_DESTROYED; }
-
-  EditActionResult SetResult(nsresult aRv) {
-    mRv = aRv;
-    return *this;
-  }
-  EditActionResult MarkAsCanceled() {
-    mCanceled = true;
-    return *this;
-  }
-  EditActionResult MarkAsHandled() {
-    mHandled = true;
-    return *this;
-  }
-
-  explicit EditActionResult(nsresult aRv)
-      : mRv(aRv), mCanceled(false), mHandled(false) {}
-
-  EditActionResult& operator|=(const EditActionResult& aOther) {
-    mCanceled |= aOther.mCanceled;
-    mHandled |= aOther.mHandled;
-    // When both result are same, keep the result.
-    if (mRv == aOther.mRv) {
-      return *this;
-    }
-    // If one of the result is NS_ERROR_EDITOR_DESTROYED, use it since it's
-    // the most important error code for editor.
-    if (EditorDestroyed() || aOther.EditorDestroyed()) {
-      mRv = NS_ERROR_EDITOR_DESTROYED;
-    }
-    // If one of the results is error, use NS_ERROR_FAILURE.
-    else if (Failed() || aOther.Failed()) {
-      mRv = NS_ERROR_FAILURE;
-    } else {
-      // Otherwise, use generic success code, NS_OK.
-      mRv = NS_OK;
-    }
-    return *this;
-  }
-
-  EditActionResult& operator|=(const MoveNodeResult& aMoveNodeResult);
-
- private:
-  nsresult mRv;
-  bool mCanceled;
-  bool mHandled;
-
-  EditActionResult(nsresult aRv, bool aCanceled, bool aHandled)
-      : mRv(aRv), mCanceled(aCanceled), mHandled(aHandled) {}
-
-  EditActionResult()
-      : mRv(NS_ERROR_NOT_INITIALIZED), mCanceled(false), mHandled(false) {}
-
-  friend EditActionResult EditActionIgnored(nsresult aRv);
-  friend EditActionResult EditActionHandled(nsresult aRv);
-  friend EditActionResult EditActionCanceled(nsresult aRv);
-};
-
-/***************************************************************************
- * When an edit action handler (or its helper) does nothing,
- * EditActionIgnored should be returned.
- */
-inline EditActionResult EditActionIgnored(nsresult aRv = NS_OK) {
-  return EditActionResult(aRv, false, false);
-}
-
-/***************************************************************************
- * When an edit action handler (or its helper) handled and not canceled,
- * EditActionHandled should be returned.
- */
-inline EditActionResult EditActionHandled(nsresult aRv = NS_OK) {
-  return EditActionResult(aRv, false, true);
-}
-
-/***************************************************************************
- * When an edit action handler (or its helper) handled and canceled,
- * EditActionHandled should be returned.
- */
-inline EditActionResult EditActionCanceled(nsresult aRv = NS_OK) {
-  return EditActionResult(aRv, true, true);
-}
-
-/***************************************************************************
- * CreateNodeResultBase is a simple class for CreateSomething() methods
- * which want to return new node.
- */
-
-#define NS_INSTANTIATE_CREATE_NODE_RESULT_METHOD(aResultType, aMethodName, \
-                                                 ...)                      \
-  template aResultType CreateContentResult::aMethodName(__VA_ARGS__);      \
-  template aResultType CreateElementResult::aMethodName(__VA_ARGS__);      \
-  template aResultType CreateTextResult::aMethodName(__VA_ARGS__);
-
-#define NS_INSTANTIATE_CREATE_NODE_RESULT_CONST_METHOD(aResultType,         \
-                                                       aMethodName, ...)    \
-  template aResultType CreateContentResult::aMethodName(__VA_ARGS__) const; \
-  template aResultType CreateElementResult::aMethodName(__VA_ARGS__) const; \
-  template aResultType CreateTextResult::aMethodName(__VA_ARGS__) const;
+enum class StyleWhiteSpace : uint8_t;
 
 enum class SuggestCaret {
   // If specified, the method returns NS_OK when there is no recommended caret
@@ -158,39 +45,28 @@ enum class SuggestCaret {
   AndIgnoreTrivialError,
 };
 
-// TODO: Perhaps, we can make this inherits mozilla::Result for guaranteeing
-//       same API.  Then, changing to/from Result<*, nsresult> can be easier.
-//       For now, we should give same API name rather than same as
-//       mozilla::ErrorResult.
-template <typename NodeType>
-class MOZ_STACK_CLASS CreateNodeResultBase final {
-  typedef CreateNodeResultBase<NodeType> SelfType;
-
+/******************************************************************************
+ * CaretPoint is a wrapper of EditorDOMPoint and provides a helper method to
+ * collapse Selection there, or move it to a local variable.  This is typically
+ * used as the ok type of Result or a base class of DoSomethingResult classes.
+ ******************************************************************************/
+class MOZ_STACK_CLASS CaretPoint {
  public:
-  // FYI: NS_SUCCEEDED and NS_FAILED contain MOZ_(UN)LIKELY so that isOk() and
-  // isErr() must not required to wrap with them.
-  bool isOk() const { return NS_SUCCEEDED(mRv); }
-  bool isErr() const { return NS_FAILED(mRv); }
-  bool Handled() const {
-    MOZ_ASSERT_IF(mRv == NS_SUCCESS_DOM_NO_OPERATION, !mNode);
-    return isOk() && mRv == NS_SUCCESS_DOM_NO_OPERATION;
-  }
-  constexpr nsresult inspectErr() const { return mRv; }
-  constexpr nsresult unwrapErr() const { return inspectErr(); }
-  constexpr bool EditorDestroyed() const {
-    return MOZ_UNLIKELY(mRv == NS_ERROR_EDITOR_DESTROYED);
-  }
-  constexpr bool GotUnexpectedDOMTree() const {
-    return MOZ_UNLIKELY(mRv == NS_ERROR_EDITOR_UNEXPECTED_DOM_TREE);
-  }
-  NodeType* GetNewNode() const { return mNode; }
-  RefPtr<NodeType> UnwrapNewNode() { return std::move(mNode); }
+  explicit CaretPoint(const EditorDOMPoint& aPointToPutCaret)
+      : mCaretPoint(aPointToPutCaret) {}
+  explicit CaretPoint(EditorDOMPoint&& aPointToPutCaret)
+      : mCaretPoint(std::move(aPointToPutCaret)) {}
+
+  CaretPoint(const CaretPoint&) = delete;
+  CaretPoint& operator=(const CaretPoint&) = delete;
+  CaretPoint(CaretPoint&&) = default;
+  CaretPoint& operator=(CaretPoint&&) = default;
 
   /**
    * Suggest caret position to aEditorBase.
    */
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult SuggestCaretPointTo(
-      const EditorBase& aEditorBase, const SuggestCaretOptions& aOptions) const;
+      EditorBase& aEditorBase, const SuggestCaretOptions& aOptions) const;
 
   /**
    * IgnoreCaretPointSuggestion() should be called if the method does not want
@@ -198,10 +74,31 @@ class MOZ_STACK_CLASS CreateNodeResultBase final {
    */
   void IgnoreCaretPointSuggestion() const { mHandledCaretPoint = true; }
 
+  /**
+   * When propagating the result, it may not want to the caller modify
+   * selection.  In such case, this can clear the caret point.  Use
+   * IgnoreCaretPointSuggestion() in the caller side instead.
+   */
+  void ForgetCaretPointSuggestion() { mCaretPoint.Clear(); }
+
   bool HasCaretPointSuggestion() const { return mCaretPoint.IsSet(); }
-  EditorDOMPoint&& UnwrapCaretPoint() {
+  constexpr const EditorDOMPoint& CaretPointRef() const { return mCaretPoint; }
+  constexpr EditorDOMPoint&& UnwrapCaretPoint() {
     mHandledCaretPoint = true;
     return std::move(mCaretPoint);
+  }
+  bool CopyCaretPointTo(EditorDOMPoint& aPointToPutCaret,
+                        const SuggestCaretOptions& aOptions) const {
+    MOZ_ASSERT(!aOptions.contains(SuggestCaret::AndIgnoreTrivialError));
+    MOZ_ASSERT(
+        !aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt));
+    mHandledCaretPoint = true;
+    if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion) &&
+        !mCaretPoint.IsSet()) {
+      return false;
+    }
+    aPointToPutCaret = mCaretPoint;
+    return true;
   }
   bool MoveCaretPointTo(EditorDOMPoint& aPointToPutCaret,
                         const SuggestCaretOptions& aOptions) {
@@ -215,62 +112,131 @@ class MOZ_STACK_CLASS CreateNodeResultBase final {
     aPointToPutCaret = UnwrapCaretPoint();
     return true;
   }
+  bool CopyCaretPointTo(EditorDOMPoint& aPointToPutCaret,
+                        const EditorBase& aEditorBase,
+                        const SuggestCaretOptions& aOptions) const;
   bool MoveCaretPointTo(EditorDOMPoint& aPointToPutCaret,
                         const EditorBase& aEditorBase,
                         const SuggestCaretOptions& aOptions);
 
-  explicit CreateNodeResultBase(nsresult aRv) : mRv(aRv) {
-    MOZ_DIAGNOSTIC_ASSERT(NS_FAILED(mRv));
+ protected:
+  constexpr bool CaretPointHandled() const { return mHandledCaretPoint; }
+
+  void SetCaretPoint(const EditorDOMPoint& aCaretPoint) {
+    mHandledCaretPoint = false;
+    mCaretPoint = aCaretPoint;
+  }
+  void SetCaretPoint(EditorDOMPoint&& aCaretPoint) {
+    mHandledCaretPoint = false;
+    mCaretPoint = std::move(aCaretPoint);
   }
 
-  explicit CreateNodeResultBase(NodeType* aNode)
-      : mNode(aNode), mRv(aNode ? NS_OK : NS_ERROR_FAILURE) {}
-  explicit CreateNodeResultBase(NodeType* aNode,
+  void UnmarkAsHandledCaretPoint() { mHandledCaretPoint = true; }
+
+  CaretPoint() = default;
+
+ private:
+  EditorDOMPoint mCaretPoint;
+  bool mutable mHandledCaretPoint = false;
+};
+
+/***************************************************************************
+ * EditActionResult is useful to return the handling state of edit sub actions
+ * without out params.
+ */
+class MOZ_STACK_CLASS EditActionResult final {
+ public:
+  bool Canceled() const { return mCanceled; }
+  bool Handled() const { return mHandled; }
+  bool Ignored() const { return !mCanceled && !mHandled; }
+
+  void MarkAsCanceled() { mCanceled = true; }
+  void MarkAsHandled() { mHandled = true; }
+
+  EditActionResult& operator|=(const EditActionResult& aOther) {
+    mCanceled |= aOther.mCanceled;
+    mHandled |= aOther.mHandled;
+    return *this;
+  }
+
+  EditActionResult& operator|=(const MoveNodeResult& aMoveNodeResult);
+
+  static EditActionResult IgnoredResult() {
+    return EditActionResult(false, false);
+  }
+  static EditActionResult HandledResult() {
+    return EditActionResult(false, true);
+  }
+  static EditActionResult CanceledResult() {
+    return EditActionResult(true, true);
+  }
+
+  EditActionResult(const EditActionResult&) = delete;
+  EditActionResult& operator=(const EditActionResult&) = delete;
+  EditActionResult(EditActionResult&&) = default;
+  EditActionResult& operator=(EditActionResult&&) = default;
+
+ private:
+  bool mCanceled = false;
+  bool mHandled = false;
+
+  EditActionResult(bool aCanceled, bool aHandled)
+      : mCanceled(aCanceled), mHandled(aHandled) {}
+
+  EditActionResult() : mCanceled(false), mHandled(false) {}
+};
+
+/***************************************************************************
+ * CreateNodeResultBase is a simple class for CreateSomething() methods
+ * which want to return new node.
+ */
+template <typename NodeType>
+class MOZ_STACK_CLASS CreateNodeResultBase final : public CaretPoint {
+  using SelfType = CreateNodeResultBase<NodeType>;
+
+ public:
+  bool Handled() const { return mNode; }
+  NodeType* GetNewNode() const { return mNode; }
+  RefPtr<NodeType> UnwrapNewNode() { return std::move(mNode); }
+
+  CreateNodeResultBase() = delete;
+  explicit CreateNodeResultBase(NodeType& aNode) : mNode(&aNode) {}
+  explicit CreateNodeResultBase(NodeType& aNode,
                                 const EditorDOMPoint& aCandidateCaretPoint)
-      : mNode(aNode),
-        mCaretPoint(aCandidateCaretPoint),
-        mRv(aNode ? NS_OK : NS_ERROR_FAILURE) {}
-  explicit CreateNodeResultBase(NodeType* aNode,
+      : CaretPoint(aCandidateCaretPoint), mNode(&aNode) {}
+  explicit CreateNodeResultBase(NodeType& aNode,
                                 EditorDOMPoint&& aCandidateCaretPoint)
-      : mNode(aNode),
-        mCaretPoint(std::move(aCandidateCaretPoint)),
-        mRv(aNode ? NS_OK : NS_ERROR_FAILURE) {}
+      : CaretPoint(std::move(aCandidateCaretPoint)), mNode(&aNode) {}
 
   explicit CreateNodeResultBase(RefPtr<NodeType>&& aNode)
-      : mNode(std::move(aNode)), mRv(mNode.get() ? NS_OK : NS_ERROR_FAILURE) {}
+      : mNode(std::move(aNode)) {}
   explicit CreateNodeResultBase(RefPtr<NodeType>&& aNode,
                                 const EditorDOMPoint& aCandidateCaretPoint)
-      : mNode(std::move(aNode)),
-        mCaretPoint(aCandidateCaretPoint),
-        mRv(mNode.get() ? NS_OK : NS_ERROR_FAILURE) {}
+      : CaretPoint(aCandidateCaretPoint), mNode(std::move(aNode)) {
+    MOZ_ASSERT(mNode);
+  }
   explicit CreateNodeResultBase(RefPtr<NodeType>&& aNode,
                                 EditorDOMPoint&& aCandidateCaretPoint)
-      : mNode(std::move(aNode)),
-        mCaretPoint(std::move(aCandidateCaretPoint)),
-        mRv(mNode.get() ? NS_OK : NS_ERROR_FAILURE) {}
+      : CaretPoint(std::move(aCandidateCaretPoint)), mNode(std::move(aNode)) {
+    MOZ_ASSERT(mNode);
+  }
 
   [[nodiscard]] static SelfType NotHandled() {
-    SelfType result;
-    result.mRv = NS_SUCCESS_DOM_NO_OPERATION;
-    return result;
+    return SelfType(EditorDOMPoint());
   }
   [[nodiscard]] static SelfType NotHandled(
       const EditorDOMPoint& aPointToPutCaret) {
-    SelfType result;
-    result.mRv = NS_SUCCESS_DOM_NO_OPERATION;
-    result.mCaretPoint = aPointToPutCaret;
+    SelfType result(aPointToPutCaret);
     return result;
   }
   [[nodiscard]] static SelfType NotHandled(EditorDOMPoint&& aPointToPutCaret) {
-    SelfType result;
-    result.mRv = NS_SUCCESS_DOM_NO_OPERATION;
-    result.mCaretPoint = std::move(aPointToPutCaret);
+    SelfType result(std::move(aPointToPutCaret));
     return result;
   }
 
 #ifdef DEBUG
   ~CreateNodeResultBase() {
-    MOZ_ASSERT_IF(isOk(), !mCaretPoint.IsSet() || mHandledCaretPoint);
+    MOZ_ASSERT(!HasCaretPointSuggestion() || CaretPointHandled());
   }
 #endif
 
@@ -280,12 +246,51 @@ class MOZ_STACK_CLASS CreateNodeResultBase final {
   SelfType& operator=(SelfType&& aOther) = default;
 
  private:
-  CreateNodeResultBase() = default;
+  explicit CreateNodeResultBase(const EditorDOMPoint& aCandidateCaretPoint)
+      : CaretPoint(aCandidateCaretPoint) {}
+  explicit CreateNodeResultBase(EditorDOMPoint&& aCandidateCaretPoint)
+      : CaretPoint(std::move(aCandidateCaretPoint)) {}
 
   RefPtr<NodeType> mNode;
-  EditorDOMPoint mCaretPoint;
-  nsresult mRv = NS_OK;
-  bool mutable mHandledCaretPoint = false;
+};
+
+/**
+ * This is a result of inserting text.  If the text inserted as a part of
+ * composition, this does not return CaretPoint.  Otherwise, must return
+ * CaretPoint which is typically same as end of inserted text.
+ */
+class MOZ_STACK_CLASS InsertTextResult final : public CaretPoint {
+ public:
+  InsertTextResult() : CaretPoint(EditorDOMPoint()) {}
+  template <typename EditorDOMPointType>
+  explicit InsertTextResult(const EditorDOMPointType& aEndOfInsertedText)
+      : CaretPoint(EditorDOMPoint()),
+        mEndOfInsertedText(aEndOfInsertedText.template To<EditorDOMPoint>()) {}
+  explicit InsertTextResult(EditorDOMPointInText&& aEndOfInsertedText)
+      : CaretPoint(EditorDOMPoint()),
+        mEndOfInsertedText(std::move(aEndOfInsertedText)) {}
+  template <typename PT, typename CT>
+  InsertTextResult(EditorDOMPointInText&& aEndOfInsertedText,
+                   const EditorDOMPointBase<PT, CT>& aCaretPoint)
+      : CaretPoint(aCaretPoint.template To<EditorDOMPoint>()),
+        mEndOfInsertedText(std::move(aEndOfInsertedText)) {}
+  InsertTextResult(EditorDOMPointInText&& aEndOfInsertedText,
+                   CaretPoint&& aCaretPoint)
+      : CaretPoint(std::move(aCaretPoint)),
+        mEndOfInsertedText(std::move(aEndOfInsertedText)) {
+    UnmarkAsHandledCaretPoint();
+  }
+  InsertTextResult(InsertTextResult&& aOther, EditorDOMPoint&& aCaretPoint)
+      : CaretPoint(std::move(aCaretPoint)),
+        mEndOfInsertedText(std::move(aOther.mEndOfInsertedText)) {}
+
+  [[nodiscard]] bool Handled() const { return mEndOfInsertedText.IsSet(); }
+  const EditorDOMPointInText& EndOfInsertedTextRef() const {
+    return mEndOfInsertedText;
+  }
+
+ private:
+  EditorDOMPointInText mEndOfInsertedText;
 };
 
 /***************************************************************************
@@ -396,6 +401,12 @@ class EditorUtils final {
   }
 
   /**
+   * Get computed white-space style of aContent.
+   */
+  static Maybe<StyleWhiteSpace> GetComputedWhiteSpaceStyle(
+      const nsIContent& aContent);
+
+  /**
    * IsWhiteSpacePreformatted() checks the style info for the node for the
    * preformatted text style.  This does NOT flush layout.
    */
@@ -413,17 +424,6 @@ class EditorUtils final {
    * returns true only when `white-space:pre-line`.
    */
   static bool IsOnlyNewLinePreformatted(const nsIContent& aContent);
-
-  /**
-   * Helper method for `AppendString()` and `AppendSubString()`.  This should
-   * be called only when `aText` is in a password field.  This method masks
-   * A part of or all of `aText` (`aStartOffsetInText` and later) should've
-   * been copied (apppended) to `aString`.  `aStartOffsetInString` is where
-   * the password was appended into `aString`.
-   */
-  static void MaskString(nsString& aString, const dom::Text& aTextNode,
-                         uint32_t aStartOffsetInString,
-                         uint32_t aStartOffsetInText);
 
   static nsStaticAtom* GetTagNameAtom(const nsAString& aTagName) {
     if (aTagName.IsEmpty()) {
@@ -471,7 +471,7 @@ class EditorUtils final {
                                  const nsINode& aParentNode, uint32_t aOffset);
 
   /**
-   * Create an nsITransferable instance which has kUnicodeMime and
+   * Create an nsITransferable instance which has kTextMime and
    * kMozTextInternal flavors.
    */
   static Result<nsCOMPtr<nsITransferable>, nsresult>

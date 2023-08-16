@@ -5,7 +5,6 @@
 import React, { Component } from "react";
 import PropTypes from "prop-types";
 import { connect } from "../../../utils/connect";
-import classnames from "classnames";
 
 import Reps from "devtools/client/shared/components/reps/index";
 const {
@@ -14,11 +13,10 @@ const {
 
 import actions from "../../../actions";
 
-import { getThreadContext } from "../../../selectors";
-
 import AccessibleImage from "../../shared/AccessibleImage";
 
 const DevToolsUtils = require("devtools/shared/DevToolsUtils");
+const classnames = require("devtools/client/shared/classnames.js");
 
 const POPUP_SELECTOR = ".preview-popup.exception-popup";
 const ANONYMOUS_FN_NAME = "<anonymous>";
@@ -39,7 +37,6 @@ class ExceptionPopup extends Component {
   static get propTypes() {
     return {
       clearPreview: PropTypes.func.isRequired,
-      cx: PropTypes.object.isRequired,
       mouseout: PropTypes.func.isRequired,
       selectSourceURL: PropTypes.func.isRequired,
       exception: PropTypes.object.isRequired,
@@ -62,12 +59,10 @@ class ExceptionPopup extends Component {
   }
 
   onTopWindowClick = e => {
-    const { cx, clearPreview } = this.props;
-
     // When the stactrace is expaned the exception popup gets closed
     // only by clicking ouside the popup.
     if (!e.target.closest(POPUP_SELECTOR)) {
-      clearPreview(cx);
+      this.props.clearPreview();
     }
   };
 
@@ -79,14 +74,15 @@ class ExceptionPopup extends Component {
   }
 
   buildStackFrame(frame) {
-    const { cx, selectSourceURL } = this.props;
     const { filename, lineNumber } = frame;
     const functionName = frame.functionName || ANONYMOUS_FN_NAME;
 
     return (
       <div
         className="frame"
-        onClick={() => selectSourceURL(cx, filename, { line: lineNumber })}
+        onClick={() =>
+          this.props.selectSourceURL(filename, { line: lineNumber })
+        }
       >
         <span className="title">{functionName}</span>
         <span className="location">
@@ -152,13 +148,8 @@ class ExceptionPopup extends Component {
   }
 }
 
-const mapStateToProps = state => ({
-  cx: getThreadContext(state),
-});
-
 const mapDispatchToProps = {
   selectSourceURL: actions.selectSourceURL,
-  clearPreview: actions.clearPreview,
 };
 
-export default connect(mapStateToProps, mapDispatchToProps)(ExceptionPopup);
+export default connect(null, mapDispatchToProps)(ExceptionPopup);

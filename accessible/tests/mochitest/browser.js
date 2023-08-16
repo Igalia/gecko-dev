@@ -1,7 +1,7 @@
 /* import-globals-from common.js */
 
-var { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+var { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 /**
@@ -119,14 +119,15 @@ function openBrowserWindowIntl() {
     }
   }
 
-  gBrowserContext.browserWnd = window.browsingContext.topChromeWindow.openDialog(
-    AppConstants.BROWSER_CHROME_URL,
-    "_blank",
-    params,
-    gBrowserContext.startURL || "data:text/html,<html></html>"
-  );
+  gBrowserContext.browserWnd =
+    window.browsingContext.topChromeWindow.openDialog(
+      AppConstants.BROWSER_CHROME_URL,
+      "_blank",
+      params,
+      gBrowserContext.startURL || "data:text/html,<html></html>"
+    );
 
-  whenDelayedStartupFinished(browserWindow(), function() {
+  whenDelayedStartupFinished(browserWindow(), function () {
     addA11yLoadEvent(startBrowserTests, browserWindow());
   });
 }

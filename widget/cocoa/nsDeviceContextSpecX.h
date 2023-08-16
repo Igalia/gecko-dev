@@ -12,6 +12,8 @@
 
 #include "nsCOMPtr.h"
 
+#include "mozilla/gfx/PrintPromise.h"
+
 #include <ApplicationServices/ApplicationServices.h>
 
 class nsDeviceContextSpecX : public nsIDeviceContextSpec {
@@ -25,8 +27,8 @@ class nsDeviceContextSpecX : public nsIDeviceContextSpec {
   NS_IMETHOD BeginDocument(const nsAString& aTitle,
                            const nsAString& aPrintToFileName,
                            int32_t aStartPage, int32_t aEndPage) override;
-  NS_IMETHOD EndDocument() override;
-  NS_IMETHOD BeginPage() override { return NS_OK; };
+  RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocument() override;
+  NS_IMETHOD BeginPage(const IntSize& aSizeInPoints) override { return NS_OK; };
   NS_IMETHOD EndPage() override { return NS_OK; };
 
   void GetPaperRect(double* aTop, double* aLeft, double* aBottom,
@@ -44,6 +46,8 @@ class nsDeviceContextSpecX : public nsIDeviceContextSpec {
   // file "print" output generated if printing via PDF
   nsCOMPtr<nsIFile> mTempFile;
 #endif
+ private:
+  nsresult DoEndDocument();
 };
 
 #endif  // nsDeviceContextSpecX_h_

@@ -32,7 +32,7 @@ class MIDIPortInfo;
  */
 class MIDIPlatformService {
  public:
-  NS_INLINE_DECL_REFCOUNTING(MIDIPlatformService);
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MIDIPlatformService);
   // Adds info about MIDI Port that has been connected.
   void AddPortInfo(MIDIPortInfo& aPortInfo);
 
@@ -68,6 +68,17 @@ class MIDIPlatformService {
   // protocols left to communicate with.
   void MaybeStop();
 
+  // Initializes statics on startup.
+  static void InitStatics();
+
+  // Returns the MIDI Task Queue.
+  static nsISerialEventTarget* OwnerThread();
+
+  // Asserts that we're on the above task queue.
+  static void AssertThread() {
+    MOZ_DIAGNOSTIC_ASSERT(OwnerThread()->IsOnCurrentThread());
+  }
+
   // True if service is live.
   static bool IsRunning();
 
@@ -96,6 +107,9 @@ class MIDIPlatformService {
   // Clears all messages later than now, sends all outgoing message scheduled
   // before/at now, and schedules MIDI Port connection closing.
   void Close(MIDIPortParent* aPort);
+
+  // Returns whether there are currently any MIDI devices.
+  bool HasDevice() { return !mPortInfo.IsEmpty(); }
 
  protected:
   MIDIPlatformService();

@@ -7,23 +7,14 @@
 
 """A parser for cross-platform IDL (XPIDL) files."""
 
-# Note that this file is used by the searchfox indexer in ways that are
-# not tested in Firefox's CI. Please try to keep this file py2-compatible
-# if the burden for that is low. If you are making changes you know to be
-# incompatible with py2, please give a searchfox maintainer a heads-up so
-# that any necessary changes can be made on the searchfox side.
-
-from __future__ import absolute_import
-from __future__ import print_function
-
-import sys
 import os.path
 import re
-from ply import lex
-from ply import yacc
-import six
+import sys
 import textwrap
 from collections import namedtuple
+
+import six
+from ply import lex, yacc
 
 """A type conforms to the following pattern:
 
@@ -197,6 +188,12 @@ builtinNames = [
     Builtin("string", "char *", "*const libc::c_char", False, False),
     Builtin("wchar", "char16_t", "u16", False, False),
     Builtin("wstring", "char16_t *", "*const u16", False, False),
+    # As seen in mfbt/RefCountType.h, this type has special handling to
+    # maintain binary compatibility with MSCOM's IUnknown that cannot be
+    # expressed in XPIDL.
+    Builtin(
+        "MozExternalRefCountType", "MozExternalRefCountType", "MozExternalRefCountType"
+    ),
 ]
 
 builtinMap = {}
@@ -295,7 +292,7 @@ class NameMap(object):
         try:
             return self[id]
         except KeyError:
-            raise IDLError("Name '%s' not found", location)
+            raise IDLError(f"Name '{id}' not found", location)
 
 
 class RustNoncompat(Exception):
@@ -524,7 +521,7 @@ class Forward(object):
         if rustPreventForward(self.name):
             raise RustNoncompat("forward declaration %s is unsupported" % self.name)
         if calltype == "element":
-            return "RefPtr<%s>" % self.name
+            return "Option<RefPtr<%s>>" % self.name
         return "%s*const %s" % ("*mut" if "out" in calltype else "", self.name)
 
     def __str__(self):
@@ -779,6 +776,13 @@ class Interface(object):
     def resolve(self, parent):
         self.idl = parent
 
+        if not self.attributes.scriptable and self.attributes.builtinclass:
+            raise IDLError(
+                "Non-scriptable interface '%s' doesn't need to be marked builtinclass"
+                % self.name,
+                self.location,
+            )
+
         # Hack alert: if an identifier is already present, libIDL assigns
         # doc comments incorrectly. This is quirks-mode extraordinaire!
         if parent.hasName(self.name):
@@ -829,6 +833,23 @@ class Interface(object):
                     "builtinclass '%s'" % (self.name, self.base),
                     self.location,
                 )
+
+            if realbase.attributes.rust_sync and not self.attributes.rust_sync:
+                raise IDLError(
+                    "interface '%s' is not rust_sync but derives from rust_sync '%s'"
+                    % (self.name, self.base),
+                    self.location,
+                )
+
+            if (
+                self.attributes.rust_sync
+                and self.attributes.scriptable
+                and not self.attributes.builtinclass
+            ):
+                raise IDLError(
+                    "interface '%s' is rust_sync but is not builtinclass" % self.name,
+                    self.location,
+                )
         elif self.name != "nsISupports":
             raise IDLError(
                 "Interface '%s' must inherit from nsISupports" % self.name,
@@ -858,7 +879,7 @@ class Interface(object):
 
     def rustType(self, calltype, const=False):
         if calltype == "element":
-            return "RefPtr<%s>" % self.name
+            return "Option<RefPtr<%s>>" % self.name
         return "%s*const %s" % ("*mut " if "out" in calltype else "", self.name)
 
     def __str__(self):
@@ -908,8 +929,8 @@ class InterfaceAttributes(object):
     scriptable = False
     builtinclass = False
     function = False
-    noscript = False
     main_process_scriptable_only = False
+    rust_sync = False
 
     def setuuid(self, value):
         self.uuid = value.lower()
@@ -920,23 +941,23 @@ class InterfaceAttributes(object):
     def setfunction(self):
         self.function = True
 
-    def setnoscript(self):
-        self.noscript = True
-
     def setbuiltinclass(self):
         self.builtinclass = True
 
     def setmain_process_scriptable_only(self):
         self.main_process_scriptable_only = True
 
+    def setrust_sync(self):
+        self.rust_sync = True
+
     actions = {
         "uuid": (True, setuuid),
         "scriptable": (False, setscriptable),
         "builtinclass": (False, setbuiltinclass),
         "function": (False, setfunction),
-        "noscript": (False, setnoscript),
         "object": (False, lambda self: True),
         "main_process_scriptable_only": (False, setmain_process_scriptable_only),
+        "rust_sync": (False, setrust_sync),
     }
 
     def __init__(self, attlist, location):
@@ -971,6 +992,8 @@ class InterfaceAttributes(object):
             l.append("\tfunction\n")
         if self.main_process_scriptable_only:
             l.append("\tmain_process_scriptable_only\n")
+        if self.rust_sync:
+            l.append("\trust_sync\n")
         return "".join(l)
 
 
@@ -1111,10 +1134,11 @@ def ensureInfallibleIsSound(methodOrAttribute):
             "(numbers, booleans, cenum, and raw char types)",
             methodOrAttribute.location,
         )
-    if not methodOrAttribute.iface.attributes.builtinclass:
+    ifaceAttributes = methodOrAttribute.iface.attributes
+    if ifaceAttributes.scriptable and not ifaceAttributes.builtinclass:
         raise IDLError(
             "[infallible] attributes and methods are only allowed on "
-            "[builtinclass] interfaces",
+            "non-[scriptable] or [builtinclass] interfaces",
             methodOrAttribute.location,
         )
 
@@ -1338,21 +1362,33 @@ class Method(object):
                     self.location,
                 )
             if p.size_is:
-                found_size_param = False
-                for size_param in self.params:
-                    if p.size_is == size_param.name:
-                        found_size_param = True
-                        if (
-                            getBuiltinOrNativeTypeName(size_param.realtype)
-                            != "unsigned long"
-                        ):
-                            raise IDLError(
-                                "is_size parameter must have type 'unsigned long'",
-                                self.location,
-                            )
-                if not found_size_param:
+                size_param = self.namemap.get(p.size_is, p.location)
+                if (
+                    p.paramtype.count("in") == 1
+                    and size_param.paramtype.count("in") == 0
+                ):
                     raise IDLError(
-                        "could not find is_size parameter '%s'" % p.size_is,
+                        "size_is parameter of an input must also be an input",
+                        p.location,
+                    )
+                if getBuiltinOrNativeTypeName(size_param.realtype) != "unsigned long":
+                    raise IDLError(
+                        "size_is parameter must have type 'unsigned long'",
+                        p.location,
+                    )
+            if p.iid_is:
+                iid_param = self.namemap.get(p.iid_is, p.location)
+                if (
+                    p.paramtype.count("in") == 1
+                    and iid_param.paramtype.count("in") == 0
+                ):
+                    raise IDLError(
+                        "iid_is parameter of an input must also be an input",
+                        p.location,
+                    )
+                if getBuiltinOrNativeTypeName(iid_param.realtype) != "[nsid]":
+                    raise IDLError(
+                        "iid_is parameter must be an nsIID",
                         self.location,
                     )
 
@@ -1618,13 +1654,13 @@ class IDLParser(object):
     t_ignore = " \t"
 
     def t_multilinecomment(self, t):
-        r"/\*(?s).*?\*/"
+        r"/\*(\n|.)*?\*/"
         t.lexer.lineno += t.value.count("\n")
         if t.value.startswith("/**"):
             self._doccomments.append(t.value)
 
     def t_singlelinecomment(self, t):
-        r"(?m)//.*?$"
+        r"//[^\n]*"
 
     def t_IID(self, t):
         return t
@@ -1637,7 +1673,7 @@ class IDLParser(object):
         return t
 
     def t_LCDATA(self, t):
-        r"(?s)%\{[ ]*C\+\+[ ]*\n(?P<cdata>.*?\n?)%\}[ ]*(C\+\+)?"
+        r"%\{[ ]*C\+\+[ ]*\n(?P<cdata>(\n|.)*?\n?)%\}[ ]*(C\+\+)?"
         t.type = "CDATA"
         t.value = t.lexer.lexmatch.group("cdata")
         t.lexer.lineno += t.value.count("\n")
@@ -1988,7 +2024,7 @@ class IDLParser(object):
             type=p[3],
             name=p[4],
             attlist=p[1]["attlist"],
-            location=self.getLocation(p, 3),
+            location=self.getLocation(p, 4),
         )
 
     def p_paramtype(self, p):

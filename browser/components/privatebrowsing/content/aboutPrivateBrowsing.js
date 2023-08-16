@@ -9,10 +9,7 @@
  * @param {Array<[HTMLElement, string]>} items An array of [element, value] where value is
  *                                       a fluent id starting with "fluent:" or plain text
  */
-async function translateElements(container, items) {
-  // We need to wait for fluent to initialize
-  await document.l10n.ready;
-
+function translateElements(items) {
   items.forEach(([element, value]) => {
     // Skip empty text or elements
     if (!element || !value) {
@@ -26,12 +23,10 @@ async function translateElements(container, items) {
       element.removeAttribute("data-l10n-id");
     }
   });
-
-  document.l10n.translateFragment(container);
 }
 
-async function renderInfo({
-  infoEnabled = false,
+function renderInfo({
+  infoEnabled,
   infoTitle,
   infoTitleEnabled,
   infoBody,
@@ -40,10 +35,11 @@ async function renderInfo({
   infoIcon,
 } = {}) {
   const container = document.querySelector(".info");
-  if (!infoEnabled) {
-    container.remove();
+  if (infoEnabled === false) {
+    container.hidden = true;
     return;
   }
+  container.hidden = false;
 
   const titleEl = document.getElementById("info-title");
   const bodyEl = document.getElementById("info-body");
@@ -53,26 +49,17 @@ async function renderInfo({
     container.style.backgroundImage = `url(${infoIcon})`;
   }
 
-  if (!infoTitleEnabled) {
-    titleEl.remove();
-  }
+  titleEl.hidden = !infoTitleEnabled;
 
-  await translateElements(container, [
+  translateElements([
     [titleEl, infoTitle],
     [bodyEl, infoBody],
     [linkEl, infoLinkText],
   ]);
 
-  linkEl.setAttribute(
-    "href",
-    infoLinkUrl ||
-      RPMGetFormatURLPref("app.support.baseURL") + "private-browsing-myths"
-  );
-  linkEl.setAttribute("target", "_blank");
-
-  linkEl.addEventListener("click", () => {
-    window.PrivateBrowsingRecordClick("info_link");
-  });
+  if (infoLinkUrl) {
+    linkEl.setAttribute("href", infoLinkUrl);
+  }
 }
 
 async function renderPromo({
@@ -180,7 +167,7 @@ async function renderPromo({
     promoHeaderEl.remove();
   }
 
-  await translateElements(container, [
+  translateElements([
     [titleEl, promoTitle],
     [linkEl, promoLinkText],
     [promoHeaderEl, promoHeader],
@@ -223,7 +210,7 @@ function recordOnceVisible(message) {
 }
 
 // The PB newtab may be pre-rendered. Once the tab is visible, check to make sure the message wasn't blocked after the initial render. If it was, remove the promo.
-async function handlePromoOnPreload(message) {
+function handlePromoOnPreload(message) {
   async function removePromoIfBlocked() {
     if (document.visibilityState === "visible") {
       let blocked = await RPMSendQuery("IsPromoBlocked", message);
@@ -240,51 +227,72 @@ async function handlePromoOnPreload(message) {
   }
 }
 
-async function setupMessageConfig() {
-  let config = null;
+async function setupMessageConfig(config = null) {
   let message = null;
 
-  let hideDefault = window.PrivateBrowsingShouldHideDefault();
-  try {
-    let response = await window.ASRouterMessage({
-      type: "PBNEWTAB_MESSAGE_REQUEST",
-      data: { hideDefault: !!hideDefault },
-    });
-    message = response?.message;
-    config = message?.content;
-    config.messageId = message?.id;
-  } catch (e) {}
+  if (!config) {
+    let hideDefault = window.PrivateBrowsingShouldHideDefault();
+    try {
+      let response = await window.ASRouterMessage({
+        type: "PBNEWTAB_MESSAGE_REQUEST",
+        data: { hideDefault: !!hideDefault },
+      });
+      message = response?.message;
+      config = message?.content;
+      config.messageId = message?.id;
+    } catch (e) {}
+  }
 
-  await renderInfo(config);
+  renderInfo(config);
   let hasRendered = await renderPromo(config);
   if (hasRendered && message) {
     recordOnceVisible(message);
-    await handlePromoOnPreload(message);
+    handlePromoOnPreload(message);
   }
   // For tests
   document.documentElement.setAttribute("PrivateBrowsingRenderComplete", true);
 }
 
-document.addEventListener("DOMContentLoaded", function() {
+let SHOW_DEVTOOLS_MESSAGE = "ShowDevToolsMessage";
+
+function showDevToolsMessage(msg) {
+  msg.data.content.messageId = "DEVTOOLS_MESSAGE";
+  setupMessageConfig(msg?.data?.content);
+  RPMRemoveMessageListener(SHOW_DEVTOOLS_MESSAGE, showDevToolsMessage);
+}
+
+document.addEventListener("DOMContentLoaded", function () {
+  // check the url to see if we're rendering a devtools message
+  if (document.location.toString().includes("debug")) {
+    RPMAddMessageListener(SHOW_DEVTOOLS_MESSAGE, showDevToolsMessage);
+    return;
+  }
   if (!RPMIsWindowPrivate()) {
     document.documentElement.classList.remove("private");
     document.documentElement.classList.add("normal");
     document
       .getElementById("startPrivateBrowsing")
-      .addEventListener("click", function() {
+      .addEventListener("click", function () {
         RPMSendAsyncMessage("OpenPrivateWindow");
       });
     return;
   }
 
-  let newLogoEnabled = RPMGetBoolPref(
-    "browser.privatebrowsing.enable-new-logo",
-    false
-  );
-
+  let newLogoEnabled = window.PrivateBrowsingEnableNewLogo();
   document
     .getElementById("about-private-browsing-logo")
     .toggleAttribute("legacy", !newLogoEnabled);
+
+  // The default info content is already in the markup, but we need to use JS to
+  // set up the learn more link, since it's dynamically generated.
+  const linkEl = document.getElementById("private-browsing-myths");
+  linkEl.setAttribute(
+    "href",
+    RPMGetFormatURLPref("app.support.baseURL") + "private-browsing-myths"
+  );
+  linkEl.addEventListener("click", () => {
+    window.PrivateBrowsingRecordClick("info_link");
+  });
 
   // We don't do this setup until now, because we don't want to record any impressions until we're
   // sure we're actually running a private window, not just about:privatebrowsing in a normal window.
@@ -395,22 +403,22 @@ document.addEventListener("DOMContentLoaded", function() {
       RPMAddMessageListener(DISABLE_SEARCH_TOPIC, disableSearch);
     }
   }
-  btn.addEventListener("focus", function() {
+  btn.addEventListener("focus", function () {
     handoffSearch();
   });
-  btn.addEventListener("click", function() {
+  btn.addEventListener("click", function () {
     handoffSearch();
   });
 
   // Hand-off any text that gets dropped or pasted
-  editable.addEventListener("drop", function(ev) {
+  editable.addEventListener("drop", function (ev) {
     ev.preventDefault();
     let text = ev.dataTransfer.getData("text");
     if (text) {
       handoffSearch(text);
     }
   });
-  editable.addEventListener("paste", function(ev) {
+  editable.addEventListener("paste", function (ev) {
     ev.preventDefault();
     handoffSearch(ev.clipboardData.getData("Text"));
   });

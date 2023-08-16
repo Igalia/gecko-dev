@@ -35,7 +35,7 @@ includes = ["mozilla/ServoStyleConstsForwards.h", "mozilla/ServoStyleSet.h"]
 [parse]
 parse_deps = true
 extra_bindings = ["style"]
-include = ["style", "cssparser", "style_traits", "servo_arc"]
+include = ["style", "app_units", "cssparser", "style_traits", "servo_arc"]
 
 [struct]
 associated_constants_in_body = true
@@ -72,22 +72,29 @@ prefix = "Style"
 exclude = [
   "NS_LogCtor",
   "NS_LogDtor",
+  "SelectorList",
+  "AuthorStyles",
 ]
 include = [
   "AnimationTimeline",
+  "AnimationIterationCount",
   "Appearance",
+  "Au",
   "BreakBetween",
   "BreakWithin",
   "BorderStyle",
+  "BoolInteger",
   "OutlineStyle",
   "CaptionSide",
   "FontSizeAdjust",
+  "FontPalette",
   "ComputedFontStretchRange",
   "ComputedFontStyleDescriptor",
   "ComputedFontWeightRange",
   "ComputedTimingFunction",
   "ComputedValueFlags",
   "CursorKind",
+  "Display",
   "DisplayOutside",
   "DisplayInside",
   "DisplayMode",
@@ -95,19 +102,27 @@ include = [
   "PrefersColorScheme",
   "PrefersContrast",
   "DynamicRange",
+  "Scripting",
   "FillRule",
   "FontDisplay",
   "FontFaceSourceListComponent",
+  "FontFaceSourceTechFlags",
   "FontLanguageOverride",
+  "FontSynthesis",
   "GenericFontFamily",
   "FontFamily",
   "FontFamilyNameSyntax",
+  "MozTheme",
   "OverflowWrap",
   "OffsetPath",
+  "OffsetPathFunction",
+  "OffsetPosition",
   "OffsetRotate",
+  "RayFunction",
   "UnicodeRange",
   "UserSelect",
   "Float",
+  "Clear",
   "OverscrollBehavior",
   "ScrollSnapAlign",
   "ScrollSnapAxis",
@@ -115,6 +130,7 @@ include = [
   "ScrollSnapStrictness",
   "ScrollSnapType",
   "ScrollTimelineName",
+  "ViewTimelineInset",
   "OverflowAnchor",
   "OverflowClipBox",
   "Resize",
@@ -130,6 +146,7 @@ include = [
   "NonNegativeLengthOrAuto",
   "TextDecorationSkipInk",
   "TextDecorationLength",
+  "Time",
   "Rect",
   "IntersectionObserverRootMargin",
   "Size",
@@ -138,6 +155,7 @@ include = [
   "Position",
   "PositionOrAuto",
   "BackgroundSize",
+  "BaselineSource",
   "BorderImageSlice",
   "BorderSpacing",
   "BorderRadius",
@@ -147,6 +165,7 @@ include = [
   "ZIndex",
   "TransformOrigin",
   "LineBreak",
+  "LineClamp",
   "WordBreak",
   "Contain",
   "ContainerType",
@@ -158,6 +177,9 @@ include = [
   "TouchAction",
   "WillChange",
   "TextDecorationLine",
+  "MasonryAutoFlow",
+  "MasonryPlacement",
+  "MasonryItemOrder",
   "TextUnderlinePosition",
   "TextTransform",
   "TextJustify",
@@ -177,6 +199,7 @@ include = [
   "GradientItem",
   "VerticalAlign",
   "BasicShape",
+  "InsetRect",
   "ShapeRadius",
   "ArcSlice",
   "ForgottenArcSlicePtr",
@@ -204,7 +227,8 @@ include = [
   "SVGPaintKind",
   "GridTemplateComponent",
   "TextEmphasisStyle",
-  "VariantAlternatesList",
+  "TextEmphasisPosition",
+  "FontVariantAlternates",
   "PaintOrder",
   "SVGPaintOrder",
   "ClipRectOrAuto",
@@ -239,16 +263,19 @@ include = [
   "DefaultFontSizes",
   "RuleChangeKind",
   "PageName",
+  "PageOrientation",
   "PageSize",
   "DProperty",
   "ImageRendering",
   "PrintColorAdjust",
+  "ForcedColorAdjust",
   "ScrollbarGutter",
   "ScrollDirection",
   "HyphenateCharacter",
   "ComputedLinearStop",
   "PiecewiseLinearFunction",
-  "BeforeFlag"
+  "BeforeFlag",
+  "XTextScale",
 ]
 item_types = ["enums", "structs", "unions", "typedefs", "functions", "constants"]
 renaming_overrides_prefixing = true
@@ -274,10 +301,8 @@ renaming_overrides_prefixing = true
 "nsCSSPropertyIDSet" = "nsCSSPropertyIDSet"
 "nsCSSValueSharedList" = "nsCSSValueSharedList"
 "AnimationPropertySegment" = "AnimationPropertySegment"
-"RawServoAnimationValueMap" = "RawServoAnimationValueMap"
 "RawServoAnimationValueTable" = "RawServoAnimationValueTable"
 "nsCSSUnit" = "nsCSSUnit"
-"ParsingMode" = "ParsingMode"
 "InheritTarget" = "InheritTarget"
 "PseudoStyleType" = "PseudoStyleType"
 "DeclarationBlockMutationClosure" = "DeclarationBlockMutationClosure"
@@ -303,6 +328,9 @@ renaming_overrides_prefixing = true
 "ServoTraversalFlags" = "ServoTraversalFlags"
 "ServoStyleSetSizes" = "ServoStyleSetSizes"
 "BeforeFlag" = "StyleEasingBeforeFlag"
+"FontPaletteValueSet" = "gfx::FontPaletteValueSet"
+"PaletteValues" = "gfx::FontPaletteValueSet::PaletteValues"
+"ThinVec" = "nsTArray"
 
 [export.body]
 "CSSPixelLength" = """
@@ -316,19 +344,14 @@ renaming_overrides_prefixing = true
   inline StyleCSSPixelLength ScaledBy(float) const;
 """
 
+"CalcLengthPercentage" = """
+  inline CSSCoord ResolveToCSSPixels(CSSCoord aBasis) const;
+
+  using CoordRounder = nscoord(*)(float);
+  nscoord Resolve(nscoord aBasis, CoordRounder) const;
+"""
+
 "GenericCalcNode" = """
- private:
-
-  template <typename ResultT, typename PercentageConverter>
-  ResultT ResolveInternal(ResultT aPercentageBasis,
-                          PercentageConverter aPercentageConverter) const;
-
- public:
-  CSSCoord ResolveToCSSPixels(CSSCoord aPercentageBasis) const;
-
-  using CoordPercentageRounder = nscoord(*)(float);
-  nscoord Resolve(nscoord aBasis, CoordPercentageRounder) const;
-
   void ScaleLengthsBy(float);
 """
 
@@ -387,9 +410,9 @@ renaming_overrides_prefixing = true
   inline CSSCoord ResolveToCSSPixels(CSSCoord aPercentageBasisInCSSPixels) const;
   template<typename T> inline CSSCoord ResolveToCSSPixelsWith(T aPercentageGetter) const;
   template<typename T, typename U>
-  inline nscoord Resolve(T aPercentageGetter, U aPercentRoundingFunction) const;
+  inline nscoord Resolve(T aPercentageGetter, U aRoundingFunction) const;
   template<typename T>
-  inline nscoord Resolve(nscoord aPercentageBasis, T aPercentRoundingFunction) const;
+  inline nscoord Resolve(nscoord aPercentageBasis, T aRoundingFunction) const;
   template<typename T> inline nscoord Resolve(T aPercentageGetter) const;
   inline nscoord Resolve(nscoord aPercentageBasis) const;
 """
@@ -405,6 +428,8 @@ renaming_overrides_prefixing = true
   // Just some convenient aliases for LengthOrAuto, to avoid confusing naming.
   inline bool IsLength() const;
   inline const StyleLength& AsLength() const;
+
+  static inline StyleGenericLengthPercentageOrAuto Zero();
 """
 
 "GenericSize" = """
@@ -461,6 +486,10 @@ renaming_overrides_prefixing = true
   inline T& GetBStart(WritingMode);
   inline T& GetIEnd(WritingMode);
   inline T& GetBEnd(WritingMode);
+
+  static StyleRect WithAllSides(const T& aSide) {
+    return {aSide, aSide, aSide, aSide};
+  }
 """
 
 "GenericBorderRadius" = """
@@ -521,6 +550,12 @@ renaming_overrides_prefixing = true
   static inline StyleGenericColor White();
   static inline StyleGenericColor Transparent();
   bool MaybeTransparent() const;
+
+  /**
+   * Compute the final color, taking into account the foreground color.
+   **/
+  StyleAbsoluteColor ResolveColor(const StyleAbsoluteColor&) const;
+
   /**
    * Compute the final color, taking into account the foreground color from the
    * frame's ComputedStyle.
@@ -535,14 +570,31 @@ renaming_overrides_prefixing = true
    * Compute the final color, making the argument the foreground color.
    */
   nscolor CalcColor(nscolor) const;
-  nscolor CalcColor(const StyleRGBA&) const;
+  nscolor CalcColor(const StyleAbsoluteColor&) const;
 """
 
-"RGBA" = """
-  static inline StyleRGBA Transparent();
-  static inline StyleRGBA FromColor(nscolor);
+"AbsoluteColor" = """
+  /**
+   * Create a new AbsoluteColor in the sRGB color space.
+   */
+  static inline StyleAbsoluteColor Srgb(float red, float green, float blue, float alpha);
 
-  inline nscolor ToColor() const;
+  static inline StyleAbsoluteColor Transparent();
+  static inline StyleAbsoluteColor Black();
+  static inline StyleAbsoluteColor White();
+
+  static inline StyleAbsoluteColor FromColor(nscolor);
+
+  /**
+   * Convert this color into the given color space.
+   */
+  StyleAbsoluteColor ToColorSpace(StyleColorSpace aColorSpace) const;
+
+  /**
+   * Convert this color to an nscolor. The color will be converted to sRGB first
+   * if required.
+   */
+  nscolor ToColor() const;
 """
 
 "OwnedSlice" = """
@@ -589,23 +641,25 @@ renaming_overrides_prefixing = true
   [[nodiscard]] inline bool DecrementRef();
 """
 
+"HeaderSlice" = """
+  StyleHeaderSlice() = delete;
+  StyleHeaderSlice(const StyleHeaderSlice&) = delete;
+
+  inline ~StyleHeaderSlice();
+  inline bool operator==(const StyleHeaderSlice& other) const;
+  inline bool operator!=(const StyleHeaderSlice& other) const;
+
+  inline Span<const T> AsSpan() const;
+  inline size_t Length() const { return len; }
+  inline bool IsEmpty() const { return len == 0; }
+"""
+
 "ArcSlice" = """
   inline StyleArcSlice();
-  inline StyleArcSlice(const StyleArcSlice& aOther);
-
-  inline StyleArcSlice& operator=(const StyleArcSlice&);
-  inline StyleArcSlice& operator=(StyleArcSlice&&);
-
   inline explicit StyleArcSlice(const StyleForgottenArcSlicePtr<T>& aPtr);
- private:
-  inline void Release();
- public:
-  inline ~StyleArcSlice();
   inline Span<const T> AsSpan() const;
   inline size_t Length() const;
   inline bool IsEmpty() const;
-  inline bool operator==(const StyleArcSlice& other) const;
-  inline bool operator!=(const StyleArcSlice& other) const;
 """
 
 "Arc" = """
@@ -614,6 +668,9 @@ renaming_overrides_prefixing = true
  private:
   inline void Release();
  public:
+  explicit StyleArc(decltype(p) aP) : p(aP) {
+    MOZ_DIAGNOSTIC_ASSERT(p, "Arc shouldn't be null");
+  }
   inline ~StyleArc();
 
   inline StyleArc& operator=(const StyleArc&);
@@ -684,7 +741,8 @@ renaming_overrides_prefixing = true
 """
 
 "CoordPair" = """
-  explicit StyleCoordPair(const gfx::Point& aPoint): _0(aPoint.x), _1(aPoint.y) {}
+  explicit StyleCoordPair(const gfx::Point& aPoint): x(aPoint.x), y(aPoint.y) {}
+  gfx::Point ConvertsToGfxPoint() const { return gfx::Point(x, y); }
 """
 
 "TextOverflow" = """
@@ -781,42 +839,10 @@ renaming_overrides_prefixing = true
   inline nsRect ToLayoutRect(nscoord aAutoSize = NS_MAXSIZE) const;
 """
 
-"GenericRotate" = """
- public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleGenericRotate(): tag(Tag::None) {}
-"""
-
-"GenericScale" = """
- public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleGenericScale(): tag(Tag::None) {}
-"""
-
-"GenericTranslate" = """
- public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleGenericTranslate(): tag(Tag::None) {}
-"""
-
-"GenericOffsetPath" = """
- public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleGenericOffsetPath(): tag(Tag::None) {}
-"""
-
-"GenericPositionOrAuto" = """
- public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleGenericPositionOrAuto(): tag(Tag::Auto) {}
-"""
-
 "TimingFunction" = """
  public:
-  // The implementation of IPC LayersMessages needs this to be public.
-  StyleTimingFunction() : tag(Tag::Keyword) { ::new (&keyword._0) (StyleTimingKeyword) (StyleTimingKeyword::Linear); }
-
   bool IsLinearKeyword() const { return IsKeyword() && AsKeyword() == StyleTimingKeyword::Linear; }
+  static StyleTimingFunction LinearKeyword() { return Keyword(StyleTimingKeyword::Linear); }
 
   inline double At(double, bool aBeforeFlag) const;
   inline void AppendToString(nsACString&) const;
@@ -904,11 +930,6 @@ renaming_overrides_prefixing = true
   bool IsNamedFamily(const nsAString&) const;
 """
 
-"AnimationTimeline" = """
- public:
-  StyleAnimationTimeline(): tag(Tag::Auto) {}
-"""
-
 "TimelineOrKeyframesName" = """
  public:
   inline nsAtom* AsAtom() const;
@@ -925,14 +946,82 @@ renaming_overrides_prefixing = true
 
  inline bool IsItalic() const;
  inline bool IsOblique() const;
- inline float ObliqueAngle() const;
+ inline float ObliqueAngle() const;  // Only for use when IsOblique() is true
+ inline float SlantAngle() const;  // Returns angle for any font-style, including
+                                   // normal/italic as well as explicit oblique
 """
 
 "FontStretch" = """
  SERVO_FIXED_POINT_HELPERS(StyleFontStretch, uint16_t, StyleFONT_STRETCH_FRACTION_BITS);
 """
 
-"ScrollTimelineName" = """
+"AnimationName" = """
  public:
-  StyleScrollTimelineName(): _0(RefPtr<nsAtom>(nsGkAtoms::_empty).forget()) {}
+  StyleAnimationName(): _0(RefPtr<nsAtom>(nsGkAtoms::_empty).forget()) {}
+"""
+
+"GenericViewTimelineInset" = """
+ public:
+  inline StyleGenericViewTimelineInset();
+"""
+
+"Time" = """
+ float ToSeconds() const { return seconds; }
+ float ToMilliseconds() const { return seconds * 1000.0f; }
+"""
+
+"FontFaceSourceTechFlags" = """
+  inline static StyleFontFaceSourceTechFlags Empty() {
+    return StyleFontFaceSourceTechFlags{0};
+  }
+"""
+
+"FontPalette" = """
+  inline static StyleFontPalette Normal() {
+    return StyleFontPalette{StyleAtom(nsGkAtoms::normal->ToAddRefed())};
+  }
+"""
+
+"GenericOffsetPath" = """
+  // Return true if the <offset-path> is ray().
+  bool IsRay() const {
+    return IsOffsetPath() && AsOffsetPath().path->IsRay();
+  }
+
+  const StyleRayFunction& AsRay() const {
+    return AsOffsetPath().path->AsRay();
+  }
+
+  // Return true if the <basic-shape> is path().
+  bool IsPath() const {
+    return IsOffsetPath() && AsOffsetPath().path->IsShape() &&
+           AsOffsetPath().path->AsShape().IsPath();
+  }
+
+  const StyleSVGPathData& AsSVGPathData() const {
+    return AsOffsetPath().path->AsShape().AsPath().path;
+  }
+
+  // Return true if this is "<basic-shape> || <coord-box>".
+  bool IsBasicShapeOrCoordBox() const {
+    return IsCoordBox() || (IsOffsetPath() && AsOffsetPath().path->IsShape());
+  }
+"""
+
+"GenericContainIntrinsicSize" = """
+  bool HasAuto() const { return IsAutoLength() || IsAutoNone(); }
+"""
+
+"Display" = """
+  inline StyleDisplayOutside Outside() const;
+  inline StyleDisplayInside Inside() const;
+  inline bool IsListItem() const;
+  inline bool IsInlineFlow() const;
+  inline bool IsInlineInside() const;
+  inline bool IsInlineOutside() const;
+  inline bool IsBlockOutside() const;
+  inline bool IsRuby() const;
+  inline bool IsInternalRuby() const;
+  inline bool IsInternalTable() const;
+  inline bool IsInternalTableExceptCell() const;
 """

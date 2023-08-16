@@ -58,11 +58,12 @@ static void ReleaseData(void* aData, nsAString::DataFlags aFlags) {
   if (aFlags & nsAString::DataFlags::REFCOUNTED) {
     nsStringBuffer::FromData(aData)->Release();
   } else if (aFlags & nsAString::DataFlags::OWNED) {
-    free(aData);
-    STRING_STAT_INCREMENT(AdoptFree);
     // Treat this as destruction of a "StringAdopt" object for leak
     // tracking purposes.
     MOZ_LOG_DTOR(aData, "StringAdopt", 1);
+
+    free(aData);
+    STRING_STAT_INCREMENT(AdoptFree);
   }
   // otherwise, nothing to do.
 }
@@ -1048,12 +1049,24 @@ void nsTSubstring<T>::StripTaggedASCII(const ASCIIMaskArray& aToStrip) {
     return;
   }
 
+  size_t untaggedPrefixLength = 0;
+  for (; untaggedPrefixLength < this->mLength; ++untaggedPrefixLength) {
+    uint32_t theChar = (uint32_t)this->mData[untaggedPrefixLength];
+    if (mozilla::ASCIIMask::IsMasked(aToStrip, theChar)) {
+      break;
+    }
+  }
+
+  if (untaggedPrefixLength == this->mLength) {
+    return;
+  }
+
   if (!EnsureMutable()) {
     AllocFailed(this->mLength);
   }
 
-  char_type* to = this->mData;
-  char_type* from = this->mData;
+  char_type* to = this->mData + untaggedPrefixLength;
+  char_type* from = to;
   char_type* end = this->mData + this->mLength;
 
   while (from < end) {

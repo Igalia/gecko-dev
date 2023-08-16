@@ -2,20 +2,17 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-const { actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  DownloadsCommon: "resource:///modules/DownloadsCommon.jsm",
-  DownloadsViewUI: "resource:///modules/DownloadsViewUI.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  DownloadsCommon: "resource:///modules/DownloadsCommon.sys.mjs",
+  DownloadsViewUI: "resource:///modules/DownloadsViewUI.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
 });
 
 const DOWNLOAD_CHANGED_DELAY_TIME = 1000; // time in ms to delay timer for downloads changed events
@@ -161,7 +158,7 @@ class DownloadsManager {
         break;
       case at.REMOVE_DOWNLOAD_FILE:
         doDownloadAction(download => {
-          lazy.DownloadsCommon.deleteDownload(download).catch(Cu.reportError);
+          lazy.DownloadsCommon.deleteDownload(download).catch(console.error);
         });
         break;
       case at.SHOW_DOWNLOAD_FILE:

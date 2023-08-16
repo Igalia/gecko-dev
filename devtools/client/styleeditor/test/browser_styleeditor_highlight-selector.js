@@ -14,7 +14,7 @@ const TOP_LEVEL_URL = `https://example.com/document-builder.sjs?html=
     <h1>highlighter test</h1>
     <iframe src='${REMOTE_IFRAME_URL}'></iframe>`;
 
-add_task(async function() {
+add_task(async function () {
   const { ui } = await openStyleEditorForURL(TOP_LEVEL_URL);
 
   info(
@@ -32,9 +32,10 @@ add_task(async function() {
   await waitFor(() => topLevelStylesheetEditor.highlighter);
 
   info("Check that highlighting works on the top-level document");
-  const topLevelHighlighterTestFront = await topLevelStylesheetEditor._resource.targetFront.getFront(
-    "highlighterTest"
-  );
+  const topLevelHighlighterTestFront =
+    await topLevelStylesheetEditor._resource.targetFront.getFront(
+      "highlighterTest"
+    );
   topLevelHighlighterTestFront.highlighter =
     topLevelStylesheetEditor.highlighter;
 
@@ -78,9 +79,10 @@ add_task(async function() {
   await ui.selectStyleSheet(iframeStylesheetEditor.styleSheet);
   await waitFor(() => iframeStylesheetEditor.highlighter);
 
-  const iframeHighlighterTestFront = await iframeStylesheetEditor._resource.targetFront.getFront(
-    "highlighterTest"
-  );
+  const iframeHighlighterTestFront =
+    await iframeStylesheetEditor._resource.targetFront.getFront(
+      "highlighterTest"
+    );
   iframeHighlighterTestFront.highlighter = iframeStylesheetEditor.highlighter;
 
   info("Expecting a node-highlighted event");
@@ -152,13 +154,12 @@ async function getElementNodeRectWithinTarget(selectors) {
   // Retrieve the browsing context in which the element is
   const inBCSelector = selectors.pop();
   const frameSelectors = selectors;
-  const bc =
-    frameSelectors.length > 0
-      ? await getBrowsingContextInFrames(
-          gBrowser.selectedBrowser.browsingContext,
-          frameSelectors
-        )
-      : gBrowser.selectedBrowser.browsingContext;
+  const bc = frameSelectors.length
+    ? await getBrowsingContextInFrames(
+        gBrowser.selectedBrowser.browsingContext,
+        frameSelectors
+      )
+    : gBrowser.selectedBrowser.browsingContext;
 
   // Get the element bounds within the Firefox window
   const elementBounds = await SpecialPowers.spawn(
@@ -166,12 +167,9 @@ async function getElementNodeRectWithinTarget(selectors) {
     [inBCSelector],
     _selector => {
       const el = content.document.querySelector(_selector);
-      const {
-        left,
-        top,
-        width,
-        height,
-      } = el.getBoxQuadsFromWindowOrigin()[0].getBounds();
+      const { left, top, width, height } = el
+        .getBoxQuadsFromWindowOrigin()[0]
+        .getBounds();
       return { left, top, width, height };
     }
   );

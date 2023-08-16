@@ -12,11 +12,14 @@
 #include "MediaFormatReader.h"
 #include "BaseMediaResource.h"
 #include "MediaShutdownManager.h"
+#include "base/process_util.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "VideoUtils.h"
 
 namespace mozilla {
+
+using TimeUnit = media::TimeUnit;
 
 extern LazyLogModule gMediaDecoderLog;
 #define LOG(x, ...) \
@@ -211,6 +214,10 @@ MediaDecoderStateMachineBase* ChannelMediaDecoder::CreateStateMachine(
   init.mFrameStats = mFrameStats;
   init.mResource = mResource;
   init.mMediaDecoderOwnerID = mOwner;
+  static Atomic<uint32_t> sTrackingIdCounter(0);
+  init.mTrackingId.emplace(TrackingId::Source::ChannelDecoder,
+                           sTrackingIdCounter++,
+                           TrackingId::TrackAcrossProcesses::Yes);
   mReader = DecoderTraits::CreateReader(ContainerType(), init);
 
 #ifdef MOZ_WMF_MEDIA_ENGINE
@@ -307,7 +314,8 @@ void ChannelMediaDecoder::NotifyDownloadEnded(nsresult aStatus) {
         "ChannelMediaDecoder::UpdatePlaybackRate",
         [stats = mPlaybackStatistics,
          res = RefPtr<BaseMediaResource>(mResource), duration = mDuration]() {
-          auto rate = ComputePlaybackRate(stats, res, duration);
+          auto rate = ComputePlaybackRate(stats, res,
+                                          duration.match(DurationToTimeUnit()));
           UpdatePlaybackRate(rate, res);
         });
     nsresult rv = GetStateMachine()->OwnerThread()->Dispatch(r.forget());
@@ -365,7 +373,8 @@ void ChannelMediaDecoder::DurationChanged() {
       "ChannelMediaDecoder::UpdatePlaybackRate",
       [stats = mPlaybackStatistics, res = RefPtr<BaseMediaResource>(mResource),
        duration = mDuration]() {
-        auto rate = ComputePlaybackRate(stats, res, duration);
+        auto rate = ComputePlaybackRate(stats, res,
+                                        duration.match(DurationToTimeUnit()));
         UpdatePlaybackRate(rate, res);
       });
   nsresult rv = GetStateMachine()->OwnerThread()->Dispatch(r.forget());
@@ -384,7 +393,8 @@ void ChannelMediaDecoder::DownloadProgressed() {
               [playbackStats = mPlaybackStatistics,
                res = RefPtr<BaseMediaResource>(mResource), duration = mDuration,
                pos = mPlaybackPosition]() {
-                auto rate = ComputePlaybackRate(playbackStats, res, duration);
+                auto rate = ComputePlaybackRate(
+                    playbackStats, res, duration.match(DurationToTimeUnit()));
                 UpdatePlaybackRate(rate, res);
                 MediaStatistics stats = GetStatistics(rate, res, pos);
                 return StatsPromise::CreateAndResolve(stats, __func__);
@@ -408,13 +418,14 @@ void ChannelMediaDecoder::DownloadProgressed() {
 /* static */ ChannelMediaDecoder::PlaybackRateInfo
 ChannelMediaDecoder::ComputePlaybackRate(const MediaChannelStatistics& aStats,
                                          BaseMediaResource* aResource,
-                                         double aDuration) {
+                                         const TimeUnit& aDuration) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   int64_t length = aResource->GetLength();
-  if (mozilla::IsFinite<double>(aDuration) && aDuration > 0 && length >= 0 &&
-      length / aDuration < UINT32_MAX) {
-    return {uint32_t(length / aDuration), true};
+  if (aDuration.IsValid() && !aDuration.IsInfinite() &&
+      aDuration.IsPositive() && length >= 0 &&
+      length / aDuration.ToSeconds() < UINT32_MAX) {
+    return {uint32_t(length / aDuration.ToSeconds()), true};
   }
 
   bool reliable = false;

@@ -7,7 +7,7 @@
  * Test that about:devtools-toolbox is reloaded correctly when reusing the same debugger
  * client instance.
  */
-add_task(async function() {
+add_task(async function () {
   const devToolsClient = await createLocalClient();
 
   info(
@@ -15,7 +15,7 @@ add_task(async function() {
   );
   const {
     remoteClientManager,
-  } = require("devtools/client/shared/remote-debugging/remote-client-manager");
+  } = require("resource://devtools/client/shared/remote-debugging/remote-client-manager.js");
   remoteClientManager.setClient(
     "this-firefox",
     "this-firefox",
@@ -57,8 +57,12 @@ add_task(async function() {
 });
 
 async function createLocalClient() {
-  const { DevToolsClient } = require("devtools/client/devtools-client");
-  const { DevToolsServer } = require("devtools/server/devtools-server");
+  const {
+    DevToolsClient,
+  } = require("resource://devtools/client/devtools-client.js");
+  const {
+    DevToolsServer,
+  } = require("resource://devtools/server/devtools-server.js");
   DevToolsServer.init();
   DevToolsServer.registerAllActors();
   DevToolsServer.allowChromeProcess = true;

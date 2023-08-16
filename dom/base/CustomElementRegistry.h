@@ -16,6 +16,7 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/ElementInternals.h"
+#include "mozilla/dom/ElementInternalsBinding.h"
 #include "mozilla/dom/HTMLFormElement.h"
 #include "mozilla/RefPtr.h"
 #include "nsCycleCollectionParticipant.h"
@@ -43,6 +44,7 @@ enum class ElementCallbackType {
   eFormAssociated,
   eFormReset,
   eFormDisabled,
+  eFormStateRestore,
   eGetCustomInterface
 };
 
@@ -62,6 +64,10 @@ struct LifecycleCallbackArgs {
 
   // Used by the form disabled callback.
   bool mDisabled;
+
+  // Used by the form state restore callback.
+  Nullable<OwningFileOrUSVStringOrFormData> mState;
+  RestoreReason mReason;
 
   size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const;
 };
@@ -133,13 +139,13 @@ struct CustomElementDefinition {
   NS_DECL_CYCLE_COLLECTION_NATIVE_CLASS(CustomElementDefinition)
   NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(CustomElementDefinition)
 
-  CustomElementDefinition(nsAtom* aType, nsAtom* aLocalName,
-                          int32_t aNamespaceID,
-                          CustomElementConstructor* aConstructor,
-                          nsTArray<RefPtr<nsAtom>>&& aObservedAttributes,
-                          UniquePtr<LifecycleCallbacks>&& aCallbacks,
-                          bool aFormAssociated, bool aDisableInternals,
-                          bool aDisableShadow);
+  CustomElementDefinition(
+      nsAtom* aType, nsAtom* aLocalName, int32_t aNamespaceID,
+      CustomElementConstructor* aConstructor,
+      nsTArray<RefPtr<nsAtom>>&& aObservedAttributes,
+      UniquePtr<LifecycleCallbacks>&& aCallbacks,
+      UniquePtr<FormAssociatedLifecycleCallbacks>&& aFormAssociatedCallbacks,
+      bool aFormAssociated, bool aDisableInternals, bool aDisableShadow);
 
   // The type (name) for this custom element, for <button is="x-foo"> or <x-foo>
   // this would be x-foo.
@@ -159,6 +165,7 @@ struct CustomElementDefinition {
 
   // The lifecycle callbacks to call for this custom element.
   UniquePtr<LifecycleCallbacks> mCallbacks;
+  UniquePtr<FormAssociatedLifecycleCallbacks> mFormAssociatedCallbacks;
 
   // If this is true, user agent treats elements associated to this custom
   // element definition as form-associated custom elements.
@@ -495,7 +502,7 @@ class CustomElementRegistry final : public nsISupports, public nsWrapperCache {
                            nsTHashSet<RefPtr<nsIWeakReference>>>
       CandidateMap;
   typedef JS::GCHashMap<JS::Heap<JSObject*>, RefPtr<nsAtom>,
-                        js::MovableCellHasher<JS::Heap<JSObject*>>,
+                        js::StableCellHasher<JS::Heap<JSObject*>>,
                         js::SystemAllocPolicy>
       ConstructorMap;
 
@@ -547,8 +554,11 @@ class CustomElementRegistry final : public nsISupports, public nsWrapperCache {
               CustomElementConstructor& aFunctionConstructor,
               const ElementDefinitionOptions& aOptions, ErrorResult& aRv);
 
-  void Get(JSContext* cx, const nsAString& name,
-           JS::MutableHandle<JS::Value> aRetVal);
+  void Get(const nsAString& name,
+           OwningCustomElementConstructorOrUndefined& aRetVal);
+
+  void GetName(JSContext* aCx, CustomElementConstructor& aConstructor,
+               nsAString& aResult);
 
   already_AddRefed<Promise> WhenDefined(const nsAString& aName,
                                         ErrorResult& aRv);

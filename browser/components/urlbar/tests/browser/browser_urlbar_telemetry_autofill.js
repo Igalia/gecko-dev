@@ -7,11 +7,6 @@
 
 "use strict";
 
-ChromeUtils.defineESModuleGetters(this, {
-  UrlbarProviderPreloadedSites:
-    "resource:///modules/UrlbarProviderPreloadedSites.sys.mjs",
-});
-
 const SCALAR_URLBAR = "browser.engagement.navigation.urlbar";
 
 function assertSearchTelemetryEmpty(search_hist) {
@@ -67,10 +62,10 @@ function assertTelemetryResults(histograms, type, index, method) {
 }
 
 /**
- * Performs a search and picks the first result. The search string is assumed
- * to trigger an autofill result.
+ * Performs a search and picks the first result.
  *
  * @param {string} searchString
+ *   The search string. Assumed to trigger an autofill result
  * @param {string} autofilledValue
  *   The input's expected value after autofill occurs.
  * @param {string} unpickResult
@@ -162,9 +157,21 @@ if (AppConstants.platform == "macosx") {
   requestLongerTimeout(3);
 }
 
-add_setup(async function() {
-  await PlacesUtils.history.clear();
+add_setup(async function () {
+  // The following initialization code is necessary to avoid a frequent
+  // intermittent failure in verify-fission where, due to timings, we may or
+  // may not import default bookmarks.
+  info("Ensure Places init is complete");
+  let placesInitCompleteObserved = TestUtils.topicObserved(
+    "places-browser-init-complete"
+  );
+  Cc["@mozilla.org/browser/browserglue;1"]
+    .getService(Ci.nsIObserver)
+    .observe(null, "browser-glue-test", "places-browser-init-complete");
+  await placesInitCompleteObserved;
+
   await PlacesUtils.bookmarks.eraseEverything();
+  await PlacesUtils.history.clear();
   await PlacesTestUtils.clearInputHistory();
 
   // Enable local telemetry recording for the duration of the tests.
@@ -322,30 +329,6 @@ add_task(async function about() {
   await PlacesUtils.history.clear();
 });
 
-// Checks preloaded sites autofill.
-add_task(async function preloaded() {
-  UrlbarPrefs.set("usepreloadedtopurls.enabled", true);
-  UrlbarPrefs.set("usepreloadedtopurls.expire_days", 100);
-  UrlbarProviderPreloadedSites.populatePreloadedSiteStorage([
-    ["http://example.com/", "Example"],
-  ]);
-
-  let histograms = snapshotHistograms();
-  await triggerAutofillAndPickResult("example", "example.com/");
-
-  assertSearchTelemetryEmpty(histograms.search_hist);
-  assertTelemetryResults(
-    histograms,
-    "autofill_preloaded",
-    0,
-    UrlbarTestUtils.SELECTED_RESULT_METHODS.enter
-  );
-
-  await PlacesUtils.history.clear();
-  UrlbarPrefs.clear("usepreloadedtopurls.enabled");
-  UrlbarPrefs.clear("usepreloadedtopurls.expire_days");
-});
-
 // Checks the "other" fallback, which shouldn't normally happen.
 add_task(async function other() {
   let searchString = "exam";
@@ -463,22 +446,6 @@ add_task(async function impression() {
       autofilled: "about:about",
     },
     {
-      description: "Preloaded site autofill and pick it",
-      usePreloadedSite: true,
-      preloadedSites: [["http://example.com/", "Example"]],
-      userInput: "exa",
-      autofilled: "example.com/",
-      expected: "autofill_preloaded",
-    },
-    {
-      description: "Preloaded site autofill but not pick any result",
-      unpickResult: true,
-      usePreloadedSite: true,
-      preloadedSites: [["http://example.com/", "Example"]],
-      userInput: "exa",
-      autofilled: "example.com/",
-    },
-    {
       description: "Other provider's autofill and pick it",
       useOtherProvider: true,
       userInput: "example",
@@ -497,12 +464,10 @@ add_task(async function impression() {
   for (const {
     description,
     useAdaptiveHistory = false,
-    usePreloadedSite = false,
     useOtherProvider = false,
     unpickResult = false,
     visitHistory,
     inputHistory,
-    preloadedSites,
     userInput,
     select,
     autofilled,
@@ -511,10 +476,6 @@ add_task(async function impression() {
     info(description);
 
     UrlbarPrefs.set("autoFill.adaptiveHistory.enabled", useAdaptiveHistory);
-    if (usePreloadedSite) {
-      UrlbarPrefs.set("usepreloadedtopurls.enabled", true);
-      UrlbarPrefs.set("usepreloadedtopurls.expire_days", 100);
-    }
     let otherProvider;
     if (useOtherProvider) {
       otherProvider = createOtherAutofillProvider(userInput, autofilled);
@@ -528,9 +489,6 @@ add_task(async function impression() {
       for (const { uri, input } of inputHistory) {
         await UrlbarUtils.addToInputHistory(uri, input);
       }
-    }
-    if (preloadedSites) {
-      UrlbarProviderPreloadedSites.populatePreloadedSiteStorage(preloadedSites);
     }
 
     await triggerAutofillAndPickResult(
@@ -567,8 +525,6 @@ add_task(async function impression() {
     }
 
     UrlbarPrefs.clear("autoFill.adaptiveHistory.enabled");
-    UrlbarPrefs.clear("usepreloadedtopurls.enabled");
-    UrlbarPrefs.clear("usepreloadedtopurls.expire_days");
 
     if (otherProvider) {
       UrlbarProvidersManager.unregisterProvider(otherProvider);
@@ -578,3 +534,156 @@ add_task(async function impression() {
     await PlacesUtils.history.clear();
   }
 });
+
+// Checks autofill deletion telemetry.
+add_task(async function deletion() {
+  await PlacesTestUtils.addVisits(["http://example.com/"]);
+
+  info("Delete autofilled value by DELETE key");
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      EventUtils.synthesizeKey("KEY_Delete");
+      Assert.equal(gURLBar.value, "exa");
+    },
+    expectedScalar: 1,
+  });
+
+  info("Delete autofilled value by BACKSPACE key");
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      EventUtils.synthesizeKey("KEY_Backspace");
+      Assert.equal(gURLBar.value, "exa");
+    },
+    expectedScalar: 1,
+  });
+
+  info("Delete autofilled value twice");
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      // Delete autofilled string.
+      EventUtils.synthesizeKey("KEY_Delete");
+      Assert.equal(gURLBar.value, "exa");
+
+      // Re-autofilling.
+      EventUtils.synthesizeKey("m");
+      Assert.equal(gURLBar.value, "example.com/");
+      Assert.equal(gURLBar.selectionStart, "exam".length);
+      Assert.equal(gURLBar.selectionEnd, "example.com/".length);
+
+      // Delete autofilled string again.
+      EventUtils.synthesizeKey("KEY_Backspace");
+      Assert.equal(gURLBar.value, "exam");
+    },
+    expectedScalar: 2,
+  });
+
+  info("Delete one char after unselecting autofilled string");
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      // Cancel selection.
+      EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+      Assert.equal(gURLBar.selectionStart, "example.com/".length);
+      Assert.equal(gURLBar.selectionEnd, "example.com/".length);
+
+      EventUtils.synthesizeKey("KEY_Backspace");
+      Assert.equal(gURLBar.value, "example.com");
+    },
+    expectedScalar: 0,
+  });
+
+  info("Delete autofilled value after unselecting autofilled string");
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      // Cancel selection.
+      EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+      Assert.equal(gURLBar.selectionStart, "example.com/".length);
+      Assert.equal(gURLBar.selectionEnd, "example.com/".length);
+
+      // Delete autofilled string one by one.
+      for (let i = 0; i < "mple.com/".length; i++) {
+        EventUtils.synthesizeKey("KEY_Backspace");
+      }
+      Assert.equal(gURLBar.value, "exa");
+    },
+    expectedScalar: 0,
+  });
+
+  info(
+    "Delete autofilled value after unselecting autofilled string then selecting them manually again"
+  );
+  await doDeletionTest({
+    firstSearchString: "exa",
+    firstAutofilledValue: "example.com/",
+    trigger: () => {
+      // Cancel selection.
+      const previousSelectionStart = gURLBar.selectionStart;
+      const previousSelectionEnd = gURLBar.selectionEnd;
+      EventUtils.synthesizeMouseAtCenter(gURLBar.inputField, {});
+      Assert.equal(gURLBar.selectionStart, "example.com/".length);
+      Assert.equal(gURLBar.selectionEnd, "example.com/".length);
+
+      // Select same range again.
+      gURLBar.selectionStart = previousSelectionStart;
+      gURLBar.selectionEnd = previousSelectionEnd;
+
+      EventUtils.synthesizeKey("KEY_Backspace");
+      Assert.equal(gURLBar.value, "exa");
+    },
+    expectedScalar: 1,
+  });
+
+  await PlacesUtils.history.clear();
+});
+
+async function doDeletionTest({
+  firstSearchString,
+  firstAutofilledValue,
+  trigger,
+  expectedScalar,
+}) {
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: firstSearchString,
+      fireInputEvent: true,
+    });
+    const details = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+    Assert.ok(details.autofill, "Result is autofill");
+    Assert.equal(gURLBar.value, firstAutofilledValue, "gURLBar.value");
+    Assert.equal(
+      gURLBar.selectionStart,
+      firstSearchString.length,
+      "selectionStart"
+    );
+    Assert.equal(
+      gURLBar.selectionEnd,
+      firstAutofilledValue.length,
+      "selectionEnd"
+    );
+
+    await trigger();
+
+    const scalars = TelemetryTestUtils.getProcessScalars("parent", false, true);
+    if (expectedScalar) {
+      TelemetryTestUtils.assertScalar(
+        scalars,
+        "urlbar.autofill_deletion",
+        expectedScalar
+      );
+    } else {
+      TelemetryTestUtils.assertScalarUnset(scalars, "urlbar.autofill_deletion");
+    }
+
+    await UrlbarTestUtils.promisePopupClose(window);
+  });
+}

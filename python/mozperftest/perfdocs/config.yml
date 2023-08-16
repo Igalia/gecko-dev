@@ -27,8 +27,6 @@ suites:
             Politico Link: ""
             BBC Link: ""
             JSConf (cold): ""
-            VIEW: ""
-            main: ""
             Facebook: ""
             YouTube Link: ""
             pageload: ""
@@ -36,6 +34,8 @@ suites:
             perfstats: ""
             webpagetest-firefox: ""
             webpagetest-chrome: ""
+            android-startup: ""
+
     browser/base/content/test:
         description: "Performance tests from the 'browser/base/content/test' folder."
         tests:

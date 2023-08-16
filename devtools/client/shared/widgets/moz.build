@@ -9,11 +9,11 @@ DIRS += [
 ]
 
 DevToolsModules(
-    "AbstractTreeItem.jsm",
     "Chart.js",
     "CubicBezierPresets.js",
     "CubicBezierWidget.js",
     "FilterWidget.js",
+    "LinearEasingFunctionWidget.js",
     "ShapesInContextEditor.js",
     "Spectrum.js",
     "TableWidget.js",

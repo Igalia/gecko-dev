@@ -8,7 +8,7 @@
  * and hence is not blocked by the CSP of the page.
  */
 
-add_task(async function() {
+add_task(async function () {
   if (
     Services.prefs.getBoolPref(
       "devtools.netmonitor.features.newEditAndResend",
@@ -45,7 +45,7 @@ add_task(async function() {
   EventUtils.sendMouseEvent({ type: "contextmenu" }, imgRequest);
 
   const waitForResentRequest = waitForNetworkEvents(monitor, 1);
-  getContextMenuItem(monitor, "request-list-context-resend-only").click();
+  await selectContextMenuItem(monitor, "request-list-context-resend-only");
   await waitForResentRequest;
 
   // Selects request that was resent
@@ -75,7 +75,7 @@ add_task(async function() {
  * and hence is not blocked by the CSP of the page.
  */
 
-add_task(async function() {
+add_task(async function () {
   if (
     Services.prefs.getBoolPref(
       "devtools.netmonitor.features.newEditAndResend",
@@ -108,23 +108,14 @@ add_task(async function() {
     EventUtils.sendMouseEvent({ type: "contextmenu" }, imgRequest);
 
     info("Opening the new request panel");
-    const waitForPanels = waitForDOM(
-      document,
-      ".monitor-panel .network-action-bar"
+    const waitForPanels = waitUntil(
+      () =>
+        document.querySelector(".http-custom-request-panel") &&
+        document.querySelector("#http-custom-request-send-button").disabled ===
+          false
     );
-    const menuItem = getContextMenuItem(monitor, "request-list-context-resend");
-    getContextMenuItem(monitor, "request-list-context-resend").click();
 
-    const menuPopup = menuItem.parentNode;
-
-    const onHidden = new Promise(resolve => {
-      menuPopup.addEventListener("popuphidden", resolve, { once: true });
-    });
-
-    menuItem.click();
-    menuPopup.hidePopup();
-
-    await onHidden;
+    await selectContextMenuItem(monitor, "request-list-context-edit-resend");
     await waitForPanels;
 
     const waitForResentRequest = waitForNetworkEvents(monitor, 1);

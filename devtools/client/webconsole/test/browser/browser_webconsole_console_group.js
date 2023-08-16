@@ -11,15 +11,15 @@ const TEST_URI =
   "test/browser/test-console-group.html";
 const {
   INDENT_WIDTH,
-} = require("devtools/client/webconsole/components/Output/MessageIndent");
+} = require("resource://devtools/client/webconsole/components/Output/MessageIndent.js");
 
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
   const store = hud.ui.wrapper.getStore();
   logAllStoreChanges(hud);
 
   const onMessagesLogged = waitForMessageByType(hud, "log-6", ".console-api");
-  SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     content.wrappedJSObject.doLog();
   });
   await onMessagesLogged;

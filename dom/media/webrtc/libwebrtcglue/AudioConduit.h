@@ -32,20 +32,15 @@ class WebrtcAudioConduit : public AudioSessionConduit,
   Maybe<int> ActiveSendPayloadType() const override;
   Maybe<int> ActiveRecvPayloadType() const override;
 
-  void OnRtpReceived(MediaPacket&& aPacket, webrtc::RTPHeader&& aHeader);
+  void OnRtpReceived(webrtc::RtpPacketReceived&& aPacket,
+                     webrtc::RTPHeader&& aHeader);
   void OnRtcpReceived(MediaPacket&& aPacket);
 
   void OnRtcpBye() override;
   void OnRtcpTimeout() override;
 
-  void SetTransportActive(bool aActive) override {
-    mTransportActive = aActive;
-    if (!aActive) {
-      mReceiverRtpEventListener.DisconnectIfExists();
-      mReceiverRtcpEventListener.DisconnectIfExists();
-      mSenderRtcpEventListener.DisconnectIfExists();
-    }
-  }
+  void SetTransportActive(bool aActive) override;
+
   MediaEventSourceExc<MediaPacket>& SenderRtpSendEvent() override {
     return mSenderRtpSendEvent;
   }
@@ -56,34 +51,20 @@ class WebrtcAudioConduit : public AudioSessionConduit,
     return mReceiverRtcpSendEvent;
   }
   void ConnectReceiverRtpEvent(
-      MediaEventSourceExc<MediaPacket, webrtc::RTPHeader>& aEvent) override {
-    // Hold a strong-ref to `this` for safety, since we'll be disconnecting
-    // off-target.
-    mReceiverRtpEventListener = aEvent.Connect(
-        mCallThread, [this, self = RefPtr<WebrtcAudioConduit>(this)](
-                         MediaPacket aPacket, webrtc::RTPHeader aHeader) {
-          OnRtpReceived(std::move(aPacket), std::move(aHeader));
-        });
+      MediaEventSourceExc<webrtc::RtpPacketReceived, webrtc::RTPHeader>& aEvent)
+      override {
+    mReceiverRtpEventListener =
+        aEvent.Connect(mCallThread, this, &WebrtcAudioConduit::OnRtpReceived);
   }
   void ConnectReceiverRtcpEvent(
       MediaEventSourceExc<MediaPacket>& aEvent) override {
-    // Hold a strong-ref to `this` for safety, since we'll be disconnecting
-    // off-target.
-    mReceiverRtcpEventListener = aEvent.Connect(
-        mCallThread,
-        [this, self = RefPtr<WebrtcAudioConduit>(this)](MediaPacket aPacket) {
-          OnRtcpReceived(std::move(aPacket));
-        });
+    mReceiverRtcpEventListener =
+        aEvent.Connect(mCallThread, this, &WebrtcAudioConduit::OnRtcpReceived);
   }
   void ConnectSenderRtcpEvent(
       MediaEventSourceExc<MediaPacket>& aEvent) override {
-    // Hold a strong-ref to `this` for safety, since we'll be disconnecting
-    // off-target.
-    mSenderRtcpEventListener = aEvent.Connect(
-        mCallThread,
-        [this, self = RefPtr<WebrtcAudioConduit>(this)](MediaPacket aPacket) {
-          OnRtcpReceived(std::move(aPacket));
-        });
+    mSenderRtcpEventListener =
+        aEvent.Connect(mCallThread, this, &WebrtcAudioConduit::OnRtcpReceived);
   }
 
   Maybe<uint16_t> RtpSendBaseSeqFor(uint32_t aSsrc) const override;
@@ -132,6 +113,8 @@ class WebrtcAudioConduit : public AudioSessionConduit,
 
   bool HasCodecPluginID(uint64_t aPluginID) const override { return false; }
 
+  void SetJitterBufferTarget(DOMHighResTimeStamp aTargetMs) override;
+
   void DeliverPacket(rtc::CopyOnWriteBuffer packet, PacketType type) override;
 
   RefPtr<GenericPromise> Shutdown() override;
@@ -172,9 +155,10 @@ class WebrtcAudioConduit : public AudioSessionConduit,
  public:
   void UnsetRemoteSSRC(uint32_t aSsrc) override {}
 
-  Maybe<webrtc::AudioReceiveStream::Stats> GetReceiverStats() const override;
+  Maybe<webrtc::AudioReceiveStreamInterface::Stats> GetReceiverStats()
+      const override;
   Maybe<webrtc::AudioSendStream::Stats> GetSenderStats() const override;
-  Maybe<webrtc::Call::Stats> GetCallStats() const override;
+  Maybe<webrtc::CallBasicStats> GetCallStats() const override;
 
   bool IsSamplingFreqSupported(int freq) const override;
 
@@ -182,6 +166,7 @@ class WebrtcAudioConduit : public AudioSessionConduit,
   MediaEventSource<void>& RtcpTimeoutEvent() override {
     return mRtcpTimeoutEvent;
   }
+  MediaEventSource<void>& RtpPacketEvent() override { return mRtpPacketEvent; }
 
   std::vector<webrtc::RtpSource> GetUpstreamRtpSources() const override;
 
@@ -223,11 +208,11 @@ class WebrtcAudioConduit : public AudioSessionConduit,
   WebrtcReceiveTransport mRecvTransport;
 
   // Accessed only on the Call thread.
-  webrtc::AudioReceiveStream::Config mRecvStreamConfig;
+  webrtc::AudioReceiveStreamInterface::Config mRecvStreamConfig;
 
   // Written only on the Call thread. Guarded by mLock, except for reads on the
   // Call thread.
-  webrtc::AudioReceiveStream* mRecvStream;
+  webrtc::AudioReceiveStreamInterface* mRecvStream;
 
   // Accessed only on the Call thread.
   webrtc::AudioSendStream::Config mSendStreamConfig;
@@ -254,6 +239,9 @@ class WebrtcAudioConduit : public AudioSessionConduit,
   // Socket transport service thread. Any thread.
   const nsCOMPtr<nsISerialEventTarget> mStsThread;
 
+  // Target jitter buffer to be applied to the receive stream in milliseconds.
+  uint16_t mJitterBufferTargetMs = 0;
+
   struct Control {
     // Mirrors and events that map to AudioConduitControlInterface for control.
     // Call thread only.
@@ -268,6 +256,8 @@ class WebrtcAudioConduit : public AudioSessionConduit,
     Mirror<RtpExtList> mLocalSendRtpExtensions;
     Mirror<Maybe<AudioCodecConfig>> mSendCodec;
     Mirror<std::vector<AudioCodecConfig>> mRecvCodecs;
+    Mirror<RefPtr<FrameTransformerProxy>> mFrameTransformerProxySend;
+    Mirror<RefPtr<FrameTransformerProxy>> mFrameTransformerProxyRecv;
     MediaEventListener mOnDtmfEventListener;
 
     // For caching mRemoteSsrc, since another caller may change the remote ssrc
@@ -277,6 +267,10 @@ class WebrtcAudioConduit : public AudioSessionConduit,
     Maybe<AudioCodecConfig> mConfiguredSendCodec;
     // For tracking changes to mRecvCodecs.
     std::vector<AudioCodecConfig> mConfiguredRecvCodecs;
+
+    // For change tracking. Callthread only.
+    RefPtr<FrameTransformerProxy> mConfiguredFrameTransformerProxySend;
+    RefPtr<FrameTransformerProxy> mConfiguredFrameTransformerProxyRecv;
 
     Control() = delete;
     explicit Control(const RefPtr<AbstractThread>& aCallThread);
@@ -299,6 +293,7 @@ class WebrtcAudioConduit : public AudioSessionConduit,
   Atomic<bool> mTransportActive = Atomic<bool>(false);
   MediaEventProducer<void> mRtcpByeEvent;
   MediaEventProducer<void> mRtcpTimeoutEvent;
+  MediaEventProducer<void> mRtpPacketEvent;
   MediaEventProducerExc<MediaPacket> mSenderRtpSendEvent;
   MediaEventProducerExc<MediaPacket> mSenderRtcpSendEvent;
   MediaEventProducerExc<MediaPacket> mReceiverRtcpSendEvent;

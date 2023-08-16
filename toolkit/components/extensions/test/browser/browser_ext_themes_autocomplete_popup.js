@@ -21,7 +21,7 @@ ChromeUtils.defineESModuleGetters(this, {
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
 });
 
-add_setup(async function() {
+add_setup(async function () {
   await PlacesUtils.history.clear();
   const NUM_VISITS = 10;
   let visits = [];
@@ -35,7 +35,7 @@ add_setup(async function() {
 
   await PlacesTestUtils.addVisits(visits);
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
   });
 });
@@ -71,7 +71,7 @@ add_task(async function test_popup_url() {
     gBrowser,
     "about:mozilla"
   );
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
     await BrowserTestUtils.removeTab(tab);
   });
@@ -100,7 +100,7 @@ add_task(async function test_popup_url() {
   UrlbarTestUtils.setSelectedRowIndex(window, 1);
   let actionResult = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
   let urlResult = await UrlbarTestUtils.getDetailsOfResultAt(window, 1);
-  let resultCS = window.getComputedStyle(urlResult.element.row._content);
+  let resultCS = window.getComputedStyle(urlResult.element.row);
 
   Assert.equal(
     resultCS.backgroundColor,

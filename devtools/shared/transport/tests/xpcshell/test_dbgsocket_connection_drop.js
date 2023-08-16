@@ -9,7 +9,9 @@
  */
 "use strict";
 
-const { RawPacket } = require("devtools/shared/transport/packets");
+const {
+  RawPacket,
+} = require("resource://devtools/shared/transport/packets.js");
 
 function run_test() {
   info("Starting test at " + new Date().toTimeString());
@@ -44,7 +46,7 @@ function test_socket_conn_drops_after_too_long_header() {
   return test_helper(rawPacket + ":");
 }
 
-var test_helper = async function(payload) {
+var test_helper = async function (payload) {
   const AuthenticatorType = DevToolsServer.Authenticators.get("PROMPT");
   const authenticator = new AuthenticatorType.Server();
   authenticator.allowConnection = () => {
@@ -65,7 +67,7 @@ var test_helper = async function(payload) {
   return new Promise(resolve => {
     transport.hooks = {
       onPacket(packet) {
-        this.onPacket = function() {
+        this.onPacket = function () {
           do_throw(new Error("This connection should be dropped."));
           transport.close();
         };

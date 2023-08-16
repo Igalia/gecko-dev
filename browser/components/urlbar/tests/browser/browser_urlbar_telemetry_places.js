@@ -85,7 +85,7 @@ function assertTelemetryResults(histograms, type, index, method) {
   );
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       // Disable search suggestions in the urlbar.
@@ -116,7 +116,7 @@ add_setup(async function() {
   });
 
   // Make sure to restore the engine once we're done.
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.keywords.remove("get");
     Services.telemetry.canRecordExtended = oldCanRecord;
     await PlacesUtils.history.clear();
@@ -158,13 +158,34 @@ add_task(async function test_history() {
   BrowserTestUtils.removeTab(tab);
 });
 
-add_task(async function test_bookmark() {
+add_task(async function test_history_adaptive() {
   const histograms = snapshotHistograms();
 
-  let tab = await BrowserTestUtils.openNewForegroundTab(
-    gBrowser,
-    "about:blank"
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
+
+  let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+  await searchInAwesomebar("example");
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  EventUtils.synthesizeKey("KEY_Enter");
+  await p;
+
+  assertSearchTelemetryEmpty(histograms.search_hist);
+  assertTelemetryResults(
+    histograms,
+    "history_adaptive",
+    1,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
   );
+
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function test_bookmark_without_history() {
+  await PlacesUtils.history.clear();
+
+  const histograms = snapshotHistograms();
+
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
 
   let bm = await PlacesUtils.bookmarks.insert({
     url: "http://example.com",
@@ -182,6 +203,36 @@ add_task(async function test_bookmark() {
   assertTelemetryResults(
     histograms,
     "bookmark",
+    1,
+    UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
+  );
+
+  await PlacesUtils.bookmarks.remove(bm);
+
+  BrowserTestUtils.removeTab(tab);
+});
+
+add_task(async function test_bookmark_with_history() {
+  const histograms = snapshotHistograms();
+
+  let tab = await BrowserTestUtils.openNewForegroundTab(gBrowser);
+
+  let bm = await PlacesUtils.bookmarks.insert({
+    url: "http://example.com",
+    title: "example",
+    parentGuid: PlacesUtils.bookmarks.menuGuid,
+  });
+
+  let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
+  await searchInAwesomebar("example");
+  EventUtils.synthesizeKey("KEY_ArrowDown");
+  EventUtils.synthesizeKey("KEY_Enter");
+  await p;
+
+  assertSearchTelemetryEmpty(histograms.search_hist);
+  assertTelemetryResults(
+    histograms,
+    "bookmark_adaptive",
     1,
     UrlbarTestUtils.SELECTED_RESULT_METHODS.arrowEnterSelection
   );
@@ -254,7 +305,7 @@ add_task(async function test_visitURL() {
   );
 
   let p = BrowserTestUtils.browserLoaded(tab.linkedBrowser);
-  await searchInAwesomebar("http://example.com");
+  await searchInAwesomebar("http://example.com/a/");
   EventUtils.synthesizeKey("KEY_Enter");
   await p;
 

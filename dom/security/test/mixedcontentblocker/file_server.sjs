@@ -1,4 +1,6 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 function ERR(response, msg) {
   dump("ERROR: " + msg + "\n");
@@ -39,7 +41,7 @@ function handleRequest(request, response) {
   var contentType = null;
   var uniqueID = null;
   var showLastRequest = false;
-  request.queryString.split("&").forEach(function(val) {
+  request.queryString.split("&").forEach(function (val) {
     var [name, value] = val.split("=");
     if (name == "type") {
       contentType = unescape(value);

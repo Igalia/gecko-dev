@@ -3,8 +3,8 @@
  */
 "use strict";
 
-const { SitePermissions } = ChromeUtils.import(
-  "resource:///modules/SitePermissions.jsm"
+const { SitePermissions } = ChromeUtils.importESModule(
+  "resource:///modules/SitePermissions.sys.mjs"
 );
 
 const RESIST_FINGERPRINTING_ENABLED = Services.prefs.getBoolPref(
@@ -14,6 +14,10 @@ const MIDI_ENABLED = Services.prefs.getBoolPref("dom.webmidi.enabled");
 
 const EXT_PROTOCOL_ENABLED = Services.prefs.getBoolPref(
   "security.external_protocol_requires_permission"
+);
+
+const SPEAKER_SELECTION_ENABLED = Services.prefs.getBoolPref(
+  "media.setsinkid.enabled"
 );
 
 add_task(async function testPermissionsListing() {
@@ -33,6 +37,7 @@ add_task(async function testPermissionsListing() {
     "storage-access",
     "xr",
     "3rdPartyStorage",
+    "3rdPartyFrameStorage",
   ];
   if (RESIST_FINGERPRINTING_ENABLED) {
     // Canvas permission should be hidden unless privacy.resistFingerprinting
@@ -47,6 +52,9 @@ add_task(async function testPermissionsListing() {
   if (EXT_PROTOCOL_ENABLED) {
     expectedPermissions.push("open-protocol-handler");
   }
+  if (SPEAKER_SELECTION_ENABLED) {
+    expectedPermissions.push("speaker");
+  }
   Assert.deepEqual(
     SitePermissions.listPermissions().sort(),
     expectedPermissions.sort(),
@@ -57,14 +65,16 @@ add_task(async function testPermissionsListing() {
 add_task(async function testGetAllByPrincipal() {
   // check that it returns an empty array on an invalid principal
   // like a principal with an about URI, which doesn't support site permissions
-  let wrongPrincipal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "about:config"
-  );
+  let wrongPrincipal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "about:config"
+    );
   Assert.deepEqual(SitePermissions.getAllByPrincipal(wrongPrincipal), []);
 
-  let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "https://example.com"
-  );
+  let principal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "https://example.com"
+    );
   Assert.deepEqual(SitePermissions.getAllByPrincipal(principal), []);
 
   SitePermissions.setForPrincipal(principal, "camera", SitePermissions.ALLOW);
@@ -177,12 +187,14 @@ add_task(async function testGetAvailableStates() {
 });
 
 add_task(async function testExactHostMatch() {
-  let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "https://example.com"
-  );
-  let subPrincipal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "https://test1.example.com"
-  );
+  let principal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "https://example.com"
+    );
+  let subPrincipal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "https://test1.example.com"
+    );
 
   let exactHostMatched = [
     "autoplay-media",
@@ -209,6 +221,9 @@ add_task(async function testExactHostMatch() {
   if (EXT_PROTOCOL_ENABLED) {
     exactHostMatched.push("open-protocol-handler");
   }
+  if (SPEAKER_SELECTION_ENABLED) {
+    exactHostMatched.push("speaker");
+  }
   let nonExactHostMatched = [
     "cookie",
     "popup",
@@ -216,6 +231,7 @@ add_task(async function testExactHostMatch() {
     "shortcuts",
     "storage-access",
     "3rdPartyStorage",
+    "3rdPartyFrameStorage",
   ];
 
   let permissions = SitePermissions.listPermissions();
@@ -244,7 +260,7 @@ add_task(async function testExactHostMatch() {
       Assert.ok(
         false,
         `Found an unknown permission ${permission} in exact host match test.` +
-          "Please add new permissions from SitePermissions.jsm to this test."
+          "Please add new permissions from SitePermissions.sys.mjs to this test."
       );
     }
 
@@ -269,9 +285,10 @@ add_task(async function testExactHostMatch() {
 });
 
 add_task(async function testDefaultPrefs() {
-  let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "https://example.com"
-  );
+  let principal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "https://example.com"
+    );
 
   // Check that without a pref the default return value is UNKNOWN.
   Assert.deepEqual(SitePermissions.getForPrincipal(principal, "camera"), {
@@ -332,9 +349,10 @@ add_task(async function testCanvasPermission() {
     "privacy.resistFingerprinting",
     false
   );
-  let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "https://example.com"
-  );
+  let principal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "https://example.com"
+    );
 
   SitePermissions.setForPrincipal(principal, "canvas", SitePermissions.ALLOW);
 
@@ -366,9 +384,10 @@ add_task(async function testCanvasPermission() {
 });
 
 add_task(async function testFilePermissions() {
-  let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-    "file:///example.js"
-  );
+  let principal =
+    Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+      "file:///example.js"
+    );
   Assert.deepEqual(SitePermissions.getAllByPrincipal(principal), []);
 
   SitePermissions.setForPrincipal(principal, "camera", SitePermissions.ALLOW);

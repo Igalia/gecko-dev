@@ -24,6 +24,11 @@
 #   - cors+pna: this endpoint responds with valid CORS and PNA headers to
 #     preflights. These should be sufficient for both non-PNA preflight
 #     requests and PNA-specific preflight requests to succeed.
+#   - cors+pna+sw: this endpoint responds with valid CORS and PNA headers and
+#     "Access-Control-Allow-Headers: Service-Worker" to preflights. These should
+#     be sufficient for both non-PNA preflight requests and PNA-specific
+#     preflight requests to succeed. This allows the main request to fetch a
+#     service worker script.
 #   - unspecified, or any other value: this endpoint responds with no CORS or
 #     PNA headers. Preflight requests should fail.
 # - final-headers: Valid values are:
@@ -55,6 +60,7 @@ from wptserve.utils import isomorphic_encode
 
 _ACAO = ("Access-Control-Allow-Origin", "*")
 _ACAPN = ("Access-Control-Allow-Private-Network", "true")
+_ACAH = ("Access-Control-Allow-Headers", "Service-Worker")
 
 def _get_response_headers(method, mode):
   acam = ("Access-Control-Allow-Methods", method)
@@ -65,13 +71,22 @@ def _get_response_headers(method, mode):
   if mode == b"cors+pna":
     return [acam, _ACAO, _ACAPN]
 
+  if mode == b"cors+pna+sw":
+    return [acam, _ACAO, _ACAPN, _ACAH]
+
   return []
 
 def _get_expect_single_preflight(request):
   return request.GET.get(b"expect-single-preflight")
 
+def _is_preflight_optional(request):
+  return request.GET.get(b"is-preflight-optional")
+
 def _get_preflight_uuid(request):
   return request.GET.get(b"preflight-uuid")
+
+def _is_loaded_in_fenced_frame(request):
+  return request.GET.get(b"is-loaded-in-fenced-frame")
 
 def _should_treat_as_public_once(request):
   uuid = request.GET.get(b"treat-as-public-once")
@@ -126,8 +141,9 @@ def _handle_final_request(request, response):
   else:
     uuid = _get_preflight_uuid(request)
     if uuid is not None:
-      if request.server.stash.take(uuid) is None:
-        return (405, [], "no preflight received for {}".format(uuid))
+      if (request.server.stash.take(uuid) is None and
+          not _is_preflight_optional(request)):
+        return (405, [], "no preflight received")
       request.server.stash.put(uuid, "final")
 
     mode = request.GET.get(b"final-headers")
@@ -141,6 +157,9 @@ def _handle_final_request(request, response):
   mime_type = request.GET.get(b"mime-type")
   if mime_type is not None:
     headers.append(("Content-Type", mime_type),)
+
+  if _is_loaded_in_fenced_frame(request):
+    headers.append(("Supports-Loading-Mode", "fenced-frame"))
 
   body = _final_response_body(request)
   return (headers, body)

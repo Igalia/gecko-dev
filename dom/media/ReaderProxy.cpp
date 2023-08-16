@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/CDMProxy.h"
 #include "mozilla/MozPromise.h"
 #include "MediaFormatReader.h"
 #include "ReaderProxy.h"
@@ -182,18 +183,14 @@ void ReaderProxy::UpdateDuration() {
 }
 
 void ReaderProxy::SetCanonicalDuration(
-    AbstractCanonical<media::NullableTimeUnit>* aCanonical) {
-  using DurationT = AbstractCanonical<media::NullableTimeUnit>;
-  RefPtr<ReaderProxy> self = this;
-  RefPtr<DurationT> canonical = aCanonical;
+    Canonical<media::NullableTimeUnit>& aCanonical) {
+  MOZ_ASSERT(mOwnerThread->IsCurrentThreadIn());
   nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
-      "ReaderProxy::SetCanonicalDuration", [this, self, canonical]() {
-        mDuration.Connect(canonical);
+      "ReaderProxy::SetCanonicalDuration", [this, self = RefPtr(this)]() {
         mWatchManager.Watch(mDuration, &ReaderProxy::UpdateDuration);
       });
-  nsresult rv = mReader->OwnerThread()->Dispatch(r.forget());
-  MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
-  Unused << rv;
+  mReader->OwnerThread()->DispatchStateChange(r.forget());
+  aCanonical.ConnectMirror(&mDuration);
 }
 
 void ReaderProxy::UpdateMediaEngineId(uint64_t aMediaEngineId) {
@@ -204,6 +201,12 @@ void ReaderProxy::UpdateMediaEngineId(uint64_t aMediaEngineId) {
   nsresult rv = mReader->OwnerThread()->Dispatch(r.forget());
   MOZ_DIAGNOSTIC_ASSERT(NS_SUCCEEDED(rv));
   Unused << rv;
+}
+
+RefPtr<SetCDMPromise> ReaderProxy::SetCDMProxy(CDMProxy* aProxy) {
+  return InvokeAsync<RefPtr<CDMProxy>>(mReader->OwnerThread(), mReader.get(),
+                                       __func__,
+                                       &MediaFormatReader::SetCDMProxy, aProxy);
 }
 
 }  // namespace mozilla

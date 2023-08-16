@@ -42,6 +42,9 @@ namespace a11y {
 class MaiHyperlink;
 
 /**
+ * Atk specific functionality for an accessibility tree node that originated in
+ * mDoc's content process.
+ *
  * AccessibleWrap, and its descendents in atk directory provide the
  * implementation of AtkObject.
  */
@@ -55,7 +58,6 @@ class AccessibleWrap : public LocalAccessible {
 
   // return the atk object for this AccessibleWrap
   virtual void GetNativeInterface(void** aOutAccessible) override;
-  virtual nsresult HandleAccEvent(AccEvent* aEvent) override;
 
   AtkObject* GetAtkObject(void);
   static AtkObject* GetAtkObject(LocalAccessible* aAccessible);
@@ -70,9 +72,9 @@ class AccessibleWrap : public LocalAccessible {
 
   static void GetKeyBinding(Accessible* aAccessible, nsAString& aResult);
 
-  static Accessible* GetColumnHeader(TableAccessibleBase* aAccessible,
+  static Accessible* GetColumnHeader(TableAccessible* aAccessible,
                                      int32_t aColIdx);
-  static Accessible* GetRowHeader(TableAccessibleBase* aAccessible,
+  static Accessible* GetRowHeader(TableAccessible* aAccessible,
                                   int32_t aRowIdx);
 
  protected:

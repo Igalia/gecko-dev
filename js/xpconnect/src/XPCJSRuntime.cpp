@@ -53,13 +53,13 @@
 #include "js/MemoryMetrics.h"
 #include "js/Object.h"  // JS::GetClass
 #include "js/RealmIterators.h"
-#include "js/Stream.h"  // JS::AbortSignalIsAborted, JS::InitPipeToHandling
 #include "js/SliceBudget.h"
 #include "js/UbiNode.h"
 #include "js/UbiNodeUtils.h"
 #include "js/friend/UsageStatistics.h"  // JSMetric, JS_SetAccumulateTelemetryCallback
 #include "js/friend/WindowProxy.h"  // js::SetWindowProxyClass
 #include "js/friend/XrayJitInfo.h"  // JS::SetXrayJitInfo
+#include "js/Utility.h"             // JS::UniqueTwoByteChars
 #include "mozilla/dom/AbortSignalBinding.h"
 #include "mozilla/dom/GeneratedAtomList.h"
 #include "mozilla/dom/BindingUtils.h"
@@ -78,16 +78,21 @@
 #include "nsAboutProtocolUtils.h"
 
 #include "NodeUbiReporting.h"
+#include "ExpandedPrincipal.h"
 #include "nsIInputStream.h"
 #include "nsJSPrincipals.h"
+#include "nsJSEnvironment.h"
+#include "XPCInlines.h"
 
 #ifdef XP_WIN
 #  include <windows.h>
 #endif
 
 using namespace mozilla;
+using namespace mozilla::dom;
 using namespace xpc;
 using namespace JS;
+using namespace js;
 using mozilla::dom::PerThreadAtomCache;
 
 /***************************************************************************/
@@ -254,6 +259,15 @@ void RealmPrivate::Init(HandleObject aGlobal, const SiteIdentifier& aSite) {
                                   BasePrincipal::Cast(principal), aSite);
     JS_SetCompartmentPrivate(c, priv);
   }
+}
+
+// As XPCJSRuntime can live longer than when we shutdown the observer service,
+// we have our own getter to account for this.
+static nsCOMPtr<nsIObserverService> GetObserverService() {
+  if (AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMShutdownFinal)) {
+    return nullptr;
+  }
+  return mozilla::services::GetObserverService();
 }
 
 static bool TryParseLocationURICandidate(
@@ -619,7 +633,7 @@ nsGlobalWindowInner* WindowGlobalOrNull(JSObject* aObj) {
   return WindowOrNull(glob);
 }
 
-nsGlobalWindowInner* SandboxWindowOrNull(JSObject* aObj, JSContext* aCx) {
+JSObject* SandboxPrototypeOrNull(JSContext* aCx, JSObject* aObj) {
   MOZ_ASSERT(aObj);
 
   if (!IsSandbox(aObj)) {
@@ -632,11 +646,7 @@ nsGlobalWindowInner* SandboxWindowOrNull(JSObject* aObj, JSContext* aCx) {
     return nullptr;
   }
 
-  proto = js::CheckedUnwrapDynamic(proto, aCx, /* stopAtWindowProxy = */ false);
-  if (!proto) {
-    return nullptr;
-  }
-  return WindowOrNull(proto);
+  return js::CheckedUnwrapDynamic(proto, aCx, /* stopAtWindowProxy = */ false);
 }
 
 nsGlobalWindowInner* CurrentWindowOrNull(JSContext* cx) {
@@ -718,31 +728,16 @@ void XPCJSRuntime::TraceNativeBlackRoots(JSTracer* trc) {
 
 void XPCJSRuntime::TraceAdditionalNativeGrayRoots(JSTracer* trc) {
   XPCWrappedNativeScope::TraceWrappedNativesInAllScopes(this, trc);
-
-  for (XPCRootSetElem* e = mVariantRoots; e; e = e->GetNextRoot()) {
-    static_cast<XPCTraceableVariant*>(e)->TraceJS(trc);
-  }
-
-  for (XPCRootSetElem* e = mWrappedJSRoots; e; e = e->GetNextRoot()) {
-    static_cast<nsXPCWrappedJS*>(e)->TraceJS(trc);
-  }
 }
 
 void XPCJSRuntime::TraverseAdditionalNativeRoots(
     nsCycleCollectionNoteRootCallback& cb) {
   XPCWrappedNativeScope::SuspectAllWrappers(cb);
 
-  for (XPCRootSetElem* e = mVariantRoots; e; e = e->GetNextRoot()) {
-    XPCTraceableVariant* v = static_cast<XPCTraceableVariant*>(e);
-    cb.NoteXPCOMRoot(
-        v,
-        XPCTraceableVariant::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());
-  }
-
-  for (XPCRootSetElem* e = mWrappedJSRoots; e; e = e->GetNextRoot()) {
-    cb.NoteXPCOMRoot(
-        ToSupports(static_cast<nsXPCWrappedJS*>(e)),
-        nsXPCWrappedJS::NS_CYCLE_COLLECTION_INNERCLASS::GetParticipant());
+  auto* parti = NS_CYCLE_COLLECTION_PARTICIPANT(nsXPCWrappedJS);
+  for (auto* wjs : mSubjectToFinalizationWJS) {
+    MOZ_DIAGNOSTIC_ASSERT(wjs->IsSubjectToFinalization());
+    cb.NoteXPCOMRoot(ToSupports(wjs), parti);
   }
 }
 
@@ -751,7 +746,7 @@ void XPCJSRuntime::UnmarkSkippableJSHolders() {
 }
 
 void XPCJSRuntime::PrepareForForgetSkippable() {
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  nsCOMPtr<nsIObserverService> obs = xpc::GetObserverService();
   if (obs) {
     obs->NotifyObservers(nullptr, "cycle-collector-forget-skippable", nullptr);
   }
@@ -760,7 +755,7 @@ void XPCJSRuntime::PrepareForForgetSkippable() {
 void XPCJSRuntime::BeginCycleCollectionCallback(CCReason aReason) {
   nsJSContext::BeginCycleCollectionCallback(aReason);
 
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  nsCOMPtr<nsIObserverService> obs = xpc::GetObserverService();
   if (obs) {
     obs->NotifyObservers(nullptr, "cycle-collector-begin", nullptr);
   }
@@ -769,7 +764,7 @@ void XPCJSRuntime::BeginCycleCollectionCallback(CCReason aReason) {
 void XPCJSRuntime::EndCycleCollectionCallback(CycleCollectorResults& aResults) {
   nsJSContext::EndCycleCollectionCallback(aResults);
 
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  nsCOMPtr<nsIObserverService> obs = xpc::GetObserverService();
   if (obs) {
     obs->NotifyObservers(nullptr, "cycle-collector-end", nullptr);
   }
@@ -793,7 +788,7 @@ void XPCJSRuntime::GCSliceCallback(JSContext* cx, JS::GCProgress progress,
     return;
   }
 
-  nsCOMPtr<nsIObserverService> obs = mozilla::services::GetObserverService();
+  nsCOMPtr<nsIObserverService> obs = xpc::GetObserverService();
   if (obs) {
     switch (progress) {
       case JS::GC_CYCLE_BEGIN:
@@ -996,7 +991,7 @@ void XPCJSRuntime::CustomOutOfMemoryCallback() {
 void XPCJSRuntime::OnLargeAllocationFailure() {
   CycleCollectedJSRuntime::SetLargeAllocationFailure(OOMState::Reporting);
 
-  nsCOMPtr<nsIObserverService> os = mozilla::services::GetObserverService();
+  nsCOMPtr<nsIObserverService> os = xpc::GetObserverService();
   if (os) {
     os->NotifyObservers(nullptr, "memory-pressure", u"heap-minimize");
   }
@@ -1101,14 +1096,6 @@ size_t CompartmentPrivate::SizeOfIncludingThis(MallocSizeOf mallocSizeOf) {
 
 /***************************************************************************/
 
-void XPCJSRuntime::SystemIsBeingShutDown() {
-  // We don't want to track wrapped JS roots after this point since we're
-  // making them !IsValid anyway through SystemIsBeingShutDown.
-  while (mWrappedJSRoots) {
-    mWrappedJSRoots->RemoveFromRootSet();
-  }
-}
-
 void XPCJSRuntime::Shutdown(JSContext* cx) {
   // This destructor runs before ~CycleCollectedJSContext, which does the actual
   // JS_DestroyContext() call. But destroying the context triggers one final GC,
@@ -1132,6 +1119,8 @@ void XPCJSRuntime::Shutdown(JSContext* cx) {
 
   // Prevent ~LinkedList assertion failures if we leaked things.
   mWrappedNativeScopes.clear();
+
+  mSubjectToFinalizationWJS.clear();
 
   CycleCollectedJSRuntime::Shutdown(cx);
 }
@@ -2299,6 +2288,9 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
   mozJSModuleLoader* loader = mozJSModuleLoader::Get();
   size_t jsModuleLoaderSize =
       loader ? loader->SizeOfIncludingThis(JSMallocSizeOf) : 0;
+  mozJSModuleLoader* devToolsLoader = mozJSModuleLoader::GetDevToolsLoader();
+  size_t jsDevToolsModuleLoaderSize =
+      devToolsLoader ? devToolsLoader->SizeOfIncludingThis(JSMallocSizeOf) : 0;
 
   // This is the second step (see above).  First we report stuff in the
   // "explicit" tree, then we report other stuff.
@@ -2530,6 +2522,8 @@ void JSReporter::CollectReports(WindowPaths* windowPaths,
 
   REPORT_BYTES("explicit/xpconnect/js-module-loader"_ns, KIND_HEAP,
                jsModuleLoaderSize, "XPConnect's JS module loader.");
+  REPORT_BYTES("explicit/xpconnect/js-devtools-module-loader"_ns, KIND_HEAP,
+               jsDevToolsModuleLoaderSize, "DevTools's JS module loader.");
 
   // Report HelperThreadState.
 
@@ -2735,15 +2729,18 @@ static nsresult ReadSourceFromFilename(JSContext* cx, const char* filename,
 
     // |buf| can't be directly returned -- convert it to UTF-16.
 
-    // On success this overwrites |*twoByteSource| and |*len|.
+    // On success this overwrites |chars| and |*len|.
+    JS::UniqueTwoByteChars chars;
     rv = ScriptLoader::ConvertToUTF16(
         scriptChannel, reinterpret_cast<const unsigned char*>(buf.get()),
-        rawLen, u"UTF-8"_ns, nullptr, *twoByteSource, *len);
+        rawLen, u"UTF-8"_ns, nullptr, chars, *len);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    if (!*twoByteSource) {
+    if (!chars) {
       return NS_ERROR_FAILURE;
     }
+
+    *twoByteSource = chars.release();
   }
 
   return NS_OK;
@@ -2797,8 +2794,6 @@ XPCJSRuntime::XPCJSRuntime(JSContext* aCx)
       mGCIsRunning(false),
       mNativesToReleaseArray(),
       mDoingFinalization(false),
-      mVariantRoots(nullptr),
-      mWrappedJSRoots(nullptr),
       mAsyncSnowWhiteFreer(new AsyncFreeSnowWhite()) {
   MOZ_COUNT_CTOR_INHERITED(XPCJSRuntime, CycleCollectedJSRuntime);
 }
@@ -2984,6 +2979,11 @@ bool XPCJSRuntime::DescribeCustomObjects(JSObject* obj, const JSClass* clasp,
   }
 
   XPCWrappedNativeProto* p = XPCWrappedNativeProto::Get(obj);
+  // Nothing here can GC. The analysis would otherwise think that ~nsCOMPtr
+  // could GC, but that's only possible if nsIXPCScriptable::GetJSClass()
+  // somehow released a reference to the nsIXPCScriptable, which isn't going to
+  // happen.
+  JS::AutoSuppressGCAnalysis nogc;
   nsCOMPtr<nsIXPCScriptable> scr = p->GetScriptable();
   if (!scr) {
     return false;
@@ -3054,34 +3054,6 @@ void XPCJSRuntime::DebugDump(int16_t depth) {
 }
 
 /***************************************************************************/
-
-void XPCRootSetElem::AddToRootSet(XPCRootSetElem** listHead) {
-  MOZ_ASSERT(!mSelfp, "Must be not linked");
-
-  mSelfp = listHead;
-  mNext = *listHead;
-  if (mNext) {
-    MOZ_ASSERT(mNext->mSelfp == listHead, "Must be list start");
-    mNext->mSelfp = &mNext;
-  }
-  *listHead = this;
-}
-
-void XPCRootSetElem::RemoveFromRootSet() {
-  JS::NotifyGCRootsRemoved(XPCJSContext::Get()->Context());
-
-  MOZ_ASSERT(mSelfp, "Must be linked");
-
-  MOZ_ASSERT(*mSelfp == this, "Link invariant");
-  *mSelfp = mNext;
-  if (mNext) {
-    mNext->mSelfp = mSelfp;
-  }
-#ifdef DEBUG
-  mSelfp = nullptr;
-  mNext = nullptr;
-#endif
-}
 
 void XPCJSRuntime::AddGCCallback(xpcGCCallback cb) {
   MOZ_ASSERT(cb, "null callback");

@@ -6,8 +6,10 @@
 /**
  * Tests if the POST requests display the correct information in the UI.
  */
-add_task(async function() {
-  const { L10N } = require("devtools/client/netmonitor/src/utils/l10n");
+add_task(async function () {
+  const {
+    L10N,
+  } = require("resource://devtools/client/netmonitor/src/utils/l10n.js");
 
   // Set a higher panel height in order to get full CodeMirror content
   Services.prefs.setIntPref("devtools.toolbox.footer.height", 600);

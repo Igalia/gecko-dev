@@ -14,7 +14,6 @@ if CONFIG["MOZ_HAS_REMOTE"]:
 DIRS += [
     "aboutcheckerboard",
     "aboutmemory",
-    "aboutperformance",
     "aboutprocesses",
     "alerts",
     "antitracking",
@@ -27,11 +26,13 @@ DIRS += [
     "certviewer",
     "cleardata",
     "clearsitedata",
+    "cookiebanners",
     "commandlines",
     "contentprefs",
     "contextualidentity",
     "crashes",
     "crashmonitor",
+    "credentialmanagement",
     "downloads",
     "enterprisepolicies",
     "extensions",
@@ -44,15 +45,12 @@ DIRS += [
     "httpsonlyerror",
     "jsoncpp/src/lib_json",
     "kvstore",
-    "lz4",
     "mediasniffer",
     "mozintl",
     "mozprotocol",
-    "osfile",
     "parentalcontrols",
     "passwordmgr",
     "pdfjs",
-    "perfmonitoring",
     "pictureinpicture",
     "places",
     "processtools",
@@ -61,7 +59,6 @@ DIRS += [
     "prompts",
     "protobuf",
     "remotebrowserutils",
-    "remotepagemanager",
     "reflect",
     "reputationservice",
     "resistfingerprinting",
@@ -71,11 +68,12 @@ DIRS += [
     "startup",
     "statusfilter",
     "telemetry",
+    "translation",
+    "translations",
     "thumbnails",
     "timermanager",
     "tooltiptext",
     "typeaheadfind",
-    "uniffi-js",
     "utils",
     "url-classifier",
     "urlformatter",
@@ -95,6 +93,8 @@ if CONFIG["MOZ_BUILD_APP"] != "mobile/android":
         "narrate",
         "reader",
         "viaduct",
+        "uniffi-js",
+        "uniffi-bindgen-gecko-js/components",
     ]
 
 if CONFIG["BUILD_CTYPES"]:
@@ -110,12 +110,15 @@ if CONFIG["MOZ_UPDATE_AGENT"]:
 
 DIRS += ["build"]
 
+if CONFIG["NIGHTLY_BUILD"]:
+    DIRS += ["shopping"]
+
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
-    DIRS += ["aboutthirdparty", "gfx"]
+    DIRS += ["aboutthirdparty", "aboutwindowsmessages", "gfx"]
 
 if CONFIG["MOZ_WIDGET_TOOLKIT"] != "android":
     EXTRA_JS_MODULES += [
-        "DefaultCLH.jsm",
+        "DefaultCLH.sys.mjs",
     ]
 
     XPCOM_MANIFESTS += [
@@ -134,15 +137,10 @@ if CONFIG["MOZ_BACKGROUNDTASKS"]:
 if CONFIG["MOZ_BUILD_APP"] == "browser":
     DIRS += ["corroborator"]
 
-if CONFIG["COMPILE_ENVIRONMENT"]:
-    CbindgenHeader(
-        "regex_ffi_generated.h",
-        inputs=["/toolkit/components/regex-ffi"],
-    )
-
-    EXPORTS.mozilla += [
-        "!regex_ffi_generated.h",
-    ]
-
 if CONFIG["MOZ_UNIFFI_FIXTURES"]:
     DIRS += ["uniffi-bindgen-gecko-js/fixtures"]
+
+
+UNIFIED_SOURCES += [
+    "/toolkit/components/antitracking/ContentBlockingAllowList.cpp",
+]

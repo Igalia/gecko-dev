@@ -110,6 +110,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
         mStreamFilterEndpoints;
     uint32_t mRedirectFlags;
     uint32_t mLoadFlags;
+    uint32_t mEarlyHintLinkType;
     RefPtr<PDocumentChannelParent::RedirectToRealChannelPromise::Private>
         mPromise;
   };
@@ -227,7 +228,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   NS_DECLARE_STATIC_IID_ACCESSOR(DOCUMENT_LOAD_LISTENER_IID)
 
   // Called by the DocumentChannel if cancelled.
-  void Cancel(const nsresult& aStatusCode);
+  void Cancel(const nsresult& aStatusCode, const nsACString& aReason);
 
   nsIChannel* GetChannel() const { return mChannel; }
 
@@ -244,10 +245,12 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   }
 
   nsresult LogBlockedCORSRequest(const nsAString& aMessage,
-                                 const nsACString& aCategory) override {
+                                 const nsACString& aCategory,
+                                 bool aIsWarning) override {
     LogBlockedCORSRequestParams params;
     params.mMessage = aMessage;
     params.mCategory = aCategory;
+    params.mIsWarning = aIsWarning;
     mSecurityWarningFunctions.AppendElement(
         SecurityWarningFunction{VariantIndex<1>{}, std::move(params)});
     return NS_OK;
@@ -276,12 +279,22 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
 
   [[nodiscard]] RefPtr<ChildEndpointPromise> AttachStreamFilter();
 
+  // EarlyHints aren't supported on ParentProcessDocumentChannels yet, allow
+  // EarlyHints to be cancelled from there (Bug 1819886)
+  void CancelEarlyHintPreloads();
+
+  // Gets the EarlyHint preloads for this document to pass them to the
+  // ContentProcess. Registers them in the EarlyHintRegister
+  void RegisterEarlyHintLinksAndGetConnectArgs(
+      dom::ContentParentId aCpId, nsTArray<EarlyHintConnectArgs>& aOutLinks);
+
   // Serializes all data needed to setup the new replacement channel
   // in the content process into the RedirectToRealChannelArgs struct.
   void SerializeRedirectData(RedirectToRealChannelArgs& aArgs,
                              bool aIsCrossProcess, uint32_t aRedirectFlags,
                              uint32_t aLoadFlags,
-                             dom::ContentParent* aParent) const;
+                             nsTArray<EarlyHintConnectArgs>&& aEarlyHints,
+                             uint32_t aEarlyHintLinkType) const;
 
   uint64_t GetLoadIdentifier() const { return mLoadIdentifier; }
   uint32_t GetLoadType() const { return mLoadStateLoadType; }
@@ -470,6 +483,7 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   struct LogBlockedCORSRequestParams {
     nsString mMessage;
     nsCString mCategory;
+    bool mIsWarning;
   };
 
   struct LogMimeTypeMismatchParams {
@@ -484,25 +498,6 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
                        LogMimeTypeMismatchParams>;
   nsTArray<SecurityWarningFunction> mSecurityWarningFunctions;
 
-  struct OnStartRequestParams {
-    nsCOMPtr<nsIRequest> request;
-  };
-  struct OnDataAvailableParams {
-    nsCOMPtr<nsIRequest> request;
-    nsCString data;
-    uint64_t offset;
-    uint32_t count;
-  };
-  struct OnStopRequestParams {
-    nsCOMPtr<nsIRequest> request;
-    nsresult status;
-  };
-  struct OnAfterLastPartParams {
-    nsresult status;
-  };
-  using StreamListenerFunction =
-      mozilla::Variant<OnStartRequestParams, OnDataAvailableParams,
-                       OnStopRequestParams, OnAfterLastPartParams>;
   // TODO Backtrack this.
   // The set of nsIStreamListener functions that got called on this
   // listener, so that we can replay them onto the replacement channel's
@@ -531,6 +526,8 @@ class DocumentLoadListener : public nsIInterfaceRequestor,
   // This will be passed back to the new content process should a process
   // switch occurs.
   RefPtr<nsDOMNavigationTiming> mTiming;
+
+  net::EarlyHintsService mEarlyHintsService;
 
   // An optional ObjectUpgradeHandler which can be used to upgrade an <object>
   // or <embed> element to contain a nsFrameLoader, allowing us to switch them

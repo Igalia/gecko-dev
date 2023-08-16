@@ -3,11 +3,11 @@
  */
 "use strict";
 
-const { BrowserUsageTelemetry } = ChromeUtils.import(
-  "resource:///modules/BrowserUsageTelemetry.jsm"
+const { BrowserUsageTelemetry } = ChromeUtils.importESModule(
+  "resource:///modules/BrowserUsageTelemetry.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 const PROFILE_COUNT_SCALAR = "browser.engagement.profile_count";
@@ -86,6 +86,11 @@ function reset(resetFile = true) {
 
 function setup() {
   reset();
+  // FOG needs a profile directory to put its data in.
+  do_get_profile();
+  // Initialize FOG so we can test the FOG version of profile count
+  Services.fog.initializeFOG();
+  Services.fog.testResetFOG();
 
   BrowserUsageTelemetry.Policy.readProfileCountFile = async path => {
     if (!gProfileCounterFilePath) {
@@ -146,6 +151,10 @@ function checkSuccess(profilesReported, rawCount = profilesReported) {
     PROFILE_COUNT_SCALAR,
     profilesReported,
     "The value reported to telemetry should be the expected profile count"
+  );
+  Assert.equal(
+    profilesReported,
+    Glean.browserEngagement.profileCount.testGetValue()
   );
 }
 

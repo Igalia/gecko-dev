@@ -3,9 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # add this directory to the path
-from __future__ import absolute_import
-import sys
 import os
+import sys
 
 sys.path.append(os.path.dirname(__file__))
 
@@ -34,7 +33,7 @@ class TestSessionStoreEnabledAllWindows(SessionStoreTestCase):
             self.all_windows, "Not all requested windows have been opened"
         )
 
-        self.marionette.quit(in_app=True)
+        self.marionette.quit()
         self.marionette.start_session()
 
         self.wait_for_windows(

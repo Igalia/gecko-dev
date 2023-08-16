@@ -4,55 +4,56 @@
 
 "use strict";
 
-const Services = require("Services");
-const { l10n } = require("devtools/shared/inspector/css-logic");
+const { l10n } = require("resource://devtools/shared/inspector/css-logic.js");
 const {
   InplaceEditor,
   editableField,
-} = require("devtools/client/shared/inplace-editor");
+} = require("resource://devtools/client/shared/inplace-editor.js");
 const {
   createChild,
   appendText,
   advanceValidate,
   blurOnMultipleProperties,
-} = require("devtools/client/inspector/shared/utils");
-const { throttle } = require("devtools/shared/throttle");
+} = require("resource://devtools/client/inspector/shared/utils.js");
+const { throttle } = require("resource://devtools/shared/throttle.js");
 const {
   style: { ELEMENT_STYLE },
-} = require("devtools/shared/constants");
+} = require("resource://devtools/shared/constants.js");
 
 loader.lazyRequireGetter(
   this,
   "openContentLink",
-  "devtools/client/shared/link",
+  "resource://devtools/client/shared/link.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   ["parseDeclarations", "parseSingleValue"],
-  "devtools/shared/css/parsing-utils",
+  "resource://devtools/shared/css/parsing-utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "findCssSelector",
-  "devtools/shared/inspector/css-logic",
+  "resource://devtools/shared/inspector/css-logic.js",
   true
 );
-loader.lazyRequireGetter(
-  this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm",
-  true
-);
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+});
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
-const INLINE_COMPATIBILITY_WARNING_PREF =
-  "devtools.inspector.ruleview.inline-compatibility-warning.enabled";
+// @backward-compat { version 117 } The pref is enabled by default since 117.
+//                                  Let's completely remove it once 117 hits release.
+const inlineCompatibilityWarningEnabled = Services.prefs.getBoolPref(
+  "devtools.inspector.ruleview.inline-compatibility-warning.enabled"
+);
 
 const SHARED_SWATCH_CLASS = "ruleview-swatch";
 const COLOR_SWATCH_CLASS = "ruleview-colorswatch";
 const BEZIER_SWATCH_CLASS = "ruleview-bezierswatch";
+const LINEAR_EASING_SWATCH_CLASS = "ruleview-lineareasingswatch";
 const FILTER_SWATCH_CLASS = "ruleview-filterswatch";
 const ANGLE_SWATCH_CLASS = "ruleview-angleswatch";
 const FONT_FAMILY_CLASS = "ruleview-font-family";
@@ -65,6 +66,7 @@ const SHAPE_SWATCH_CLASS = "ruleview-shapeswatch";
 const ACTIONABLE_ELEMENTS_SELECTORS = [
   `.${COLOR_SWATCH_CLASS}`,
   `.${BEZIER_SWATCH_CLASS}`,
+  `.${LINEAR_EASING_SWATCH_CLASS}`,
   `.${FILTER_SWATCH_CLASS}`,
   `.${ANGLE_SWATCH_CLASS}`,
   "a",
@@ -136,9 +138,8 @@ function TextPropertyEditor(ruleEditor, property) {
   this.getGridlineNames = this.getGridlineNames.bind(this);
   this.update = this.update.bind(this);
   this.updatePropertyState = this.updatePropertyState.bind(this);
-  this._onDraggablePreferenceChanged = this._onDraggablePreferenceChanged.bind(
-    this
-  );
+  this._onDraggablePreferenceChanged =
+    this._onDraggablePreferenceChanged.bind(this);
   this._onEnableChanged = this._onEnableChanged.bind(this);
   this._onEnableClicked = this._onEnableClicked.bind(this);
   this._onExpandClicked = this._onExpandClicked.bind(this);
@@ -189,13 +190,21 @@ TextPropertyEditor.prototype = {
    * Create the property editor's DOM.
    */
   _create() {
-    this.element = this.doc.createElementNS(HTML_NS, "li");
+    this.element = this.doc.createElementNS(HTML_NS, "div");
+    this.element.setAttribute("role", "listitem");
     this.element.classList.add("ruleview-property");
     this.element.dataset.declarationId = this.prop.id;
     this.element._textPropertyEditor = this;
 
     this.container = createChild(this.element, "div", {
       class: "ruleview-propertycontainer",
+    });
+
+    const indent =
+      ((this.ruleEditor.rule.domRule.ancestorData.length || 0) + 1) * 2;
+    createChild(this.container, "span", {
+      class: "ruleview-rule-indent clipboard-only",
+      textContent: " ".repeat(indent),
     });
 
     // The enable checkbox will disable or enable the rule.
@@ -258,10 +267,6 @@ TextPropertyEditor.prototype = {
       class: "ruleview-unused-warning",
       hidden: "",
     });
-
-    const inlineCompatibilityWarningEnabled = Services.prefs.getBoolPref(
-      INLINE_COMPATIBILITY_WARNING_PREF
-    );
 
     if (inlineCompatibilityWarningEnabled) {
       this.compatibilityState = createChild(this.container, "div", {
@@ -425,7 +430,8 @@ TextPropertyEditor.prototype = {
    */
   async getGridlineNames() {
     const gridLineNames = { cols: [], rows: [] };
-    const layoutInspector = await this.ruleView.inspector.walker.getLayoutInspector();
+    const layoutInspector =
+      await this.ruleView.inspector.walker.getLayoutInspector();
     const gridFront = await layoutInspector.getCurrentGrid(
       this.ruleView.inspector.selection.nodeFront
     );
@@ -549,6 +555,9 @@ TextPropertyEditor.prototype = {
       filterSwatchClass: SHARED_SWATCH_CLASS + " " + FILTER_SWATCH_CLASS,
       flexClass: "ruleview-flex js-toggle-flexbox-highlighter",
       gridClass: "ruleview-grid js-toggle-grid-highlighter",
+      linearEasingClass: "ruleview-lineareasing",
+      linearEasingSwatchClass:
+        SHARED_SWATCH_CLASS + " " + LINEAR_EASING_SWATCH_CLASS,
       shapeClass: "ruleview-shape",
       shapeSwatchClass: SHAPE_SWATCH_CLASS,
       // Only ask the parser to convert colors to the default color type specified by the
@@ -582,6 +591,14 @@ TextPropertyEditor.prototype = {
 
     this.valueSpan.innerHTML = "";
     this.valueSpan.appendChild(frag);
+    if (
+      this.valueSpan.textProperty?.name === "grid-template-areas" &&
+      this.isValid() &&
+      (this.valueSpan.innerText.includes(`"`) ||
+        this.valueSpan.innerText.includes(`'`))
+    ) {
+      this._formatGridTemplateAreasValue();
+    }
 
     this.ruleView.emit("property-value-updated", {
       rule: this.prop.rule,
@@ -665,6 +682,26 @@ TextPropertyEditor.prototype = {
         });
         const title = l10n("rule.bezierSwatch.tooltip");
         span.setAttribute("title", title);
+      }
+    }
+
+    // Attach the linear easing tooltip to the linear easing swatches
+    this._linearEasingSwatchSpans = this.valueSpan.querySelectorAll(
+      "." + LINEAR_EASING_SWATCH_CLASS
+    );
+    if (this.ruleEditor.isEditable) {
+      for (const span of this._linearEasingSwatchSpans) {
+        // Adding this swatch to the list of swatches our colorpicker
+        // knows about
+        this.ruleView.tooltips
+          .getTooltip("linearEaseFunction")
+          .addSwatch(span, {
+            onShow: this._onStartEditing,
+            onPreview: this._onSwatchPreview,
+            onCommit: this._onSwatchCommit,
+            onRevert: this._onSwatchRevert,
+          });
+        span.setAttribute("title", l10n("rule.bezierSwatch.tooltip"));
       }
     }
 
@@ -835,10 +872,6 @@ TextPropertyEditor.prototype = {
     }
 
     this.updatePropertyUsedIndicator();
-
-    const inlineCompatibilityWarningEnabled = Services.prefs.getBoolPref(
-      INLINE_COMPATIBILITY_WARNING_PREF
-    );
 
     if (inlineCompatibilityWarningEnabled) {
       this.updatePropertyCompatibilityIndicator();
@@ -1022,9 +1055,7 @@ TextPropertyEditor.prototype = {
   _onEnableChanged(event) {
     this.prop.setEnabled(this.enable.checked);
     event.stopPropagation();
-    this.telemetry.recordEvent("edit_rule", "ruleview", null, {
-      session_id: this.toolbox.sessionId,
-    });
+    this.telemetry.recordEvent("edit_rule", "ruleview");
   },
 
   /**
@@ -1097,9 +1128,7 @@ TextPropertyEditor.prototype = {
       return;
     }
 
-    this.telemetry.recordEvent("edit_rule", "ruleview", null, {
-      session_id: this.toolbox.sessionId,
-    });
+    this.telemetry.recordEvent("edit_rule", "ruleview");
 
     // Remove a property if the name is empty
     if (!value.trim()) {
@@ -1209,9 +1238,7 @@ TextPropertyEditor.prototype = {
       this._removeDraggingCapacity();
     }
 
-    this.telemetry.recordEvent("edit_rule", "ruleview", null, {
-      session_id: this.toolbox.sessionId,
-    });
+    this.telemetry.recordEvent("edit_rule", "ruleview");
 
     // First, set this property value (common case, only modified a property)
     this.prop.setValue(val.value, val.priority);
@@ -1342,7 +1369,8 @@ TextPropertyEditor.prototype = {
    * @returns {Boolean}
    */
   _hasSmallIncrementModifier(event) {
-    const modifier = AppConstants.platform === "macosx" ? "altKey" : "ctrlKey";
+    const modifier =
+      lazy.AppConstants.platform === "macosx" ? "altKey" : "ctrlKey";
     return event[modifier] === true;
   },
 
@@ -1356,7 +1384,8 @@ TextPropertyEditor.prototype = {
    */
   _parseDimension(value) {
     // The regex handles values like +1, -1, 1e4, .4, 1.3e-4, 1.567
-    const cssDimensionRegex = /^(?<value>[+-]?(\d*\.)?\d+(e[+-]?\d+)?)(?<unit>(%|[a-zA-Z]+))$/;
+    const cssDimensionRegex =
+      /^(?<value>[+-]?(\d*\.)?\d+(e[+-]?\d+)?)(?<unit>(%|[a-zA-Z]+))$/;
     return value.match(cssDimensionRegex);
   },
 
@@ -1368,12 +1397,7 @@ TextPropertyEditor.prototype = {
    */
   _isDraggableProperty(textProperty) {
     // Check if the feature is explicitly disabled.
-    if (
-      !Services.prefs.getBoolPref(
-        "devtools.inspector.draggable_properties",
-        false
-      )
-    ) {
+    if (!this.ruleView.draggablePropertiesEnabled) {
       return false;
     }
     // temporary way of fixing the bug when editing inline styles
@@ -1541,6 +1565,43 @@ TextPropertyEditor.prototype = {
    */
   isNameValid() {
     return this.prop.isNameValid();
+  },
+
+  /**
+   * Display grid-template-area value strings each on their own line
+   * to display it in an ascii-art style matrix
+   */
+  _formatGridTemplateAreasValue() {
+    this.valueSpan.classList.add("ruleview-propertyvalue-break-spaces");
+
+    let quoteSymbolsUsed = [];
+
+    const getQuoteSymbolsUsed = cssValue => {
+      const regex = /\"|\'/g;
+      const found = cssValue.match(regex);
+      quoteSymbolsUsed = found.filter((_, i) => i % 2 === 0);
+    };
+
+    getQuoteSymbolsUsed(this.valueSpan.innerText);
+
+    this.valueSpan.innerText = this.valueSpan.innerText
+      .split('"')
+      .filter(s => s !== "")
+      .map(s => s.split("'"))
+      .flat()
+      .map(s => s.trim().replace(/\s+/g, " "))
+      .filter(s => s.length)
+      .map(line => line.split(" "))
+      .map((line, i, lines) =>
+        line.map((col, j) =>
+          col.padEnd(Math.max(...lines.map(l => l[j].length)), " ")
+        )
+      )
+      .map(
+        (line, i) =>
+          `\n${quoteSymbolsUsed[i]}` + line.join(" ") + quoteSymbolsUsed[i]
+      )
+      .join(" ");
   },
 };
 

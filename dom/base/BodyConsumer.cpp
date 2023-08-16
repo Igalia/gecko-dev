@@ -23,6 +23,7 @@
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/ScopeExit.h"
+#include "mozilla/TaskQueue.h"
 #include "nsComponentManagerUtils.h"
 #include "nsIFile.h"
 #include "nsIThreadRetargetableRequest.h"
@@ -272,7 +273,7 @@ NS_IMPL_ISUPPORTS(ConsumeBodyDoneObserver, nsIStreamLoaderObserver)
 }  // namespace
 
 /* static */ already_AddRefed<Promise> BodyConsumer::Create(
-    nsIGlobalObject* aGlobal, nsIEventTarget* aMainThreadEventTarget,
+    nsIGlobalObject* aGlobal, nsISerialEventTarget* aMainThreadEventTarget,
     nsIInputStream* aBodyStream, AbortSignalImpl* aSignalImpl,
     ConsumeType aType, const nsACString& aBodyBlobURISpec,
     const nsAString& aBodyLocalPath, const nsACString& aBodyMimeType,
@@ -359,10 +360,11 @@ void BodyConsumer::ReleaseObject() {
 }
 
 BodyConsumer::BodyConsumer(
-    nsIEventTarget* aMainThreadEventTarget, nsIGlobalObject* aGlobalObject,
-    nsIInputStream* aBodyStream, Promise* aPromise, ConsumeType aType,
-    const nsACString& aBodyBlobURISpec, const nsAString& aBodyLocalPath,
-    const nsACString& aBodyMimeType, const nsACString& aMixedCaseMimeType,
+    nsISerialEventTarget* aMainThreadEventTarget,
+    nsIGlobalObject* aGlobalObject, nsIInputStream* aBodyStream,
+    Promise* aPromise, ConsumeType aType, const nsACString& aBodyBlobURISpec,
+    const nsAString& aBodyLocalPath, const nsACString& aBodyMimeType,
+    const nsACString& aMixedCaseMimeType,
     MutableBlobStorage::MutableBlobStorageType aBlobStorageType)
     : mTargetThread(NS_GetCurrentThread()),
       mMainThreadEventTarget(aMainThreadEventTarget),
@@ -575,7 +577,9 @@ void BodyConsumer::BeginConsumeBodyMainThread(ThreadSafeWorkerRef* aWorkerRef) {
   if (rr) {
     nsCOMPtr<nsIEventTarget> sts =
         do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
-    rv = rr->RetargetDeliveryTo(sts);
+    RefPtr<TaskQueue> queue =
+        TaskQueue::Create(sts.forget(), "BodyConsumer STS Delivery Queue");
+    rv = rr->RetargetDeliveryTo(queue);
     if (NS_FAILED(rv)) {
       NS_WARNING("Retargeting failed");
     }
@@ -647,7 +651,7 @@ void BodyConsumer::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength,
   AssertIsOnTargetThread();
 
   // This makes sure that we free the data correctly.
-  auto autoFree = mozilla::MakeScopeExit([&] { free(aResult); });
+  UniquePtr<uint8_t[], JS::FreePolicy> resultPtr{aResult};
 
   if (mBodyConsumed) {
     return;
@@ -685,7 +689,7 @@ void BodyConsumer::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength,
   }
 
   // Finish successfully consuming body according to type.
-  MOZ_ASSERT(aResult);
+  MOZ_ASSERT(resultPtr);
 
   AutoJSAPI jsapi;
   if (!jsapi.Init(mGlobal)) {
@@ -699,16 +703,14 @@ void BodyConsumer::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength,
   switch (mConsumeType) {
     case CONSUME_ARRAYBUFFER: {
       JS::Rooted<JSObject*> arrayBuffer(cx);
-      BodyUtil::ConsumeArrayBuffer(cx, &arrayBuffer, aResultLength, aResult,
-                                   error);
+      BodyUtil::ConsumeArrayBuffer(cx, &arrayBuffer, aResultLength,
+                                   std::move(resultPtr), error);
 
       if (!error.Failed()) {
         JS::Rooted<JS::Value> val(cx);
         val.setObjectOrNull(arrayBuffer);
 
         localPromise->MaybeResolve(val);
-        // ArrayBuffer takes over ownership.
-        aResult = nullptr;
       }
       break;
     }
@@ -718,8 +720,7 @@ void BodyConsumer::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength,
     }
     case CONSUME_FORMDATA: {
       nsCString data;
-      data.Adopt(reinterpret_cast<char*>(aResult), aResultLength);
-      aResult = nullptr;
+      data.Adopt(reinterpret_cast<char*>(resultPtr.release()), aResultLength);
 
       RefPtr<dom::FormData> fd = BodyUtil::ConsumeFormData(
           mGlobal, mBodyMimeType, mMixedCaseMimeType, data, error);
@@ -733,7 +734,7 @@ void BodyConsumer::ContinueConsumeBody(nsresult aStatus, uint32_t aResultLength,
     case CONSUME_JSON: {
       nsString decoded;
       if (NS_SUCCEEDED(
-              BodyUtil::ConsumeText(aResultLength, aResult, decoded))) {
+              BodyUtil::ConsumeText(aResultLength, resultPtr.get(), decoded))) {
         if (mConsumeType == CONSUME_TEXT) {
           localPromise->MaybeResolve(decoded);
         } else {
@@ -799,7 +800,8 @@ void BodyConsumer::ShutDownMainThreadConsuming() {
   mShuttingDown = true;
 
   if (mConsumeBodyPump) {
-    mConsumeBodyPump->Cancel(NS_BINDING_ABORTED);
+    mConsumeBodyPump->CancelWithReason(
+        NS_BINDING_ABORTED, "BodyConsumer::ShutDownMainThreadConsuming"_ns);
     mConsumeBodyPump = nullptr;
   }
 }

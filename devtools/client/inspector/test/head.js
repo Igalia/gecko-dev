@@ -2,8 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 /* eslint no-unused-vars: [2, {"vars": "local"}] */
-/* import-globals-from ../../shared/test/shared-head.js */
-/* import-globals-from ../../inspector/test/shared-head.js */
+
 "use strict";
 
 // Load the shared-head file first.
@@ -23,7 +22,6 @@ Services.scriptloader.loadSubScript(
   this
 );
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
 const INSPECTOR_L10N = new LocalizationHelper(
   "devtools/client/locales/inspector.properties"
 );
@@ -33,7 +31,7 @@ registerCleanupFunction(() => {
   Services.prefs.clearUserPref("devtools.inspector.selectedSidebar");
 });
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   // Move the mouse outside inspector. If the test happened fake a mouse event
   // somewhere over inspector the pointer is considered to be there when the
   // next test begins. This might cause unexpected events to be emitted when
@@ -54,14 +52,14 @@ registerCleanupFunction(function() {
  * @param {Toolbox} toolbox
  * @param {Boolean} skipFocus - Allow tests to bypass the focus event.
  */
-var startPicker = async function(toolbox, skipFocus) {
+var startPicker = async function (toolbox, skipFocus) {
   info("Start the element picker");
   toolbox.win.focus();
   await toolbox.nodePicker.start();
   if (!skipFocus) {
     // By default make sure the content window is focused since the picker may not focus
     // the content window by default.
-    await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+    await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
       content.focus();
     });
   }
@@ -71,7 +69,7 @@ var startPicker = async function(toolbox, skipFocus) {
  * Stop the element picker using the Escape keyboard shortcut
  * @param {Toolbox} toolbox
  */
-var stopPickerWithEscapeKey = async function(toolbox) {
+var stopPickerWithEscapeKey = async function (toolbox) {
   const onPickerStopped = toolbox.nodePicker.once("picker-node-canceled");
   EventUtils.synthesizeKey("VK_ESCAPE", {}, toolbox.win);
   await onPickerStopped;
@@ -81,7 +79,7 @@ var stopPickerWithEscapeKey = async function(toolbox) {
  * Start the eye dropper tool.
  * @param {Toolbox} toolbox
  */
-var startEyeDropper = async function(toolbox) {
+var startEyeDropper = async function (toolbox) {
   info("Start the eye dropper tool");
   toolbox.win.focus();
   await toolbox.getPanel("inspector").showEyeDropper();
@@ -208,7 +206,7 @@ async function getBrowsingContextForNestedFrame(selectorArray = []) {
     browsingContext = await SpecialPowers.spawn(
       browsingContext,
       [selectorArray.shift()],
-      function(selector) {
+      function (selector) {
         const iframe = content.document.querySelector(selector);
         return iframe.browsingContext;
       }
@@ -273,7 +271,7 @@ function clearCurrentNodeSelection(inspector) {
  * @param {String} selector The selector for the node to click on in the page.
  * @return {Promise} Resolves to the inspector when it has opened and is updated
  */
-var clickOnInspectMenuItem = async function(selector) {
+var clickOnInspectMenuItem = async function (selector) {
   info("Showing the contextual menu on node " + selector);
   const contentAreaContextMenu = document.querySelector(
     "#contentAreaContextMenu"
@@ -308,7 +306,7 @@ var clickOnInspectMenuItem = async function(selector) {
  * @return {Promise} Resolves the node front when the inspector is updated with the new
  *         node.
  */
-var getFrameDocument = async function(frameSelector, inspector) {
+var getFrameDocument = async function (frameSelector, inspector) {
   const iframe = await getNodeFront(frameSelector, inspector);
   const { nodes } = await inspector.walker.children(iframe);
 
@@ -326,7 +324,7 @@ var getFrameDocument = async function(frameSelector, inspector) {
  * @return {Promise} Resolves the node front when the inspector is updated with the new
  *         node.
  */
-var getShadowRoot = async function(hostSelector, inspector) {
+var getShadowRoot = async function (hostSelector, inspector) {
   const hostFront = await getNodeFront(hostSelector, inspector);
   const { nodes } = await inspector.walker.children(hostFront);
 
@@ -346,7 +344,7 @@ var getShadowRoot = async function(hostSelector, inspector) {
  * @return {Promise} Resolves the node front when the inspector is updated with the new
  *         node.
  */
-var getNodeFrontInShadowDom = async function(
+var getNodeFrontInShadowDom = async function (
   selector,
   hostSelector,
   inspector
@@ -361,7 +359,7 @@ var getNodeFrontInShadowDom = async function(
   return inspector.walker.querySelector(shadowRoot, selector);
 };
 
-var focusSearchBoxUsingShortcut = async function(panelWin, callback) {
+var focusSearchBoxUsingShortcut = async function (panelWin, callback) {
   info("Focusing search box");
   const searchBox = panelWin.document.getElementById("inspector-searchbox");
   const focused = once(searchBox, "focus");
@@ -398,7 +396,7 @@ function getContainerForNodeFront(nodeFront, { markup }) {
  * @param {Boolean} Set to true in the event that the node shouldn't be found.
  * @return {MarkupContainer}
  */
-var getContainerForSelector = async function(
+var getContainerForSelector = async function (
   selector,
   inspector,
   expectFailure = false
@@ -425,7 +423,7 @@ var getContainerForSelector = async function(
  * @return {Promise} Resolves when the container is hovered and the higlighter
  * is shown on the corresponding node
  */
-var hoverContainer = async function(selector, inspector) {
+var hoverContainer = async function (selector, inspector) {
   const { waitForHighlighterTypeShown } = getHighlighterTestHelpers(inspector);
   info("Hovering over the markup-container for node " + selector);
 
@@ -451,7 +449,7 @@ var hoverContainer = async function(selector, inspector) {
  * loaded in the toolbox
  * @return {Promise} Resolves when the node has been selected.
  */
-var clickContainer = async function(selector, inspector) {
+var clickContainer = async function (selector, inspector) {
   info("Clicking on the markup-container for node " + selector);
 
   const nodeFront = await getNodeFront(selector, inspector);
@@ -592,7 +590,7 @@ async function poll(check, desc, attempts = 10, timeBetweenAttempts = 200) {
  *    properties. (see `openInspector`)
  */
 const getHighlighterHelperFor = type =>
-  async function({ inspector, highlighterTestFront }) {
+  async function ({ inspector, highlighterTestFront }) {
     const front = inspector.inspectorFront;
     const highlighter = await front.getHighlighterByType(type);
 
@@ -672,7 +670,7 @@ const getHighlighterHelperFor = type =>
       },
 
       async waitForElementAttributeSet(id, name) {
-        await poll(async function() {
+        await poll(async function () {
           const value = await highlighterTestFront.getHighlighterNodeAttribute(
             prefix + id,
             name,
@@ -683,7 +681,7 @@ const getHighlighterHelperFor = type =>
       },
 
       async waitForElementAttributeRemoved(id, name) {
-        await poll(async function() {
+        await poll(async function () {
           const value = await highlighterTestFront.getHighlighterNodeAttribute(
             prefix + id,
             name,
@@ -723,7 +721,7 @@ const getHighlighterHelperFor = type =>
         {},
         {
           get: (target, name) =>
-            async function(x = prevX, y = prevY, selector = ":root") {
+            async function (x = prevX, y = prevY, selector = ":root") {
               prevX = x;
               prevY = y;
               await safeSynthesizeMouseEventInContentPage(selector, x, y, {
@@ -794,39 +792,6 @@ function getHighlighterTestHelpers(inspector) {
   };
 }
 
-// The expand all operation of the markup-view calls itself recursively and
-// there's not one event we can wait for to know when it's done so use this
-// helper function to wait until all recursive children updates are done.
-async function waitForMultipleChildrenUpdates(inspector) {
-  // As long as child updates are queued up while we wait for an update already
-  // wait again
-  if (
-    inspector.markup._queuedChildUpdates &&
-    inspector.markup._queuedChildUpdates.size
-  ) {
-    await waitForChildrenUpdated(inspector);
-    return waitForMultipleChildrenUpdates(inspector);
-  }
-  return null;
-}
-
-/**
- * Using the markupview's _waitForChildren function, wait for all queued
- * children updates to be handled.
- * @param {InspectorPanel} inspector The instance of InspectorPanel currently
- * loaded in the toolbox
- * @return a promise that resolves when all queued children updates have been
- * handled
- */
-function waitForChildrenUpdated({ markup }) {
-  info("Waiting for queued children updates to be handled");
-  return new Promise(resolve => {
-    markup._waitForChildren().then(() => {
-      executeSoon(resolve);
-    });
-  });
-}
-
 /**
  * Wait for the toolbox to emit the styleeditor-selected event and when done
  * wait for the stylesheet identified by href to be loaded in the stylesheet
@@ -849,6 +814,11 @@ function waitForStyleEditor(toolbox, href) {
       // A helper that resolves the promise once it receives an editor that
       // matches the expected href. Returns false if the editor was not correct.
       const gotEditor = editor => {
+        if (!editor) {
+          info("Editor went away after selected?");
+          return false;
+        }
+
         const currentHref = editor.styleSheet.href;
         if (!href || (href && currentHref.endsWith(href))) {
           info("Stylesheet editor selected");
@@ -900,7 +870,7 @@ function containsFocus(doc, container) {
  *
  * @return a promise that resolves to the tab object
  */
-var waitForTab = async function() {
+var waitForTab = async function () {
   info("Waiting for a tab to open");
   await once(gBrowser.tabContainer, "TabOpen");
   const tab = gBrowser.selectedTab;
@@ -1118,15 +1088,6 @@ async function toggleShapesHighlighter(
     );
     await onHighlighterHidden;
   }
-}
-
-/**
- * Expand the provided markup container programatically and  wait for all children to
- * update.
- */
-async function expandContainer(inspector, container) {
-  await inspector.markup.expandNode(container.node);
-  await waitForMultipleChildrenUpdates(inspector);
 }
 
 /**
@@ -1415,7 +1376,7 @@ async function deleteNodeWithContextMenu(node, inspector) {
  * Forces the content page to reflow and waits for the next repaint.
  */
 function reflowContentPage() {
-  return SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+  return SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
     return new Promise(resolve => {
       content.document.documentElement.offsetWidth;
       content.requestAnimationFrame(resolve);
@@ -1448,10 +1409,12 @@ async function getAllAdjustedQuadsForContentPageElement(
     browsingContext,
     [inBrowsingContextSelector, useTopWindowAsBoundary],
     (_selector, _useTopWindowAsBoundary) => {
-      const { require } = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+      const { require } = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/Loader.sys.mjs"
       );
-      const { getAdjustedQuads } = require("devtools/shared/layout/utils");
+      const {
+        getAdjustedQuads,
+      } = require("resource://devtools/shared/layout/utils.js");
 
       const node = content.document.querySelector(_selector);
 
@@ -1497,4 +1460,57 @@ async function isNodeCorrectlyHighlighted(highlighterTestFront, selector) {
       );
     }
   }
+}
+
+/**
+ * Get the position and size of the measuring tool.
+ *
+ * @param {Object} Object returned by getHighlighterHelperFor()
+ * @return {Promise<Object>} A promise that resolves with an object containing
+ *    the x, y, width, and height properties of the measuring tool which has
+ *    been drawn on-screen
+ */
+async function getAreaRect({ getElementAttribute }) {
+  // The 'box-path' element holds the width and height of the
+  // measuring area as well as the position relative to its
+  // parent <g> element.
+  const d = await getElementAttribute("box-path", "d");
+  // The tool element itself is a <g> element grouping all paths.
+  // Though <g> elements do not have coordinates by themselves,
+  // therefore it is positioned using the 'transform' CSS property.
+  // So, in order to get the position of the measuring area, the
+  // coordinates need to be read from the translate() function.
+  const transform = await getElementAttribute("tool", "transform");
+  const reDir = /(\d+) (\d+)/g;
+  const reTransform = /(\d+),(\d+)/;
+  const coords = {
+    x: 0,
+    y: 0,
+    width: 0,
+    height: 0,
+  };
+  let match;
+  while ((match = reDir.exec(d))) {
+    let [, x, y] = match;
+    x = Number(x);
+    y = Number(y);
+    if (x < coords.x) {
+      coords.x = x;
+    }
+    if (y < coords.y) {
+      coords.y = y;
+    }
+    if (x > coords.width) {
+      coords.width = x;
+    }
+    if (y > coords.height) {
+      coords.height = y;
+    }
+  }
+
+  match = reTransform.exec(transform);
+  coords.x += Number(match[1]);
+  coords.y += Number(match[2]);
+
+  return coords;
 }

@@ -3,12 +3,12 @@
 
 "use strict";
 
-const { FxAccountsCommands, SendTab } = ChromeUtils.import(
-  "resource://gre/modules/FxAccountsCommands.js"
+const { FxAccountsCommands, SendTab } = ChromeUtils.importESModule(
+  "resource://gre/modules/FxAccountsCommands.sys.mjs"
 );
 
-const { FxAccountsClient } = ChromeUtils.import(
-  "resource://gre/modules/FxAccountsClient.jsm"
+const { FxAccountsClient } = ChromeUtils.importESModule(
+  "resource://gre/modules/FxAccountsClient.sys.mjs"
 );
 
 const { COMMAND_SENDTAB, COMMAND_SENDTAB_TAIL } = ChromeUtils.import(
@@ -45,9 +45,11 @@ function MockFxAccountsClient() {
   FxAccountsClient.apply(this);
 }
 
-MockFxAccountsClient.prototype = {
-  __proto__: FxAccountsClient.prototype,
-};
+MockFxAccountsClient.prototype = {};
+Object.setPrototypeOf(
+  MockFxAccountsClient.prototype,
+  FxAccountsClient.prototype
+);
 
 add_task(async function test_sendtab_isDeviceCompatible() {
   const sendTab = new SendTab(null, null);
@@ -226,7 +228,7 @@ add_task(async function test_sendtab_receive_old_client() {
   // No 'flowID' in the encrypted payload, no 'streamID' anywhere.
   const payload = {
     flowID: "flow-id",
-    encrypted: new TextEncoder("utf8").encode(JSON.stringify(data)),
+    encrypted: new TextEncoder().encode(JSON.stringify(data)),
   };
   const reason = "push";
   await sendTab.handle("sender-id", payload, reason);
@@ -312,14 +314,10 @@ add_task(async function test_commands_pollDeviceCommands_push() {
   };
   const commands = new FxAccountsCommands(fxAccounts);
   const mockCommands = sinon.mock(commands);
-  mockCommands
-    .expects("_fetchDeviceCommands")
-    .once()
-    .withArgs(11)
-    .returns({
-      index: remoteIndex,
-      messages: remoteMessages,
-    });
+  mockCommands.expects("_fetchDeviceCommands").once().withArgs(11).returns({
+    index: remoteIndex,
+    messages: remoteMessages,
+  });
   mockCommands
     .expects("_handleCommands")
     .once()
@@ -500,14 +498,10 @@ add_task(
     };
     const commands = new FxAccountsCommands(fxAccounts);
     const mockCommands = sinon.mock(commands);
-    mockCommands
-      .expects("_fetchDeviceCommands")
-      .once()
-      .withArgs(11)
-      .returns({
-        index: remoteIndex,
-        messages: remoteMessages,
-      });
+    mockCommands.expects("_fetchDeviceCommands").once().withArgs(11).returns({
+      index: remoteIndex,
+      messages: remoteMessages,
+    });
     mockCommands
       .expects("_handleCommands")
       .once()
@@ -555,14 +549,10 @@ add_task(async function test_commands_pollDeviceCommands_scheduled_local() {
   };
   const commands = new FxAccountsCommands(fxAccounts);
   const mockCommands = sinon.mock(commands);
-  mockCommands
-    .expects("_fetchDeviceCommands")
-    .once()
-    .withArgs(11)
-    .returns({
-      index: remoteIndex,
-      messages: remoteMessages,
-    });
+  mockCommands.expects("_fetchDeviceCommands").once().withArgs(11).returns({
+    index: remoteIndex,
+    messages: remoteMessages,
+  });
   mockCommands
     .expects("_handleCommands")
     .once()
@@ -608,14 +598,10 @@ add_task(
     };
     const commands = new FxAccountsCommands(fxAccounts);
     const mockCommands = sinon.mock(commands);
-    mockCommands
-      .expects("_fetchDeviceCommands")
-      .once()
-      .withArgs(0)
-      .returns({
-        index: remoteIndex,
-        messages: remoteMessages,
-      });
+    mockCommands.expects("_fetchDeviceCommands").once().withArgs(0).returns({
+      index: remoteIndex,
+      messages: remoteMessages,
+    });
     mockCommands
       .expects("_handleCommands")
       .once()

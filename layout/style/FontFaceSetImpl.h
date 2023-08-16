@@ -25,9 +25,9 @@ class nsFontFaceLoader;
 class nsIChannel;
 class nsIPrincipal;
 class nsPIDOMWindowInner;
-struct RawServoFontFaceRule;
 
 namespace mozilla {
+struct StyleLockedFontFaceRule;
 class PostTraversalTask;
 class Runnable;
 class SharedFontList;
@@ -51,6 +51,8 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
 
   bool BypassCache() final { return mBypassCache; }
 
+  void ForgetLocalFaces() final;
+
  protected:
   virtual nsresult CreateChannelForSyncLoadFontData(
       nsIChannel** aOutChannel, gfxUserFontEntry* aFontToLoad,
@@ -69,20 +71,24 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
                       nsresult aStatus = NS_OK) override;
   void DoRebuildUserFontSet() override;
   already_AddRefed<gfxUserFontEntry> CreateUserFontEntry(
-      const nsTArray<gfxFontFaceSrc>& aFontFaceSrcList, WeightRange aWeight,
-      StretchRange aStretch, SlantStyleRange aStyle,
-      const nsTArray<gfxFontFeature>& aFeatureSettings,
-      const nsTArray<gfxFontVariation>& aVariationSettings,
-      uint32_t aLanguageOverride, gfxCharacterMap* aUnicodeRanges,
-      StyleFontDisplay aFontDisplay, RangeFlags aRangeFlags,
-      float aAscentOverride, float aDescentOverride, float aLineGapOverride,
-      float aSizeAdjust) override;
+      nsTArray<gfxFontFaceSrc>&& aFontFaceSrcList,
+      gfxUserFontAttributes&& aAttr) override;
+
+  already_AddRefed<gfxUserFontFamily> GetFamily(
+      const nsACString& aFamilyName) final;
 
   explicit FontFaceSetImpl(FontFaceSet* aOwner);
+
+  void DestroyLoaders();
 
  public:
   virtual void Destroy();
   virtual bool IsOnOwningThread() = 0;
+#ifdef DEBUG
+  virtual void AssertIsOnOwningThread() = 0;
+#else
+  void AssertIsOnOwningThread() {}
+#endif
   virtual void DispatchToOwningThread(const char* aName,
                                       std::function<void()>&& aFunc) = 0;
 
@@ -96,7 +102,7 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
   }
 
   // search for @font-face rule that matches a platform font entry
-  virtual RawServoFontFaceRule* FindRuleForEntry(gfxFontEntry* aFontEntry) {
+  virtual StyleLockedFontFaceRule* FindRuleForEntry(gfxFontEntry* aFontEntry) {
     MOZ_ASSERT_UNREACHABLE("Not implemented!");
     return nullptr;
   }
@@ -106,7 +112,9 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
    * font entry for the given FontFace object.
    */
   static already_AddRefed<gfxUserFontEntry>
-  FindOrCreateUserFontEntryFromFontFace(FontFaceImpl* aFontFace);
+  FindOrCreateUserFontEntryFromFontFace(FontFaceImpl* aFontFace,
+                                        gfxUserFontAttributes&& aAttr,
+                                        StyleOrigin);
 
   /**
    * Notification method called by a FontFace to indicate that its loading
@@ -202,12 +210,8 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
     Maybe<StyleOrigin> mOrigin;  // only relevant for mRuleFaces entries
   };
 
-  static already_AddRefed<gfxUserFontEntry>
-  FindOrCreateUserFontEntryFromFontFace(const nsACString& aFamilyName,
-                                        FontFaceImpl* aFontFace, StyleOrigin);
-
   // search for @font-face rule that matches a userfont font entry
-  virtual RawServoFontFaceRule* FindRuleForUserFontEntry(
+  virtual StyleLockedFontFaceRule* FindRuleForUserFontEntry(
       gfxUserFontEntry* aUserFontEntry) {
     return nullptr;
   }
@@ -215,6 +219,10 @@ class FontFaceSetImpl : public nsISupports, public gfxUserFontSet {
   virtual void FindMatchingFontFaces(
       const nsTHashSet<FontFace*>& aMatchingFaces,
       nsTArray<FontFace*>& aFontFaces);
+
+  class UpdateUserFontEntryRunnable;
+  void UpdateUserFontEntry(gfxUserFontEntry* aEntry,
+                           gfxUserFontAttributes&& aAttr);
 
   nsresult CheckFontLoad(const gfxFontFaceSrc* aFontFaceSrc,
                          gfxFontSrcPrincipal** aPrincipal, bool* aBypassCache);

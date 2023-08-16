@@ -6,23 +6,21 @@
 
 const {
   TYPES: { NETWORK_EVENT_STACKTRACE },
-} = require("devtools/server/actors/resources/index");
-
-const { Ci, components } = require("chrome");
-const Services = require("Services");
+} = require("resource://devtools/server/actors/resources/index.js");
 
 loader.lazyRequireGetter(
   this,
   "ChannelEventSinkFactory",
-  "devtools/server/actors/network-monitor/channel-event-sink",
+  "resource://devtools/server/actors/network-monitor/channel-event-sink.js",
   true
 );
 
-loader.lazyRequireGetter(
-  this,
-  "NetworkUtils",
-  "devtools/server/actors/network-monitor/utils/network-utils.js"
-);
+const lazy = {};
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  NetworkUtils:
+    "resource://devtools/shared/network-observer/NetworkUtils.sys.mjs",
+});
 
 class NetworkEventStackTracesWatcher {
   /**
@@ -105,15 +103,22 @@ class NetworkEventStackTracesWatcher {
           channel = subject.QueryInterface(Ci.nsIWebSocketChannel);
           id = channel.serial;
         } catch (e3) {
-          // Channels which don't implement the above interfaces can appear here,
-          // such as nsIFileChannel. Ignore these channels.
-          return;
+          // Try if the channel is a nsIWorkerChannelInfo which is the substitute
+          // of the channel in the parent process.
+          try {
+            channel = subject.QueryInterface(Ci.nsIWorkerChannelInfo);
+            id = channel.channelId;
+          } catch (e4) {
+            // Channels which don't implement the above interfaces can appear here,
+            // such as nsIFileChannel. Ignore these channels.
+            return;
+          }
         }
       }
     }
 
     if (
-      !NetworkUtils.matchRequest(channel, {
+      !lazy.NetworkUtils.matchRequest(channel, {
         targetActor: this.targetActor,
       })
     ) {
@@ -136,7 +141,7 @@ class NetworkEventStackTracesWatcher {
         //
         // Convert the nsIStackFrame XPCOM objects to a nice JSON that can be
         // passed around through message managers etc.
-        let frame = components.stack;
+        let frame = Components.stack;
         if (frame?.caller) {
           frame = frame.caller;
           while (frame) {
@@ -161,7 +166,7 @@ class NetworkEventStackTracesWatcher {
         //
         // - The HTTP channel is opened asynchronously or on a different thread
         //   from the code which triggered its creation, in which case the stack
-        //   from components.stack will be empty. The alternate stack will be
+        //   from Components.stack will be empty. The alternate stack will be
         //   for the point we want to associate with the channel.
         //
         // - The channel is not a nsIHttpChannel, and we will receive no
@@ -192,9 +197,8 @@ class NetworkEventStackTracesWatcher {
       {
         resourceType: NETWORK_EVENT_STACKTRACE,
         resourceId,
-        stacktraceAvailable: stacktrace && stacktrace.length > 0,
-        lastFrame:
-          stacktrace && stacktrace.length > 0 ? stacktrace[0] : undefined,
+        stacktraceAvailable: stacktrace && !!stacktrace.length,
+        lastFrame: stacktrace && stacktrace.length ? stacktrace[0] : undefined,
       },
     ]);
   }

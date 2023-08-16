@@ -4,34 +4,36 @@
 
 "use strict";
 
-const { Cc, Ci, Cu } = require("chrome");
-const { reportException } = require("devtools/shared/DevToolsUtils");
-const { expectState } = require("devtools/server/actors/common");
+const {
+  reportException,
+} = require("resource://devtools/shared/DevToolsUtils.js");
+const { expectState } = require("resource://devtools/server/actors/common.js");
 
-loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
 loader.lazyRequireGetter(
   this,
-  "DeferredTask",
-  "resource://gre/modules/DeferredTask.jsm",
-  true
+  "EventEmitter",
+  "resource://devtools/shared/event-emitter.js"
 );
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
+});
 loader.lazyRequireGetter(
   this,
   "StackFrameCache",
-  "devtools/server/actors/utils/stack",
+  "resource://devtools/server/actors/utils/stack.js",
   true
 );
-loader.lazyRequireGetter(this, "ChromeUtils");
 loader.lazyRequireGetter(
   this,
   "ParentProcessTargetActor",
-  "devtools/server/actors/targets/parent-process",
+  "resource://devtools/server/actors/targets/parent-process.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "ContentProcessTargetActor",
-  "devtools/server/actors/targets/content-process",
+  "resource://devtools/server/actors/targets/content-process.js",
   true
 );
 
@@ -104,7 +106,7 @@ Memory.prototype = {
    */
   detach: expectState(
     "attached",
-    function() {
+    function () {
       this._clearDebuggees();
       this.dbg.disable();
       this._dbg = null;
@@ -168,7 +170,7 @@ Memory.prototype = {
    */
   saveHeapSnapshot: expectState(
     "attached",
-    function(boundaries = null) {
+    function (boundaries = null) {
       // If we are observing the whole process, then scope the snapshot
       // accordingly. Otherwise, use the debugger's debuggees.
       if (!boundaries) {
@@ -192,7 +194,7 @@ Memory.prototype = {
    */
   takeCensus: expectState(
     "attached",
-    function() {
+    function () {
       return this.dbg.memory.takeCensus();
     },
     "taking census"
@@ -215,7 +217,7 @@ Memory.prototype = {
    */
   startRecordingAllocations: expectState(
     "attached",
-    function(options = {}) {
+    function (options = {}) {
       if (this.isRecordingAllocations()) {
         return this._getCurrentTime();
       }
@@ -231,7 +233,7 @@ Memory.prototype = {
         if (this._poller) {
           this._poller.disarm();
         }
-        this._poller = new DeferredTask(
+        this._poller = new lazy.DeferredTask(
           this._emitAllocations,
           this.drainAllocationsTimeoutTimer,
           0
@@ -254,7 +256,7 @@ Memory.prototype = {
    */
   stopRecordingAllocations: expectState(
     "attached",
-    function() {
+    function () {
       if (!this.isRecordingAllocations()) {
         return this._getCurrentTime();
       }
@@ -277,7 +279,7 @@ Memory.prototype = {
    */
   getAllocationsSettings: expectState(
     "attached",
-    function() {
+    function () {
       return {
         maxLogLength: this.dbg.memory.maxAllocationsLogLength,
         probability: this.dbg.memory.allocationSamplingProbability,
@@ -344,7 +346,7 @@ Memory.prototype = {
    */
   getAllocations: expectState(
     "attached",
-    function() {
+    function () {
       if (this.dbg.memory.allocationsLogOverflowed) {
         // Since the last time we drained the allocations log, there have been
         // more allocations than the log's capacity, and we lost some data. There

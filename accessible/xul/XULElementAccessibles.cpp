@@ -12,7 +12,7 @@
 #include "nsCoreUtils.h"
 #include "nsTextEquivUtils.h"
 #include "Relation.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 #include "TextUpdater.h"
 
@@ -23,7 +23,6 @@
 #include "nsNameSpaceManager.h"
 #include "nsNetUtil.h"
 #include "nsString.h"
-#include "nsTextBoxFrame.h"
 #include "nsXULElement.h"
 
 using namespace mozilla::a11y;
@@ -36,21 +35,6 @@ XULLabelAccessible::XULLabelAccessible(nsIContent* aContent,
                                        DocAccessible* aDoc)
     : HyperTextAccessibleWrap(aContent, aDoc) {
   mType = eXULLabelType;
-
-  // If @value attribute is given then it's rendered instead text content. In
-  // this case we need to create a text leaf accessible to make @value attribute
-  // accessible.
-  // XXX: text interface doesn't let you get the text by words.
-  nsTextBoxFrame* textBoxFrame = do_QueryFrame(mContent->GetPrimaryFrame());
-  if (textBoxFrame) {
-    mValueTextLeaf = new XULLabelTextLeafAccessible(mContent, mDoc);
-    mDoc->BindToDocument(mValueTextLeaf, nullptr);
-
-    nsAutoString text;
-    textBoxFrame->GetCroppedTitle(text);
-    mValueTextLeaf->SetText(text);
-    AppendChild(mValueTextLeaf);
-  }
 }
 
 void XULLabelAccessible::Shutdown() {
@@ -124,7 +108,7 @@ void XULLabelAccessible::UpdateLabelValue(const nsString& aValue) {
 role XULLabelTextLeafAccessible::NativeRole() const { return roles::TEXT_LEAF; }
 
 uint64_t XULLabelTextLeafAccessible::NativeState() const {
-  return TextLeafAccessibleWrap::NativeState() | states::READONLY;
+  return TextLeafAccessible::NativeState() | states::READONLY;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -158,11 +142,11 @@ XULLinkAccessible::~XULLinkAccessible() {}
 void XULLinkAccessible::Value(nsString& aValue) const {
   aValue.Truncate();
 
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::href, aValue);
+  mContent->AsElement()->GetAttr(nsGkAtoms::href, aValue);
 }
 
 ENameValueFlag XULLinkAccessible::NativeName(nsString& aName) const {
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::value, aName);
+  mContent->AsElement()->GetAttr(nsGkAtoms::value, aName);
   if (!aName.IsEmpty()) return eNameOK;
 
   nsTextEquivUtils::GetNameFromSubtree(this, aName);
@@ -209,7 +193,7 @@ already_AddRefed<nsIURI> XULLinkAccessible::AnchorURIAt(
   if (aAnchorIndex != 0) return nullptr;
 
   nsAutoString href;
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::href, href);
+  mContent->AsElement()->GetAttr(nsGkAtoms::href, href);
 
   dom::Document* document = mContent->OwnerDoc();
 

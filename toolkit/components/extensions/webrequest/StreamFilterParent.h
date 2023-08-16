@@ -87,6 +87,10 @@ class StreamFilterParent final : public PStreamFilterParent,
     Disconnected,
   };
 
+  // This method makes StreamFilterParent to disconnect from channel.
+  // Notice that this method can only be called before OnStartRequest().
+  void Disconnect(const nsACString& aReason);
+
  protected:
   virtual ~StreamFilterParent();
 
@@ -97,8 +101,6 @@ class StreamFilterParent final : public PStreamFilterParent,
   IPCResult RecvClose();
   IPCResult RecvDisconnect();
   IPCResult RecvDestroy();
-
-  virtual void ActorDealloc() override;
 
  private:
   bool IPCActive() {
@@ -135,7 +137,7 @@ class StreamFilterParent final : public PStreamFilterParent,
 
   inline nsIEventTarget* ActorThread();
 
-  inline nsIEventTarget* IOThread();
+  inline nsISerialEventTarget* IOThread();
 
   inline bool IsIOThread();
 
@@ -164,8 +166,8 @@ class StreamFilterParent final : public PStreamFilterParent,
   nsCOMPtr<nsILoadGroup> mLoadGroup;
   nsCOMPtr<nsIStreamListener> mOrigListener;
 
-  nsCOMPtr<nsIEventTarget> mMainThread;
-  nsCOMPtr<nsIEventTarget> mIOThread;
+  nsCOMPtr<nsISerialEventTarget> mMainThread;
+  nsCOMPtr<nsISerialEventTarget> mIOThread;
 
   RefPtr<net::ChannelEventQueue> mQueue;
 
@@ -180,6 +182,8 @@ class StreamFilterParent final : public PStreamFilterParent,
   // be filtered. Using mDisconnected causes race condition. mState is possible
   // to late to be set, which leads out of sync.
   bool mDisconnectedByOnStartRequest = false;
+
+  bool mBeforeOnStartRequest = true;
 
   nsCOMPtr<nsISupports> mContext;
   uint64_t mOffset;

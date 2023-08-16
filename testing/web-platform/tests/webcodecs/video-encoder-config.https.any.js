@@ -19,6 +19,54 @@ const invalidConfigs = [
     },
   },
   {
+    comment: 'Width is 0',
+    config: {
+      codec: 'vp8',
+      width: 0,
+      height: 480,
+    },
+  },
+  {
+    comment: 'Height is 0',
+    config: {
+      codec: 'vp8',
+      width: 640,
+      height: 0,
+    },
+  },
+  {
+    comment: 'displayWidth is 0',
+    config: {
+      codec: 'vp8',
+      displayWidth: 0,
+      width: 640,
+      height: 480,
+    },
+  },
+  {
+    comment: 'displayHeight is 0',
+    config: {
+      codec: 'vp8',
+      width: 640,
+      displayHeight: 0,
+      height: 480,
+    },
+  }
+];
+
+invalidConfigs.forEach(entry => {
+  promise_test(t => {
+    return promise_rejects_js(t, TypeError, VideoEncoder.isConfigSupported(entry.config));
+  }, 'Test that VideoEncoder.isConfigSupported() rejects invalid config:' + entry.comment);
+});
+
+
+const validButUnsupportedConfigs = [
+  {
+    comment: 'Invalid scalability mode',
+    config: {codec: 'vp8', width: 640, height: 480, scalabilityMode: 'ABC'}
+  },
+  {
     comment: 'Width is too large',
     config: {
       codec: 'vp8',
@@ -34,36 +82,6 @@ const invalidConfigs = [
       height: 1000000,
     },
   },
-  {
-    comment: 'Invalid scalability mode',
-    config: {
-      codec: 'vp8',
-      width: 640,
-      height: 480,
-      scalabilityMode: "ABC"
-    }
-  },
-  {
-    comment: 'AVC not supported by VP8',
-    config: {
-      codec: 'vp8',
-      width: 640,
-      height: 480,
-      avc: {
-        format: "annexb"
-      }
-    }
-  }
-];
-
-invalidConfigs.forEach(entry => {
-  promise_test(t => {
-    return promise_rejects_js(t, TypeError, VideoEncoder.isConfigSupported(entry.config));
-  }, 'Test that VideoEncoder.isConfigSupported() rejects invalid config:' + entry.comment);
-});
-
-
-const validButUnsupportedConfigs = [
   {
     comment: 'Too strenuous accelerated encoding parameters',
     config: {
@@ -106,47 +124,46 @@ validButUnsupportedConfigs.forEach(entry => {
 
 const validConfigs = [
   {
-    codec: "avc1.42001E",
-    hardwareAcceleration: "no-preference",
+    codec: 'avc1.42001E',
+    hardwareAcceleration: 'no-preference',
     width: 640,
     height: 480,
     bitrate: 5000000,
     framerate: 24,
-    avc: {
-      format: "annexb"
-    },
+    avc: {format: 'annexb'},
     futureConfigFeature: 'foo',
   },
   {
-    codec: "vp8",
-    hardwareAcceleration: "no-preference",
+    codec: 'vp8',
+    hardwareAcceleration: 'no-preference',
     width: 800,
     height: 600,
     bitrate: 7000000,
-    bitrateMode: "variable",
+    bitrateMode: 'variable',
     framerate: 60,
-    scalabilityMode: "L1T2",
+    scalabilityMode: 'L1T2',
     futureConfigFeature: 'foo',
-    latencyMode: "quality"
+    latencyMode: 'quality',
+    avc: {format: 'annexb'}
   },
   {
-    codec: "vp09.00.10.08",
-    hardwareAcceleration: "no-preference",
+    codec: 'vp09.00.10.08',
+    hardwareAcceleration: 'no-preference',
     width: 1280,
     height: 720,
     bitrate: 7000000,
-    bitrateMode: "constant",
+    bitrateMode: 'constant',
     framerate: 25,
     futureConfigFeature: 'foo',
-    latencyMode: "realtime",
-    alpha: "discard"
+    latencyMode: 'realtime',
+    alpha: 'discard'
   }
 ];
 
 validConfigs.forEach(config => {
   promise_test(async t => {
     let support = await VideoEncoder.isConfigSupported(config);
-    assert_true(support.supported);
+    assert_implements_optional(support.supported);
 
     let new_config = support.config;
     assert_false(new_config.hasOwnProperty('futureConfigFeature'));
@@ -163,6 +180,13 @@ validConfigs.forEach(config => {
       assert_equals(new_config.latencyMode, config.latencyMode);
     if (config.alpha)
       assert_equals(new_config.alpha, config.alpha);
+    if (config.codec.startsWith('avc')) {
+      if (config.avc) {
+        assert_equals(new_config.avc.format, config.avc.format);
+      }
+    } else {
+      assert_equals(new_config.avc, undefined);
+    }
   }, "VideoEncoder.isConfigSupported() supports:" + JSON.stringify(config));
 });
 

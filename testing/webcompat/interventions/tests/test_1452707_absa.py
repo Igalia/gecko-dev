@@ -1,17 +1,20 @@
 import pytest
-from helpers import Css, expect_alert, find_element
 
 URL = "https://ib.absa.co.za/absa-online/login.jsp"
+UNSUPPORTED_ALERT = "Browser unsupported"
 
 
+@pytest.mark.asyncio
 @pytest.mark.with_interventions
-def test_enabled(session):
-    session.get(URL)
-    assert find_element(session, Css("html.gecko"))
+async def test_enabled(client):
+    await client.navigate(URL)
+    assert client.find_css("html.gecko")
 
 
+@pytest.mark.asyncio
 @pytest.mark.without_interventions
-def test_disabled(session):
-    session.get(URL)
-    expect_alert(session, text="Browser unsupported")
-    assert find_element(session, Css("html.unknown"))
+async def test_disabled(client):
+    alert = await client.await_alert(UNSUPPORTED_ALERT)
+    await client.navigate(URL)
+    await alert
+    assert client.find_css("html.unknown")

@@ -4,8 +4,7 @@
 
 "use strict";
 
-const { Cr } = require("chrome");
-const flags = require("devtools/shared/flags");
+const flags = require("resource://devtools/shared/flags.js");
 
 /**
  * A transport for the debugging protocol that uses nsIMessageManagers to
@@ -75,7 +74,11 @@ ChildDebuggerTransport.prototype = {
    */
   _canBeSerialized(object) {
     try {
-      const holder = new StructuredCloneHolder(object);
+      const holder = new StructuredCloneHolder(
+        "ChildDebuggerTransport._canBeSerialized",
+        null,
+        object
+      );
       holder.deserialize(this);
     } catch (e) {
       return false;

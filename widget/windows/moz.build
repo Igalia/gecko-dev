@@ -26,6 +26,10 @@ with Files("OSK*"):
 with Files("*TSFTextStore*"):
     BUG_COMPONENT = ("Core", "DOM: UI Events & Focus Handling")
 
+DIRS += [
+    "filedialog",
+]
+
 TEST_DIRS += ["tests"]
 
 EXPORTS += [
@@ -36,8 +40,10 @@ EXPORTS += [
 
 EXPORTS.mozilla += [
     "ShellHeaderOnlyUtils.h",
+    "ToastNotificationHeaderOnlyUtils.h",
     "UrlmonHeaderOnlyUtils.h",
     "WindowsConsole.h",
+    "WindowsEventLog.h",
     "WinHeaderOnlyUtils.h",
 ]
 
@@ -46,6 +52,7 @@ EXPORTS.mozilla.widget += [
     "CompositorWidgetChild.h",
     "CompositorWidgetParent.h",
     "InProcessWinCompositorWidget.h",
+    "nsWindowLoggedMessages.h",
     "WinCompositorWidget.h",
     "WinCompositorWindowThread.h",
     "WindowsEMF.h",
@@ -63,7 +70,6 @@ UNIFIED_SOURCES += [
     "GfxInfo.cpp",
     "IEnumFE.cpp",
     "IMMHandler.cpp",
-    "InkCollector.cpp",
     "JumpListItem.cpp",
     "KeyboardLayout.cpp",
     "LSPAnnotator.cpp",
@@ -84,6 +90,7 @@ UNIFIED_SOURCES += [
     "nsWindow.cpp",
     "nsWindowDbg.cpp",
     "nsWindowGfx.cpp",
+    "nsWindowLoggedMessages.cpp",
     "nsWindowTaskbarConcealer.cpp",
     "nsWinGesture.cpp",
     "OSKTabTipManager.cpp",
@@ -181,7 +188,7 @@ DEFINES["MOZ_APP_NAME"] = '"%s"' % CONFIG["MOZ_APP_NAME"]
 # Turn `firefox` into `Firefox`.
 DEFINES["MOZ_TOAST_APP_NAME"] = '"%s"' % CONFIG["MOZ_APP_NAME"].title()
 
-for var in ("MOZ_ENABLE_D3D10_LAYER", "MOZ_BACKGROUNDTASKS"):
+for var in ("MOZ_ENABLE_D3D10_LAYER",):
     if CONFIG[var]:
         DEFINES[var] = True
 
@@ -197,4 +204,4 @@ if CONFIG["CC_TYPE"] == "clang-cl":
         "ToastNotificationHandler.cpp",
     ]
 
-REQUIRES_UNIFIED_BUILD = True
+SPHINX_TREES["/widget/windows"] = "docs"

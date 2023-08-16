@@ -459,12 +459,12 @@ interface nsIHttpChannel : nsIIdentChannel
     [must_use] attribute uint64_t topLevelContentWindowId;
 
     /**
-     * ID of the top-level browsing context for this channel.
+     * ID of the browser for this channel.
      *
      * NOTE: The setter of this attribute is currently for xpcshell test only.
      *       Don't alter it otherwise.
      */
-    [must_use] attribute uint64_t topBrowsingContextId;
+    [must_use] attribute uint64_t browserId;
 
     /**
      * In e10s, the information that the CORS response blocks the load is in the
@@ -476,8 +476,13 @@ interface nsIHttpChannel : nsIIdentChannel
      *
      * @param aCategory
      *        The category under which the message should be displayed.
+     *
+     * @param aIsWarning
+     *        When true, this is a warning message.
      */
-    void logBlockedCORSRequest(in AString aMessage, in ACString aCategory);
+    void logBlockedCORSRequest(in AString aMessage,
+                               in ACString aCategory,
+                               in boolean aIsWarning);
 
     void logMimeTypeMismatch(in ACString aMessageName,
                              in boolean aWarning,
@@ -485,4 +490,8 @@ interface nsIHttpChannel : nsIIdentChannel
                              in AString aContentType);
 
     [notxpcom, nostdcall] void setSource(in UniqueProfileChunkedBuffer aSource);
+
+    [must_use] attribute AString classicScriptHintCharset;
+
+    [must_use] attribute AString documentCharacterSet;
 };

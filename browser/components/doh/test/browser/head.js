@@ -1,22 +1,18 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ASRouter: "resource://activity-stream/lib/ASRouter.jsm",
-  DoHController: "resource:///modules/DoHController.jsm",
-  DoHConfigController: "resource:///modules/DoHConfig.jsm",
-  DoHTestUtils: "resource://testing-common/DoHTestUtils.jsm",
-  Preferences: "resource://gre/modules/Preferences.jsm",
-  Region: "resource://gre/modules/Region.jsm",
-  RegionTestUtils: "resource://testing-common/RegionTestUtils.jsm",
-  RemoteSettings: "resource://services-settings/remote-settings.js",
+ChromeUtils.defineESModuleGetters(this, {
+  DoHConfigController: "resource:///modules/DoHConfig.sys.mjs",
+  DoHController: "resource:///modules/DoHController.sys.mjs",
+  DoHTestUtils: "resource://testing-common/DoHTestUtils.sys.mjs",
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
+  RegionTestUtils: "resource://testing-common/RegionTestUtils.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
 });
 
-XPCOMUtils.defineLazyServiceGetter(
-  this,
-  "gDNSService",
-  "@mozilla.org/network/dns-service;1",
-  "nsIDNSService"
-);
+XPCOMUtils.defineLazyModuleGetters(this, {
+  ASRouter: "resource://activity-stream/lib/ASRouter.jsm",
+});
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -25,8 +21,8 @@ XPCOMUtils.defineLazyServiceGetter(
   "nsINativeDNSResolverOverride"
 );
 
-const { CommonUtils } = ChromeUtils.import(
-  "resource://services-common/utils.js"
+const { CommonUtils } = ChromeUtils.importESModule(
+  "resource://services-common/utils.sys.mjs"
 );
 
 const EXAMPLE_URL = "https://example.com/";
@@ -43,8 +39,6 @@ const prefs = {
   SKIP_HEURISTICS_PREF: "doh-rollout.skipHeuristicsCheck",
   CLEAR_ON_SHUTDOWN_PREF: "doh-rollout.clearModeOnShutdown",
   FIRST_RUN_PREF: "doh-rollout.doneFirstRun",
-  BALROG_MIGRATION_PREF: "doh-rollout.balrog-migration-done",
-  PREVIOUS_TRR_MODE_PREF: "doh-rollout.previous.trr.mode",
   PROVIDER_LIST_PREF: "doh-rollout.provider-list",
   TRR_SELECT_ENABLED_PREF: "doh-rollout.trr-selection.enabled",
   TRR_SELECT_URI_PREF: "doh-rollout.uri",
@@ -282,6 +276,7 @@ async function waitForStateTelemetry(expectedStates) {
     return events;
   });
   events = events.filter(e => e[1] == "doh" && e[2] == "state");
+  info(events);
   is(events.length, expectedStates.length, "Found the expected state events.");
   for (let state of expectedStates) {
     let event = events.find(e => e[3] == state);

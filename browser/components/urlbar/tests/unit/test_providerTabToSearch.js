@@ -39,7 +39,6 @@ add_task(async function basic() {
     context,
     autofilled: "example.com/",
     completed: "https://example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://example.com/",
@@ -50,9 +49,7 @@ add_task(async function basic() {
       makeSearchResult(context, {
         engineName: testEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(
-          testEngine.getResultDomain()
-        ),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(testEngine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -66,7 +63,6 @@ add_task(async function basic() {
     context,
     autofilled: "example.com/",
     completed: "https://example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://example.com/",
@@ -98,9 +94,7 @@ add_task(async function noAutofill() {
       makeSearchResult(context, {
         engineName: testEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(
-          testEngine.getResultDomain()
-        ),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(testEngine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -118,7 +112,6 @@ add_task(async function autofillDoesNotMatchEngine() {
     context,
     autofilled: "example.test.ca/",
     completed: "https://example.test.ca/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://example.test.ca/",
@@ -142,7 +135,6 @@ add_task(async function ignoreWww() {
     context,
     autofilled: "www.example.com/",
     completed: "https://www.example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://www.example.com/",
@@ -153,9 +145,7 @@ add_task(async function ignoreWww() {
       makeSearchResult(context, {
         engineName: testEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(
-          testEngine.getResultDomain()
-        ),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(testEngine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -171,7 +161,7 @@ add_task(async function ignoreWww() {
       name: "TestWww",
       search_url: "https://www.foo.bar/",
     },
-    true
+    { skipUnload: true }
   );
   let wwwTestEngine = Services.search.getEngineByName("TestWww");
   context = createContext("foo", { isPrivate: false });
@@ -179,7 +169,6 @@ add_task(async function ignoreWww() {
     context,
     autofilled: "foo.bar/",
     completed: "https://foo.bar/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://foo.bar/",
@@ -191,7 +180,7 @@ add_task(async function ignoreWww() {
         engineName: wwwTestEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
         uri: UrlbarUtils.stripPublicSuffixFromHost(
-          wwwTestEngine.getResultDomain()
+          wwwTestEngine.searchUrlDomain
         ),
         providesSearchMode: true,
         query: "",
@@ -208,7 +197,6 @@ add_task(async function ignoreWww() {
     context,
     autofilled: "foo.bar/",
     completed: "https://www.foo.bar/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://www.foo.bar/",
@@ -220,7 +208,7 @@ add_task(async function ignoreWww() {
         engineName: wwwTestEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
         uri: UrlbarUtils.stripPublicSuffixFromHost(
-          wwwTestEngine.getResultDomain()
+          wwwTestEngine.searchUrlDomain
         ),
         providesSearchMode: true,
         query: "",
@@ -247,14 +235,14 @@ add_task(async function conflictingEngines() {
       name: "TestFooBar",
       search_url: "https://foobar.com/",
     },
-    true
+    { skipUnload: true }
   );
   let extension2 = await SearchTestUtils.installSearchExtension(
     {
       name: "TestFoo",
       search_url: "https://foo.com/",
     },
-    true
+    { skipUnload: true }
   );
   let fooBarTestEngine = Services.search.getEngineByName("TestFooBar");
   let fooTestEngine = Services.search.getEngineByName("TestFoo");
@@ -268,7 +256,6 @@ add_task(async function conflictingEngines() {
     context,
     autofilled: "foo.com/",
     completed: "https://foo.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://foo.com/",
@@ -280,7 +267,7 @@ add_task(async function conflictingEngines() {
         engineName: fooTestEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
         uri: UrlbarUtils.stripPublicSuffixFromHost(
-          fooTestEngine.getResultDomain()
+          fooTestEngine.searchUrlDomain
         ),
         providesSearchMode: true,
         query: "",
@@ -301,7 +288,6 @@ add_task(async function conflictingEngines() {
     context,
     autofilled: "foobar.com/",
     completed: "https://foobar.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://foobar.com/",
@@ -313,7 +299,7 @@ add_task(async function conflictingEngines() {
         engineName: fooBarTestEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
         uri: UrlbarUtils.stripPublicSuffixFromHost(
-          fooBarTestEngine.getResultDomain()
+          fooBarTestEngine.searchUrlDomain
         ),
         providesSearchMode: true,
         query: "",
@@ -336,7 +322,7 @@ add_task(async function multipleEnginesForHostname() {
       name: "TestMaps",
       search_url: "https://example.com/maps/",
     },
-    true
+    { skipUnload: true }
   );
 
   let context = createContext("examp", { isPrivate: false });
@@ -365,7 +351,6 @@ add_task(async function multipleEnginesForHostname() {
     context,
     autofilled: "example.com/",
     completed: "https://example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://example.com/",
@@ -376,9 +361,7 @@ add_task(async function multipleEnginesForHostname() {
       makeSearchResult(context, {
         engineName: testEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(
-          testEngine.getResultDomain()
-        ),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(testEngine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -403,7 +386,6 @@ add_task(async function test_casing() {
     context,
     autofilled: "eXAmple.com/",
     completed: "https://example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://example.com/",
@@ -414,9 +396,7 @@ add_task(async function test_casing() {
       makeSearchResult(context, {
         engineName: testEngine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(
-          testEngine.getResultDomain()
-        ),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(testEngine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -433,7 +413,7 @@ add_task(async function test_publicSuffix() {
       name: "MyTest",
       search_url: "https://test.mytest.it/",
     },
-    true
+    { skipUnload: true }
   );
   let engine = Services.search.getEngineByName("MyTest");
   await PlacesTestUtils.addVisits(["https://test.mytest.it/"]);
@@ -450,7 +430,7 @@ add_task(async function test_publicSuffix() {
       makeSearchResult(context, {
         engineName: engine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -474,7 +454,7 @@ add_task(async function test_publicSuffixIsHost() {
       name: "SuffixTest",
       search_url: "https://somesuffix.com.mx/",
     },
-    true
+    { skipUnload: true }
   );
 
   // The top level domain will be autofilled, not the full domain.
@@ -484,7 +464,6 @@ add_task(async function test_publicSuffixIsHost() {
     context,
     autofilled: "com.mx/",
     completed: "https://com.mx/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://com.mx/",
@@ -505,7 +484,7 @@ add_task(async function test_disabledEngine() {
       name: "Disabled",
       search_url: "https://disabled.com/",
     },
-    true
+    { skipUnload: true }
   );
   let engine = Services.search.getEngineByName("Disabled");
   await PlacesTestUtils.addVisits(["https://disabled.com/"]);
@@ -516,7 +495,6 @@ add_task(async function test_disabledEngine() {
     context,
     autofilled: "disabled.com/",
     completed: "https://disabled.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://disabled.com/",
@@ -527,7 +505,7 @@ add_task(async function test_disabledEngine() {
       makeSearchResult(context, {
         engineName: engine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
@@ -536,12 +514,12 @@ add_task(async function test_disabledEngine() {
   });
 
   info("Now disable the engine.");
-  Services.prefs.setCharPref("browser.search.hiddenOneOffs", engine.name);
+  engine.hideOneOffButton = true;
+
   await check_results({
     context,
     autofilled: "disabled.com/",
     completed: "https://disabled.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: "https://disabled.com/",
@@ -551,7 +529,7 @@ add_task(async function test_disabledEngine() {
       }),
     ],
   });
-  Services.prefs.clearUserPref("browser.search.hiddenOneOffs");
+  engine.hideOneOffButton = false;
 
   await cleanupPlaces();
   await extension.unload();

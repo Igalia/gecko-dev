@@ -26,6 +26,7 @@ EXPORTS.mozilla += [
     "RemoteDecoderManagerParent.h",
     "RemoteDecoderModule.h",
     "RemoteDecoderParent.h",
+    "RemoteDecodeUtils.h",
     "RemoteImageHolder.h",
     "RemoteMediaData.h",
     "RemoteMediaDataDecoder.h",
@@ -34,6 +35,7 @@ EXPORTS.mozilla += [
 
 EXPORTS.mozilla.dom += [
     "MediaIPCUtils.h",
+    "MFCDMSerializers.h",
 ]
 
 SOURCES += [
@@ -48,6 +50,7 @@ SOURCES += [
     "RemoteDecoderManagerParent.cpp",
     "RemoteDecoderModule.cpp",
     "RemoteDecoderParent.cpp",
+    "RemoteDecodeUtils.cpp",
     "RemoteImageHolder.cpp",
     "RemoteMediaData.cpp",
     "RemoteMediaDataDecoder.cpp",
@@ -70,6 +73,24 @@ if CONFIG["MOZ_WMF_MEDIA_ENGINE"]:
     ]
     LOCAL_INCLUDES += [
         "../platforms/wmf",
+    ]
+
+if CONFIG["MOZ_WMF_CDM"]:
+    IPDL_SOURCES += [
+        "PMFCDM.ipdl",
+    ]
+    EXPORTS.mozilla += [
+        "MFCDMChild.h",
+        "MFCDMParent.h",
+    ]
+    UNIFIED_SOURCES += [
+        "MFCDMChild.cpp",
+    ]
+    SOURCES += [
+        "MFCDMParent.cpp",
+    ]
+    LOCAL_INCLUDES += [
+        "../eme/mediafoundation",
     ]
 
 # so we can include nsMacUtilsImpl.h in RDDParent.cpp for sandboxing

@@ -21,14 +21,13 @@
 
 requestLongerTimeout(4);
 
-/* import-globals-from ../../../framework/browser-toolbox/test/helpers-browser-toolbox.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/framework/browser-toolbox/test/helpers-browser-toolbox.js",
   this
 );
 
-const { BackgroundTasksTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BackgroundTasksTestUtils.jsm"
+const { BackgroundTasksTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BackgroundTasksTestUtils.sys.mjs"
 );
 BackgroundTasksTestUtils.init(this);
 const do_backgroundtask = BackgroundTasksTestUtils.do_backgroundtask.bind(
@@ -73,6 +72,16 @@ add_task(async function test_backgroundtask_debugger() {
   };
   const ToolboxTask = await initBrowserToolboxTask({ existingProcessClose });
 
+  await ToolboxTask.spawn(selectors, () => {
+    const {
+      LocalizationHelper,
+    } = require("resource://devtools/shared/l10n.js");
+    // We have to expose this symbol as global for waitForSelectedSource
+    this.DEBUGGER_L10N = new LocalizationHelper(
+      "devtools/client/locales/debugger.properties"
+    );
+  });
+
   await ToolboxTask.importFunctions({
     checkEvaluateInTopFrame,
     evaluateInTopFrame,
@@ -81,7 +90,6 @@ add_task(async function test_backgroundtask_debugger() {
     findElement,
     findElementWithSelector,
     getSelector,
-    getThreadContext,
     getVisibleSelectedFrameLine,
     isPaused,
     resume,
@@ -95,6 +103,8 @@ add_task(async function test_backgroundtask_debugger() {
     waitForSelectedSource,
     waitForState,
     waitUntil,
+    createLocation,
+    getCM,
     log: (msg, data) =>
       console.log(`${msg} ${!data ? "" : JSON.stringify(data)}`),
     info: (msg, data) =>

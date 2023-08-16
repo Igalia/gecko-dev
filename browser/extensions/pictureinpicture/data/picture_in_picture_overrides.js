@@ -9,9 +9,10 @@
 let AVAILABLE_PIP_OVERRIDES;
 
 {
-  // See PictureInPictureControls.jsm for these values.
+  // See PictureInPictureControls.sys.mjs for these values.
   // eslint-disable-next-line no-unused-vars
   const TOGGLE_POLICIES = browser.pictureInPictureChild.getPolicies();
+  const KEYBOARD_CONTROLS = browser.pictureInPictureChild.getKeyboardControls();
 
   AVAILABLE_PIP_OVERRIDES = {
     // The keys of this object are match patterns for URLs, as documented in
@@ -23,21 +24,23 @@ let AVAILABLE_PIP_OVERRIDES;
     //
     // "https://*.youtube.com/*": {
     //   policy: TOGGLE_POLICIES.THREE_QUARTERS,
-    //   keyboardControls: KEYBOARD_CONTROLS.PLAY_PAUSE | KEYBOARD_CONTROLS.VOLUME,
+    //   disabledKeyboardControls: KEYBOARD_CONTROLS.PLAY_PAUSE | KEYBOARD_CONTROLS.VOLUME,
     // },
     // "https://*.twitch.tv/mikeconley_dot_ca/*": {
     //   policy: TOGGLE_POLICIES.TOP,
-    //   keyboardControls: KEYBOARD_CONTROLS.NONE,
+    //   disabledKeyboardControls: KEYBOARD_CONTROLS.ALL,
     // },
 
     tests: {
       // FOR TESTS ONLY!
-      "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-mock-wrapper.html": {
-        videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
-      },
-      "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-toggle-visibility.html": {
-        videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
-      },
+      "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-mock-wrapper.html":
+        {
+          videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
+        },
+      "https://mochitest.youtube.com/*browser/browser/extensions/pictureinpicture/tests/browser/test-toggle-visibility.html":
+        {
+          videoWrapperScriptPath: "video-wrappers/mock-wrapper.js",
+        },
     },
 
     abcnews: {
@@ -52,12 +55,35 @@ let AVAILABLE_PIP_OVERRIDES;
       },
     },
 
+    aol: {
+      "https://*.aol.com/*": {
+        videoWrapperScriptPath: "video-wrappers/yahoo.js",
+      },
+    },
+
+    arte: {
+      "https://*.arte.tv/*": {
+        videoWrapperScriptPath: "video-wrappers/arte.js",
+      },
+    },
+
     bbc: {
       "https://*.bbc.com/*": {
         videoWrapperScriptPath: "video-wrappers/bbc.js",
       },
       "https://*.bbc.co.uk/*": {
         videoWrapperScriptPath: "video-wrappers/bbc.js",
+      },
+    },
+
+    brightcove: {
+      "https://*.brightcove.com/*": {
+        videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
+      },
+    },
+    cbc: {
+      "https://*.cbc.ca/*": {
+        videoWrapperScriptPath: "video-wrappers/cbc.js",
       },
     },
 
@@ -73,6 +99,18 @@ let AVAILABLE_PIP_OVERRIDES;
       },
     },
 
+    edx: {
+      "https://*.edx.org/*": {
+        videoWrapperScriptPath: "video-wrappers/edx.js",
+      },
+    },
+
+    frontendMasters: {
+      "https://*.frontendmasters.com/*": {
+        videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
+      },
+    },
+
     funimation: {
       "https://*.funimation.com/*": {
         videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
@@ -80,10 +118,8 @@ let AVAILABLE_PIP_OVERRIDES;
     },
 
     hbomax: {
-      "https://play.hbomax.com/feature/*": {
-        videoWrapperScriptPath: "video-wrappers/hbomax.js",
-      },
-      "https://play.hbomax.com/episode/*": {
+      "https://play.hbomax.com/page/*": { policy: TOGGLE_POLICIES.HIDDEN },
+      "https://play.hbomax.com/player/*": {
         videoWrapperScriptPath: "video-wrappers/hbomax.js",
       },
     },
@@ -108,6 +144,11 @@ let AVAILABLE_PIP_OVERRIDES;
       "https://*.laracasts.com/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
     },
 
+    msn: {
+      "https://*.msn.com/*": {
+        visibilityThreshold: 0.7,
+      },
+    },
     mxplayer: {
       "https://*.mxplayer.in/*": {
         videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
@@ -132,8 +173,17 @@ let AVAILABLE_PIP_OVERRIDES;
       "https://*.netflix.com/search*": { policy: TOGGLE_POLICIES.HIDDEN },
     },
 
+    nytimes: {
+      "https://*.nytimes.com/*": {
+        videoWrapperScriptPath: "video-wrappers/nytimes.js",
+      },
+    },
+
     pbs: {
       "https://*.pbs.org/*": {
+        videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
+      },
+      "https://*.pbskids.org/*": {
         videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
       },
     },
@@ -147,31 +197,80 @@ let AVAILABLE_PIP_OVERRIDES;
       },
     },
 
+    radiocanada: {
+      "https://*.ici.radio-canada.ca/*": {
+        videoWrapperScriptPath: "video-wrappers/radiocanada.js",
+      },
+    },
+
+    reddit: {
+      "https://*.reddit.com/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
+    },
+
     sonyliv: {
       "https://*.sonyliv.com/*": {
-        videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
+        videoWrapperScriptPath: "video-wrappers/sonyliv.js",
+      },
+    },
+
+    ted: {
+      "https://*.ted.com/*": {
+        showHiddenTextTracks: true,
       },
     },
 
     tubi: {
-      "https://*.tubitv.com/*": {
+      "https://*.tubitv.com/live*": {
+        videoWrapperScriptPath: "video-wrappers/tubilive.js",
+      },
+      "https://*.tubitv.com/movies*": {
+        videoWrapperScriptPath: "video-wrappers/tubi.js",
+      },
+      "https://*.tubitv.com/tv-shows*": {
         videoWrapperScriptPath: "video-wrappers/tubi.js",
       },
     },
 
     twitch: {
-      "https://*.twitch.tv/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
-      "https://*.twitch.tech/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
-      "https://*.twitch.a2z.com/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
+      "https://*.twitch.tv/*": {
+        videoWrapperScriptPath: "video-wrappers/twitch.js",
+        policy: TOGGLE_POLICIES.ONE_QUARTER,
+        disabledKeyboardControls: KEYBOARD_CONTROLS.LIVE_SEEK,
+      },
+      "https://*.twitch.tech/*": {
+        videoWrapperScriptPath: "video-wrappers/twitch.js",
+        policy: TOGGLE_POLICIES.ONE_QUARTER,
+        disabledKeyboardControls: KEYBOARD_CONTROLS.LIVE_SEEK,
+      },
+      "https://*.twitch.a2z.com/*": {
+        videoWrapperScriptPath: "video-wrappers/twitch.js",
+        policy: TOGGLE_POLICIES.ONE_QUARTER,
+        disabledKeyboardControls: KEYBOARD_CONTROLS.LIVE_SEEK,
+      },
     },
 
     udemy: {
-      "https://*.udemy.com/*": { policy: TOGGLE_POLICIES.ONE_QUARTER },
+      "https://*.udemy.com/*": {
+        videoWrapperScriptPath: "video-wrappers/udemy.js",
+        policy: TOGGLE_POLICIES.ONE_QUARTER,
+      },
     },
 
     voot: {
       "https://*.voot.com/*": {
         videoWrapperScriptPath: "video-wrappers/voot.js",
+      },
+    },
+
+    wired: {
+      "https://*.wired.com/*": {
+        videoWrapperScriptPath: "video-wrappers/videojsWrapper.js",
+      },
+    },
+
+    yahoofinance: {
+      "https://*.finance.yahoo.com/*": {
+        videoWrapperScriptPath: "video-wrappers/yahoo.js",
       },
     },
 

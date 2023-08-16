@@ -2,12 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
 import sys
 import unittest
-
-from six.moves.urllib.parse import quote
+from urllib.parse import quote
 
 from marionette_driver import errors
 from marionette_driver.by import By
@@ -132,7 +129,7 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
     def test_force_restart(self):
-        self.marionette.restart()
+        self.marionette.restart(in_app=False)
         self.assertEqual(self.marionette.profile, self.profile)
         self.assertNotEqual(self.marionette.session_id, self.session_id)
 
@@ -143,7 +140,7 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
     def test_force_clean_restart(self):
-        self.marionette.restart(clean=True)
+        self.marionette.restart(in_app=False, clean=True)
         self.assertNotEqual(self.marionette.profile, self.profile)
         self.assertNotEqual(self.marionette.session_id, self.session_id)
         # A forced restart will cause a new process id
@@ -153,7 +150,7 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
     def test_force_quit(self):
-        self.marionette.quit()
+        self.marionette.quit(in_app=False)
 
         self.assertEqual(self.marionette.session, None)
         with self.assertRaisesRegexp(
@@ -162,7 +159,7 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.get_url()
 
     def test_force_clean_quit(self):
-        self.marionette.quit(clean=True)
+        self.marionette.quit(in_app=False, clean=True)
 
         self.assertEqual(self.marionette.session, None)
         with self.assertRaisesRegexp(
@@ -177,7 +174,14 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.get_pref("startup.homepage_welcome_url"), "about:about"
         )
 
-    def test_no_in_app_clean_restart(self):
+    def test_quit_no_in_app_and_clean(self):
+        # Test that in_app and clean cannot be used in combination
+        with self.assertRaisesRegexp(
+            ValueError, "cannot be triggered with the clean flag set"
+        ):
+            self.marionette.quit(in_app=True, clean=True)
+
+    def test_restart_no_in_app_and_clean(self):
         # Test that in_app and clean cannot be used in combination
         with self.assertRaisesRegexp(
             ValueError, "cannot be triggered with the clean flag set"
@@ -186,10 +190,10 @@ class TestQuitRestart(MarionetteTestCase):
 
     def test_restart_preserves_requested_capabilities(self):
         self.marionette.delete_session()
-        self.marionette.start_session(capabilities={"moz:fooBar": True})
+        self.marionette.start_session(capabilities={"test:fooBar": True})
 
         self.marionette.restart(in_app=False)
-        self.assertEqual(self.marionette.session.get("moz:fooBar"), True)
+        self.assertEqual(self.marionette.session.get("test:fooBar"), True)
 
     def test_restart_safe_mode(self):
         try:
@@ -197,11 +201,20 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.restart(safe_mode=True)
             self.assertTrue(self.is_safe_mode, "Safe Mode is not enabled")
         finally:
-            self.marionette.quit(clean=True)
+            self.marionette.quit(in_app=False, clean=True)
+
+    def test_restart_safe_mode_requires_in_app(self):
+        self.assertFalse(self.is_safe_mode, "Safe Mode is unexpectedly enabled")
+
+        with self.assertRaisesRegexp(ValueError, "in_app restart is required"):
+            self.marionette.restart(in_app=False, safe_mode=True)
+
+        self.assertFalse(self.is_safe_mode, "Safe Mode is unexpectedly enabled")
+        self.marionette.quit(in_app=False, clean=True)
 
     def test_in_app_restart(self):
-        details = self.marionette.restart(in_app=True)
-
+        details = self.marionette.restart()
+        self.assertTrue(details["in_app"], "Expected in_app restart")
         self.assertFalse(details["forced"], "Expected non-forced shutdown")
 
         self.assertEqual(self.marionette.profile, self.profile)
@@ -224,8 +237,8 @@ class TestQuitRestart(MarionetteTestCase):
                 """
             )
 
-        details = self.marionette.restart(in_app=True)
-
+        details = self.marionette.restart()
+        self.assertTrue(details["in_app"], "Expected in_app restart")
         self.assertTrue(details["forced"], "Expected forced shutdown")
 
         self.assertEqual(self.marionette.profile, self.profile)
@@ -238,9 +251,8 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
     def test_in_app_restart_with_callback(self):
-        self.marionette.restart(
-            in_app=True, callback=lambda: self.shutdown(restart=True)
-        )
+        details = self.marionette.restart(callback=lambda: self.shutdown(restart=True))
+        self.assertTrue(details["in_app"], "Expected in_app restart")
 
         self.assertEqual(self.marionette.profile, self.profile)
         self.assertNotEqual(self.marionette.session_id, self.session_id)
@@ -251,12 +263,15 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.get_pref("startup.homepage_welcome_url"), "about:about"
         )
 
-    def test_in_app_restart_with_callback_not_callable(self):
+    def test_in_app_restart_with_non_callable_callback(self):
         with self.assertRaisesRegexp(ValueError, "is not callable"):
-            self.marionette.restart(in_app=True, callback=4)
+            self.marionette.restart(callback=4)
+
+        self.assertEqual(self.marionette.instance.runner.returncode, None)
+        self.assertEqual(self.marionette.is_shutting_down, False)
 
     @unittest.skipIf(sys.platform.startswith("win"), "Bug 1493796")
-    def test_in_app_restart_with_callback_but_process_quit(self):
+    def test_in_app_restart_with_callback_but_process_quits_instead(self):
         try:
             timeout_shutdown = self.marionette.shutdown_timeout
             timeout_startup = self.marionette.startup_timeout
@@ -266,9 +281,7 @@ class TestQuitRestart(MarionetteTestCase):
             with self.assertRaisesRegexp(
                 IOError, "Process unexpectedly quit without restarting"
             ):
-                self.marionette.restart(
-                    in_app=True, callback=lambda: self.shutdown(restart=False)
-                )
+                self.marionette.restart(callback=lambda: self.shutdown(restart=False))
         finally:
             self.marionette.shutdown_timeout = timeout_shutdown
             self.marionette.startup_timeout = timeout_startup
@@ -291,10 +304,11 @@ class TestQuitRestart(MarionetteTestCase):
 
     def test_in_app_restart_preserves_requested_capabilities(self):
         self.marionette.delete_session()
-        self.marionette.start_session(capabilities={"moz:fooBar": True})
+        self.marionette.start_session(capabilities={"test:fooBar": True})
 
-        self.marionette.restart(in_app=True)
-        self.assertEqual(self.marionette.session.get("moz:fooBar"), True)
+        details = self.marionette.restart()
+        self.assertTrue(details["in_app"], "Expected in_app restart")
+        self.assertEqual(self.marionette.session.get("test:fooBar"), True)
 
     @unittest.skipUnless(sys.platform.startswith("darwin"), "Only supported on MacOS")
     def test_in_app_silent_restart_fails_without_windowless_flag_on_mac_os(self):
@@ -312,8 +326,18 @@ class TestQuitRestart(MarionetteTestCase):
         self.marionette.restart(silent=True)
         self.assertTrue(self.marionette.session_capabilities["moz:windowless"])
 
-        self.marionette.restart(in_app=True)
+        self.marionette.restart()
         self.assertTrue(self.marionette.session_capabilities["moz:windowless"])
+
+        self.marionette.delete_session()
+
+    @unittest.skipUnless(sys.platform.startswith("darwin"), "Only supported on MacOS")
+    def test_in_app_silent_restart_requires_in_app(self):
+        self.marionette.delete_session()
+        self.marionette.start_session(capabilities={"moz:windowless": True})
+
+        with self.assertRaisesRegexp(ValueError, "in_app restart is required"):
+            self.marionette.restart(in_app=False, silent=True)
 
         self.marionette.delete_session()
 
@@ -327,9 +351,10 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.start_session(capabilities={"moz:windowless": True})
 
     def test_in_app_quit(self):
-        details = self.marionette.quit(in_app=True)
-
+        details = self.marionette.quit()
+        self.assertTrue(details["in_app"], "Expected in_app shutdown")
         self.assertFalse(details["forced"], "Expected non-forced shutdown")
+        self.assertEqual(self.marionette.instance.runner.returncode, 0)
 
         self.assertEqual(self.marionette.session, None)
         with self.assertRaisesRegexp(
@@ -344,20 +369,21 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.get_pref("startup.homepage_welcome_url"), "about:about"
         )
 
-    def test_in_app_quit_component_prevents_shutdown(self):
+    def test_in_app_quit_forced_because_component_prevents_shutdown(self):
         with self.marionette.using_context("chrome"):
             self.marionette.execute_script(
                 """
                 Services.obs.addObserver(subject => {
-                  let cancelQuit = subject.QueryInterface(Ci.nsISupportsPRBool);
-                  cancelQuit.data = true;
+                    let cancelQuit = subject.QueryInterface(Ci.nsISupportsPRBool);
+                    cancelQuit.data = true;
                 }, "quit-application-requested");
                 """
             )
 
-        details = self.marionette.quit(in_app=True)
-
+        details = self.marionette.quit()
+        self.assertTrue(details["in_app"], "Expected in_app shutdown")
         self.assertTrue(details["forced"], "Expected forced shutdown")
+        self.assertEqual(self.marionette.instance.runner.returncode, 0)
 
         self.assertEqual(self.marionette.session, None)
         with self.assertRaisesRegexp(
@@ -373,7 +399,13 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
     def test_in_app_quit_with_callback(self):
-        self.marionette.quit(in_app=True, callback=self.shutdown)
+        details = self.marionette.quit(callback=self.shutdown)
+        self.assertTrue(details["in_app"], "Expected in_app shutdown")
+        self.assertFalse(details["forced"], "Expected non-forced shutdown")
+
+        self.assertEqual(self.marionette.instance.runner.returncode, 0)
+        self.assertEqual(self.marionette.is_shutting_down, False)
+
         self.assertEqual(self.marionette.session, None)
         with self.assertRaisesRegexp(
             errors.InvalidSessionIdException, "Please start a session"
@@ -387,19 +419,38 @@ class TestQuitRestart(MarionetteTestCase):
             self.marionette.get_pref("startup.homepage_welcome_url"), "about:about"
         )
 
-    def test_in_app_quit_with_callback_missing_shutdown(self):
+    def test_in_app_quit_with_non_callable_callback(self):
+        with self.assertRaisesRegexp(ValueError, "is not callable"):
+            self.marionette.quit(callback=4)
+        self.assertEqual(self.marionette.instance.runner.returncode, None)
+        self.assertEqual(self.marionette.is_shutting_down, False)
+
+    def test_in_app_quit_forced_because_callback_does_not_shutdown(self):
         try:
             timeout = self.marionette.shutdown_timeout
             self.marionette.shutdown_timeout = 5
 
             with self.assertRaisesRegexp(IOError, "Process still running"):
                 self.marionette.quit(in_app=True, callback=lambda: False)
+
+            self.assertNotEqual(self.marionette.instance.runner.returncode, None)
+            self.assertEqual(self.marionette.is_shutting_down, False)
         finally:
             self.marionette.shutdown_timeout = timeout
 
-    def test_in_app_quit_with_callback_not_callable(self):
-        with self.assertRaisesRegexp(ValueError, "is not callable"):
-            self.marionette.restart(in_app=True, callback=4)
+        self.marionette.start_session()
+
+    def test_in_app_quit_with_callback_that_raises_an_exception(self):
+        def errorneous_callback():
+            raise Exception("foo")
+
+        with self.assertRaisesRegexp(Exception, "foo"):
+            self.marionette.quit(in_app=True, callback=errorneous_callback)
+        self.assertEqual(self.marionette.instance.runner.returncode, None)
+        self.assertEqual(self.marionette.is_shutting_down, False)
+
+        self.assertIsNotNone(self.marionette.session)
+        self.marionette.current_window_handle
 
     def test_in_app_quit_with_dismissed_beforeunload_prompt(self):
         self.marionette.navigate(
@@ -416,7 +467,8 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
         self.marionette.find_element(By.TAG_NAME, "input").send_keys("foo")
-        self.marionette.quit(in_app=True)
+        self.marionette.quit()
+        self.assertNotEqual(self.marionette.instance.runner.returncode, None)
         self.marionette.start_session()
 
     def test_reset_context_after_quit_by_set_context(self):
@@ -429,7 +481,7 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
         self.marionette.set_context("chrome")
-        self.marionette.quit(in_app=True)
+        self.marionette.quit()
         self.assertEqual(self.marionette.session, None)
         self.marionette.start_session()
         self.assertNotIn(
@@ -448,7 +500,7 @@ class TestQuitRestart(MarionetteTestCase):
         )
 
         with self.marionette.using_context("chrome"):
-            self.marionette.quit(in_app=True)
+            self.marionette.quit()
             self.assertEqual(self.marionette.session, None)
             self.marionette.start_session()
             self.assertNotIn(
@@ -466,7 +518,7 @@ class TestQuitRestart(MarionetteTestCase):
 
         # restart while we are in chrome context
         self.marionette.set_context("chrome")
-        self.marionette.restart(in_app=True)
+        self.marionette.restart()
 
         self.assertNotEqual(self.marionette.process_id, self.pid)
 
@@ -487,7 +539,7 @@ class TestQuitRestart(MarionetteTestCase):
 
         # restart while we are in chrome context
         with self.marionette.using_context("chrome"):
-            self.marionette.restart(in_app=True)
+            self.marionette.restart()
 
             self.assertNotEqual(self.marionette.process_id, self.pid)
 

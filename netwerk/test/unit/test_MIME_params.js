@@ -579,6 +579,20 @@ var tests = [
 
   // Check that whitespace processing can't crash.
   ["attachment; filename =      ", "attachment", ""],
+
+  // Bug 1784348
+  [
+    "attachment; filename=foo.exe\0.pdf",
+    Cr.NS_ERROR_ILLEGAL_VALUE,
+    Cr.NS_ERROR_INVALID_ARG,
+  ],
+  [
+    "attachment; filename=\0\0foo\0",
+    Cr.NS_ERROR_ILLEGAL_VALUE,
+    Cr.NS_ERROR_INVALID_ARG,
+  ],
+  ["attachment; filename=foo\0\0\0", "attachment", "foo"],
+  ["attachment; filename=\0\0\0", "attachment", ""],
 ];
 
 var rfc5987paramtests = [
@@ -690,7 +704,7 @@ function do_tests(whichRFC) {
       tests[i].length == 3 || whichRFC == 0 ? tests[i][1] : tests[i][3];
 
     try {
-      var result;
+      let result;
 
       if (whichRFC == 0) {
         result = mhp.getParameter(tests[i][0], "", "UTF-8", true, unused);
@@ -715,7 +729,7 @@ function do_tests(whichRFC) {
       tests[i].length == 3 || whichRFC == 0 ? tests[i][2] : tests[i][4];
 
     try {
-      var result;
+      let result;
 
       if (whichRFC == 0) {
         result = mhp.getParameter(

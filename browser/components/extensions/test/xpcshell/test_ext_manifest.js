@@ -44,7 +44,7 @@ add_task(async function test_manifest() {
       let error = new RegExp(`Error processing ${action}.default_icon`);
       await testManifest(manifest, error);
 
-      manifest[action] = { default_icon: { "16": path } };
+      manifest[action] = { default_icon: { 16: path } };
       await testManifest(manifest, error);
     }
   }
@@ -67,7 +67,7 @@ add_task(async function test_manifest() {
       }
       await testManifest(manifest);
 
-      manifest[action] = { default_icon: { "16": path } };
+      manifest[action] = { default_icon: { 16: path } };
       if (action == "sidebar_action") {
         manifest[action].default_panel = "foo.html";
       }
@@ -102,22 +102,4 @@ add_task(async function test_action_version() {
     [`Property "action" is unsupported in Manifest Version 2`],
     `Manifest v2 with "action" key first warning is clear.`
   );
-});
-
-add_task(async function test_mv2_scripting_permission_always_enabled() {
-  let warnings = await testManifest({
-    manifest_version: 2,
-    permissions: ["scripting"],
-  });
-
-  Assert.deepEqual(warnings, [], "Got no warnings");
-});
-
-add_task(async function test_mv3_scripting_permission_always_enabled() {
-  let warnings = await testManifest({
-    manifest_version: 3,
-    permissions: ["scripting"],
-  });
-
-  Assert.deepEqual(warnings, [], "Got no warnings");
 });

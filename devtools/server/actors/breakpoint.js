@@ -9,7 +9,7 @@
 const {
   logEvent,
   getThrownMessage,
-} = require("devtools/server/actors/utils/logEvent");
+} = require("resource://devtools/server/actors/utils/logEvent.js");
 
 /**
  * Set breakpoints on all the given entry points with the given
@@ -34,17 +34,17 @@ exports.setBreakpointAtEntryPoints = setBreakpointAtEntryPoints;
  * client directly, but encapsulate the DebuggerScript locations where the
  * breakpoint is installed.
  */
-function BreakpointActor(threadActor, location) {
-  // A map from Debugger.Script instances to the offsets which the breakpoint
-  // has been set for in that script.
-  this.scripts = new Map();
+class BreakpointActor {
+  constructor(threadActor, location) {
+    // A map from Debugger.Script instances to the offsets which the breakpoint
+    // has been set for in that script.
+    this.scripts = new Map();
 
-  this.threadActor = threadActor;
-  this.location = location;
-  this.options = null;
-}
+    this.threadActor = threadActor;
+    this.location = location;
+    this.options = null;
+  }
 
-BreakpointActor.prototype = {
   setOptions(options) {
     const oldOptions = this.options;
     this.options = options;
@@ -52,16 +52,16 @@ BreakpointActor.prototype = {
     for (const [script, offsets] of this.scripts) {
       this._newOffsetsOrOptions(script, offsets, oldOptions);
     }
-  },
+  }
 
   destroy() {
     this.removeScripts();
     this.options = null;
-  },
+  }
 
   hasScript(script) {
     return this.scripts.has(script);
-  },
+  }
 
   /**
    * Called when this same breakpoint is added to another Debugger.Script
@@ -75,7 +75,7 @@ BreakpointActor.prototype = {
   addScript(script, offsets) {
     this.scripts.set(script, offsets.concat(this.scripts.get(offsets) || []));
     this._newOffsetsOrOptions(script, offsets, null);
-  },
+  }
 
   /**
    * Remove the breakpoints from associated scripts and clear the script cache.
@@ -85,7 +85,7 @@ BreakpointActor.prototype = {
       script.clearBreakpoint(this);
     }
     this.scripts.clear();
-  },
+  }
 
   /**
    * Called on changes to this breakpoint's script offsets or options.
@@ -101,7 +101,7 @@ BreakpointActor.prototype = {
     for (const offset of offsets) {
       script.setBreakpoint(offset, this);
     }
-  },
+  }
 
   /**
    * Check if this breakpoint has a condition that doesn't error and
@@ -118,7 +118,28 @@ BreakpointActor.prototype = {
    *            If the condition throws, this is the thrown message.
    */
   checkCondition(frame, condition) {
-    const completion = frame.eval(condition, { hideFromDebugger: true });
+    // Ensure disabling breakpoint while evaluating the condition.
+    // All but exception breakpoint to report any exception when running the condition.
+    this.threadActor.insideClientEvaluation = {
+      disableBreaks: true,
+      reportExceptionsWhenBreaksAreDisabled: true,
+    };
+    let completion;
+
+    // Temporarily enable pause on exception when evaluating the condition.
+    const hadToEnablePauseOnException =
+      !this.threadActor.isPauseOnExceptionsEnabled();
+    try {
+      if (hadToEnablePauseOnException) {
+        this.threadActor.setPauseOnExceptions(true);
+      }
+      completion = frame.eval(condition, { hideFromDebugger: true });
+    } finally {
+      this.threadActor.insideClientEvaluation = null;
+      if (hadToEnablePauseOnException) {
+        this.threadActor.setPauseOnExceptions(false);
+      }
+    }
     if (completion) {
       if (completion.throw) {
         // The evaluation failed and threw
@@ -134,7 +155,7 @@ BreakpointActor.prototype = {
     }
     // The evaluation was killed (possibly by the slow script dialog)
     return { result: undefined };
-  },
+  }
 
   /**
    * A function that the engine calls when a breakpoint has been hit.
@@ -144,14 +165,14 @@ BreakpointActor.prototype = {
    */
   // eslint-disable-next-line complexity
   hit(frame) {
+    if (this.threadActor.shouldSkipAnyBreakpoint) {
+      return undefined;
+    }
+
     // Don't pause if we are currently stepping (in or over) or the frame is
     // black-boxed.
     const location = this.threadActor.sourcesManager.getFrameLocation(frame);
-
-    if (
-      this.threadActor.sourcesManager.isFrameBlackBoxed(frame) ||
-      this.threadActor.skipBreakpointsOption
-    ) {
+    if (this.threadActor.sourcesManager.isFrameBlackBoxed(frame)) {
       return undefined;
     }
 
@@ -182,11 +203,6 @@ BreakpointActor.prototype = {
       }
 
       if (message) {
-        // Don't pause if there is an exception message and POE is false
-        if (!this.threadActor._options.pauseOnExceptions) {
-          return undefined;
-        }
-
         reason.type = "breakpointConditionThrown";
         reason.message = message;
       }
@@ -202,7 +218,7 @@ BreakpointActor.prototype = {
     }
 
     return this.threadActor._pauseAndRespond(frame, reason);
-  },
+  }
 
   delete() {
     // Remove from the breakpoint store.
@@ -210,7 +226,7 @@ BreakpointActor.prototype = {
     // Remove the actual breakpoint from the associated scripts.
     this.removeScripts();
     this.destroy();
-  },
-};
+  }
+}
 
 exports.BreakpointActor = BreakpointActor;

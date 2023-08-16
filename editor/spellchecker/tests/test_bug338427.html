@@ -20,8 +20,8 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=338427
 
 /** Test for Bug 338427 **/
 function init() {
-    var { onSpellCheck } = SpecialPowers.ChromeUtils.import(
-      "resource://testing-common/AsyncSpellCheckTestHelper.jsm"
+    var { onSpellCheck } = SpecialPowers.ChromeUtils.importESModule(
+      "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"
     );
     var textarea = document.getElementById("editor");
     var editor = SpecialPowers.wrap(textarea).editor;
@@ -31,7 +31,7 @@ function init() {
 
     onSpellCheck(textarea, function() {
         var list = spellchecker.spellChecker.GetDictionaryList();
-        ok(list.length > 0, "At least one dictionary should be present");
+        ok(!!list.length, "At least one dictionary should be present");
 
         var lang = list[0];
         spellchecker.spellChecker.setCurrentDictionaries([lang]).then(() => {

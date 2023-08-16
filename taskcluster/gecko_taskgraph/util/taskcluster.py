@@ -3,8 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-import os
 import logging
+import os
 
 import taskcluster_urls as liburls
 from taskcluster import Hooks
@@ -16,7 +16,6 @@ from taskgraph.util.taskcluster import (
     get_task_definition,
     get_task_url,
 )
-
 
 logger = logging.getLogger(__name__)
 
@@ -117,3 +116,13 @@ def list_task_group_incomplete_task_ids(task_group_id):
     for task in [t["status"] for t in list_task_group_tasks(task_group_id)]:
         if task["state"] in states:
             yield task["taskId"]
+
+
+def list_task_group_complete_tasks(task_group_id):
+    tasks = {}
+    for task in list_task_group_tasks(task_group_id):
+        if task.get("status", {}).get("state", "") == "completed":
+            tasks[task.get("task", {}).get("metadata", {}).get("name", "")] = task.get(
+                "status", {}
+            ).get("taskId", "")
+    return tasks

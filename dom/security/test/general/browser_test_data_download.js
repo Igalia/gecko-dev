@@ -13,7 +13,7 @@ function addWindowListener(aURL) {
         info("window opened, waiting for focus");
         Services.wm.removeListener(this);
         var domwindow = aXULWindow.docShell.domWindow;
-        waitForFocus(function() {
+        waitForFocus(function () {
           is(
             domwindow.document.location.href,
             aURL,
@@ -47,13 +47,12 @@ add_task(async function test_with_downloads_pref_disabled() {
     set: [
       ["security.data_uri.block_toplevel_data_uri_navigations", true],
       ["browser.download.always_ask_before_handling_new_types", true],
-      ["browser.download.improvements_to_download_panel", false],
     ],
   });
   let windowPromise = addWindowListener(
     "chrome://mozapps/content/downloads/unknownContentType.xhtml"
   );
-  BrowserTestUtils.loadURI(gBrowser, kTestURI);
+  BrowserTestUtils.loadURIString(gBrowser, kTestURI);
   let win = await windowPromise;
 
   is(
@@ -73,13 +72,12 @@ add_task(async function test_with_always_ask_pref_disabled() {
     set: [
       ["security.data_uri.block_toplevel_data_uri_navigations", true],
       ["browser.download.always_ask_before_handling_new_types", false],
-      ["browser.download.improvements_to_download_panel", true],
     ],
   });
   let downloadsPanelPromise = promisePanelOpened();
   let downloadsPromise = Downloads.getList(Downloads.PUBLIC);
 
-  BrowserTestUtils.loadURI(gBrowser, kTestURI);
+  BrowserTestUtils.loadURIString(gBrowser, kTestURI);
   // wait until downloadsPanel opens before continuing with test
   await downloadsPanelPromise;
   let downloadList = await downloadsPromise;

@@ -2,9 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-
 import os
-from taskgraph.util import taskcluster as tc_util, schema
+
+from taskgraph import config as taskgraph_config
+from taskgraph import morph as taskgraph_morph
+from taskgraph.util import schema
+from taskgraph.util import taskcluster as tc_util
+
+from gecko_taskgraph.config import graph_config_schema
 
 GECKO = os.path.normpath(os.path.realpath(os.path.join(__file__, "..", "..", "..")))
 
@@ -13,6 +18,13 @@ GECKO = os.path.normpath(os.path.realpath(os.path.join(__file__, "..", "..", "..
 # specifies 100, but we also optionally add the decision task id as a dep in
 # taskgraph.create, so let's set this to 99.
 MAX_DEPENDENCIES = 99
+
+# Overwrite Taskgraph's default graph_config_schema with a custom one.
+taskgraph_config.graph_config_schema = graph_config_schema
+
+# Don't use any of the upstream morphs.
+# TODO Investigate merging our morphs with upstream.
+taskgraph_morph.registered_morphs = []
 
 # Default rootUrl to use if none is given in the environment; this should point
 # to the production Taskcluster deployment used for CI.
@@ -36,9 +48,18 @@ def register(graph_config):
     Args:
         graph_config: The graph configuration object.
     """
-    from gecko_taskgraph.parameters import register_parameters
+    from taskgraph import generator
+
     from gecko_taskgraph import (  # noqa: trigger target task method registration
+        morph,  # noqa: trigger morph registration
         target_tasks,
     )
+    from gecko_taskgraph.loader import multi_dep  # noqa: trigger group_by registration
+    from gecko_taskgraph.parameters import register_parameters
+    from gecko_taskgraph.util.verify import verifications
+
+    # Don't use the upstream verifications, and replace them with our own.
+    # TODO Investigate merging our verifications with upstream.
+    generator.verifications = verifications
 
     register_parameters()

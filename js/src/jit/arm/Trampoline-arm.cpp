@@ -11,9 +11,7 @@
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
-#ifdef JS_ION_PERF
-#  include "jit/PerfSpewer.h"
-#endif
+#include "jit/PerfSpewer.h"
 #include "jit/VMFunctions.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
@@ -266,7 +264,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
 
     masm.push(r0);  // jitcode
 
-    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+    using Fn = bool (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
                         uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(framePtrScratch);  // BaselineFrame
@@ -387,8 +385,7 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   // setupAlignedABICall.
   masm.reserveStack(sizeof(void*) * 2);
   masm.mov(sp, r1);
-  using Fn =
-      bool (*)(InvalidationBailoutStack * sp, BaselineBailoutInfo * *info);
+  using Fn = bool (*)(InvalidationBailoutStack* sp, BaselineBailoutInfo** info);
   masm.setupAlignedABICall();
   masm.passABIArg(r0);
   masm.passABIArg(r1);
@@ -563,7 +560,7 @@ static void GenerateBailoutThunk(MacroAssembler& masm, Label* bailoutTail) {
   // Make space for Bailout's bailoutInfo outparam.
   masm.reserveStack(sizeof(void*));
   masm.mov(sp, r1);
-  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
+  using Fn = bool (*)(BailoutStack* sp, BaselineBailoutInfo** info);
   masm.setupAlignedABICall();
 
   masm.passABIArg(r0);
@@ -606,17 +603,15 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   Register cxreg = r0;
   regs.take(cxreg);
 
-  // Stack is:
-  //    ... frame ...
-  //  +8  [args] + argPadding
-  //  +0  ExitFrame
-  //
-  // If it isn't a tail call, then the return address needs to be saved.
+  // On link-register platforms, it is the responsibility of the VM *callee* to
+  // push the return address, while the caller must ensure that the address
+  // is stored in lr on entry. This allows the VM wrapper to work with both
+  // direct calls and tail calls.
+  masm.pushReturnAddress();
+
   // Push the frame pointer to finish the exit frame, then link it up.
-  if (f.expectTailCall == NonTailCall) {
-    masm.pushReturnAddress();
-  }
   masm.Push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
   masm.loadJSContext(cxreg);
   masm.enterExitFrame(cxreg, regs.getAny(), &f);
 
@@ -689,13 +684,13 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
         break;
       case VMFunctionData::WordByRef:
         masm.passABIArg(
-            MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
+            MoveOperand(argsBase, argDisp, MoveOperand::Kind::EffectiveAddress),
             MoveOp::GENERAL);
         argDisp += sizeof(void*);
         break;
       case VMFunctionData::DoubleByRef:
         masm.passABIArg(
-            MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
+            MoveOperand(argsBase, argDisp, MoveOperand::Kind::EffectiveAddress),
             MoveOp::GENERAL);
         argDisp += 2 * sizeof(void*);
         break;
@@ -763,7 +758,8 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   }
 
   // Pop ExitFooterFrame and the frame pointer.
-  masm.leaveExitFrame(sizeof(void*));
+  masm.leaveExitFrame(0);
+  masm.pop(FramePointer);
 
   // Return. Subtract sizeof(void*) for the frame pointer.
   masm.retn(Imm32(sizeof(ExitFrameLayout) - sizeof(void*) +

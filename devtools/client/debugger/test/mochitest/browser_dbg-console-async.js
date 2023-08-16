@@ -8,7 +8,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   Services.prefs.setBoolPref("devtools.toolbox.splitconsoleEnabled", true);
   Services.prefs.setBoolPref(
     "devtools.debugger.features.map-await-expression",
@@ -45,6 +45,6 @@ async function hasMessageByType(dbg, msg, typeSelector) {
   const webConsole = await dbg.toolbox.getPanel("webconsole");
   const hud = webConsole.hud;
   return waitFor(
-    async () => findMessagesByType(hud, msg, typeSelector).length > 0
+    async () => !!findMessagesByType(hud, msg, typeSelector).length
   );
 }

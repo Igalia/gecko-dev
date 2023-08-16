@@ -35,7 +35,7 @@ class gfxMacFont final : public gfxFont {
 
   int32_t GetGlyphWidth(uint16_t aGID) override;
 
-  bool GetGlyphBounds(uint16_t aGID, gfxRect* aBounds, bool aTight) const override;
+  bool GetGlyphBounds(uint16_t aGID, gfxRect* aBounds, bool aTight) override;
 
   already_AddRefed<mozilla::gfx::ScaledFont> GetScaledFont(
       const TextRunDrawParams& aRunParams) override;
@@ -48,6 +48,8 @@ class gfxMacFont final : public gfxFont {
                               FontCacheSizes* aSizes) const override;
 
   FontType GetType() const override { return FONT_TYPE_MAC; }
+
+  bool UseNativeColrFontSupport() const override;
 
   // Helper to create a CTFont from a CGFont, with optional font descriptor
   // (for features), and copying any variations that were set on the CGFont.

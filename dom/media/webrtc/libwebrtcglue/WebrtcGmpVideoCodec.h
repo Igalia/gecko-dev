@@ -44,6 +44,7 @@
 #include "mozIGeckoMediaPluginService.h"
 #include "MediaConduitInterface.h"
 #include "AudioConduit.h"
+#include "PerformanceRecorder.h"
 #include "VideoConduit.h"
 #include "api/video/video_frame_type.h"
 #include "modules/video_coding/include/video_codec_interface.h"
@@ -124,7 +125,7 @@ class GMPDecodeData {
 
 class RefCountedWebrtcVideoEncoder {
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(RefCountedWebrtcVideoEncoder);
+  NS_INLINE_DECL_PURE_VIRTUAL_REFCOUNTING
 
   // Implement sort of WebrtcVideoEncoder interface and support refcounting.
   // (We cannot use |Release|, since that's needed for nsRefPtr)
@@ -157,7 +158,10 @@ class RefCountedWebrtcVideoEncoder {
 class WebrtcGmpVideoEncoder : public GMPVideoEncoderCallbackProxy,
                               public RefCountedWebrtcVideoEncoder {
  public:
-  explicit WebrtcGmpVideoEncoder(std::string aPCHandle);
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebrtcGmpVideoEncoder, final);
+
+  WebrtcGmpVideoEncoder(const webrtc::SdpVideoFormat& aFormat,
+                        std::string aPCHandle);
 
   // Implement VideoEncoder interface, sort of.
   // (We cannot use |Release|, since that's needed for nsRefPtr)
@@ -285,6 +289,7 @@ class WebrtcGmpVideoEncoder : public GMPVideoEncoderCallbackProxy,
   GMPVideoHost* mHost;
   GMPVideoCodec mCodecParams;
   uint32_t mMaxPayloadSize;
+  const webrtc::SdpVideoFormat::Parameters mFormatParams;
   webrtc::CodecSpecificInfo mCodecSpecificInfo;
   webrtc::H264BitstreamParser mH264BitstreamParser;
   // Protects mCallback
@@ -358,13 +363,12 @@ class WebrtcVideoEncoderProxy : public WebrtcVideoEncoder {
 
 class WebrtcGmpVideoDecoder : public GMPVideoDecoderCallbackProxy {
  public:
-  explicit WebrtcGmpVideoDecoder(std::string aPCHandle);
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebrtcGmpVideoDecoder);
+  WebrtcGmpVideoDecoder(std::string aPCHandle, TrackingId aTrackingId);
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(WebrtcGmpVideoDecoder, final);
 
   // Implement VideoEncoder interface, sort of.
   // (We cannot use |Release|, since that's needed for nsRefPtr)
-  virtual int32_t InitDecode(const webrtc::VideoCodec* aCodecSettings,
-                             int32_t aNumberOfCores);
+  virtual bool Configure(const webrtc::VideoDecoder::Settings& settings);
   virtual int32_t Decode(const webrtc::EncodedImage& aInputImage,
                          bool aMissingFrames, int64_t aRenderTimeMs);
   virtual int32_t RegisterDecodeCompleteCallback(
@@ -403,10 +407,9 @@ class WebrtcGmpVideoDecoder : public GMPVideoDecoderCallbackProxy {
  private:
   virtual ~WebrtcGmpVideoDecoder();
 
-  static void InitDecode_g(const RefPtr<WebrtcGmpVideoDecoder>& aThis,
-                           const webrtc::VideoCodec* aCodecSettings,
-                           int32_t aNumberOfCores,
-                           const RefPtr<GmpInitDoneRunnable>& aInitDone);
+  static void Configure_g(const RefPtr<WebrtcGmpVideoDecoder>& aThis,
+                          const webrtc::VideoDecoder::Settings& settings,
+                          const RefPtr<GmpInitDoneRunnable>& aInitDone);
   int32_t GmpInitDone(GMPVideoDecoderProxy* aGMP, GMPVideoHost* aHost,
                       std::string* aErrorOut);
   static void ReleaseGmp_g(const RefPtr<WebrtcGmpVideoDecoder>& aDecoder);
@@ -448,6 +451,8 @@ class WebrtcGmpVideoDecoder : public GMPVideoDecoderCallbackProxy {
   Maybe<uint64_t> mCachedPluginId;
   Atomic<GMPErr, ReleaseAcquire> mDecoderStatus;
   const std::string mPCHandle;
+  const TrackingId mTrackingId;
+  PerformanceRecorderMulti<DecodeStage> mPerformanceRecorder;
 
   MediaEventProducer<uint64_t> mInitPluginEvent;
   MediaEventProducer<uint64_t> mReleasePluginEvent;
@@ -460,8 +465,10 @@ class WebrtcGmpVideoDecoder : public GMPVideoDecoderCallbackProxy {
 // the "real" encoder.
 class WebrtcVideoDecoderProxy : public WebrtcVideoDecoder {
  public:
-  explicit WebrtcVideoDecoderProxy(std::string aPCHandle)
-      : mDecoderImpl(new WebrtcGmpVideoDecoder(std::move(aPCHandle))) {}
+  explicit WebrtcVideoDecoderProxy(std::string aPCHandle,
+                                   TrackingId aTrackingId)
+      : mDecoderImpl(new WebrtcGmpVideoDecoder(std::move(aPCHandle),
+                                               std::move(aTrackingId))) {}
 
   virtual ~WebrtcVideoDecoderProxy() {
     RegisterDecodeCompleteCallback(nullptr);
@@ -475,9 +482,8 @@ class WebrtcVideoDecoderProxy : public WebrtcVideoDecoder {
     return mDecoderImpl->ReleasePluginEvent();
   }
 
-  int32_t InitDecode(const webrtc::VideoCodec* aCodecSettings,
-                     int32_t aNumberOfCores) override {
-    return mDecoderImpl->InitDecode(aCodecSettings, aNumberOfCores);
+  bool Configure(const Settings& settings) override {
+    return mDecoderImpl->Configure(settings);
   }
 
   int32_t Decode(const webrtc::EncodedImage& aInputImage, bool aMissingFrames,

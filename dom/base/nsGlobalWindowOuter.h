@@ -24,7 +24,6 @@
 // Interfaces Needed
 #include "nsIBrowserDOMWindow.h"
 #include "nsIInterfaceRequestor.h"
-#include "nsIDOMChromeWindow.h"
 #include "nsIScriptGlobalObject.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "mozilla/EventListenerManager.h"
@@ -109,6 +108,7 @@ class PrintPreviewResultInfo;
 struct RequestInit;
 class RequestOrUSVString;
 class Selection;
+struct SizeToContentConstraints;
 class SpeechSynthesis;
 class Timeout;
 class U2F;
@@ -154,11 +154,7 @@ extern const JSClass OuterWindowProxyClass;
 
 class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
                                   public nsPIDOMWindowOuter,
-                                  private nsIDOMWindow
-    // NOTE: This interface is private, as it's only
-    // implemented on chrome windows.
-    ,
-                                  private nsIDOMChromeWindow,
+                                  private nsIDOMWindow,
                                   public nsIScriptGlobalObject,
                                   public nsIScriptObjectPrincipal,
                                   public nsSupportsWeakReference,
@@ -232,10 +228,9 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   }
 
   // nsIGlobalObject
-  bool ShouldResistFingerprinting() const final;
-  uint32_t GetPrincipalHashValue() const final;
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const final;
   mozilla::OriginTrials Trials() const final;
-  mozilla::dom::FontFaceSet* Fonts() final;
+  mozilla::dom::FontFaceSet* GetFonts() final;
 
   // nsIGlobalJSObjectHolder
   JSObject* GetGlobalJSObject() final { return GetWrapper(); }
@@ -262,9 +257,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   // nsIDOMWindow
   NS_DECL_NSIDOMWINDOW
-
-  // nsIDOMChromeWindow (only implemented on chrome windows)
-  NS_DECL_NSIDOMCHROMEWINDOW
 
   mozilla::dom::ChromeMessageBroadcaster* GetMessageManager();
   mozilla::dom::ChromeMessageBroadcaster* GetGroupMessageManager(
@@ -305,8 +297,8 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
       mozilla::dom::EventTarget* aChromeEventHandler) override;
 
   // Outer windows only.
-  virtual void SetInitialPrincipalToSubject(
-      nsIContentSecurityPolicy* aCSP,
+  virtual void SetInitialPrincipal(
+      nsIPrincipal* aNewWindowPrincipal, nsIContentSecurityPolicy* aCSP,
       const mozilla::Maybe<nsILoadInfo::CrossOriginEmbedderPolicy>& aCoep)
       override;
 
@@ -595,14 +587,15 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
                    nsAString& aReturn, nsIPrincipal& aSubjectPrincipal,
                    mozilla::ErrorResult& aError);
 
-  void PrintOuter(mozilla::ErrorResult& aError);
+  MOZ_CAN_RUN_SCRIPT void PrintOuter(mozilla::ErrorResult& aError);
 
   enum class IsPreview : bool { No, Yes };
   enum class IsForWindowDotPrint : bool { No, Yes };
-  mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder> Print(
-      nsIPrintSettings*, mozilla::layout::RemotePrintJobChild* aRemotePrintJob,
-      nsIWebProgressListener*, nsIDocShell*, IsPreview, IsForWindowDotPrint,
-      PrintPreviewResolver&&, mozilla::ErrorResult&);
+  MOZ_CAN_RUN_SCRIPT mozilla::dom::Nullable<mozilla::dom::WindowProxyHolder>
+  Print(nsIPrintSettings*,
+        mozilla::layout::RemotePrintJobChild* aRemotePrintJob,
+        nsIWebProgressListener*, nsIDocShell*, IsPreview, IsForWindowDotPrint,
+        PrintPreviewResolver&&, mozilla::ErrorResult&);
   mozilla::dom::Selection* GetSelectionOuter();
   already_AddRefed<mozilla::dom::Selection> GetSelection() override;
   nsScreen* GetScreen();
@@ -623,8 +616,9 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   double GetScrollYOuter();
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  void SizeToContentOuter(mozilla::dom::CallerType aCallerType,
-                          mozilla::ErrorResult& aError);
+  void SizeToContentOuter(mozilla::dom::CallerType,
+                          const mozilla::dom::SizeToContentConstraints&,
+                          mozilla::ErrorResult&);
   nsIControllers* GetControllersOuter(mozilla::ErrorResult& aError);
   nsresult GetControllers(nsIControllers** aControllers) override;
   float GetMozInnerScreenXOuter(mozilla::dom::CallerType aCallerType);
@@ -656,7 +650,7 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   // ChromeWindow bits.  Do NOT call these unless your window is in
   // fact chrome.
-  nsIBrowserDOMWindow* GetBrowserDOMWindowOuter();
+  nsIBrowserDOMWindow* GetBrowserDOMWindow();
   void SetBrowserDOMWindowOuter(nsIBrowserDOMWindow* aBrowserWindow);
   void SetCursorOuter(const nsACString& aCursor, mozilla::ErrorResult& aError);
 
@@ -684,37 +678,21 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   double GetInnerWidthOuter(mozilla::ErrorResult& aError);
 
  protected:
-  nsresult GetInnerWidth(double* aWidth) override;
-  void SetInnerWidthOuter(double aInnerWidth,
-                          mozilla::dom::CallerType aCallerType,
-                          mozilla::ErrorResult& aError);
+  nsresult GetInnerWidth(double* aInnerWidth) override;
 
  public:
   double GetInnerHeightOuter(mozilla::ErrorResult& aError);
 
  protected:
-  nsresult GetInnerHeight(double* aHeight) override;
-  void SetInnerHeightOuter(double aInnerHeight,
-                           mozilla::dom::CallerType aCallerType,
-                           mozilla::ErrorResult& aError);
+  nsresult GetInnerHeight(double* aInnerHeight) override;
   int32_t GetScreenXOuter(mozilla::dom::CallerType aCallerType,
                           mozilla::ErrorResult& aError);
-  void SetScreenXOuter(int32_t aScreenX, mozilla::dom::CallerType aCallerType,
-                       mozilla::ErrorResult& aError);
   int32_t GetScreenYOuter(mozilla::dom::CallerType aCallerType,
                           mozilla::ErrorResult& aError);
-  void SetScreenYOuter(int32_t aScreenY, mozilla::dom::CallerType aCallerType,
-                       mozilla::ErrorResult& aError);
   int32_t GetOuterWidthOuter(mozilla::dom::CallerType aCallerType,
                              mozilla::ErrorResult& aError);
-  void SetOuterWidthOuter(int32_t aOuterWidth,
-                          mozilla::dom::CallerType aCallerType,
-                          mozilla::ErrorResult& aError);
   int32_t GetOuterHeightOuter(mozilla::dom::CallerType aCallerType,
                               mozilla::ErrorResult& aError);
-  void SetOuterHeightOuter(int32_t aOuterHeight,
-                           mozilla::dom::CallerType aCallerType,
-                           mozilla::ErrorResult& aError);
 
   friend class HashchangeCallback;
   friend class mozilla::dom::BarProp;
@@ -827,9 +805,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   // Outer windows only.
   // Arguments to this function should have values in app units
   void SetCSSViewportWidthAndHeight(nscoord width, nscoord height);
-  // Arguments to this function should have values in device pixels
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY
-  nsresult SetDocShellSize(const mozilla::LayoutDeviceIntSize& aInnerSize);
 
   static bool CanSetProperty(const char* aPrefName);
 
@@ -855,9 +830,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
   nsresult GetInnerSize(mozilla::CSSSize& aSize);
   mozilla::CSSIntSize GetOuterSize(mozilla::dom::CallerType aCallerType,
                                    mozilla::ErrorResult& aError);
-  void SetOuterSize(int32_t aLengthCSSPixels, bool aIsWidth,
-                    mozilla::dom::CallerType aCallerType,
-                    mozilla::ErrorResult& aError);
   nsRect GetInnerScreenRect();
   static mozilla::Maybe<mozilla::CSSIntSize> GetRDMDeviceSize(
       const Document& aDocument);
@@ -891,8 +863,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   bool ShouldShowFocusRing() override;
 
-  void SetKeyboardIndicators(UIStateChangeType aShowFocusRings) override;
-
  public:
   already_AddRefed<nsPIWindowRoot> GetTopWindowRoot() override;
 
@@ -903,8 +873,6 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   void UpdateParentTarget() override;
 
-  void InitializeShowFocusRings();
-
  protected:
   // Helper for getComputedStyle and getDefaultComputedStyle
   already_AddRefed<nsICSSDeclaration> GetComputedStyleHelperOuter(
@@ -913,6 +881,10 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
 
   // Outer windows only.
   void PreloadLocalStorage();
+
+  mozilla::CSSPoint ScreenEdgeSlop();
+  mozilla::CSSCoord ScreenEdgeSlopX() { return ScreenEdgeSlop().X(); }
+  mozilla::CSSCoord ScreenEdgeSlopY() { return ScreenEdgeSlop().Y(); }
 
   // Returns CSS pixels based on primary screen.  Outer windows only.
   mozilla::CSSIntPoint GetScreenXY(mozilla::dom::CallerType aCallerType,
@@ -1050,8 +1022,34 @@ class nsGlobalWindowOuter final : public mozilla::dom::EventTarget,
       mozilla::TaskCategory aCategory) override;
 
  protected:
-  bool mFullscreen : 1;
-  bool mFullscreenMode : 1;
+  nsresult ProcessWidgetFullscreenRequest(FullscreenReason aReason,
+                                          bool aFullscreen);
+
+  // Indicates whether browser window should be in fullscreen mode and the
+  // reason, e.g. browser fullscreen mode or DOM fullscreen API, which should
+  // never be ForForceExitFullscreen. Nothing if browser window should not be in
+  // fullscreen mode.
+  mozilla::Maybe<FullscreenReason> mFullscreen;
+
+  // Indicates whether new fullscreen request have been made when previous
+  // fullscreen request is still in-process.
+  bool mFullscreenHasChangedDuringProcessing : 1;
+
+  using FullscreenRequest = struct FullscreenRequest {
+    FullscreenRequest(FullscreenReason aReason, bool aFullscreen)
+        : mReason(aReason), mFullscreen(aFullscreen) {
+      MOZ_ASSERT(
+          mReason != FullscreenReason::ForForceExitFullscreen || !mFullscreen,
+          "FullscreenReason::ForForceExitFullscreen can only be used with "
+          "exiting fullscreen");
+    }
+    FullscreenReason mReason;
+    bool mFullscreen : 1;
+  };
+  // The current in-process fullscreen request. Nothing if there is no
+  // in-process request.
+  mozilla::Maybe<FullscreenRequest> mInProcessFullscreenRequest;
+
   bool mForceFullScreenInWidget : 1;
   bool mIsClosed : 1;
   bool mInClose : 1;

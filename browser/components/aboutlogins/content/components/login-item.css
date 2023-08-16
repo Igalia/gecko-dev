@@ -8,14 +8,12 @@
   --reveal-checkbox-opacity: .8;
   --reveal-checkbox-opacity-hover: .6;
   --reveal-checkbox-opacity-active: 1;
-  --success-color: #2AC3A2;
-  --edit-delete-button-color: #4a4a4f;
 }
 
 /* Only overwrite the deemphasized text color in non-dark mode. */
 @media not (prefers-color-scheme: dark) {
   :host {
-    --in-content-deemphasized-text: #737373;
+    --text-color-deemphasized: #737373;
   }
 }
 
@@ -24,14 +22,12 @@
     --reveal-checkbox-opacity: .8;
     --reveal-checkbox-opacity-hover: 1;
     --reveal-checkbox-opacity-active: .6;
-    --success-color: #54FFBD;
-    --edit-delete-button-color: #cfcfd1;
   }
 }
 
 .container {
   overflow: auto;
-  padding: 40px;
+  padding: 0 40px;
   box-sizing: border-box;
   height: 100%;
 }
@@ -59,10 +55,9 @@ form {
 
 :host([data-editing]) .edit-button,
 :host([data-editing]) .copy-button,
-:host([data-is-new-login].no-logins) .cancel-button,
 :host([data-is-new-login]) .delete-button,
 :host([data-is-new-login]) .origin-saved-value,
-:host([data-is-new-login]) .meta-info,
+:host([data-is-new-login]) login-timeline,
 :host([data-is-new-login]) .login-item-title,
 :host(:not([data-is-new-login])) .new-login-title,
 :host(:not([data-editing])) .form-actions-row {
@@ -75,7 +70,7 @@ input[type="url"] {
   text-align: match-parent !important; /* override `all: unset` in the rule below */
 }
 
-input[type="password"]:read-only,
+:host(:not([data-editing])) input[type="password"]:read-only,
 input[type="text"]:read-only,
 input[type="url"]:read-only {
   all: unset;
@@ -105,7 +100,6 @@ input[type="url"]:read-only {
 .header {
   display: flex;
   align-items: center;
-  border-bottom: 1px solid var(--in-content-border-color);
   margin-bottom: 40px;
 }
 
@@ -115,33 +109,6 @@ input[type="url"]:read-only {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.delete-button,
-.edit-button {
-  color: var(--edit-delete-button-color);
-  background-repeat: no-repeat;
-  background-position: 8px;
-  -moz-context-properties: fill;
-  fill: currentColor;
-  min-width: auto;
-  /* See bug 1627164: In CJK locales, line break could happen in any letter of the button. The fix here is to explicitly specify flex property so that the button couldn't grow or shrink. */
-  flex: 0 0 auto;
-}
-
-.delete-button:dir(rtl),
-.edit-button:dir(rtl) {
-  background-position-x: right 8px;
-}
-
-.delete-button {
-  background-image: url("chrome://global/skin/icons/delete.svg");
-  padding-inline-start: 30px; /* 8px on each side, and 14px for icon width */
-}
-
-.edit-button {
-  background-image: url("chrome://global/skin/icons/edit.svg");
-  padding-inline-start: 32px; /* 8px on each side, and 16px for icon width */
 }
 
 input[type="url"]:read-only {
@@ -183,11 +150,13 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
 .arrow-box {
   position: relative;
   padding: 12px;
-	background: var(--in-content-box-background);
+	background-color: var(--in-content-box-background);
 	border: 1px solid var(--in-content-border-color);
+  border-radius: 4px;
 }
 
-.arrow-box::after, .arrow-box::before {
+.arrow-box::before,
+.arrow-box::after {
   inset-inline-end: 100%;
   top: 40px; /* This allows the arrow to stay in the correct position, even if the text length is changed */
 	border: solid transparent;
@@ -212,6 +181,7 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
 .reveal-password-wrapper {
   display: flex;
   align-items: center;
+  justify-content: space-between;
 }
 
 .detail-grid {
@@ -261,12 +231,15 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
 .field-label {
   display: block;
   font-size: smaller;
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
   margin-bottom: 8px;
 }
 
-:host([data-editing]) .detail-cell input:read-write:not([type="checkbox"]) {
-  width: 280px;
+moz-button-group,
+:host([data-editing]) .detail-cell input:read-write:not([type="checkbox"]),
+:host([data-editing]) input[type="password"]:read-only {
+  width: 298px;
+  box-sizing: border-box;
 }
 
 .copy-button {
@@ -278,41 +251,13 @@ input[type = "url"]:focus:-moz-ui-invalid:not(:placeholder-shown) ~ .tooltip-con
   display: none;
 }
 
-.copy-button[data-copied] {
-  color: var(--success-color) !important; /* override common.css */
-  background-color: transparent;
-  opacity: 1; /* override common.css fading out disabled buttons */
-}
-
 .copy-button[data-copied]:-moz-focusring {
   outline-width: 0;
   box-shadow: none;
 }
 
-.copied-button-text {
-  background-image: url(chrome://global/skin/icons/check.svg);
-  background-repeat: no-repeat;
-  -moz-context-properties: fill;
-  fill: currentColor;
-  padding-inline-start: 22px;
-}
-
 .copied-button-text:dir(rtl) {
   background-position-x: right;
-}
-
-.meta-info {
-  font-size: smaller;
-  color: var(--in-content-deemphasized-text);
-  margin-block: 0 8px;
-}
-
-.meta-info:first-of-type::before {
-  content: "";
-  display: block;
-  margin-bottom: 20px;
-  border-top: 1px solid var(--in-content-border-color);
-  width: 40px;
 }
 
 input.password-display,
@@ -356,27 +301,13 @@ input[name="password"] {
   fill-opacity: 0.75;
 }
 
-.vulnerable-alert,
-.breach-alert {
-  border-radius: 4px;
-  border: 1px solid var(--in-content-border-color);
-  box-shadow: 0 2px 8px 0 var(--grey-90-a10);
-  font-size: .9em;
-  line-height: 1.4;
-  padding-block: 12px;
-  padding-inline: 64px 32px;
+login-breach-alert,
+login-vulnerable-password-alert {
   margin-block-end: 40px;
-  position: relative;
 }
 
-.breach-alert {
-  background-color: var(--red-70);
-  color: #fff;
-}
-
-.vulnerable-alert {
-  background-color: var(--in-content-box-background);
-  color: var(--in-content-text-color);
+login-command-button {
+  margin-block-start: 4px; /* Focus did not display entirely on edit and remove with margin:0 */
 }
 
 .alert-title {
@@ -423,7 +354,7 @@ input[name="password"] {
 }
 
 .vulnerable-alert > .alert-learn-more-link {
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
 }
 
 .error-message {

@@ -2,7 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
+import {
+  actionCreators as ac,
+  actionTypes as at,
+} from "common/Actions.sys.mjs";
 import { DSImage } from "../DSImage/DSImage.jsx";
 import { DSLinkMenu } from "../DSLinkMenu/DSLinkMenu";
 import { ImpressionStats } from "../../DiscoveryStreamImpressionStats/ImpressionStats";
@@ -24,7 +27,9 @@ const READING_WPM = 220;
  * @returns {int} number of words per minute in minutes
  */
 export function readTimeFromWordCount(wordCount) {
-  if (!wordCount) return false;
+  if (!wordCount) {
+    return false;
+  }
   return Math.ceil(parseInt(wordCount, 10) / READING_WPM);
 }
 
@@ -52,7 +57,7 @@ export const DSSource = ({
   }
 
   // If we are not a spoc, and can display a time to read value.
-  if (timeToRead) {
+  if (source && timeToRead) {
     return (
       <p className="source clamp time-to-read">
         <FluentOrText
@@ -197,6 +202,7 @@ export class _DSCard extends React.PureComponent {
               ...(this.props.shim && this.props.shim.click
                 ? { shim: this.props.shim.click }
                 : {}),
+              type: this.props.flightId ? "spoc" : "organic",
             },
           ],
         })
@@ -218,6 +224,7 @@ export class _DSCard extends React.PureComponent {
           event: "SAVE_TO_POCKET",
           source: "CARDGRID_HOVER",
           action_position: this.props.pos,
+          value: { card_type: this.props.flightId ? "spoc" : "organic" },
         })
       );
 
@@ -318,6 +325,12 @@ export class _DSCard extends React.PureComponent {
     }
 
     const { isRecentSave, DiscoveryStream, saveToPocketCard } = this.props;
+    let source = this.props.source || this.props.publisher;
+    if (!source) {
+      try {
+        source = new URL(this.props.url).hostname;
+      } catch (e) {}
+    }
 
     const {
       pocketButtonEnabled,
@@ -345,6 +358,24 @@ export class _DSCard extends React.PureComponent {
     const titleLinesName = `ds-card-title-lines-${titleLines}`;
     const descLinesClassName = `ds-card-desc-lines-${descLines}`;
 
+    let stpButton = () => {
+      return (
+        <button className="card-stp-button" onClick={this.onSaveClick}>
+          {this.props.context_type === "pocket" ? (
+            <>
+              <span className="story-badge-icon icon icon-pocket" />
+              <span data-l10n-id="newtab-pocket-saved" />
+            </>
+          ) : (
+            <>
+              <span className="story-badge-icon icon icon-pocket-save" />
+              <span data-l10n-id="newtab-pocket-save" />
+            </>
+          )}
+        </button>
+      );
+    };
+
     return (
       <div
         className={`ds-card ${compactImagesClassName} ${imageGradientClassName} ${titleLinesName} ${descLinesClassName}`}
@@ -362,10 +393,13 @@ export class _DSCard extends React.PureComponent {
               source={this.props.image_src}
               rawSource={this.props.raw_image_src}
               sizes={this.dsImageSizes}
+              url={this.props.url}
+              title={this.props.title}
+              isRecentSave={isRecentSave}
             />
           </div>
           <DefaultMeta
-            source={this.props.source}
+            source={source}
             title={this.props.title}
             excerpt={excerpt}
             newSponsoredLabel={newSponsoredLabel}
@@ -394,26 +428,14 @@ export class _DSCard extends React.PureComponent {
         {saveToPocketCard && (
           <div className="card-stp-button-hover-background">
             <div className="card-stp-button-position-wrapper">
-              <button className="card-stp-button" onClick={this.onSaveClick}>
-                {this.props.context_type === "pocket" ? (
-                  <>
-                    <span className="story-badge-icon icon icon-pocket" />
-                    <span data-l10n-id="newtab-pocket-saved-to-pocket" />
-                  </>
-                ) : (
-                  <>
-                    <span className="story-badge-icon icon icon-pocket-save" />
-                    <span data-l10n-id="newtab-pocket-save-to-pocket" />
-                  </>
-                )}
-              </button>
+              {!this.props.flightId && stpButton()}
               <DSLinkMenu
                 id={this.props.id}
                 index={this.props.pos}
                 dispatch={this.props.dispatch}
                 url={this.props.url}
                 title={this.props.title}
-                source={this.props.source}
+                source={source}
                 type={this.props.type}
                 pocket_id={this.props.pocket_id}
                 shim={this.props.shim}
@@ -438,7 +460,7 @@ export class _DSCard extends React.PureComponent {
             dispatch={this.props.dispatch}
             url={this.props.url}
             title={this.props.title}
-            source={this.props.source}
+            source={source}
             type={this.props.type}
             pocket_id={this.props.pocket_id}
             shim={this.props.shim}

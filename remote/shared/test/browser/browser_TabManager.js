@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { TabManager } = ChromeUtils.import(
-  "chrome://remote/content/shared/TabManager.jsm"
+const { TabManager } = ChromeUtils.importESModule(
+  "chrome://remote/content/shared/TabManager.sys.mjs"
 );
 
 const FRAME_URL = "https://example.com/document-builder.sjs?html=frame";
@@ -21,9 +21,7 @@ add_task(async function test_getBrowsingContextById() {
   is(TabManager.getBrowsingContextById("wrong-id"), null);
 
   info(`Navigate to ${TEST_URL}`);
-  const loaded = BrowserTestUtils.browserLoaded(browser);
-  BrowserTestUtils.loadURI(browser, TEST_URL);
-  await loaded;
+  await loadURL(browser, TEST_URL);
 
   const contexts = browser.browsingContext.getAllBrowsingContextsInSubtree();
   is(contexts.length, 2, "Top context has 1 child");
@@ -71,6 +69,30 @@ add_task(async function test_addTab_focus() {
   }
 });
 
+add_task(async function test_addTab_referenceTab() {
+  let tab1, tab2, tab3, tab4;
+  try {
+    tab1 = await TabManager.addTab();
+    // Add a second tab with no referenceTab, should be added at the end.
+    tab2 = await TabManager.addTab();
+    // Add a third tab with tab1 as referenceTab, should be added right after tab1.
+    tab3 = await TabManager.addTab({ referenceTab: tab1 });
+    // Add a fourth tab with tab2 as referenceTab, should be added right after tab2.
+    tab4 = await TabManager.addTab({ referenceTab: tab2 });
+
+    // Check that the tab order is as expected: tab1 > tab3 > tab2 > tab4
+    const tab1Index = gBrowser.tabs.indexOf(tab1);
+    is(gBrowser.tabs[tab1Index + 1], tab3);
+    is(gBrowser.tabs[tab1Index + 2], tab2);
+    is(gBrowser.tabs[tab1Index + 3], tab4);
+  } finally {
+    gBrowser.removeTab(tab1);
+    gBrowser.removeTab(tab2);
+    gBrowser.removeTab(tab3);
+    gBrowser.removeTab(tab4);
+  }
+});
+
 add_task(async function test_addTab_window() {
   const win1 = await BrowserTestUtils.openNewBrowserWindow();
   const win2 = await BrowserTestUtils.openNewBrowserWindow();
@@ -101,5 +123,48 @@ add_task(async function test_addTab_window() {
   } finally {
     await BrowserTestUtils.closeWindow(win1);
     await BrowserTestUtils.closeWindow(win2);
+  }
+});
+
+add_task(async function test_getNavigableForBrowsingContext() {
+  const browser = gBrowser.selectedBrowser;
+
+  info(`Navigate to ${TEST_URL}`);
+  await loadURL(browser, TEST_URL);
+
+  const contexts = browser.browsingContext.getAllBrowsingContextsInSubtree();
+  is(contexts.length, 2, "Top context has 1 child");
+
+  // For a top-level browsing context the content browser is returned.
+  const topContext = contexts[0];
+  is(
+    TabManager.getNavigableForBrowsingContext(topContext),
+    browser,
+    "Top-Level browsing context has the content browser as navigable"
+  );
+
+  // For child browsing contexts the browsing context itself is returned.
+  const childContext = contexts[1];
+  is(
+    TabManager.getNavigableForBrowsingContext(childContext),
+    childContext,
+    "Child browsing context has itself as navigable"
+  );
+});
+
+add_task(async function test_getTabForBrowsingContext() {
+  const tab = await TabManager.addTab();
+  try {
+    const browser = tab.linkedBrowser;
+
+    info(`Navigate to ${TEST_URL}`);
+    await loadURL(browser, TEST_URL);
+
+    const contexts = browser.browsingContext.getAllBrowsingContextsInSubtree();
+    is(TabManager.getTabForBrowsingContext(contexts[0]), tab);
+    is(TabManager.getTabForBrowsingContext(contexts[1]), tab);
+    is(TabManager.getTabForBrowsingContext(null), null);
+  } finally {
+    gBrowser.removeTab(tab);
   }
 });

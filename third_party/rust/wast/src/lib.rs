@@ -101,7 +101,7 @@ macro_rules! custom_keyword {
         impl<'a> $crate::parser::Parse<'a> for $name {
             fn parse(parser: $crate::parser::Parser<'a>) -> $crate::parser::Result<Self> {
                 parser.step(|c| {
-                    if let Some((kw, rest)) = c.keyword() {
+                    if let Some((kw, rest)) = c.keyword()? {
                         if kw == $kw {
                             return Ok(($name(c.cur_span()), rest));
                         }
@@ -112,12 +112,12 @@ macro_rules! custom_keyword {
         }
 
         impl $crate::parser::Peek for $name {
-            fn peek(cursor: $crate::parser::Cursor<'_>) -> bool {
-                if let Some((kw, _rest)) = cursor.keyword() {
+            fn peek(cursor: $crate::parser::Cursor<'_>) -> $crate::parser::Result<bool> {
+                Ok(if let Some((kw, _rest)) = cursor.keyword()? {
                     kw == $kw
                 } else {
                     false
-                }
+                })
             }
 
             fn display() -> &'static str {
@@ -168,7 +168,7 @@ macro_rules! custom_reserved {
         impl<'a> $crate::parser::Parse<'a> for $name {
             fn parse(parser: $crate::parser::Parser<'a>) -> $crate::parser::Result<Self> {
                 parser.step(|c| {
-                    if let Some((rsv, rest)) = c.reserved() {
+                    if let Some((rsv, rest)) = c.reserved()? {
                         if rsv == $rsv {
                             return Ok(($name(c.cur_span()), rest));
                         }
@@ -179,11 +179,11 @@ macro_rules! custom_reserved {
         }
 
         impl $crate::parser::Peek for $name {
-            fn peek(cursor: $crate::parser::Cursor<'_>) -> bool {
-                if let Some((rsv, _rest)) = cursor.reserved() {
-                    rsv == $rsv
+            fn peek(cursor: $crate::parser::Cursor<'_>) -> Result<bool> {
+                if let Some((rsv, _rest)) = cursor.reserved()? {
+                    Ok(rsv == $rsv)
                 } else {
-                    false
+                    Ok(false)
                 }
             }
 
@@ -290,7 +290,7 @@ macro_rules! custom_reserved {
 ///     fn parse(parser: Parser<'a>) -> Result<Self> {
 ///         // and here `peek` works and our delegated parsing works because the
 ///         // annotation has been registered.
-///         if parser.peek::<annotation::producer>() {
+///         if parser.peek::<annotation::producer>()? {
 ///             return Ok(ModuleField::Producer(parser.parse()?));
 ///         }
 ///
@@ -317,8 +317,8 @@ macro_rules! annotation {
         impl<'a> $crate::parser::Parse<'a> for $name {
             fn parse(parser: $crate::parser::Parser<'a>) -> $crate::parser::Result<Self> {
                 parser.step(|c| {
-                    if let Some((a, rest)) = c.annotation() {
-                        if a == $annotation {
+                    if let Some((a, rest)) = c.reserved()? {
+                        if a == concat!("@", $annotation) {
                             return Ok(($name(c.cur_span()), rest));
                         }
                     }
@@ -328,12 +328,12 @@ macro_rules! annotation {
         }
 
         impl $crate::parser::Peek for $name {
-            fn peek(cursor: $crate::parser::Cursor<'_>) -> bool {
-                if let Some((a, _rest)) = cursor.annotation() {
-                    a == $annotation
+            fn peek(cursor: $crate::parser::Cursor<'_>) -> $crate::parser::Result<bool> {
+                Ok(if let Some((a, _rest)) = cursor.reserved()? {
+                    a == concat!("@", $annotation)
                 } else {
                     false
-                }
+                })
             }
 
             fn display() -> &'static str {
@@ -359,10 +359,8 @@ macro_rules! id {
 
 #[cfg(feature = "wasm-module")]
 id! {
-    mod assert_expr;
     mod wast;
     mod wat;
-    pub use self::assert_expr::*;
     pub use self::wast::*;
     pub use self::wat::*;
 
@@ -393,15 +391,16 @@ pub mod kw {
     custom_keyword!(before);
     custom_keyword!(binary);
     custom_keyword!(block);
+    custom_keyword!(borrow);
     custom_keyword!(catch);
     custom_keyword!(catch_all);
     custom_keyword!(code);
     custom_keyword!(component);
     custom_keyword!(data);
-    custom_keyword!(dataref);
     custom_keyword!(declare);
     custom_keyword!(delegate);
     custom_keyword!(r#do = "do");
+    custom_keyword!(dtor);
     custom_keyword!(elem);
     custom_keyword!(end);
     custom_keyword!(tag);
@@ -433,6 +432,7 @@ pub mod kw {
     custom_keyword!(import);
     custom_keyword!(instance);
     custom_keyword!(instantiate);
+    custom_keyword!(interface);
     custom_keyword!(invoke);
     custom_keyword!(item);
     custom_keyword!(last);
@@ -442,10 +442,16 @@ pub mod kw {
     custom_keyword!(modulecode);
     custom_keyword!(nan_arithmetic = "nan:arithmetic");
     custom_keyword!(nan_canonical = "nan:canonical");
+    custom_keyword!(nofunc);
+    custom_keyword!(noextern);
+    custom_keyword!(none);
     custom_keyword!(null);
+    custom_keyword!(nullfuncref);
+    custom_keyword!(nullexternref);
     custom_keyword!(nullref);
     custom_keyword!(offset);
     custom_keyword!(outer);
+    custom_keyword!(own);
     custom_keyword!(param);
     custom_keyword!(parent);
     custom_keyword!(passive);
@@ -460,11 +466,16 @@ pub mod kw {
     custom_keyword!(ref_null = "ref.null");
     custom_keyword!(register);
     custom_keyword!(rec);
+    custom_keyword!(rep);
+    custom_keyword!(resource);
+    custom_keyword!(resource_new = "resource.new");
+    custom_keyword!(resource_drop = "resource.drop");
+    custom_keyword!(resource_rep = "resource.rep");
     custom_keyword!(result);
     custom_keyword!(shared);
     custom_keyword!(start);
-    custom_keyword!(r#struct = "struct");
     custom_keyword!(sub);
+    custom_keyword!(r#final = "final");
     custom_keyword!(table);
     custom_keyword!(then);
     custom_keyword!(r#try = "try");
@@ -487,13 +498,12 @@ pub mod kw {
     custom_keyword!(float32);
     custom_keyword!(float64);
     custom_keyword!(variant);
-    custom_keyword!(unit);
     custom_keyword!(flags);
     custom_keyword!(option);
     custom_keyword!(tuple);
     custom_keyword!(list);
+    custom_keyword!(error);
     custom_keyword!(union);
-    custom_keyword!(expected);
     custom_keyword!(canon);
     custom_keyword!(lift);
     custom_keyword!(lower);
@@ -501,14 +511,22 @@ pub mod kw {
     custom_keyword!(string_utf8 = "string-encoding=utf8");
     custom_keyword!(string_utf16 = "string-encoding=utf16");
     custom_keyword!(string_latin1_utf16 = "string-encoding=latin1+utf16");
+    custom_keyword!(r#struct = "struct");
+    custom_keyword!(structref);
     custom_keyword!(realloc);
     custom_keyword!(post_return = "post-return");
     custom_keyword!(with);
     custom_keyword!(core);
+    custom_keyword!(true_ = "true");
+    custom_keyword!(false_ = "false");
+    custom_keyword!(language);
+    custom_keyword!(sdk);
+    custom_keyword!(processed_by = "processed-by");
 }
 
 /// Common annotations used to parse WebAssembly text files.
 pub mod annotation {
     annotation!(custom);
     annotation!(name);
+    annotation!(producers);
 }

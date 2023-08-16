@@ -1,14 +1,14 @@
-"use strict";
-
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "TestUtils",
-  "resource://testing-common/TestUtils.jsm"
-);
+
+ChromeUtils.defineLazyGetter(lazy, "PlacesFrecencyRecalculator", () => {
+  return Cc["@mozilla.org/places/frecency-recalculator;1"].getService(
+    Ci.nsIObserver
+  ).wrappedJSObject;
+});
 
 export var PlacesTestUtils = Object.freeze({
   /**
@@ -42,6 +42,7 @@ export var PlacesTestUtils = Object.freeze({
     }
 
     // Create a PageInfo for each entry.
+    let seenUrls = new Set();
     let lastStoredVisit;
     for (let obj of places) {
       let place;
@@ -57,18 +58,13 @@ export var PlacesTestUtils = Object.freeze({
         throw new Error("Unsupported type passed to addVisits");
       }
 
-      let referrer;
+      let referrer = place.referrer
+        ? lazy.PlacesUtils.toURI(place.referrer)
+        : null;
       let info = { url: place.uri || place.url };
       let spec =
         info.url instanceof Ci.nsIURI ? info.url.spec : new URL(info.url).href;
       info.title = "title" in place ? place.title : "test visit for " + spec;
-      if (typeof place.referrer == "string") {
-        referrer = Services.io.newURI(place.referrer);
-      } else if (place.referrer) {
-        referrer = URL.isInstance(place.referrer)
-          ? Services.io.newURI(place.referrer.href)
-          : place.referrer;
-      }
       let visitDate = place.visitDate;
       if (visitDate) {
         if (visitDate.constructor.name != "Date") {
@@ -94,6 +90,7 @@ export var PlacesTestUtils = Object.freeze({
           referrer,
         },
       ];
+      seenUrls.add(info.url);
       infos.push(info);
       if (
         !place.transition ||
@@ -103,6 +100,11 @@ export var PlacesTestUtils = Object.freeze({
       }
     }
     await lazy.PlacesUtils.history.insertMany(infos);
+    if (seenUrls.size > 1) {
+      // If there's only one URL then history has updated frecency already,
+      // otherwise we must force a recalculation.
+      await lazy.PlacesFrecencyRecalculator.recalculateAnyOutdatedFrecencies();
+    }
     if (lastStoredVisit) {
       await lazy.TestUtils.waitForCondition(
         () => lazy.PlacesUtils.history.fetch(lastStoredVisit.url),
@@ -214,7 +216,7 @@ export var PlacesTestUtils = Object.freeze({
   promiseAsyncUpdates() {
     return lazy.PlacesUtils.withConnectionWrapper(
       "promiseAsyncUpdates",
-      async function(db) {
+      async function (db) {
         try {
           await db.executeCached("BEGIN EXCLUSIVE");
           await db.executeCached("COMMIT");
@@ -236,13 +238,10 @@ export var PlacesTestUtils = Object.freeze({
    * @rejects JavaScript exception.
    */
   async isPageInDB(aURI) {
-    let url = aURI instanceof Ci.nsIURI ? aURI.spec : aURI;
-    let db = await lazy.PlacesUtils.promiseDBConnection();
-    let rows = await db.executeCached(
-      "SELECT id FROM moz_places WHERE url_hash = hash(:url) AND url = :url",
-      { url }
+    return (
+      (await this.getDatabaseValue("moz_places", "id", { url: aURI })) !==
+      undefined
     );
-    return !!rows.length;
   },
 
   /**
@@ -267,30 +266,6 @@ export var PlacesTestUtils = Object.freeze({
   },
 
   /**
-   * Asynchronously returns the required DB field for a specified page.
-   * @param aURI
-   *        nsIURI or address to look for.
-   *
-   * @return {Promise}
-   * @resolves Returns the field value.
-   * @rejects JavaScript exception.
-   */
-  fieldInDB(aURI, field) {
-    let url = aURI instanceof Ci.nsIURI ? new URL(aURI.spec) : new URL(aURI);
-    return lazy.PlacesUtils.withConnectionWrapper(
-      "PlacesTestUtils.jsm: fieldInDb",
-      async db => {
-        let rows = await db.executeCached(
-          `SELECT ${field} FROM moz_places
-        WHERE url_hash = hash(:url) AND url = :url`,
-          { url: url.href }
-        );
-        return rows[0].getResultByIndex(0);
-      }
-    );
-  },
-
-  /**
    * Marks all syncable bookmarks as synced by setting their sync statuses to
    * "NORMAL", resetting their change counters, and removing all tombstones.
    * Used by tests to avoid calling `PlacesSyncUtils.bookmarks.pullChanges`
@@ -302,8 +277,8 @@ export var PlacesTestUtils = Object.freeze({
   markBookmarksAsSynced() {
     return lazy.PlacesUtils.withConnectionWrapper(
       "PlacesTestUtils: markBookmarksAsSynced",
-      function(db) {
-        return db.executeTransaction(async function() {
+      function (db) {
+        return db.executeTransaction(async function () {
           await db.executeCached(
             `WITH RECURSIVE
            syncedItems(id) AS (
@@ -343,8 +318,8 @@ export var PlacesTestUtils = Object.freeze({
   setBookmarkSyncFields(...aFieldInfos) {
     return lazy.PlacesUtils.withConnectionWrapper(
       "PlacesTestUtils: setBookmarkSyncFields",
-      function(db) {
-        return db.executeTransaction(async function() {
+      function (db) {
+        return db.executeTransaction(async function () {
           for (let info of aFieldInfos) {
             if (!lazy.PlacesUtils.isValidGuid(info.guid)) {
               throw new Error(`Invalid GUID: ${info.guid}`);
@@ -417,61 +392,73 @@ export var PlacesTestUtils = Object.freeze({
     }));
   },
 
-  waitForNotification(notification, conditionFn, type = "bookmarks") {
-    if (type == "places") {
-      return new Promise(resolve => {
-        function listener(events) {
-          if (!conditionFn || conditionFn(events)) {
-            PlacesObservers.removeListener([notification], listener);
-            resolve(events);
-          }
-        }
-        PlacesObservers.addListener([notification], listener);
-      });
-    }
-
+  /**
+   * Returns a promise that waits until happening Places events specified by
+   * notification parameter.
+   *
+   * @param {string} notification
+   *        Available values are:
+   *          bookmark-added
+   *          bookmark-removed
+   *          bookmark-moved
+   *          bookmark-guid_changed
+   *          bookmark-keyword_changed
+   *          bookmark-tags_changed
+   *          bookmark-time_changed
+   *          bookmark-title_changed
+   *          bookmark-url_changed
+   *          favicon-changed
+   *          history-cleared
+   *          page-removed
+   *          page-title-changed
+   *          page-visited
+   *          pages-rank-changed
+   *          purge-caches
+   * @param {Function} conditionFn [optional]
+   *        If need some more condition to wait, please use conditionFn.
+   *        This is an optional, but if set, should returns true when the wait
+   *        condition is met.
+   * @return {Promise}
+   *         A promise that resolved if the wait condition is met.
+   *         The resolved value is an array of PlacesEvent object.
+   */
+  waitForNotification(notification, conditionFn) {
     return new Promise(resolve => {
-      let proxifiedObserver = new Proxy(
-        {},
-        {
-          get: (target, name) => {
-            if (name == "QueryInterface") {
-              return ChromeUtils.generateQI([Ci.nsINavBookmarkObserver]);
-            }
-            if (name == notification) {
-              return (...args) => {
-                if (!conditionFn || conditionFn.apply(this, args)) {
-                  lazy.PlacesUtils[type].removeObserver(proxifiedObserver);
-                  resolve();
-                }
-              };
-            }
-            if (name == "skipTags") {
-              return false;
-            }
-            return () => false;
-          },
+      function listener(events) {
+        if (!conditionFn || conditionFn(events)) {
+          PlacesObservers.removeListener([notification], listener);
+          resolve(events);
         }
-      );
-      lazy.PlacesUtils[type].addObserver(proxifiedObserver);
+      }
+      PlacesObservers.addListener([notification], listener);
     });
   },
 
   /**
    * A debugging helper that dumps the contents of an SQLite table.
    *
-   * @param {Sqlite.OpenedConnection} db
-   *        The mirror database connection.
    * @param {String} table
    *        The table name.
+   * @param {Sqlite.OpenedConnection} [db]
+   *        The mirror database connection.
+   * @param {String[]} [columns]
+   *        Clumns to be printed, defaults to all.
    */
-  async dumpTable(db, table) {
-    let columns = (await db.execute(`PRAGMA table_info('${table}')`)).map(r =>
-      r.getResultByName("name")
-    );
+  async dumpTable({ table, db, columns }) {
+    if (!table) {
+      throw new Error("Must pass a `table` name");
+    }
+    if (!db) {
+      db = await lazy.PlacesUtils.promiseDBConnection();
+    }
+    if (!columns) {
+      columns = (await db.execute(`PRAGMA table_info('${table}')`)).map(r =>
+        r.getResultByName("name")
+      );
+    }
     let results = [columns.join("\t")];
 
-    let rows = await db.execute(`SELECT * FROM ${table}`);
+    let rows = await db.execute(`SELECT ${columns.join()} FROM ${table}`);
     dump(`>> Table ${table} contains ${rows.length} rows\n`);
 
     for (let row of rows) {
@@ -553,18 +540,110 @@ export var PlacesTestUtils = Object.freeze({
     if (url2.protocol != "place:") {
       throw new Error("Expected a place: uri, got " + url2.href);
     }
-    let tokens1 = url1.pathname
-      .split("&")
-      .sort()
-      .join("&");
-    let tokens2 = url2.pathname
-      .split("&")
-      .sort()
-      .join("&");
+    let tokens1 = url1.pathname.split("&").sort().join("&");
+    let tokens2 = url2.pathname.split("&").sort().join("&");
     if (tokens1 != tokens2) {
       dump(`Failed comparison between:\n${tokens1}\n${tokens2}\n`);
       return false;
     }
     return true;
+  },
+
+  /**
+   * Retrieves a single value from a specified field in a database table, based
+   * on the given conditions.
+   * @param {string} table - The name of the database table to query.
+   * @param {string} field - The name of the field to retrieve a value from.
+   * @param {Object} conditions - An object containing the conditions to filter
+   * the query results. The keys represent the names of the columns to filter
+   * by, and the values represent the filter values.
+   * @return {Promise} A Promise that resolves to the value of the specified
+   * field from the database table, or null if the query returns no results.
+   * @throws If more than one result is found for the given conditions.
+   */
+  async getDatabaseValue(table, field, conditions) {
+    let { fragment: where, params } = this._buildWhereClause(table, conditions);
+    let query = `SELECT ${field} FROM ${table} ${where}`;
+    let conn = await lazy.PlacesUtils.promiseDBConnection();
+    let rows = await conn.executeCached(query, params);
+    if (rows.length > 1) {
+      throw new Error(
+        "getDatabaseValue doesn't support returning multiple results"
+      );
+    }
+    return rows[0]?.getResultByName(field);
+  },
+
+  /**
+   * Updates specified fields in a database table, based on the given
+   * conditions.
+   * @param {string} table - The name of the database table to add to.
+   * @param {string} fields - an object with field, value pairs
+   * @param {Object} [conditions] - An object containing the conditions to filter
+   * the query results. The keys represent the names of the columns to filter
+   * by, and the values represent the filter values.
+   * @return {Promise} A Promise that resolves to the number of affected rows.
+   * @throws If no rows were affected.
+   */
+  async updateDatabaseValues(table, fields, conditions = {}) {
+    let { fragment: where, params } = this._buildWhereClause(table, conditions);
+    let query = `UPDATE ${table} SET ${Object.keys(fields)
+      .map(f => f + " = :" + f)
+      .join()} ${where} RETURNING rowid`;
+    params = Object.assign(fields, params);
+    return lazy.PlacesUtils.withConnectionWrapper(
+      "setDatabaseValue",
+      async conn => {
+        let rows = await conn.executeCached(query, params);
+        if (!rows.length) {
+          throw new Error("setDatabaseValue didn't update any value");
+        }
+        return rows.length;
+      }
+    );
+  },
+
+  async promiseItemId(guid) {
+    return this.getDatabaseValue("moz_bookmarks", "id", { guid });
+  },
+
+  async promiseItemGuid(id) {
+    return this.getDatabaseValue("moz_bookmarks", "guid", { id });
+  },
+
+  async promiseManyItemIds(guids) {
+    let conn = await lazy.PlacesUtils.promiseDBConnection();
+    let rows = await conn.executeCached(`
+      SELECT guid, id FROM moz_bookmarks WHERE guid IN (${guids
+        .map(guid => "'" + guid + "'")
+        .join()}
+      )`);
+    return new Map(
+      rows.map(r => [r.getResultByName("guid"), r.getResultByName("id")])
+    );
+  },
+
+  _buildWhereClause(table, conditions) {
+    let fragments = [];
+    let params = {};
+    for (let [column, value] of Object.entries(conditions)) {
+      if (column == "url") {
+        if (value instanceof Ci.nsIURI) {
+          value = value.spec;
+        } else if (URL.isInstance(value)) {
+          value = value.href;
+        }
+      }
+      if (column == "url" && table == "moz_places") {
+        fragments.push("url_hash = hash(:url) AND url = :url");
+      } else {
+        fragments.push(`${column} = :${column}`);
+      }
+      params[column] = value;
+    }
+    return {
+      fragment: fragments.length ? `WHERE ${fragments.join(" AND ")}` : "",
+      params,
+    };
   },
 });

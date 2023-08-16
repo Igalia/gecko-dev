@@ -7,10 +7,16 @@
 JAR_MANIFESTS += ["jar.mn"]
 
 with Files("**"):
-    BUG_COMPONENT = ("Firefox", "General")
+    BUG_COMPONENT = ("Firefox", "Firefox View")
 
 EXTRA_JS_MODULES += [
     "*.sys.mjs",
 ]
 
+TESTING_JS_MODULES += [
+    "tests/browser/FirefoxViewTestUtils.sys.mjs",
+]
+
 BROWSER_CHROME_MANIFESTS += ["tests/browser/browser.ini"]
+
+MOCHITEST_CHROME_MANIFESTS += ["tests/chrome/chrome.ini"]

@@ -5,26 +5,14 @@
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "RemoteSettings",
-  "resource://services-settings/remote-settings.js"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  Utils: "resource://services-settings/Utils.sys.mjs",
+});
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "Utils",
-  "resource://services-settings/Utils.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
-
-const { BasePromiseWorker } = ChromeUtils.import(
-  "resource://gre/modules/PromiseWorker.jsm"
+const { BasePromiseWorker } = ChromeUtils.importESModule(
+  "resource://gre/modules/PromiseWorker.sys.mjs"
 );
 
 const RECIPE_NAME = "personality-provider-recipe";

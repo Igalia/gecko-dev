@@ -36,8 +36,8 @@ var script;
  * user behaviour.
  */
 
-let { maybeOnSpellCheck, onSpellCheck } = SpecialPowers.ChromeUtils.import(
-    "resource://testing-common/AsyncSpellCheckTestHelper.jsm"
+let { maybeOnSpellCheck, onSpellCheck } = SpecialPowers.ChromeUtils.importESModule(
+    "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"
 );
 
 SimpleTest.waitForExplicitFinish();
@@ -71,7 +71,7 @@ SimpleTest.waitForFocus(async function() {
       var state = contextMenu.state;
 
       // Select Language from the menu.  Take a look at
-      // toolkit/modules/InlineSpellChecker.jsm to see how the menu works.
+      // toolkit/modules/InlineSpellChecker.sys.mjs to see how the menu works.
       contextMenu.ownerDocument.getElementById("spell-check-dictionary-en-US")
                  .doCommand();
       contextMenu.hidePopup();

@@ -1,13 +1,6 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { TabsSetupFlowManager } = ChromeUtils.importESModule(
-  "resource:///modules/firefox-view-tabs-setup-manager.sys.mjs"
-);
-
-const MOBILE_PROMO_DISMISSED_PREF =
-  "browser.tabs.firefox-view.mobilePromo.dismissed";
-
 const FXA_CONTINUE_EVENT = [
   ["firefoxview", "entered", "firefoxview", undefined],
   ["firefoxview", "fxa_continue", "sync", undefined],
@@ -19,41 +12,16 @@ const FXA_MOBILE_EVENT = [
 ];
 
 var gMockFxaDevices = null;
+var gUIStateStatus;
 
 function promiseSyncReady() {
-  let service = Cc["@mozilla.org/weave/service;1"].getService(Ci.nsISupports)
-    .wrappedJSObject;
+  let service = Cc["@mozilla.org/weave/service;1"].getService(
+    Ci.nsISupports
+  ).wrappedJSObject;
   return service.whenLoaded();
 }
 
-async function touchLastTabFetch() {
-  // lastTabFetch stores a timestamp in *seconds*.
-  const nowSeconds = Math.floor(Date.now() / 1000);
-  info("updating lastFetch:" + nowSeconds);
-  Services.prefs.setIntPref("services.sync.lastTabFetch", nowSeconds);
-  // wait so all pref observers can complete
-  await TestUtils.waitForTick();
-}
-
-function setupMocks({ fxaDevices = null, state = UIState.STATUS_SIGNED_IN }) {
-  const sandbox = sinon.createSandbox();
-  gMockFxaDevices = fxaDevices;
-  sandbox.stub(fxAccounts.device, "recentDeviceList").get(() => fxaDevices);
-  sandbox.stub(UIState, "get").returns({
-    status: state,
-    syncEnabled: true,
-  });
-
-  sandbox
-    .stub(Weave.Service.clientsEngine, "getClientByFxaDeviceId")
-    .callsFake(fxaDeviceId => {
-      let target = gMockFxaDevices.find(c => c.id == fxaDeviceId);
-      return target ? target.clientRecord : null;
-    });
-  sandbox.stub(Weave.Service.clientsEngine, "getClientType").returns("desktop");
-
-  return sandbox;
-}
+var gSandbox;
 
 async function setupWithDesktopDevices() {
   const sandbox = setupMocks({
@@ -64,11 +32,13 @@ async function setupWithDesktopDevices() {
         name: "This Device",
         isCurrentDevice: true,
         type: "desktop",
+        tabs: [],
       },
       {
         id: 2,
         name: "Other Device",
         type: "desktop",
+        tabs: [],
       },
     ],
   });
@@ -78,106 +48,18 @@ async function setupWithDesktopDevices() {
   });
   return sandbox;
 }
+add_setup(async function () {
+  registerCleanupFunction(() => {
+    // reset internal state so it doesn't affect the next tests
+    TabsSetupFlowManager.resetInternalState();
+  });
 
-async function waitForVisibleStep(browser, expected) {
-  const { document } = browser.contentWindow;
-
-  const deck = document.querySelector(".sync-setup-container");
-  const nextStepElem = deck.querySelector(expected.expectedVisible);
-  const stepElems = deck.querySelectorAll(".setup-step");
-
-  await BrowserTestUtils.waitForMutationCondition(
-    deck,
-    {
-      attributeFilter: ["selected-view"],
-    },
-    () => {
-      return BrowserTestUtils.is_visible(nextStepElem);
-    }
-  );
-
-  for (let elem of stepElems) {
-    if (elem == nextStepElem) {
-      ok(
-        BrowserTestUtils.is_visible(elem),
-        `Expected ${elem.id || elem.className} to be visible`
-      );
-    } else {
-      ok(
-        BrowserTestUtils.is_hidden(elem),
-        `Expected ${elem.id || elem.className} to be hidden`
-      );
-    }
-  }
-}
-
-function checkMobilePromo(browser, expected = {}) {
-  const { document } = browser.contentWindow;
-  const promoElem = document.querySelector(
-    "#tab-pickup-container > .promo-box"
-  );
-  const successElem = document.querySelector(
-    "#tab-pickup-container > .confirmation-message-box"
-  );
-
-  info("checkMobilePromo: " + JSON.stringify(expected));
-  if (expected.mobilePromo) {
-    ok(BrowserTestUtils.is_visible(promoElem), "Mobile promo is visible");
-  } else {
-    ok(
-      !promoElem || BrowserTestUtils.is_hidden(promoElem),
-      "Mobile promo is hidden"
-    );
-  }
-  if (expected.mobileConfirmation) {
-    ok(
-      BrowserTestUtils.is_visible(successElem),
-      "Success confirmation is visible"
-    );
-  } else {
-    ok(
-      !successElem || BrowserTestUtils.is_hidden(successElem),
-      "Success confirmation is hidden"
-    );
-  }
-}
-
-async function tearDown(sandbox) {
-  sandbox?.restore();
-  Services.prefs.clearUserPref("services.sync.lastTabFetch");
-  Services.prefs.clearUserPref(MOBILE_PROMO_DISMISSED_PREF);
-}
-
-add_setup(async function() {
-  // we only use this for the first test, then we reset it
-  Services.prefs.lockPref("identity.fxaccounts.enabled");
-
-  if (!Services.prefs.getBoolPref("browser.tabs.firefox-view")) {
-    info(
-      "firefox-view pref was off, toggling it on and adding the tabstrip widget"
-    );
-    await SpecialPowers.pushPrefEnv({
-      set: [["browser.tabs.firefox-view", true]],
-    });
-    CustomizableUI.addWidgetToArea(
-      "firefox-view-button",
-      CustomizableUI.AREA_TABSTRIP,
-      0
-    );
-    registerCleanupFunction(() => {
-      CustomizableUI.removeWidgetFromArea("firefox-view-button");
-      // reset internal state so it doesn't affect the next tests
-      TabsSetupFlowManager.resetInternalState();
-    });
-  }
-
-  await promiseSyncReady();
   // gSync.init() is called in a requestIdleCallback. Force its initialization.
   gSync.init();
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     Services.prefs.clearUserPref("services.sync.engine.tabs");
-    await tearDown();
+    await tearDown(gSandbox);
   });
   // set tab sync false so we don't skip setup states
   await SpecialPowers.pushPrefEnv({
@@ -185,55 +67,15 @@ add_setup(async function() {
   });
 });
 
-add_task(async function test_sync_admin_disabled() {
-  const sandbox = setupMocks({ state: UIState.STATUS_NOT_CONFIGURED });
-  await withFirefoxView({}, async browser => {
-    const { document } = browser.contentWindow;
-
-    Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-    is(
-      Services.prefs.getBoolPref("identity.fxaccounts.enabled"),
-      true,
-      "Expected identity.fxaccounts.enabled pref to be false"
-    );
-
-    is(
-      Services.prefs.prefIsLocked("identity.fxaccounts.enabled"),
-      true,
-      "Expected identity.fxaccounts.enabled pref to be locked"
-    );
-
-    await waitForVisibleStep(browser, {
-      expectedVisible: "#tabpickup-steps-view0",
-    });
-
-    const errorStateHeader = document.querySelector(
-      "#tabpickup-steps-view0-header"
-    );
-
-    await BrowserTestUtils.waitForMutationCondition(
-      errorStateHeader,
-      { childList: true },
-      () => errorStateHeader.textContent.includes("disabled")
-    );
-
-    ok(
-      errorStateHeader
-        .getAttribute("data-l10n-id")
-        .includes("fxa-admin-disabled"),
-      "Correct message should show when fxa is disabled by an admin"
-    );
-  });
-  Services.prefs.unlockPref("identity.fxaccounts.enabled");
-  await tearDown(sandbox);
-});
-
 add_task(async function test_unconfigured_initial_state() {
   await clearAllParentTelemetryEvents();
-  const sandbox = setupMocks({ state: UIState.STATUS_NOT_CONFIGURED });
-  await withFirefoxView({}, async browser => {
+  const sandbox = setupMocks({
+    state: UIState.STATUS_NOT_CONFIGURED,
+    syncEnabled: false,
+  });
+  await withFirefoxView({ openNewWindow: true }, async browser => {
     Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view1",
     });
     checkMobilePromo(browser, {
@@ -267,7 +109,6 @@ add_task(async function test_unconfigured_initial_state() {
     );
   });
   await tearDown(sandbox);
-  gBrowser.removeTab(gBrowser.selectedTab);
 });
 
 add_task(async function test_signed_in() {
@@ -280,16 +121,16 @@ add_task(async function test_signed_in() {
         name: "This Device",
         isCurrentDevice: true,
         type: "desktop",
+        tabs: [],
       },
     ],
   });
 
-  await withFirefoxView({}, async browser => {
+  await withFirefoxView({ openNewWindow: true }, async browser => {
     Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view2",
     });
-
     is(
       fxAccounts.device.recentDeviceList?.length,
       1,
@@ -326,7 +167,34 @@ add_task(async function test_signed_in() {
     );
   });
   await tearDown(sandbox);
-  gBrowser.removeTab(gBrowser.selectedTab);
+});
+
+add_task(async function test_support_links() {
+  await clearAllParentTelemetryEvents();
+  setupMocks({
+    state: UIState.STATUS_SIGNED_IN,
+    fxaDevices: [
+      {
+        id: 1,
+        name: "This Device",
+        isCurrentDevice: true,
+        type: "desktop",
+        tabs: [],
+      },
+    ],
+  });
+  await withFirefoxView({}, async browser => {
+    Services.obs.notifyObservers(null, UIState.ON_UPDATE);
+    await waitForVisibleSetupStep(browser, {
+      expectedVisible: "#tabpickup-steps-view2",
+    });
+    const { document } = browser.contentWindow;
+    const container = document.getElementById("tab-pickup-container");
+    const supportLinks = Array.from(
+      container.querySelectorAll("a[href]")
+    ).filter(a => !!a.href);
+    is(supportLinks.length, 2, "Support links have non-empty hrefs");
+  });
 });
 
 add_task(async function test_2nd_desktop_connected() {
@@ -338,11 +206,13 @@ add_task(async function test_2nd_desktop_connected() {
         name: "This Device",
         isCurrentDevice: true,
         type: "desktop",
+        tabs: [],
       },
       {
         id: 2,
         name: "Other Device",
         type: "desktop",
+        tabs: [],
       },
     ],
   });
@@ -354,16 +224,16 @@ add_task(async function test_2nd_desktop_connected() {
     );
 
     Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view3",
     });
 
     is(fxAccounts.device.recentDeviceList?.length, 2, "2 devices connected");
     ok(
       fxAccounts.device.recentDeviceList?.every(
-        device => device.type !== "mobile"
+        device => device.type !== "mobile" && device.type !== "tablet"
       ),
-      "No connected device is type:mobile"
+      "No connected device is type:mobile or type:tablet"
     );
     checkMobilePromo(browser, {
       mobilePromo: false,
@@ -382,11 +252,13 @@ add_task(async function test_mobile_connected() {
         name: "This Device",
         isCurrentDevice: true,
         type: "desktop",
+        tabs: [],
       },
       {
         id: 2,
         name: "Other Device",
         type: "mobile",
+        tabs: [],
       },
     ],
   });
@@ -398,16 +270,62 @@ add_task(async function test_mobile_connected() {
     );
 
     Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view3",
     });
 
     is(fxAccounts.device.recentDeviceList?.length, 2, "2 devices connected");
     ok(
       fxAccounts.device.recentDeviceList?.some(
-        device => device.type !== "mobile"
+        device => device.type == "mobile"
       ),
       "A connected device is type:mobile"
+    );
+    checkMobilePromo(browser, {
+      mobilePromo: false,
+      mobileConfirmation: false,
+    });
+  });
+  await tearDown(sandbox);
+});
+
+add_task(async function test_tablet_connected() {
+  const sandbox = setupMocks({
+    state: UIState.STATUS_SIGNED_IN,
+    fxaDevices: [
+      {
+        id: 1,
+        name: "This Device",
+        isCurrentDevice: true,
+        type: "desktop",
+        tabs: [],
+      },
+      {
+        id: 2,
+        name: "Other Device",
+        type: "tablet",
+        tabs: [],
+      },
+    ],
+  });
+  await withFirefoxView({}, async browser => {
+    // ensure tab sync is false so we don't skip onto next step
+    ok(
+      !Services.prefs.getBoolPref("services.sync.engine.tabs", false),
+      "services.sync.engine.tabs is initially false"
+    );
+
+    Services.obs.notifyObservers(null, UIState.ON_UPDATE);
+    await waitForVisibleSetupStep(browser, {
+      expectedVisible: "#tabpickup-steps-view3",
+    });
+
+    is(fxAccounts.device.recentDeviceList?.length, 2, "2 devices connected");
+    ok(
+      fxAccounts.device.recentDeviceList?.some(
+        device => device.type == "tablet"
+      ),
+      "A connected device is type:tablet"
     );
     checkMobilePromo(browser, {
       mobilePromo: false,
@@ -426,11 +344,13 @@ add_task(async function test_tab_sync_enabled() {
         name: "This Device",
         isCurrentDevice: true,
         type: "desktop",
+        tabs: [],
       },
       {
         id: 2,
         name: "Other Device",
         type: "mobile",
+        tabs: [],
       },
     ],
   });
@@ -438,7 +358,7 @@ add_task(async function test_tab_sync_enabled() {
     Services.obs.notifyObservers(null, UIState.ON_UPDATE);
 
     // test initial state, with the pref not enabled
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view3",
     });
     checkMobilePromo(browser, {
@@ -458,7 +378,7 @@ add_task(async function test_tab_sync_enabled() {
 
     // reset and test clicking the action button
     await SpecialPowers.popPrefEnv();
-    await waitForVisibleStep(browser, {
+    await waitForVisibleSetupStep(browser, {
       expectedVisible: "#tabpickup-steps-view3",
     });
     checkMobilePromo(browser, {
@@ -476,134 +396,12 @@ add_task(async function test_tab_sync_enabled() {
       mobilePromo: false,
       mobileConfirmation: false,
     });
-
+    ok(true, "Tab pickup product tour screen renders when sync is enabled");
     ok(
       Services.prefs.getBoolPref("services.sync.engine.tabs", false),
       "tab sync pref should be enabled after button click"
     );
   });
-  await tearDown(sandbox);
-});
-
-add_task(async function test_tab_sync_loading() {
-  const sandbox = setupMocks({
-    state: UIState.STATUS_SIGNED_IN,
-    fxaDevices: [
-      {
-        id: 1,
-        name: "This Device",
-        isCurrentDevice: true,
-        type: "desktop",
-      },
-      {
-        id: 2,
-        name: "Other Device",
-        type: "mobile",
-      },
-    ],
-  });
-  await withFirefoxView({}, async browser => {
-    Services.obs.notifyObservers(null, UIState.ON_UPDATE);
-
-    await SpecialPowers.pushPrefEnv({
-      set: [["services.sync.engine.tabs", true]],
-    });
-
-    const { document } = browser.contentWindow;
-    const tabsContainer = document.querySelector("#tabpickup-tabs-container");
-    const tabsList = document.querySelector(
-      "#tabpickup-tabs-container tab-pickup-list"
-    );
-    const loadingElem = document.querySelector(
-      "#tabpickup-tabs-container .loading-content"
-    );
-    const setupElem = document.querySelector("#tabpickup-steps");
-
-    await waitForElementVisible(browser, "#tabpickup-steps", false);
-    await waitForElementVisible(browser, "#tabpickup-tabs-container", true);
-    checkMobilePromo(browser, {
-      mobilePromo: false,
-      mobileConfirmation: false,
-    });
-
-    function checkLoadingState(isLoading = false) {
-      if (isLoading) {
-        ok(
-          tabsContainer.classList.contains("loading"),
-          "Tabs container has loading class"
-        );
-        BrowserTestUtils.is_visible(
-          loadingElem,
-          "Loading content is visible when loading"
-        );
-        !tabsList ||
-          BrowserTestUtils.is_hidden(
-            tabsList,
-            "Synced tabs list is not visible when loading"
-          );
-        !setupElem ||
-          BrowserTestUtils.is_hidden(
-            setupElem,
-            "Setup content is not visible when loading"
-          );
-      } else {
-        ok(
-          !tabsContainer.classList.contains("loading"),
-          "Tabs container has no loading class"
-        );
-        !loadingElem ||
-          BrowserTestUtils.is_hidden(
-            loadingElem,
-            "Loading content is not visible when tabs are loaded"
-          );
-        BrowserTestUtils.is_visible(
-          tabsList,
-          "Synced tabs list is visible when loaded"
-        );
-        !setupElem ||
-          BrowserTestUtils.is_hidden(
-            setupElem,
-            "Setup content is not visible when tabs are loaded"
-          );
-      }
-    }
-    checkLoadingState(true);
-
-    await touchLastTabFetch();
-
-    await BrowserTestUtils.waitForMutationCondition(
-      tabsContainer,
-      { attributeFilter: ["class"], attributes: true },
-      () => {
-        return !tabsContainer.classList.contains("loading");
-      }
-    );
-    checkLoadingState(false);
-    checkMobilePromo(browser, {
-      mobilePromo: false,
-      mobileConfirmation: false,
-    });
-
-    // Simulate stale data by setting lastTabFetch to 10mins ago
-    const TEN_MINUTES_MS = 1000 * 60 * 10;
-    const staleFetchSeconds = Math.floor((Date.now() - TEN_MINUTES_MS) / 1000);
-    info("updating lastFetch:" + staleFetchSeconds);
-    Services.prefs.setIntPref("services.sync.lastTabFetch", staleFetchSeconds);
-
-    await BrowserTestUtils.waitForMutationCondition(
-      tabsContainer,
-      { attributeFilter: ["class"], attributes: true },
-      () => {
-        return tabsContainer.classList.contains("loading");
-      }
-    );
-    checkLoadingState(true);
-    checkMobilePromo(browser, {
-      mobilePromo: false,
-      mobileConfirmation: false,
-    });
-  });
-  await SpecialPowers.popPrefEnv();
   await tearDown(sandbox);
 });
 
@@ -627,6 +425,7 @@ add_task(async function test_mobile_promo() {
       id: 3,
       name: "Mobile Device",
       type: "mobile",
+      tabs: [],
     });
 
     Services.obs.notifyObservers(null, "fxaccounts:devicelist_updated");
@@ -642,6 +441,37 @@ add_task(async function test_mobile_promo() {
     checkMobilePromo(browser, {
       mobilePromo: false,
       mobileConfirmation: true,
+    });
+
+    info("checking mobile promo disappears on log out");
+    gMockFxaDevices.pop();
+    Services.obs.notifyObservers(null, "fxaccounts:devicelist_updated");
+    await waitForElementVisible(
+      browser,
+      "#tab-pickup-container > .promo-box",
+      true
+    );
+    checkMobilePromo(browser, {
+      mobilePromo: true,
+      mobileConfirmation: false,
+    });
+
+    // Set the UIState to what we expect when the user signs out
+    gUIStateStatus = UIState.STATUS_NOT_CONFIGURED;
+    gUIStateSyncEnabled = undefined;
+
+    info(
+      "notifying that we've signed out of fxa, UIState.get().status:" +
+        UIState.get().status
+    );
+    Services.obs.notifyObservers(null, UIState.ON_UPDATE);
+    info("waiting for setup card 1 to appear again");
+    await waitForVisibleSetupStep(browser, {
+      expectedVisible: "#tabpickup-steps-view1",
+    });
+    checkMobilePromo(browser, {
+      mobilePromo: false,
+      mobileConfirmation: false,
     });
   });
   await tearDown(sandbox);
@@ -669,7 +499,9 @@ add_task(async function test_mobile_promo_pref() {
     });
 
     // reset the dismissed pref, which should case the promo to get shown
-    await SpecialPowers.popPrefEnv();
+    await SpecialPowers.pushPrefEnv({
+      set: [[MOBILE_PROMO_DISMISSED_PREF, false]],
+    });
     await waitForElementVisible(
       browser,
       "#tab-pickup-container > .promo-box",
@@ -718,10 +550,9 @@ add_task(async function test_mobile_promo_windows() {
         SpecialPowers.getBoolPref("browser.tabs.firefox-view")
     );
 
-    let win2 = await BrowserTestUtils.openNewBrowserWindow();
     info("Got window, now opening Firefox View in it");
     await withFirefoxView(
-      { resetFlowManager: false, win: win2 },
+      { openNewWindow: true, resetFlowManager: false },
       async win2Browser => {
         info("In withFirefoxView taskFn for win2");
         // promo should be visible in the 2nd window too
@@ -737,6 +568,7 @@ add_task(async function test_mobile_promo_windows() {
           id: 3,
           name: "Mobile Device",
           type: "mobile",
+          tabs: [],
         });
 
         Services.obs.notifyObservers(null, "fxaccounts:devicelist_updated");
@@ -771,7 +603,11 @@ add_task(async function test_mobile_promo_windows() {
         );
         const closeButton = confirmBox.querySelector(".close");
         ok(closeButton.hasAttribute("aria-label"), "Button has an a11y name");
-        EventUtils.sendMouseEvent({ type: "click" }, closeButton, win2);
+        EventUtils.sendMouseEvent(
+          { type: "click" },
+          closeButton,
+          win2Browser.ownerGlobal
+        );
         BrowserTestUtils.is_hidden(confirmBox);
 
         for (let fxviewBrowser of [browser, win2Browser]) {
@@ -782,80 +618,154 @@ add_task(async function test_mobile_promo_windows() {
         }
       }
     );
-    await BrowserTestUtils.closeWindow(win2);
   });
   await tearDown(sandbox);
 });
 
-add_task(async function test_network_offline() {
-  const sandbox = await setupWithDesktopDevices();
-  await withFirefoxView({}, async browser => {
-    const { document } = browser.contentWindow;
+async function mockFxaDeviceConnected(win) {
+  // We use an existing tab to navigate to the final "device connected" url
+  // in order to fake the fxa device sync process
+  const url = "https://example.org/pair/auth/complete";
+  is(win.gBrowser.tabs.length, 3, "Tabs strip should contain three tabs");
 
-    Services.obs.notifyObservers(
-      null,
-      "network:offline-status-changed",
-      "offline"
-    );
-    await waitForElementVisible(browser, "#tabpickup-steps", true);
-    await waitForVisibleStep(browser, {
-      expectedVisible: "#tabpickup-steps-view0",
-    });
+  BrowserTestUtils.loadURIString(win.gBrowser.selectedTab.linkedBrowser, url);
 
-    const errorStateHeader = document.querySelector(
-      "#tabpickup-steps-view0-header"
-    );
+  await BrowserTestUtils.browserLoaded(
+    win.gBrowser.selectedTab.linkedBrowser,
+    null,
+    url
+  );
 
-    await BrowserTestUtils.waitForMutationCondition(
-      errorStateHeader,
-      { childList: true },
-      () => errorStateHeader.textContent.includes("connection")
-    );
+  is(
+    win.gBrowser.selectedTab.linkedBrowser.currentURI.filePath,
+    "/pair/auth/complete",
+    "/pair/auth/complete is the selected tab"
+  );
+}
 
-    ok(
-      errorStateHeader.getAttribute("data-l10n-id").includes("network-offline"),
-      "Correct message should show when network connection is lost"
-    );
+add_task(async function test_close_device_connected_tab() {
+  // test that when a device has been connected to sync we close
+  // that tab after the user is directed back to firefox view
 
-    Services.obs.notifyObservers(
-      null,
-      "network:offline-status-changed",
-      "online"
-    );
-
-    await waitForElementVisible(browser, "#tabpickup-tabs-container", true);
+  // Ensure we are in the correct state to start the task.
+  TabsSetupFlowManager.resetInternalState();
+  await SpecialPowers.pushPrefEnv({
+    set: [["identity.fxaccounts.remote.root", "https://example.org/"]],
   });
-  await tearDown(sandbox);
-});
+  let win = await BrowserTestUtils.openNewBrowserWindow();
+  let fxViewTab = await openFirefoxViewTab(win);
 
-add_task(async function test_sync_error() {
-  const sandbox = await setupWithDesktopDevices();
-  await withFirefoxView({}, async browser => {
-    const { document } = browser.contentWindow;
-
-    Services.obs.notifyObservers(null, "weave:service:sync:error");
-
-    await waitForElementVisible(browser, "#tabpickup-steps", true);
-    await waitForVisibleStep(browser, {
-      expectedVisible: "#tabpickup-steps-view0",
-    });
-
-    const errorStateHeader = document.querySelector(
-      "#tabpickup-steps-view0-header"
-    );
-
-    await BrowserTestUtils.waitForMutationCondition(
-      errorStateHeader,
-      { childList: true },
-      () => errorStateHeader.textContent.includes("trouble syncing")
-    );
-
-    ok(
-      errorStateHeader.getAttribute("data-l10n-id").includes("sync-error"),
-      "Correct message should show when there's a sync service error"
-    );
-
-    Services.obs.notifyObservers(null, "weave:service:sync:finished");
+  await waitForVisibleSetupStep(win.gBrowser, {
+    expectedVisible: "#tabpickup-steps-view1",
   });
+
+  let actionButton = win.gBrowser.contentWindow.document.querySelector(
+    "#tabpickup-steps-view1 button.primary"
+  );
+  // initiate the sign in flow from Firefox View, to check that didFxaTabOpen is set
+  let tabSwitched = BrowserTestUtils.waitForEvent(
+    win.gBrowser,
+    "TabSwitchDone"
+  );
+  actionButton.click();
+  await tabSwitched;
+
+  // fake the end point of the device syncing flow
+  await mockFxaDeviceConnected(win);
+  let deviceConnectedTab = win.gBrowser.tabs[2];
+
+  // remove the blank tab opened with the browser to check that we don't
+  // close the window when the "Device connected" tab is closed
+  const newTab = win.gBrowser.tabs.find(
+    tab => tab != deviceConnectedTab && tab != fxViewTab
+  );
+  let removedTab = BrowserTestUtils.waitForTabClosing(newTab);
+  BrowserTestUtils.removeTab(newTab);
+  await removedTab;
+
+  is(win.gBrowser.tabs.length, 2, "Tabs strip should only contain two tabs");
+
+  is(
+    win.gBrowser.selectedTab.linkedBrowser.currentURI.filePath,
+    "/pair/auth/complete",
+    "/pair/auth/complete is the selected tab"
+  );
+
+  // we use this instead of BrowserTestUtils.switchTab to get back to the firefox view tab
+  // because this more accurately reflects how this tab is selected - via a custom onmousedown
+  // and command that calls FirefoxViewHandler.openTab (both when the user manually clicks the tab
+  // and when navigating from the fxa Device Connected tab, which also calls FirefoxViewHandler.openTab)
+  await EventUtils.synthesizeMouseAtCenter(
+    win.document.getElementById("firefox-view-button"),
+    { type: "mousedown" },
+    win
+  );
+
+  is(win.gBrowser.tabs.length, 2, "Tabs strip should only contain two tabs");
+
+  is(
+    win.gBrowser.tabs[0].linkedBrowser.currentURI.filePath,
+    "firefoxview",
+    "First tab is Firefox view"
+  );
+
+  is(
+    win.gBrowser.tabs[1].linkedBrowser.currentURI.filePath,
+    "newtab",
+    "Second tab is about:newtab"
+  );
+
+  // now simulate the signed-in state with the prompt to download
+  // and sync mobile
+  const sandbox = setupMocks({
+    state: UIState.STATUS_SIGNED_IN,
+    fxaDevices: [
+      {
+        id: 1,
+        name: "This Device",
+        isCurrentDevice: true,
+        type: "desktop",
+        tabs: [],
+      },
+    ],
+  });
+
+  Services.obs.notifyObservers(null, UIState.ON_UPDATE);
+
+  await waitForVisibleSetupStep(win.gBrowser, {
+    expectedVisible: "#tabpickup-steps-view2",
+  });
+
+  actionButton = win.gBrowser.contentWindow.document.querySelector(
+    "#tabpickup-steps-view2 button.primary"
+  );
+  // initiate the connect device (mobile) flow from Firefox View, to check that didFxaTabOpen is set
+  tabSwitched = BrowserTestUtils.waitForEvent(win.gBrowser, "TabSwitchDone");
+  actionButton.click();
+  await tabSwitched;
+  // fake the end point of the device syncing flow
+  await mockFxaDeviceConnected(win);
+
+  await EventUtils.synthesizeMouseAtCenter(
+    win.document.getElementById("firefox-view-button"),
+    { type: "mousedown" },
+    win
+  );
+  is(win.gBrowser.tabs.length, 2, "Tabs strip should only contain two tabs");
+
+  is(
+    win.gBrowser.tabs[0].linkedBrowser.currentURI.filePath,
+    "firefoxview",
+    "First tab is Firefox view"
+  );
+
+  is(
+    win.gBrowser.tabs[1].linkedBrowser.currentURI.filePath,
+    "newtab",
+    "Second tab is about:newtab"
+  );
+
+  // cleanup time
   await tearDown(sandbox);
+  await BrowserTestUtils.closeWindow(win);
 });

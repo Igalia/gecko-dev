@@ -4,23 +4,25 @@
 
 "use strict";
 
-var Services = require("Services");
 const {
   CommandsFactory,
-} = require("devtools/shared/commands/commands-factory");
+} = require("resource://devtools/shared/commands/commands-factory.js");
 
-loader.lazyRequireGetter(this, "Tools", "devtools/client/definitions", true);
-loader.lazyRequireGetter(this, "l10n", "devtools/client/webconsole/utils/l10n");
 loader.lazyRequireGetter(
   this,
-  "BrowserConsole",
-  "devtools/client/webconsole/browser-console"
+  "Tools",
+  "resource://devtools/client/definitions.js",
+  true
 );
 loader.lazyRequireGetter(
   this,
-  "PREFS",
-  "devtools/client/webconsole/constants",
-  true
+  "l10n",
+  "resource://devtools/client/webconsole/utils/l10n.js"
+);
+loader.lazyRequireGetter(
+  this,
+  "BrowserConsole",
+  "resource://devtools/client/webconsole/browser-console.js"
 );
 
 const BC_WINDOW_FEATURES =
@@ -64,7 +66,13 @@ class BrowserConsoleManager {
       return;
     }
 
-    await this._browserConsole.destroy();
+    // Ensure destroying the commands,
+    // even if the console throws during cleanup.
+    try {
+      await this._browserConsole.destroy();
+    } catch (e) {
+      console.error(e);
+    }
     this._browserConsole = null;
 
     await this.commands.destroy();
@@ -92,9 +100,16 @@ class BrowserConsoleManager {
       return browserConsole;
     })();
 
-    const browserConsole = await this._browserConsoleInitializing;
-    this._browserConsoleInitializing = null;
-    return browserConsole;
+    try {
+      const browserConsole = await this._browserConsoleInitializing;
+      this._browserConsoleInitializing = null;
+      return browserConsole;
+    } catch (e) {
+      // Ensure always clearing this field, even in case of exception,
+      // which may happen when closing during initialization.
+      this._browserConsoleInitializing = null;
+      throw e;
+    }
   }
 
   async openWindow() {
@@ -151,25 +166,17 @@ class BrowserConsoleManager {
    * @param {Window} win: The BrowserConsole window
    */
   updateWindowTitle(win) {
-    const fissionSupport = Services.prefs.getBoolPref(
-      PREFS.FEATURES.BROWSER_TOOLBOX_FISSION
-    );
-
     let title;
-    if (!fissionSupport) {
-      title = l10n.getStr("browserConsole.title");
+    const mode = Services.prefs.getCharPref(
+      "devtools.browsertoolbox.scope",
+      null
+    );
+    if (mode == "everything") {
+      title = l10n.getStr("multiProcessBrowserConsole.title");
+    } else if (mode == "parent-process") {
+      title = l10n.getStr("parentProcessBrowserConsole.title");
     } else {
-      const mode = Services.prefs.getCharPref(
-        "devtools.browsertoolbox.scope",
-        null
-      );
-      if (mode == "everything") {
-        title = l10n.getStr("multiProcessBrowserConsole.title");
-      } else if (mode == "parent-process") {
-        title = l10n.getStr("parentProcessBrowserConsole.title");
-      } else {
-        throw new Error("Unsupported mode: " + mode);
-      }
+      throw new Error("Unsupported mode: " + mode);
     }
 
     win.document.title = title;

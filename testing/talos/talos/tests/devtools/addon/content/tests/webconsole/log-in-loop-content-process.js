@@ -18,7 +18,7 @@ const {
   CommandsFactory,
 } = require("devtools/shared/commands/commands-factory");
 
-module.exports = async function() {
+module.exports = async function () {
   let TOTAL_MESSAGES = 1000;
   let tab = await testSetup(PAGES_BASE_URL + "custom/console/bulklog.html");
   let messageManager = tab.linkedBrowser.messageManager;
@@ -41,7 +41,11 @@ module.exports = async function() {
           const s = Cu.now();
           content.wrappedJSObject.doLogs(data, ${TOTAL_MESSAGES});
           sendAsyncMessage('logs-done',  Cu.now() - s);
-          ChromeUtils.addProfilerMarker("DAMP", s, "console.log-in-loop-content-process-" + data);
+          ChromeUtils.addProfilerMarker(
+            "DAMP",
+            { startTime: s, category: "Test" },
+            "console.log-in-loop-content-process-" + data
+          );
         });
       }`
     )})()`,

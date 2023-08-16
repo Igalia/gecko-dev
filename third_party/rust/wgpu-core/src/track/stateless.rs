@@ -7,9 +7,10 @@
 use std::marker::PhantomData;
 
 use crate::{
-    hub,
+    hal_api::HalApi,
     id::{TypedId, Valid},
-    track::{iterate_bitvec_indices, ResourceMetadata},
+    resource, storage,
+    track::ResourceMetadata,
     RefCount,
 };
 
@@ -20,7 +21,7 @@ pub(crate) struct StatelessBindGroupSate<T, Id: TypedId> {
     _phantom: PhantomData<T>,
 }
 
-impl<T: hub::Resource, Id: TypedId> StatelessBindGroupSate<T, Id> {
+impl<T: resource::Resource, Id: TypedId> StatelessBindGroupSate<T, Id> {
     pub fn new() -> Self {
         Self {
             resources: Vec::new(),
@@ -44,7 +45,11 @@ impl<T: hub::Resource, Id: TypedId> StatelessBindGroupSate<T, Id> {
     }
 
     /// Adds the given resource.
-    pub fn add_single<'a>(&mut self, storage: &'a hub::Storage<T, Id>, id: Id) -> Option<&'a T> {
+    pub fn add_single<'a>(
+        &mut self,
+        storage: &'a storage::Storage<T, Id>,
+        id: Id,
+    ) -> Option<&'a T> {
         let resource = storage.get(id).ok()?;
 
         self.resources
@@ -55,13 +60,13 @@ impl<T: hub::Resource, Id: TypedId> StatelessBindGroupSate<T, Id> {
 }
 
 /// Stores all resource state within a command buffer or device.
-pub(crate) struct StatelessTracker<A: hub::HalApi, T, Id: TypedId> {
+pub(crate) struct StatelessTracker<A: HalApi, T, Id: TypedId> {
     metadata: ResourceMetadata<A>,
 
     _phantom: PhantomData<(T, Id)>,
 }
 
-impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
+impl<A: HalApi, T: resource::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
     pub fn new() -> Self {
         Self {
             metadata: ResourceMetadata::new(),
@@ -70,8 +75,8 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
         }
     }
 
-    fn debug_assert_in_bounds(&self, index: usize) {
-        self.metadata.debug_assert_in_bounds(index);
+    fn tracker_assert_in_bounds(&self, index: usize) {
+        self.metadata.tracker_assert_in_bounds(index);
     }
 
     /// Sets the size of all the vectors inside the tracker.
@@ -84,14 +89,14 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
 
     /// Extend the vectors to let the given index be valid.
     fn allow_index(&mut self, index: usize) {
-        if index >= self.metadata.owned.len() {
+        if index >= self.metadata.size() {
             self.set_size(index + 1);
         }
     }
 
     /// Returns a list of all resources tracked.
     pub fn used(&self) -> impl Iterator<Item = Valid<Id>> + '_ {
-        self.metadata.used()
+        self.metadata.owned_ids()
     }
 
     /// Inserts a single resource into the resource tracker.
@@ -106,12 +111,10 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
 
         self.allow_index(index);
 
-        self.debug_assert_in_bounds(index);
+        self.tracker_assert_in_bounds(index);
 
         unsafe {
-            *self.metadata.epochs.get_unchecked_mut(index) = epoch;
-            *self.metadata.ref_counts.get_unchecked_mut(index) = Some(ref_count);
-            self.metadata.owned.set(index, true);
+            self.metadata.insert(index, epoch, ref_count);
         }
     }
 
@@ -119,7 +122,11 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
     ///
     /// If the ID is higher than the length of internal vectors,
     /// the vectors will be extended. A call to set_size is not needed.
-    pub fn add_single<'a>(&mut self, storage: &'a hub::Storage<T, Id>, id: Id) -> Option<&'a T> {
+    pub fn add_single<'a>(
+        &mut self,
+        storage: &'a storage::Storage<T, Id>,
+        id: Id,
+    ) -> Option<&'a T> {
         let item = storage.get(id).ok()?;
 
         let (index32, epoch, _) = id.unzip();
@@ -127,12 +134,11 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
 
         self.allow_index(index);
 
-        self.debug_assert_in_bounds(index);
+        self.tracker_assert_in_bounds(index);
 
         unsafe {
-            *self.metadata.epochs.get_unchecked_mut(index) = epoch;
-            *self.metadata.ref_counts.get_unchecked_mut(index) = Some(item.life_guard().add_ref());
-            self.metadata.owned.set(index, true);
+            self.metadata
+                .insert(index, epoch, item.life_guard().add_ref());
         }
 
         Some(item)
@@ -143,30 +149,21 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
     /// If the ID is higher than the length of internal vectors,
     /// the vectors will be extended. A call to set_size is not needed.
     pub fn add_from_tracker(&mut self, other: &Self) {
-        let incoming_size = other.metadata.owned.len();
-        if incoming_size > self.metadata.owned.len() {
+        let incoming_size = other.metadata.size();
+        if incoming_size > self.metadata.size() {
             self.set_size(incoming_size);
         }
 
-        for index in iterate_bitvec_indices(&other.metadata.owned) {
-            self.debug_assert_in_bounds(index);
-            other.debug_assert_in_bounds(index);
+        for index in other.metadata.owned_indices() {
+            self.tracker_assert_in_bounds(index);
+            other.tracker_assert_in_bounds(index);
             unsafe {
-                let previously_owned = self.metadata.owned.get(index).unwrap_unchecked();
+                let previously_owned = self.metadata.contains_unchecked(index);
 
                 if !previously_owned {
-                    self.metadata.owned.set(index, true);
-
-                    let other_ref_count = other
-                        .metadata
-                        .ref_counts
-                        .get_unchecked(index)
-                        .clone()
-                        .unwrap_unchecked();
-                    *self.metadata.ref_counts.get_unchecked_mut(index) = Some(other_ref_count);
-
-                    let epoch = *other.metadata.epochs.get_unchecked(index);
-                    *self.metadata.epochs.get_unchecked_mut(index) = epoch;
+                    let epoch = other.metadata.get_epoch_unchecked(index);
+                    let other_ref_count = other.metadata.get_ref_count_unchecked(index);
+                    self.metadata.insert(index, epoch, other_ref_count.clone());
                 }
             }
         }
@@ -183,22 +180,19 @@ impl<A: hub::HalApi, T: hub::Resource, Id: TypedId> StatelessTracker<A, T, Id> {
         let (index32, epoch, _) = id.0.unzip();
         let index = index32 as usize;
 
-        if index > self.metadata.owned.len() {
+        if index > self.metadata.size() {
             return false;
         }
 
-        self.debug_assert_in_bounds(index);
+        self.tracker_assert_in_bounds(index);
 
         unsafe {
-            if self.metadata.owned.get(index).unwrap_unchecked() {
-                let existing_epoch = self.metadata.epochs.get_unchecked_mut(index);
-                let existing_ref_count = self.metadata.ref_counts.get_unchecked_mut(index);
+            if self.metadata.contains_unchecked(index) {
+                let existing_epoch = self.metadata.get_epoch_unchecked(index);
+                let existing_ref_count = self.metadata.get_ref_count_unchecked(index);
 
-                if *existing_epoch == epoch
-                    && existing_ref_count.as_mut().unwrap_unchecked().load() == 1
-                {
-                    self.metadata.reset(index);
-
+                if existing_epoch == epoch && existing_ref_count.load() == 1 {
+                    self.metadata.remove(index);
                     return true;
                 }
             }

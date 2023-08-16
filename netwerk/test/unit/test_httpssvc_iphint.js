@@ -4,26 +4,18 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-
 let h2Port;
 let trrServer;
 
-const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
-  Ci.nsIDNSService
-);
 const certOverrideService = Cc[
   "@mozilla.org/security/certoverride;1"
 ].getService(Ci.nsICertOverrideService);
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 add_setup(async function setup() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  h2Port = env.get("MOZHTTP2_PORT");
+  h2Port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(h2Port, null);
   Assert.notEqual(h2Port, "");
 
@@ -41,6 +33,7 @@ add_setup(async function setup() {
   });
 
   if (mozinfo.socketprocess_networking) {
+    Services.dns; // Needed to trigger socket process.
     await TestUtils.waitForCondition(() => Services.io.socketProcessLaunched);
   }
 });
@@ -63,7 +56,7 @@ add_task(async function testStoreIPHint() {
     answers: [
       {
         name: "test.IPHint.com",
-        ttl: 55,
+        ttl: 999,
         type: "HTTPS",
         flush: false,
         data: {
@@ -85,6 +78,7 @@ add_task(async function testStoreIPHint() {
   });
 
   let answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;
+  Assert.equal(inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).ttl, 999);
   Assert.equal(answer[0].priority, 1);
   Assert.equal(answer[0].name, "test.IPHint.com");
   Assert.equal(answer[0].values.length, 4);
@@ -123,20 +117,23 @@ add_task(async function testStoreIPHint() {
     "got correct answer"
   );
 
-  async function verifyAnswer(flags, answer) {
-    let { inRecord } = await new TRRDNSListener("test.IPHint.com", {
+  async function verifyAnswer(domain, flags, expectedAddresses) {
+    // eslint-disable-next-line no-shadow
+    let { inRecord } = await new TRRDNSListener(domain, {
       flags,
       expectedSuccess: false,
     });
+    Assert.ok(inRecord);
     inRecord.QueryInterface(Ci.nsIDNSAddrRecord);
     let addresses = [];
     while (inRecord.hasMore()) {
       addresses.push(inRecord.getNextAddrAsString());
     }
-    Assert.deepEqual(addresses, answer);
+    Assert.deepEqual(addresses, expectedAddresses);
+    Assert.equal(inRecord.ttl, 999);
   }
 
-  await verifyAnswer(Ci.nsIDNSService.RESOLVE_IP_HINT, [
+  await verifyAnswer("test.IPHint.com", Ci.nsIDNSService.RESOLVE_IP_HINT, [
     "1.2.3.4",
     "5.6.7.8",
     "::1",
@@ -144,11 +141,52 @@ add_task(async function testStoreIPHint() {
   ]);
 
   await verifyAnswer(
+    "test.IPHint.com",
     Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV4,
     ["::1", "fe80::794f:6d2c:3d5e:7836"]
   );
 
   await verifyAnswer(
+    "test.IPHint.com",
+    Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV6,
+    ["1.2.3.4", "5.6.7.8"]
+  );
+
+  info("checking that IPv6 hints are ignored when disableIPv6 is true");
+  Services.prefs.setBoolPref("network.dns.disableIPv6", true);
+  await trrServer.registerDoHAnswers("testv6.IPHint.com", "HTTPS", {
+    answers: [
+      {
+        name: "testv6.IPHint.com",
+        ttl: 999,
+        type: "HTTPS",
+        flush: false,
+        data: {
+          priority: 1,
+          name: "testv6.IPHint.com",
+          values: [
+            { key: "alpn", value: ["h2", "h3"] },
+            { key: "port", value: 8888 },
+            { key: "ipv4hint", value: ["1.2.3.4", "5.6.7.8"] },
+            { key: "ipv6hint", value: ["::1", "fe80::794f:6d2c:3d5e:7836"] },
+          ],
+        },
+      },
+    ],
+  });
+
+  ({ inRecord } = await new TRRDNSListener("testv6.IPHint.com", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  }));
+  Services.prefs.setBoolPref("network.dns.disableIPv6", false);
+
+  await verifyAnswer("testv6.IPHint.com", Ci.nsIDNSService.RESOLVE_IP_HINT, [
+    "1.2.3.4",
+    "5.6.7.8",
+  ]);
+
+  await verifyAnswer(
+    "testv6.IPHint.com",
     Ci.nsIDNSService.RESOLVE_IP_HINT | Ci.nsIDNSService.RESOLVE_DISABLE_IPV6,
     ["1.2.3.4", "5.6.7.8"]
   );
@@ -178,7 +216,7 @@ function channelOpenPromise(chan, flags) {
 
 // Test if we can connect to the server with the IP hint address.
 add_task(async function testConnectionWithIPHint() {
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -266,7 +304,7 @@ add_task(async function testIPHintWithFreshDNS() {
   });
 
   let { inRecord } = await new TRRDNSListener("test.iphint.org", {
-    type: dns.RESOLVE_TYPE_HTTPSSVC,
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   });
 
   let answer = inRecord.QueryInterface(Ci.nsIDNSHTTPSSVCRecord).records;

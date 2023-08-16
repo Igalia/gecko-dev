@@ -506,7 +506,7 @@ class AesTask : public ReturnArrayBufferViewTask, public DeferredData {
 
       ATTEMPT_BUFFER_INIT(mIv, params.mIv)
       if (mIv.Length() != 16) {
-        mEarlyRv = NS_ERROR_DOM_DATA_ERR;
+        mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
         return;
       }
     } else if (algName.EqualsLiteral(WEBCRYPTO_ALG_AES_CTR)) {
@@ -523,7 +523,7 @@ class AesTask : public ReturnArrayBufferViewTask, public DeferredData {
 
       ATTEMPT_BUFFER_INIT(mIv, params.mCounter)
       if (mIv.Length() != 16) {
-        mEarlyRv = NS_ERROR_DOM_DATA_ERR;
+        mEarlyRv = NS_ERROR_DOM_OPERATION_ERR;
         return;
       }
 
@@ -1701,6 +1701,9 @@ class ImportRsaKeyTask : public ImportKeyTask {
       return NS_ERROR_DOM_SYNTAX_ERR;
     }
 
+    if (pubKey->keyType != rsaKey) {
+      return NS_ERROR_DOM_DATA_ERR;
+    }
     // Extract relevant information from the public key
     mModulusLength = 8 * pubKey->u.rsa.modulus.len;
     if (!mPublicExponent.Assign(&pubKey->u.rsa.publicExponent)) {
@@ -1852,6 +1855,9 @@ class ImportEcKeyTask : public ImportKeyTask {
       }
 
       if (mFormat.EqualsLiteral(WEBCRYPTO_KEY_FORMAT_SPKI)) {
+        if (pubKey->keyType != ecKey) {
+          return NS_ERROR_DOM_DATA_ERR;
+        }
         if (!CheckEncodedECParameters(&pubKey->u.ec.DEREncodedParams)) {
           return NS_ERROR_DOM_OPERATION_ERR;
         }
@@ -3216,6 +3222,7 @@ WebCryptoTask* WebCryptoTask::CreateUnwrapKeyTask(
   if (keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_CBC) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_CTR) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_GCM) ||
+      keyAlgName.EqualsASCII(WEBCRYPTO_ALG_AES_KW) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_HKDF) ||
       keyAlgName.EqualsASCII(WEBCRYPTO_ALG_HMAC)) {
     importTask = new ImportSymmetricKeyTask(aGlobal, aCx, aFormat,

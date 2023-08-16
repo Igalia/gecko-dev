@@ -10,9 +10,10 @@
 # See Cargo.toml.orig for the original contents.
 
 [package]
-edition = "2018"
+edition = "2021"
+rust-version = "1.59"
 name = "rayon-core"
-version = "1.9.3"
+version = "1.11.0"
 authors = [
     "Niko Matsakis <niko@alum.mit.edu>",
     "Josh Stone <cuviper@gmail.com>",
@@ -36,7 +37,6 @@ repository = "https://github.com/rayon-rs/rayon"
 [[test]]
 name = "stack_overflow_crash"
 path = "tests/stack_overflow_crash.rs"
-harness = false
 
 [[test]]
 name = "double_init_fail"

@@ -23,6 +23,8 @@
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryComms.h"
 #include "mozilla/Tokenizer.h"
+#include "mozilla/dom/ContentParent.h"
+#include "mozilla/net/NeckoParent.h"
 #include "mozilla/net/TRRServiceChild.h"
 // Put DNSLogging.h at the end to avoid LOG being overwritten by other headers.
 #include "DNSLogging.h"
@@ -30,7 +32,6 @@
 static const char kOpenCaptivePortalLoginEvent[] = "captive-portal-login";
 static const char kClearPrivateData[] = "clear-private-data";
 static const char kPurge[] = "browser:purge-session-history";
-static const char kDisableIpv6Pref[] = "network.dns.disableIPv6";
 
 #define TRR_PREF_PREFIX "network.trr."
 #define TRR_PREF(x) TRR_PREF_PREFIX x
@@ -41,20 +42,68 @@ StaticRefPtr<nsIThread> sTRRBackgroundThread;
 static Atomic<TRRService*> sTRRServicePtr;
 
 static Atomic<size_t, Relaxed> sDomainIndex(0);
+static Atomic<size_t, Relaxed> sCurrentTRRModeIndex(0);
 
-constexpr nsLiteralCString kTRRDomains[] = {
+constexpr nsLiteralCString kTRRDomains[3][7] = {
     // clang-format off
+    {
+    // When mode is 0, the provider key has no postfix.
     "(other)"_ns,
     "mozilla.cloudflare-dns.com"_ns,
     "firefox.dns.nextdns.io"_ns,
     "private.canadianshield.cira.ca"_ns,
     "doh.xfinity.com"_ns,  // Steered clients
     "dns.shaw.ca"_ns, // Steered clients
+    "dooh.cloudflare-dns.com"_ns, // DNS over Oblivious HTTP
+    },
+    {
+    "(other)_2"_ns,
+    "mozilla.cloudflare-dns.com_2"_ns,
+    "firefox.dns.nextdns.io_2"_ns,
+    "private.canadianshield.cira.ca_2"_ns,
+    "doh.xfinity.com_2"_ns,  // Steered clients
+    "dns.shaw.ca_2"_ns, // Steered clients
+    "dooh.cloudflare-dns.com_2"_ns, // DNS over Oblivious HTTP
+    },
+    {
+    "(other)_3"_ns,
+    "mozilla.cloudflare-dns.com_3"_ns,
+    "firefox.dns.nextdns.io_3"_ns,
+    "private.canadianshield.cira.ca_3"_ns,
+    "doh.xfinity.com_3"_ns,  // Steered clients
+    "dns.shaw.ca_3"_ns, // Steered clients
+    "dooh.cloudflare-dns.com_3"_ns, // DNS over Oblivious HTTP
+    },
     // clang-format on
 };
 
 // static
-const nsCString& TRRService::ProviderKey() { return kTRRDomains[sDomainIndex]; }
+void TRRService::SetCurrentTRRMode(nsIDNSService::ResolverMode aMode) {
+  // A table to map ResolverMode to the row of kTRRDomains.
+  // When the aMode is 2, we use kTRRDomains[1] as provider keys. When aMode is
+  // 3, we use kTRRDomains[2]. Otherwise, we kTRRDomains[0] is used.
+  static const uint32_t index[] = {0, 0, 1, 2, 0, 0};
+  if (aMode > nsIDNSService::MODE_TRROFF) {
+    aMode = nsIDNSService::MODE_TRROFF;
+  }
+  sCurrentTRRModeIndex = index[static_cast<size_t>(aMode)];
+}
+
+// static
+void TRRService::SetProviderDomain(const nsACString& aTRRDomain) {
+  sDomainIndex = 0;
+  for (size_t i = 1; i < std::size(kTRRDomains[0]); i++) {
+    if (aTRRDomain.Equals(kTRRDomains[0][i])) {
+      sDomainIndex = i;
+      break;
+    }
+  }
+}
+
+// static
+const nsCString& TRRService::ProviderKey() {
+  return kTRRDomains[sCurrentTRRModeIndex][sDomainIndex];
+}
 
 NS_IMPL_ISUPPORTS_INHERITED(TRRService, TRRServiceBase, nsIObserver,
                             nsISupportsWeakReference)
@@ -134,7 +183,6 @@ nsresult TRRService::Init() {
   GetPrefBranch(getter_AddRefs(prefBranch));
   if (prefBranch) {
     prefBranch->AddObserver(TRR_PREF_PREFIX, this, true);
-    prefBranch->AddObserver(kDisableIpv6Pref, this, true);
     prefBranch->AddObserver(kRolloutURIPref, this, true);
     prefBranch->AddObserver(kRolloutModePref, this, true);
   }
@@ -166,11 +214,6 @@ nsresult TRRService::Init() {
     sTRRBackgroundThread = thread;
   }
 
-  mODoHService = new ODoHService();
-  if (!mODoHService->Init()) {
-    return NS_ERROR_FAILURE;
-  }
-
   Preferences::RegisterCallbackAndCall(
       EventTelemetryPrefChanged,
       "network.trr.confirmation_telemetry_enabled"_ns);
@@ -200,6 +243,11 @@ void TRRService::SetDetectedTrrURI(const nsACString& aURI) {
   // (see TRRServiceBase::OnTRRURIChange)
   if (!mURIPref.IsEmpty()) {
     LOG(("Already has user value. Not setting URI"));
+    return;
+  }
+
+  if (StaticPrefs::network_trr_use_ohttp()) {
+    LOG(("No autodetection when using OHTTP"));
     return;
   }
 
@@ -276,29 +324,27 @@ bool TRRService::MaybeSetPrivateURI(const nsACString& aURI) {
       clearCache = true;
     }
 
-    nsCOMPtr<nsIURI> url;
-    nsresult rv = NS_MutateURI(NS_STANDARDURLMUTATOR_CONTRACTID)
-                      .Apply(&nsIStandardURLMutator::Init,
-                             nsIStandardURL::URLTYPE_STANDARD, 443, newURI,
-                             nullptr, nullptr, nullptr)
-                      .Finalize(url);
-    if (NS_FAILED(rv)) {
-      LOG(("TRRService::MaybeSetPrivateURI failed to create URI!\n"));
-      return false;
-    }
-
     nsAutoCString host;
-    url->GetHost(host);
 
-    sDomainIndex = 0;
-    for (size_t i = 1; i < std::size(kTRRDomains); i++) {
-      if (host.Equals(kTRRDomains[i])) {
-        sDomainIndex = i;
-        break;
-      }
+    nsCOMPtr<nsIURI> url;
+    if (NS_SUCCEEDED(NS_NewURI(getter_AddRefs(url), newURI))) {
+      url->GetHost(host);
     }
+
+    SetProviderDomain(host);
 
     mPrivateURI = newURI;
+
+    // Notify the content processes of the new TRR
+    for (auto* cp :
+         dom::ContentParent::AllProcesses(dom::ContentParent::eLive)) {
+      PNeckoParent* neckoParent =
+          SingleManagedOrNull(cp->ManagedPNeckoParent());
+      if (!neckoParent) {
+        continue;
+      }
+      Unused << neckoParent->SendSetTRRDomain(host);
+    }
 
     AsyncCreateTRRConnectionInfo(mPrivateURI);
 
@@ -342,7 +388,8 @@ nsresult TRRService::ReadPrefs(const char* name) {
   }
   if (!name || !strcmp(name, TRR_PREF("uri")) ||
       !strcmp(name, TRR_PREF("default_provider_uri")) ||
-      !strcmp(name, kRolloutURIPref)) {
+      !strcmp(name, kRolloutURIPref) || !strcmp(name, TRR_PREF("ohttp.uri")) ||
+      !strcmp(name, TRR_PREF("use_ohttp"))) {
     OnTRRURIChange();
   }
   if (!name || !strcmp(name, TRR_PREF("credentials"))) {
@@ -358,12 +405,6 @@ nsresult TRRService::ReadPrefs(const char* name) {
     MutexSingleWriterAutoLock lock(mLock);
     Preferences::GetCString(TRR_PREF("bootstrapAddr"), mBootstrapAddr);
     clearEntireCache = true;
-  }
-  if (!name || !strcmp(name, kDisableIpv6Pref)) {
-    bool tmp;
-    if (NS_SUCCEEDED(Preferences::GetBool(kDisableIpv6Pref, &tmp))) {
-      mDisableIPv6 = tmp;
-    }
   }
   if (!name || !strcmp(name, TRR_PREF("excluded-domains")) ||
       !strcmp(name, TRR_PREF("builtin-excluded-domains"))) {
@@ -491,7 +532,7 @@ nsresult TRRService::DispatchTRRRequestInternal(TRR* aTrrRequest,
 
 already_AddRefed<nsIThread> TRRService::MainThreadOrTRRThread(bool aWithLock) {
   if (!StaticPrefs::network_trr_fetch_off_main_thread() ||
-      XRE_IsSocketProcess()) {
+      XRE_IsSocketProcess() || mDontUseTRRThread) {
     return do_GetMainThread();
   }
 
@@ -636,6 +677,38 @@ void TRRService::RebuildSuffixList(nsTArray<nsCString>&& aSuffixList) {
 void TRRService::ConfirmationContext::SetState(
     enum ConfirmationState aNewState) {
   mState = aNewState;
+
+  enum ConfirmationState state = mState;
+  if (XRE_IsParentProcess()) {
+    NS_DispatchToMainThread(NS_NewRunnableFunction(
+        "TRRService::ConfirmationContextNotify", [state] {
+          if (nsCOMPtr<nsIObserverService> obs =
+                  mozilla::services::GetObserverService()) {
+            auto stateString =
+                [](enum ConfirmationState aState) -> const char16_t* {
+              switch (aState) {
+                case CONFIRM_OFF:
+                  return u"CONFIRM_OFF";
+                case CONFIRM_TRYING_OK:
+                  return u"CONFIRM_TRYING_OK";
+                case CONFIRM_OK:
+                  return u"CONFIRM_OK";
+                case CONFIRM_FAILED:
+                  return u"CONFIRM_FAILED";
+                case CONFIRM_TRYING_FAILED:
+                  return u"CONFIRM_TRYING_FAILED";
+                case CONFIRM_DISABLED:
+                  return u"CONFIRM_DISABLED";
+              }
+              MOZ_ASSERT_UNREACHABLE();
+              return u"";
+            };
+
+            obs->NotifyObservers(nullptr, "network:trr-confirmation",
+                                 stateString(state));
+          }
+        }));
+  }
 
   if (XRE_IsParentProcess()) {
     return;
@@ -1075,22 +1148,31 @@ void TRRService::RetryTRRConfirm() {
   }
 }
 
-void TRRService::RecordTRRStatus(nsresult aChannelStatus) {
+void TRRService::RecordTRRStatus(TRR* aTrrRequest) {
   MOZ_ASSERT_IF(XRE_IsParentProcess(), NS_IsMainThread() || IsOnTRRThread());
   MOZ_ASSERT_IF(XRE_IsSocketProcess(), NS_IsMainThread());
 
+  nsresult channelStatus = aTrrRequest->ChannelStatus();
+
   Telemetry::AccumulateCategoricalKeyed(
-      ProviderKey(), NS_SUCCEEDED(aChannelStatus)
+      ProviderKey(), NS_SUCCEEDED(channelStatus)
                          ? Telemetry::LABELS_DNS_TRR_SUCCESS3::Fine
-                         : (aChannelStatus == NS_ERROR_NET_TIMEOUT_EXTERNAL
+                         : (channelStatus == NS_ERROR_NET_TIMEOUT_EXTERNAL
                                 ? Telemetry::LABELS_DNS_TRR_SUCCESS3::Timeout
                                 : Telemetry::LABELS_DNS_TRR_SUCCESS3::Bad));
 
-  mConfirmation.RecordTRRStatus(aChannelStatus);
+  mConfirmation.RecordTRRStatus(aTrrRequest);
 }
 
-void TRRService::ConfirmationContext::RecordTRRStatus(nsresult aChannelStatus) {
-  if (NS_SUCCEEDED(aChannelStatus)) {
+void TRRService::ConfirmationContext::RecordTRRStatus(TRR* aTrrRequest) {
+  nsresult channelStatus = aTrrRequest->ChannelStatus();
+
+  if (OwningObject()->Mode() == nsIDNSService::MODE_TRRONLY) {
+    mLastConfirmationSkipReason = aTrrRequest->SkipReason();
+    mLastConfirmationStatus = channelStatus;
+  }
+
+  if (NS_SUCCEEDED(channelStatus)) {
     LOG(("TRRService::RecordTRRStatus channel success"));
     mTRRFailures = 0;
     return;
@@ -1115,7 +1197,7 @@ void TRRService::ConfirmationContext::RecordTRRStatus(nsresult aChannelStatus) {
   }
 
   mFailureReasons[mTRRFailures % ConfirmationContext::RESULTS_SIZE] =
-      StatusToChar(NS_OK, aChannelStatus);
+      StatusToChar(NS_OK, channelStatus);
   uint32_t fails = ++mTRRFailures;
   LOG(("TRRService::RecordTRRStatus fails=%u", fails));
 
@@ -1230,6 +1312,8 @@ void TRRService::ConfirmationContext::CompleteConfirmation(nsresult aStatus,
     }
 
     RequestCompleted(aStatus, aTRRRequest->ChannelStatus());
+    mLastConfirmationSkipReason = aTRRRequest->SkipReason();
+    mLastConfirmationStatus = aTRRRequest->ChannelStatus();
 
     MOZ_ASSERT(mTask);
     if (NS_SUCCEEDED(aStatus)) {

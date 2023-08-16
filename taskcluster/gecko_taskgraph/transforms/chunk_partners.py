@@ -10,10 +10,11 @@ import copy
 
 from mozbuild.chunkify import chunkify
 from taskgraph.transforms.base import TransformSequence
+from taskgraph.util.dependencies import get_primary_dependency
 
 from gecko_taskgraph.util.partners import (
-    get_repack_ids_by_platform,
     apply_partner_priority,
+    get_repack_ids_by_platform,
 )
 
 transforms = TransformSequence()
@@ -23,7 +24,12 @@ transforms.add(apply_partner_priority)
 @transforms.add
 def chunk_partners(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        # We need to support both the `multi_dep` and `from_deps` approach for now.
+        if "primary-dependency" in job:
+            dep_job = job["primary-dependency"]
+        else:
+            dep_job = get_primary_dependency(config, job)
+
         build_platform = dep_job.attributes["build_platform"]
         repack_id = dep_job.task.get("extra", {}).get("repack_id")
         repack_ids = dep_job.task.get("extra", {}).get("repack_ids")
@@ -42,8 +48,8 @@ def chunk_partners(config, jobs):
             if config.kind in (
                 "release-partner-repack-signing",
                 "release-eme-free-repack-signing",
-                "release-partner-repack-notarization-part-1",
-                "release-eme-free-repack-notarization-part-1",
+                "release-eme-free-repack-mac-signing",
+                "release-partner-repack-mac-signing",
             ):
                 repacks_per_chunk = job.get("repacks-per-chunk")
                 chunks, remainder = divmod(len(platform_repack_ids), repacks_per_chunk)

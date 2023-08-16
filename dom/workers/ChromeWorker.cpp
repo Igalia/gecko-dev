@@ -6,9 +6,11 @@
 
 #include "ChromeWorker.h"
 
+#include "mozilla/AppShutdown.h"
 #include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/WorkerBinding.h"
 #include "nsContentUtils.h"
+#include "nsIXPConnect.h"
 #include "WorkerPrivate.h"
 
 namespace mozilla::dom {
@@ -16,12 +18,22 @@ namespace mozilla::dom {
 /* static */
 already_AddRefed<ChromeWorker> ChromeWorker::Constructor(
     const GlobalObject& aGlobal, const nsAString& aScriptURL,
-    ErrorResult& aRv) {
+    const WorkerOptions& aOptions, ErrorResult& aRv) {
+  // Dump the JS stack if somebody's creating a ChromeWorker after shutdown has
+  // begun.  See bug 1813353.
+  if (xpc::IsInAutomation() &&
+      AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdown)) {
+    NS_WARNING("ChromeWorker construction during shutdown");
+    nsCOMPtr<nsIXPConnect> xpc = nsIXPConnect::XPConnect();
+    Unused << xpc->DebugDumpJSStack(true, true, false);
+  }
+
   JSContext* cx = aGlobal.Context();
 
   RefPtr<WorkerPrivate> workerPrivate = WorkerPrivate::Constructor(
-      cx, aScriptURL, true /* aIsChromeWorker */, WorkerKindDedicated, u""_ns,
-      VoidCString(), nullptr /*aLoadInfo */, aRv);
+      cx, aScriptURL, true /* aIsChromeWorker */, WorkerKindDedicated,
+      RequestCredentials::Omit, aOptions.mType, aOptions.mName, VoidCString(),
+      nullptr /*aLoadInfo */, aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }

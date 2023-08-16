@@ -15,6 +15,7 @@
 #include "mozilla/AutoRestore.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/TaskQueue.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/Unused.h"
 #include "FontFaceSet.h"
@@ -105,7 +106,7 @@ void nsFontFaceLoader::StartedLoading(nsIStreamLoader* aStreamLoader) {
     if (doc) {
       target = doc->EventTargetFor(TaskCategory::Other);
     } else {
-      target = GetMainThreadEventTarget();
+      target = GetMainThreadSerialEventTarget();
     }
     NS_NewTimerWithFuncCallback(
         getter_AddRefs(mLoadTimer), LoadTimerCallback, static_cast<void*>(this),
@@ -196,7 +197,7 @@ void nsFontFaceLoader::LoadTimerCallback(nsITimer* aTimer, void* aClosure) {
   // before, we mark this entry as "loading slowly", so the fallback
   // font will be used in the meantime, and tell the context to refresh.
   if (updateUserFontSet) {
-    nsTArray<gfxUserFontSet*> fontSets;
+    nsTArray<RefPtr<gfxUserFontSet>> fontSets;
     ufe->GetUserFontSets(fontSets);
     for (gfxUserFontSet* fontSet : fontSets) {
       nsPresContext* ctx = FontFaceSetImpl::GetPresContextFor(fontSet);
@@ -308,7 +309,7 @@ nsresult nsFontFaceLoader::FontLoadComplete() {
   }
 
   // when new font loaded, need to reflow
-  nsTArray<gfxUserFontSet*> fontSets;
+  nsTArray<RefPtr<gfxUserFontSet>> fontSets;
   mUserFontEntry->GetUserFontSets(fontSets);
   for (gfxUserFontSet* fontSet : fontSets) {
     nsPresContext* ctx = FontFaceSetImpl::GetPresContextFor(fontSet);
@@ -340,7 +341,9 @@ nsFontFaceLoader::OnStartRequest(nsIRequest* aRequest) {
   if (req) {
     nsCOMPtr<nsIEventTarget> sts =
         do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
-    Unused << NS_WARN_IF(NS_FAILED(req->RetargetDeliveryTo(sts)));
+    RefPtr<TaskQueue> queue =
+        TaskQueue::Create(sts.forget(), "nsFontFaceLoader STS Delivery Queue");
+    Unused << NS_WARN_IF(NS_FAILED(req->RetargetDeliveryTo(queue)));
   }
   return NS_OK;
 }
@@ -369,7 +372,8 @@ void nsFontFaceLoader::Cancel() {
     mLoadTimer = nullptr;
   }
   if (nsCOMPtr<nsIChannel> channel = std::move(mChannel)) {
-    channel->Cancel(NS_BINDING_ABORTED);
+    channel->CancelWithReason(NS_BINDING_ABORTED,
+                              "nsFontFaceLoader::OnStopRequest"_ns);
   }
 }
 

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-import { actionCreators as ac } from "common/Actions.jsm";
+import { actionCreators as ac } from "common/Actions.sys.mjs";
 import { connect } from "react-redux";
 import { ContextMenu } from "content-src/components/ContextMenu/ContextMenu";
 import { LinkMenuOptions } from "content-src/lib/link-menu-options";
@@ -69,6 +69,7 @@ export class _LinkMenu extends React.PureComponent {
                   event: eventName,
                   source,
                   action_position: index,
+                  value: { card_type: site.flight_id ? "spoc" : "organic" },
                 },
                 siteInfo
               );

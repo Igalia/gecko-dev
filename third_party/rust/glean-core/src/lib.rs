@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 #![allow(clippy::significant_drop_in_scrutinee)]
+#![allow(clippy::uninlined_format_args)]
 #![deny(rustdoc::broken_intra_doc_links)]
 #![deny(missing_docs)]
 
@@ -14,12 +15,21 @@
 //!
 //! ## [The Glean SDK Book](https://mozilla.github.io/glean)
 
+use std::borrow::Cow;
 use std::collections::HashMap;
+use std::convert::TryFrom;
+use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::Duration;
 
+use crossbeam_channel::unbounded;
+use log::{self, LevelFilter};
 use once_cell::sync::{Lazy, OnceCell};
 use uuid::Uuid;
+
+use metrics::MetricsEnabledConfig;
 
 mod common_metric_data;
 mod core;
@@ -63,7 +73,7 @@ pub use crate::metrics::{
     StringListMetric, StringMetric, TextMetric, TimeUnit, TimerId, TimespanMetric,
     TimingDistributionMetric, UrlMetric, UuidMetric,
 };
-pub use crate::upload::{PingRequest, PingUploadTask, UploadResult};
+pub use crate::upload::{PingRequest, PingUploadTask, UploadResult, UploadTaskAction};
 
 const GLEAN_VERSION: &str = env!("CARGO_PKG_VERSION");
 const GLEAN_SCHEMA_VERSION: u32 = 1;
@@ -114,6 +124,21 @@ pub struct InternalConfiguration {
     pub app_build: String,
     /// Whether Glean should schedule "metrics" pings.
     pub use_core_mps: bool,
+    /// Whether Glean should, on init, trim its event storage to only the registered pings.
+    pub trim_data_to_registered_pings: bool,
+    /// The internal logging level.
+    pub log_level: Option<LevelFilter>,
+    /// The rate at which pings may be uploaded before they are throttled.
+    pub rate_limit: Option<PingRateLimit>,
+}
+
+/// How to specify the rate at which pings may be uploaded before they are throttled.
+#[derive(Debug, Clone)]
+pub struct PingRateLimit {
+    /// Length of time in seconds of a ping uploading interval.
+    pub seconds_per_interval: u64,
+    /// Number of pings that may be uploaded in a ping uploading interval.
+    pub pings_per_interval: u32,
 }
 
 /// Launches a new task on the global dispatch queue with a reference to the Glean singleton.
@@ -159,6 +184,7 @@ static STATE: OnceCell<Mutex<State>> = OnceCell::new();
 /// Get a reference to the global state object.
 ///
 /// Panics if no global state object was set.
+#[track_caller] // If this fails we're interested in the caller.
 fn global_state() -> &'static Mutex<State> {
     STATE.get().unwrap()
 }
@@ -189,6 +215,25 @@ fn setup_state(state: State) {
     }
 }
 
+/// An error returned from callbacks.
+#[derive(Debug)]
+pub enum CallbackError {
+    /// An unexpected error occured.
+    UnexpectedError,
+}
+
+impl fmt::Display for CallbackError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Unexpected error")
+    }
+}
+
+impl From<uniffi::UnexpectedUniFFICallbackError> for CallbackError {
+    fn from(_: uniffi::UnexpectedUniFFICallbackError) -> CallbackError {
+        CallbackError::UnexpectedError
+    }
+}
+
 /// A callback object used to trigger actions on the foreign-language side.
 ///
 /// A callback object is stored in glean-core for the entire lifetime of the application.
@@ -198,19 +243,30 @@ pub trait OnGleanEvents: Send {
     /// The language SDK can do additional things from within the same initializer thread,
     /// e.g. starting to observe application events for foreground/background behavior.
     /// The observer then needs to call the respective client activity API.
-    fn on_initialize_finished(&self);
+    fn initialize_finished(&self);
 
     /// Trigger the uploader whenever a ping was submitted.
     ///
     /// This should not block.
     /// The uploader needs to asynchronously poll Glean for new pings to upload.
-    fn trigger_upload(&self);
+    fn trigger_upload(&self) -> Result<(), CallbackError>;
 
     /// Start the Metrics Ping Scheduler.
     fn start_metrics_ping_scheduler(&self) -> bool;
 
     /// Called when upload is disabled and uploads should be stopped
-    fn cancel_uploads(&self);
+    fn cancel_uploads(&self) -> Result<(), CallbackError>;
+
+    /// Called on shutdown, before glean-core is fully shutdown.
+    ///
+    /// * This MUST NOT put any new tasks on the dispatcher.
+    ///   * New tasks will be ignored.
+    /// * This SHOULD NOT block arbitrarily long.
+    ///   * Shutdown waits for a maximum of 30 seconds.
+    fn shutdown(&self) -> Result<(), CallbackError> {
+        // empty by default
+        Ok(())
+    }
 }
 
 /// Initializes Glean.
@@ -227,6 +283,11 @@ pub fn glean_initialize(
     callbacks: Box<dyn OnGleanEvents>,
 ) {
     initialize_inner(cfg, client_info, callbacks);
+}
+
+/// Shuts down Glean in an orderly fashion.
+pub fn glean_shutdown() {
+    shutdown();
 }
 
 /// Creates and initializes a new Glean object for use in a subprocess.
@@ -262,6 +323,12 @@ fn initialize_inner(
         .name("glean.init".into())
         .spawn(move || {
             let upload_enabled = cfg.upload_enabled;
+            let trim_data_to_registered_pings = cfg.trim_data_to_registered_pings;
+
+            // Set the internal logging level.
+            if let Some(level) = cfg.log_level {
+                log::set_max_level(level)
+            }
 
             let glean = match Glean::new(cfg) {
                 Ok(glean) => glean,
@@ -314,7 +381,6 @@ fn initialize_inner(
                 // send a dirty startup baseline ping below.  Immediately set it to
                 // `false` so that dirty startup pings won't be sent if Glean
                 // initialization does not complete successfully.
-                // TODO Bug 1672956 will decide where to set this flag again.
                 dirty_flag = glean.is_dirty_flag_set();
                 glean.set_dirty_flag(false);
 
@@ -339,7 +405,7 @@ fn initialize_inner(
                 }
 
                 // Deal with any pending events so we can start recording new ones
-                pings_submitted = glean.on_ready_to_submit_pings();
+                pings_submitted = glean.on_ready_to_submit_pings(trim_data_to_registered_pings);
             });
 
             {
@@ -348,7 +414,9 @@ fn initialize_inner(
                 // 1. Pings were submitted through Glean and it is ready to upload those pings;
                 // 2. Upload is disabled, to upload a possible deletion-request ping.
                 if pings_submitted || !upload_enabled {
-                    state.callbacks.trigger_upload();
+                    if let Err(e) = state.callbacks.trigger_upload() {
+                        log::error!("Triggering upload failed. Error: {}", e);
+                    }
                 }
             }
 
@@ -371,7 +439,9 @@ fn initialize_inner(
                 // ping startup check should be performed before any other ping, since it relies
                 // on being dispatched to the API context before any other metric.
                 if state.callbacks.start_metrics_ping_scheduler() {
-                    state.callbacks.trigger_upload();
+                    if let Err(e) = state.callbacks.trigger_upload() {
+                        log::error!("Triggering upload failed. Error: {}", e);
+                    }
                 }
             }
 
@@ -388,7 +458,9 @@ fn initialize_inner(
                     // Note that unwrapping below is safe: the function will return an
                     // `Ok` value for a known ping.
                     if glean.submit_ping_by_name("baseline", Some("dirty_startup")) {
-                        state.callbacks.trigger_upload();
+                        if let Err(e) = state.callbacks.trigger_upload() {
+                            log::error!("Triggering upload failed. Error: {}", e);
+                        }
                     }
                 }
 
@@ -402,6 +474,10 @@ fn initialize_inner(
             });
 
             // Signal Dispatcher that init is complete
+            // bug 1839433: It is important that this happens after any init tasks
+            // that shutdown() depends on. At time of writing that's only setting up
+            // the global Glean, but it is probably best to flush the preinit queue
+            // as late as possible in the glean.init thread.
             match dispatcher::flush_init() {
                 Ok(task_count) if task_count > 0 => {
                     core::with_glean(|glean| {
@@ -414,7 +490,7 @@ fn initialize_inner(
             }
 
             let state = global_state().lock().unwrap();
-            state.callbacks.on_initialize_finished();
+            state.callbacks.initialize_finished();
         })
         .expect("Failed to spawn Glean's init thread");
 
@@ -441,32 +517,134 @@ pub fn join_init() {
     }
 }
 
+/// Call the `shutdown` callback.
+///
+/// This calls the shutdown in a separate thread and waits up to 30s for it to finish.
+/// If not finished in that time frame it continues.
+///
+/// Under normal operation that is fine, as the main process will end
+/// and thus the thread will get killed.
+fn uploader_shutdown() {
+    let timer_id = core::with_glean(|glean| glean.additional_metrics.shutdown_wait.start_sync());
+    let (tx, rx) = unbounded();
+
+    let handle = thread::Builder::new()
+        .name("glean.shutdown".to_string())
+        .spawn(move || {
+            let state = global_state().lock().unwrap();
+            if let Err(e) = state.callbacks.shutdown() {
+                log::error!("Shutdown callback failed: {e:?}");
+            }
+
+            // Best-effort sending. The other side might have timed out already.
+            let _ = tx.send(()).ok();
+        })
+        .expect("Unable to spawn thread to wait on shutdown");
+
+    // TODO: 30 seconds? What's a good default here? Should this be configurable?
+    // Reasoning:
+    //   * If we shut down early we might still be processing pending pings.
+    //     In this case we wait at most 3 times for 1s = 3s before we upload.
+    //   * If we're rate-limited the uploader sleeps for up to 60s.
+    //     Thus waiting 30s will rarely allow another upload.
+    //   * We don't know how long uploads take until we get data from bug 1814592.
+    let result = rx.recv_timeout(Duration::from_secs(30));
+
+    let stop_time = time::precise_time_ns();
+    core::with_glean(|glean| {
+        glean
+            .additional_metrics
+            .shutdown_wait
+            .set_stop_and_accumulate(glean, timer_id, stop_time);
+    });
+
+    if result.is_err() {
+        log::warn!("Waiting for upload failed. We're shutting down.");
+    } else {
+        let _ = handle.join().ok();
+    }
+}
+
 /// Shuts down Glean in an orderly fashion.
 pub fn shutdown() {
-    // Either init was never called or Glean was not fully initialized
-    // (e.g. due to an error).
-    // There's the potential that Glean is not initialized _yet_,
-    // but in progress. That's fine, we shutdown either way before doing any work.
-    if !was_initialize_called() || core::global_glean().is_none() {
+    // Shutdown might have been called
+    // 1) Before init was called
+    //    * (data loss, oh well. Not enough time to do squat)
+    // 2) After init was called, but before it completed
+    //    * (we're willing to wait a little bit for init to complete)
+    // 3) After init completed
+    //    * (we can shut down immediately)
+
+    // Case 1: "Before init was called"
+    if !was_initialize_called() {
         log::warn!("Shutdown called before Glean is initialized");
         if let Err(e) = dispatcher::kill() {
             log::error!("Can't kill dispatcher thread: {:?}", e);
         }
-
         return;
     }
 
+    // Case 2: "After init was called, but before it completed"
+    if core::global_glean().is_none() {
+        log::warn!("Shutdown called before Glean is initialized. Waiting.");
+        // We can't join on the `glean.init` thread because there's no (easy) way
+        // to do that with a timeout. Instead, we wait for the preinit queue to
+        // empty, which is the last meaningful thing we do on that thread.
+
+        // TODO: Make the timeout configurable?
+        // We don't need the return value, as we're less interested in whether
+        // this times out than we are in whether there's a Global Glean at the end.
+        let _ = dispatcher::block_on_queue_timeout(Duration::from_secs(10));
+    }
+    // We can't shut down Glean if there's no Glean to shut down.
+    if core::global_glean().is_none() {
+        log::warn!("Waiting for Glean initialization timed out. Exiting.");
+        if let Err(e) = dispatcher::kill() {
+            log::error!("Can't kill dispatcher thread: {:?}", e);
+        }
+        return;
+    }
+
+    // Case 3: "After init completed"
     crate::launch_with_glean_mut(|glean| {
         glean.cancel_metrics_ping_scheduler();
         glean.set_dirty_flag(false);
     });
 
-    // We need to wait for above task to finish.
-    dispatcher::block_on_queue();
+    // We need to wait for above task to finish,
+    // but we also don't wait around forever.
+    //
+    // TODO: Make the timeout configurable?
+    // The default hang watchdog on Firefox waits 60s,
+    // Glean's `uploader_shutdown` further below waits up to 30s.
+    let timer_id = core::with_glean(|glean| {
+        glean
+            .additional_metrics
+            .shutdown_dispatcher_wait
+            .start_sync()
+    });
+    let blocked = dispatcher::block_on_queue_timeout(Duration::from_secs(10));
+
+    // Always record the dispatcher wait, regardless of the timeout.
+    let stop_time = time::precise_time_ns();
+    core::with_glean(|glean| {
+        glean
+            .additional_metrics
+            .shutdown_dispatcher_wait
+            .set_stop_and_accumulate(glean, timer_id, stop_time);
+    });
+    if blocked.is_err() {
+        log::error!(
+            "Timeout while blocking on the dispatcher. No further shutdown cleanup will happen."
+        );
+        return;
+    }
 
     if let Err(e) = dispatcher::shutdown() {
         log::error!("Can't shutdown dispatcher thread: {:?}", e);
     }
+
+    uploader_shutdown();
 
     // Be sure to call this _after_ draining the dispatcher
     core::with_glean(|glean| {
@@ -496,11 +674,15 @@ fn initialize_core_metrics(glean: &Glean, client_info: &ClientInfoMetrics) {
     if let Some(app_channel) = client_info.channel.as_ref() {
         core_metrics::internal_metrics::app_channel.set_sync(glean, app_channel);
     }
-    core_metrics::internal_metrics::os_version.set_sync(glean, system::get_os_version());
-    core_metrics::internal_metrics::architecture.set_sync(glean, system::ARCH.to_string());
+
+    core_metrics::internal_metrics::os_version.set_sync(glean, &client_info.os_version);
+    core_metrics::internal_metrics::architecture.set_sync(glean, &client_info.architecture);
 
     if let Some(android_sdk_version) = client_info.android_sdk_version.as_ref() {
         core_metrics::internal_metrics::android_sdk_version.set_sync(glean, android_sdk_version);
+    }
+    if let Some(windows_build_number) = client_info.windows_build_number.as_ref() {
+        core_metrics::internal_metrics::windows_build_number.set_sync(glean, *windows_build_number);
     }
     if let Some(device_manufacturer) = client_info.device_manufacturer.as_ref() {
         core_metrics::internal_metrics::device_manufacturer.set_sync(glean, device_manufacturer);
@@ -537,7 +719,7 @@ pub extern "C" fn glean_enable_logging() {
                 .build();
             android_logger::init_once(
                 android_logger::Config::default()
-                    .with_min_level(log::Level::Debug)
+                    .with_max_level(log::LevelFilter::Debug)
                     .with_filter(filter)
                     .with_tag("libglean_ffi"),
             );
@@ -569,10 +751,14 @@ pub extern "C" fn glean_enable_logging() {
         };
     }
 
-    // Make sure logging does something on non Android platforms as well.
+    // When specifically requested make sure logging does something on non-Android platforms as well.
     // Use the RUST_LOG environment variable to set the desired log level,
     // e.g. setting RUST_LOG=debug sets the log level to debug.
-    #[cfg(all(not(target_os = "android"), not(target_os = "ios")))]
+    #[cfg(all(
+        not(target_os = "android"),
+        not(target_os = "ios"),
+        feature = "enable_env_logger"
+    ))]
     {
         match env_logger::try_init() {
             Ok(_) => log::trace!("stdout logging should be hooked up!"),
@@ -598,7 +784,9 @@ pub fn glean_set_upload_enabled(enabled: bool) {
             // Stop the MPS if its handled within Rust.
             glean.cancel_metrics_ping_scheduler();
             // Stop wrapper-controlled uploader.
-            state.callbacks.cancel_uploads();
+            if let Err(e) = state.callbacks.cancel_uploads() {
+                log::error!("Canceling upload failed. Error: {}", e);
+            }
         }
 
         glean.set_upload_enabled(enabled);
@@ -608,7 +796,9 @@ pub fn glean_set_upload_enabled(enabled: bool) {
         }
 
         if original_enabled && !enabled {
-            state.callbacks.trigger_upload();
+            if let Err(e) = state.callbacks.trigger_upload() {
+                log::error!("Triggering upload failed. Error: {}", e);
+            }
         }
     })
 }
@@ -661,6 +851,21 @@ pub fn glean_set_experiment_inactive(experiment_id: String) {
 pub fn glean_test_get_experiment_data(experiment_id: String) -> Option<RecordedExperiment> {
     block_on_dispatcher();
     core::with_glean(|glean| glean.test_get_experiment_data(experiment_id.to_owned()))
+}
+
+/// Sets a remote configuration to override metrics' default enabled/disabled
+/// state
+///
+/// See [`core::Glean::set_metrics_enabled_config`].
+pub fn glean_set_metrics_enabled_config(json: String) {
+    match MetricsEnabledConfig::try_from(json) {
+        Ok(cfg) => launch_with_glean(|glean| {
+            glean.set_metrics_enabled_config(cfg);
+        }),
+        Err(e) => {
+            log::error!("Error setting metrics feature config: {:?}", e);
+        }
+    }
 }
 
 /// Sets a debug view tag.
@@ -755,7 +960,9 @@ pub fn glean_handle_client_active() {
         // the uploader. It's fine to trigger it if no ping was generated:
         // it will bail out.
         let state = global_state().lock().unwrap();
-        state.callbacks.trigger_upload();
+        if let Err(e) = state.callbacks.trigger_upload() {
+            log::error!("Triggering upload failed. Error: {}", e);
+        }
     });
 
     // The previous block of code may send a ping containing the `duration` metric,
@@ -786,7 +993,9 @@ pub fn glean_handle_client_inactive() {
         // the uploader. It's fine to trigger it if no ping was generated:
         // it will bail out.
         let state = global_state().lock().unwrap();
-        state.callbacks.trigger_upload();
+        if let Err(e) = state.callbacks.trigger_upload() {
+            log::error!("Triggering upload failed. Error: {}", e);
+        }
     })
 }
 
@@ -798,7 +1007,9 @@ pub fn glean_submit_ping_by_name(ping_name: String, reason: Option<String>) {
 
         if sent {
             let state = global_state().lock().unwrap();
-            state.callbacks.trigger_upload();
+            if let Err(e) = state.callbacks.trigger_upload() {
+                log::error!("Triggering upload failed. Error: {}", e);
+            }
         }
     })
 }
@@ -824,12 +1035,20 @@ pub fn glean_set_test_mode(enabled: bool) {
 /// **TEST-ONLY Method**
 ///
 /// Destroy the underlying database.
-pub fn glean_test_destroy_glean(clear_stores: bool) {
+pub fn glean_test_destroy_glean(clear_stores: bool, data_path: Option<String>) {
     if was_initialize_called() {
         // Just because initialize was called doesn't mean it's done.
         join_init();
 
         dispatcher::reset_dispatcher();
+
+        // Only useful if Glean initialization finished successfully
+        // and set up the storage.
+        let has_storage =
+            core::with_opt_glean(|glean| glean.storage_opt().is_some()).unwrap_or(false);
+        if has_storage {
+            uploader_shutdown();
+        }
 
         if core::global_glean().is_some() {
             core::with_glean_mut(|glean| {
@@ -842,6 +1061,12 @@ pub fn glean_test_destroy_glean(clear_stores: bool) {
 
         // Allow us to go through initialization again.
         INITIALIZE_CALLED.store(false, Ordering::SeqCst);
+    } else if clear_stores {
+        if let Some(data_path) = data_path {
+            let _ = std::fs::remove_dir_all(data_path).ok();
+        } else {
+            log::warn!("Asked to clear stores before initialization, but no data path given.");
+        }
     }
 }
 
@@ -851,7 +1076,7 @@ pub fn glean_get_upload_task() -> PingUploadTask {
 }
 
 /// Processes the response from an attempt to upload a ping.
-pub fn glean_process_ping_upload_response(uuid: String, result: UploadResult) {
+pub fn glean_process_ping_upload_response(uuid: String, result: UploadResult) -> UploadTaskAction {
     core::with_glean(|glean| glean.process_ping_upload_response(&uuid, result))
 }
 
@@ -873,11 +1098,17 @@ static FD_LOGGER: OnceCell<fd_logger::FdLogger> = OnceCell::new();
 /// `fd` is a writable file descriptor (on Unix) or file handle (on Windows).
 ///
 /// # Safety
-/// Unsafe because the fd u64 passed in will be interpreted as either a file
-/// descriptor (Unix) or file handle (Windows) without any checking.
+///
+/// `fd` MUST be a valid open file descriptor (Unix) or file handle (Windows).
+/// This function is marked safe,
+/// because we can't call unsafe functions from generated UniFFI code.
 #[cfg(all(not(target_os = "android"), not(target_os = "ios")))]
 pub fn glean_enable_logging_to_fd(fd: u64) {
-    // SAFETY: TODO.
+    // SAFETY:
+    // This functions is unsafe.
+    // Due to UniFFI restrictions we cannot mark it as such.
+    //
+    // `fd` MUST be a valid open file descriptor (Unix) or file handle (Windows).
     unsafe {
         // Set up logging to a file descriptor/handle. For this usage, the
         // language binding should setup a pipe and pass in the descriptor to
@@ -902,7 +1133,21 @@ pub fn glean_enable_logging_to_fd(_fd: u64) {
 #[allow(missing_docs)]
 mod ffi {
     use super::*;
-    uniffi_macros::include_scaffolding!("glean");
+    uniffi::include_scaffolding!("glean");
+
+    type CowString = Cow<'static, str>;
+
+    impl UniffiCustomTypeConverter for CowString {
+        type Builtin = String;
+
+        fn into_custom(val: Self::Builtin) -> uniffi::Result<Self> {
+            Ok(Cow::from(val))
+        }
+
+        fn from_custom(obj: Self) -> Self::Builtin {
+            obj.into_owned()
+        }
+    }
 }
 pub use ffi::*;
 

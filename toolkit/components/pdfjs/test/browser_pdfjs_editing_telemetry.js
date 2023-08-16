@@ -28,7 +28,7 @@ add_task(async function test() {
 
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
-    async function(browser) {
+    async function (browser) {
       await SpecialPowers.pushPrefEnv({
         set: [["pdfjs.annotationEditorMode", 0]],
       });
@@ -36,7 +36,15 @@ add_task(async function test() {
       Services.fog.testResetFOG();
 
       // check that PDF is opened with internal viewer
-      await waitForPdfJS(browser, TESTROOT + "file_pdfjs_test.pdf");
+      await waitForPdfJSAllLayers(browser, TESTROOT + "file_pdfjs_test.pdf", [
+        [
+          "annotationEditorLayer",
+          "annotationLayer",
+          "textLayer",
+          "canvasWrapper",
+        ],
+        ["annotationEditorLayer", "textLayer", "canvasWrapper"],
+      ]);
 
       let spanBox = await getSpanBox(browser, "and found references");
 
@@ -49,11 +57,11 @@ add_task(async function test() {
       await BrowserTestUtils.waitForCondition(
         async () => (await countElements(browser, ".freeTextEditor")) !== 0
       );
-      Assert.equal(await countElements(browser, ".freeTextEditor"), 1);
+      Assert.equal(await countElements(browser, ".freeTextEditor"), 2);
 
       await Services.fog.testFlushAllChildren();
 
-      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 1);
+      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 2);
 
       spanBox = await getSpanBox(browser, "forums and ask questions");
       await addFreeText(browser, "world", spanBox);
@@ -61,11 +69,11 @@ add_task(async function test() {
       await BrowserTestUtils.waitForCondition(
         async () => (await countElements(browser, ".freeTextEditor")) !== 1
       );
-      Assert.equal(await countElements(browser, ".freeTextEditor"), 2);
+      Assert.equal(await countElements(browser, ".freeTextEditor"), 3);
 
       await Services.fog.testFlushAllChildren();
 
-      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 2);
+      Assert.equal(Glean.pdfjs.editing.freetext.testGetValue(), 3);
 
       Assert.equal(Glean.pdfjs.editing.print.testGetValue() || 0, 0);
       document.getElementById("cmd_print").doCommand();
@@ -79,7 +87,7 @@ add_task(async function test() {
 
       Assert.equal(Glean.pdfjs.editing.print.testGetValue(), 1);
 
-      await SpecialPowers.spawn(browser, [], async function() {
+      await SpecialPowers.spawn(browser, [], async function () {
         var viewer = content.wrappedJSObject.PDFViewerApplication;
         await viewer.close();
       });

@@ -293,14 +293,26 @@ to alter the localization attributes in the DOM. Fluent provides a method to fac
 This will set the :code:`data-l10n-id` on the element and translate it before the next
 animation frame.
 
-The reason to use this API over manually setting the attribute is that it also
-facilitates encoding l10n arguments as JSON:
+This API can be used to set both the ID and the arguments at the same time.
 
 .. code-block:: javascript
 
   document.l10n.setAttributes(element, "containers-disable-alert-ok-button", {
     tabCount: 5
   });
+
+If only the arguments need to be updated, then it's possible to use the :code:`setArgs`
+method.
+
+.. code-block:: javascript
+
+  document.l10n.setArgs(element, {
+    tabCount: 5
+  });
+
+On debug builds if the Fluent arguments are not provided, then Firefox will crash. This
+is done so that these errors are caught in CI. On rare occasions it may be necessary
+to work around this crash by providing a blank string as an argument value.
 
 __ https://github.com/projectfluent/fluent/wiki/Good-Practices-for-Developers
 
@@ -703,6 +715,17 @@ DocumentL10n
 
 DocumentL10n implements the DocumentL10n WebIDL API and allows Document to
 communicate with DOMLocalization.
+
+Events
+^^^^^^
+
+DOM translation is asynchronous (e.g., setting a `data-l10n-id` attribute won't
+immediately reflect the localized content in the DOM).
+
+We expose a :js:`Document.hasPendingL10nMutations` member that reflects whether
+there are any async operations pending. When they are finished, the
+`L10nMutationsFinished` event is fired on the document, so that chrome code can
+be certain all the async operations are done.
 
 L10nRegistry
 ------------

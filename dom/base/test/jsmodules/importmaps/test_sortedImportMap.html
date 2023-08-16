@@ -19,8 +19,8 @@ test_simpleImportMap.html, here we reverse the order, for example, we list
 "scope1/" after "scope1/scope2/" in this test.
 
 See:
-https://wicg.github.io/import-maps/#sort-and-normalize-a-specifier-map, Step 3.
-https://wicg.github.io/import-maps/#sort-and-normalize-scopes, Step 3.
+https://html.spec.whatwg.org/multipage/webappapis.html#sorting-and-normalizing-a-module-specifier-map, Step 3.
+https://html.spec.whatwg.org/multipage/webappapis.html#sorting-and-normalizing-scopes, Step 3.
 -->
 
 <script type="importmap">
@@ -33,10 +33,10 @@ https://wicg.github.io/import-maps/#sort-and-normalize-scopes, Step 3.
   },
   "scopes": {
     "chrome://mochitests/content/chrome/dom/base/test/jsmodules/importmaps/scope1/scope2/": {
-      "simple": "/content/chrome/dom/base/test/jsmodules/importmaps/scope1/scope2/module_simpleExport.js"
+      "simple": "/content/chrome/dom/base/test/jsmodules/importmaps/scope1/scope2/module_simpleExport.mjs"
     },
     "chrome://mochitests/content/chrome/dom/base/test/jsmodules/importmaps/scope1/": {
-      "simple": "/content/chrome/dom/base/test/jsmodules/importmaps/scope1/module_simpleExport.js"
+      "simple": "/content/chrome/dom/base/test/jsmodules/importmaps/scope1/module_simpleExport.mjs"
     }
   }
 }
@@ -57,6 +57,6 @@ https://wicg.github.io/import-maps/#sort-and-normalize-scopes, Step 3.
     SimpleTest.finish();
   }
 </script>
-<script type="module" src="module_sortedImportMap.js"></script>
-<script type="module" src="scope1/scope2/module_simpleImportMap.js"></script>
+<script type="module" src="module_sortedImportMap.mjs"></script>
+<script type="module" src="scope1/scope2/module_simpleImportMap.mjs"></script>
 <body onload='testLoaded()'></body>

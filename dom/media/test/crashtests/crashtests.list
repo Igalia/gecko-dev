@@ -99,6 +99,7 @@ load 1489160.html
 load disconnect-wrong-destination.html
 load analyser-channels-1.html
 load audiocontext-after-unload-1.html
+load audiocontext-after-xhr.html
 load audiocontext-double-suspend.html
 skip-if(Android) load audioworkletnode-after-unload-1.html # Needs secure context
 load buffer-source-duration-1.html
@@ -145,6 +146,7 @@ load mp4_box_emptyrange.mp4 # Bug 1667480
 load 1673526-1.html
 load 1673526-2.html
 load 1693043.html
+load 1696511.html
 load 1697521.html
 load 1708790.html
 skip-if(cocoaWidget) load 1709130.html # video failed decoding on MacOS, 1709684
@@ -155,4 +157,11 @@ load 1748272.html
 load 1752917.html
 load 1762620.html
 load 1765842.html
-load 1770073.html
+load adts.aac # Bug 1770073
+load 1787281.html
+load 1798778.html
+load 1830206.html
+load 1833896.mp4
+load 1833894.mp4
+load 1835164.html
+load 1840002.webm

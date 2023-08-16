@@ -299,7 +299,7 @@ impl<'ctx> PulseStream<'ctx> {
         fn check_error(s: &pulse::Stream, u: *mut c_void) {
             let stm = unsafe { &mut *(u as *mut PulseStream) };
             if !s.get_state().is_good() {
-                cubeb_log!("Calling error callback");
+                cubeb_alog!("Calling error callback");
                 stm.state_change_callback(ffi::CUBEB_STATE_ERROR);
             }
             stm.context.mainloop.signal();
@@ -319,7 +319,7 @@ impl<'ctx> PulseStream<'ctx> {
                 readable_size
             }
 
-            cubeb_logv!("Input callback buffer size {}", nbytes);
+            cubeb_alogv!("Input callback buffer size {}", nbytes);
             let stm = unsafe { &mut *(u as *mut PulseStream) };
             if stm.shutdown {
                 return;
@@ -380,7 +380,7 @@ impl<'ctx> PulseStream<'ctx> {
         }
 
         fn write_data(_: &pulse::Stream, nbytes: usize, u: *mut c_void) {
-            cubeb_logv!("Output callback to be written buffer size {}", nbytes);
+            cubeb_alogv!("Output callback to be written buffer size {}", nbytes);
             let stm = unsafe { &mut *(u as *mut PulseStream) };
             if stm.shutdown || stm.state != ffi::CUBEB_STATE_STARTED {
                 return;
@@ -400,7 +400,7 @@ impl<'ctx> PulseStream<'ctx> {
                         let popped_frames = buffered_input_frames - nframes;
                         input_buffer_manager
                             .trim(nframes * stm.input_sample_spec.channels as usize);
-                        cubeb_log!("Dropping {} frames in input buffer.", popped_frames);
+                        cubeb_alog!("Dropping {} frames in input buffer.", popped_frames);
                     }
                 }
 
@@ -1025,7 +1025,7 @@ impl<'ctx> PulseStream<'ctx> {
         true
     }
 
-    #[cfg_attr(feature = "cargo-clippy", allow(cyclomatic_complexity))]
+    #[cfg_attr(feature = "cargo-clippy", allow(clippy::cognitive_complexity))]
     fn trigger_user_callback(&mut self, input_data: *const c_void, nbytes: usize) {
         fn drained_cb(
             a: &pulse::MainloopApi,
@@ -1066,6 +1066,7 @@ impl<'ctx> PulseStream<'ctx> {
                             read_offset
                         );
                         let read_ptr = unsafe { (input_data as *const u8).add(read_offset) };
+                        #[cfg_attr(feature = "cargo-clippy", allow(clippy::unnecessary_cast))]
                         let mut got = unsafe {
                             self.data_callback.unwrap()(
                                 self as *const _ as *mut _,

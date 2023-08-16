@@ -14,9 +14,9 @@
 #include <fcntl.h>
 #include <sstream>
 
+using std::ostringstream;
 using std::string;
 using std::vector;
-using std::ostringstream;
 
 using namespace CrashReporter;
 
@@ -379,7 +379,7 @@ static bool RestartApplication() {
       [checkbox setFrame:frame];
     }
     // keep existing spacing on left side, + 20 px spare on right
-    float neededWidth = frame.origin.x + frame.size.width + 20;
+    float neededWidth = frame.origin.x + checkbox.intrinsicContentSize.width + 20;
     if (neededWidth > windowFrame.size.width) {
       windowFrame.size.width = neededWidth;
       [mWindow setFrame:windowFrame display:true animate:NO];
@@ -725,13 +725,9 @@ bool UIGetIniPath(string& path) {
 }
 
 bool UIGetSettingsPath(const string& vendor, const string& product, string& settingsPath) {
-  FSRef foundRef;
-  OSErr err = FSFindFolder(kUserDomain, kApplicationSupportFolderType, kCreateFolder, &foundRef);
-  if (err != noErr) return false;
-
-  unsigned char path[PATH_MAX];
-  FSRefMakePath(&foundRef, path, sizeof(path));
-  NSString* destPath = [NSString stringWithUTF8String:reinterpret_cast<char*>(path)];
+  NSArray* paths =
+      NSSearchPathForDirectoriesInDomains(NSApplicationSupportDirectory, NSUserDomainMask, YES);
+  NSString* destPath = [paths firstObject];
 
   // Note that MacOS ignores the vendor when creating the profile hierarchy -
   // all application preferences directories live alongside one another in

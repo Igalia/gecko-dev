@@ -22,19 +22,17 @@ add_task(async function test_session_data_broadcast() {
   await BrowserTestUtils.browserLoaded(contentBrowser1);
   const parentBrowser1 = createParentBrowserElement(tab1, "content");
   const parentBrowser2 = createParentBrowserElement(tab1, "chrome");
-  const {
-    extension: extension1,
-    sidebarBrowser: extSidebarBrowser1,
-  } = await installSidebarExtension();
+  const { extension: extension1, sidebarBrowser: extSidebarBrowser1 } =
+    await installSidebarExtension();
 
   const root = createRootMessageHandler("session-id-event");
 
   // When the windowglobal command.jsm module applies the session data
-  // browser_session_data_browser_element, it will emit an internal event.
+  // browser_session_data_browser_element, it will emit an event.
   // Collect the events to detect which MessageHandlers have been started.
-  info("Watch internal events emitted when session data is applied");
+  info("Watch events emitted when session data is applied");
   const sessionDataEvents = [];
-  const onRootEvent = function(evtName, wrappedEvt) {
+  const onRootEvent = function (evtName, wrappedEvt) {
     if (wrappedEvt.name === "received-session-data") {
       sessionDataEvents.push(wrappedEvt.data.contextId);
     }
@@ -42,7 +40,7 @@ add_task(async function test_session_data_broadcast() {
   root.on("message-handler-event", onRootEvent);
 
   info("Add a new session data item, expect one return value");
-  await root.addSessionData({
+  await root.addSessionDataItem({
     moduleName: "command",
     category: "browser_session_data_browser_element",
     contextDescriptor: {
@@ -69,10 +67,8 @@ add_task(async function test_session_data_broadcast() {
   const parentBrowser3 = createParentBrowserElement(contentBrowser2, "content");
   const parentBrowser4 = createParentBrowserElement(contentBrowser2, "chrome");
 
-  const {
-    extension: extension2,
-    sidebarBrowser: extSidebarBrowser2,
-  } = await installSidebarExtension();
+  const { extension: extension2, sidebarBrowser: extSidebarBrowser2 } =
+    await installSidebarExtension();
 
   info("Wait until the session data was applied to the new tab");
   await TestUtils.waitForCondition(() =>

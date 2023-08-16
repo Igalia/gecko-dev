@@ -21,7 +21,7 @@ for feature in gkrust_features:
 # Target directory doesn't matter a lot here, since we can't share panic=abort
 # compilation artifacts with gkrust.
 RUST_TESTS = [
-    "fog",
+    "firefox-on-glean",
     "l10nregistry",
     "selectors",
     "servo_arc",
@@ -38,6 +38,10 @@ RUST_TESTS = [
 # altogether.
 if not CONFIG["MOZ_CODE_COVERAGE"]:
     RUST_TESTS += ["stylo_tests"]
+    # Same happens for the style tests, except the windows linker is not great
+    # at eliminating dead code, so we end up with some missing symbols too.
+    if CONFIG["OS_TARGET"] != "WINNT":
+        RUST_TESTS += ["style"]
 
 if CONFIG["CPU_ARCH"] != "x86":
     # malloc_size_of_derive is a build dependency, so if we are doing
@@ -46,3 +50,9 @@ if CONFIG["CPU_ARCH"] != "x86":
 
 if CONFIG["MOZ_BITS_DOWNLOAD"]:
     RUST_TESTS += ["bits_client"]
+
+# Export the `rure` crate's included .h file. The symbols defined in that file
+# will be exported from the `gkrust-shared` crate.
+EXPORTS += [
+    "/third_party/rust/rure/include/rure.h",
+]

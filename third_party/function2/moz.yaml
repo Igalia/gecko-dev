@@ -10,9 +10,9 @@ origin:
 
   url: https://naios.github.io/function2/
 
-  release: 02ca99831de59c7c3a4b834789260253cace0ced (2021-06-16T17:21:46Z).
+  release: 9e303865d14f1204f09379e37bbeb30c4375139a (2023-07-13T21:46:03Z).
 
-  revision: 02ca99831de59c7c3a4b834789260253cace0ced
+  revision: 9e303865d14f1204f09379e37bbeb30c4375139a
 
   license: BSL-1.0
   license-file: LICENSE.txt
@@ -22,7 +22,6 @@ updatebot:
   maintainer-bz: nika@thelayzells.com
   tasks:
     - type: vendoring
-      branch: master
       enabled: True
       frequency: every
 

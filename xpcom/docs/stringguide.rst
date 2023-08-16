@@ -68,7 +68,7 @@ There are a number of additional string classes:
 * ``nsLiteral[C]String`` which should rarely be constructed explicitly but
   usually through the ``""_ns`` and ``u""_ns`` user-defined string literals.
   ``nsLiteral[C]String`` is trivially constructible and destructible, and
-  therefore does not emit construction/destruction code when stored in statics,
+  therefore does not emit construction/destruction code when stored in static,
   as opposed to the other string classes.
 
 The Major String Classes
@@ -334,7 +334,7 @@ indicate success or OOM. Calling ``RestartBulkWrite()`` invalidates
 previously-obtained span, raw pointer or length.
 
 Once you are done writing, call ``Finish()``. It takes two arguments: the new
-logical length of the string (which must not exceed the capacity retuned by
+logical length of the string (which must not exceed the capacity returned by
 the ``Length()`` method of the handle) and a boolean indicating whether it's
 OK to attempt to reallocate a smaller buffer in case a smaller mozjemalloc
 bucket could accommodate the new logical length.
@@ -462,7 +462,7 @@ ones are defined in the `Encoding Standard <https://encoding.spec.whatwg.org/>`_
 Conversions from these encodings to
 UTF-8 and UTF-16 are provided by `mozilla::Encoding
 <https://searchfox.org/mozilla-central/source/intl/Encoding.h#109>`_.
-Additonally, on Windows the are some rare cases (e.g. drag&drop) where it's
+Additionally, on Windows the are some rare cases (e.g. drag&drop) where it's
 necessary to call a system API with data encoded in the Windows
 locale-dependent legacy encoding instead of UTF-16. In those rare cases, use
 ``MultiByteToWideChar``/``WideCharToMultiByte`` from kernel32.dll. Do not use
@@ -655,7 +655,7 @@ deal with response bodies.)
 
 .. cpp:function:: NS_ConvertASCIItoUTF16(const nsACString&)
 
-    A ``nsAutoString`` which holds a temproary buffer contianing the value of
+    A ``nsAutoString`` which holds a temporary buffer containing the value of
     the Latin1 to UTF-16 conversion.
 
 .. cpp:function:: void CopyASCIItoUTF16(Span<const char>, nsAString&)
@@ -1092,19 +1092,3 @@ Class Reference
     .. cpp:function:: void SetLength(size_type)
 
     .. cpp:function:: Result<BulkWriteHandle<char_type>, nsresult> BulkWrite(size_type aCapacity, size_type aPrefixToPreserve, bool aAllowShrinking)
-
-
-Original Document Information
------------------------------
-
-This document was originally hosted on MDN as part of the XPCOM guide.
-
-* Author: `Alec Flett <mailto:alecf@flett.org>`_
-* Copyright Information: Portions of this content are © 1998–2007 by individual mozilla.org contributors; content available under a Creative Commons license.
-* Thanks to David Baron for `actual docs <http://dbaron.org/mozilla/coding-practices>`_,
-* Peter Annema for lots of direction
-* Myk Melez for some more docs
-* David Bradley for a diagram
-* Revised by Darin Fisher for Mozilla 1.7
-* Revised by Jungshik Shin to clarify character encoding issues
-* Migrated to in-tree documentation by Nika Layzell

@@ -13,7 +13,9 @@
 #include <limits.h>
 #include <type_traits>
 
+#include "js/AllocPolicy.h"
 #include "js/GCAnnotations.h"
+#include "js/HashTable.h"
 #include "js/shadow/String.h"  // JS::shadow::String
 #include "js/shadow/Symbol.h"  // JS::shadow::Symbol
 #include "js/shadow/Zone.h"    // JS::shadow::Zone
@@ -206,7 +208,9 @@ struct MarkBitmap {
   inline bool isMarkedBlack(const TenuredCell* cell);
   inline bool isMarkedGray(const TenuredCell* cell);
   inline bool markIfUnmarked(const TenuredCell* cell, MarkColor color);
+  inline bool markIfUnmarkedAtomic(const TenuredCell* cell, MarkColor color);
   inline void markBlack(const TenuredCell* cell);
+  inline void markBlackAtomic(const TenuredCell* cell);
   inline void copyMarkBit(TenuredCell* dst, const TenuredCell* src,
                           ColorBit colorBit);
   inline void unmark(const TenuredCell* cell);
@@ -593,15 +597,13 @@ MOZ_ALWAYS_INLINE bool CellHasStoreBuffer(const Cell* cell) {
 } /* namespace detail */
 
 MOZ_ALWAYS_INLINE bool IsInsideNursery(const Cell* cell) {
-  if (!cell) {
-    return false;
-  }
+  MOZ_ASSERT(cell);
   return detail::CellHasStoreBuffer(cell);
 }
 
 MOZ_ALWAYS_INLINE bool IsInsideNursery(const TenuredCell* cell) {
-  MOZ_ASSERT_IF(
-      cell, !detail::CellHasStoreBuffer(reinterpret_cast<const Cell*>(cell)));
+  MOZ_ASSERT(cell);
+  MOZ_ASSERT(!IsInsideNursery(reinterpret_cast<const Cell*>(cell)));
   return false;
 }
 

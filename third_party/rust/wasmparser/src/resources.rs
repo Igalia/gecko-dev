@@ -13,7 +13,10 @@
  * limitations under the License.
  */
 
-use crate::{FuncType, GlobalType, MemoryType, TableType, ValType};
+use crate::{
+    BinaryReaderError, FuncType, GlobalType, HeapType, MemoryType, RefType, TableType, ValType,
+    WasmFeatures,
+};
 use std::ops::Range;
 
 /// Types that qualify as Wasm function types for validation purposes.
@@ -208,10 +211,47 @@ pub trait WasmModuleResources {
     fn global_at(&self, at: u32) -> Option<GlobalType>;
     /// Returns the `FuncType` associated with the given type index.
     fn func_type_at(&self, type_idx: u32) -> Option<&Self::FuncType>;
+    /// Returns the type index associated with the given function
+    /// index. type_of_function = func_type_at(type_index_of_function)
+    fn type_index_of_function(&self, func_idx: u32) -> Option<u32>;
     /// Returns the `FuncType` associated with the given function index.
     fn type_of_function(&self, func_idx: u32) -> Option<&Self::FuncType>;
     /// Returns the element type at the given index.
-    fn element_type_at(&self, at: u32) -> Option<ValType>;
+    fn element_type_at(&self, at: u32) -> Option<RefType>;
+    /// Under the function references proposal, returns whether t1 <=
+    /// t2. Otherwise, returns whether t1 == t2
+    fn matches(&self, t1: ValType, t2: ValType) -> bool;
+    /// Check a value type. This requires using func_type_at to check references
+    fn check_value_type(
+        &self,
+        t: ValType,
+        features: &WasmFeatures,
+        offset: usize,
+    ) -> Result<(), BinaryReaderError>;
+
+    /// Checks that a `HeapType` is valid, notably its function index if one is
+    /// used.
+    fn check_heap_type(
+        &self,
+        heap_type: HeapType,
+        features: &WasmFeatures,
+        offset: usize,
+    ) -> Result<(), BinaryReaderError> {
+        // Delegate to the generic value type validation which will have the
+        // same validity checks.
+        self.check_value_type(
+            RefType::new(true, heap_type)
+                .ok_or_else(|| {
+                    BinaryReaderError::new(
+                        "heap type index beyond this crate's implementation limits",
+                        offset,
+                    )
+                })?
+                .into(),
+            features,
+            offset,
+        )
+    }
 
     /// Returns the number of elements.
     fn element_count(&self) -> u32;
@@ -243,11 +283,25 @@ where
     fn func_type_at(&self, at: u32) -> Option<&Self::FuncType> {
         T::func_type_at(self, at)
     }
+    fn type_index_of_function(&self, func_idx: u32) -> Option<u32> {
+        T::type_index_of_function(self, func_idx)
+    }
     fn type_of_function(&self, func_idx: u32) -> Option<&Self::FuncType> {
         T::type_of_function(self, func_idx)
     }
-    fn element_type_at(&self, at: u32) -> Option<ValType> {
+    fn check_value_type(
+        &self,
+        t: ValType,
+        features: &WasmFeatures,
+        offset: usize,
+    ) -> Result<(), BinaryReaderError> {
+        T::check_value_type(self, t, features, offset)
+    }
+    fn element_type_at(&self, at: u32) -> Option<RefType> {
         T::element_type_at(self, at)
+    }
+    fn matches(&self, t1: ValType, t2: ValType) -> bool {
+        T::matches(self, t1, t2)
     }
 
     fn element_count(&self) -> u32 {
@@ -287,12 +341,29 @@ where
         T::func_type_at(self, type_idx)
     }
 
+    fn type_index_of_function(&self, func_idx: u32) -> Option<u32> {
+        T::type_index_of_function(self, func_idx)
+    }
+
     fn type_of_function(&self, func_idx: u32) -> Option<&Self::FuncType> {
         T::type_of_function(self, func_idx)
     }
 
-    fn element_type_at(&self, at: u32) -> Option<ValType> {
+    fn check_value_type(
+        &self,
+        t: ValType,
+        features: &WasmFeatures,
+        offset: usize,
+    ) -> Result<(), BinaryReaderError> {
+        T::check_value_type(self, t, features, offset)
+    }
+
+    fn element_type_at(&self, at: u32) -> Option<RefType> {
         T::element_type_at(self, at)
+    }
+
+    fn matches(&self, t1: ValType, t2: ValType) -> bool {
+        T::matches(self, t1, t2)
     }
 
     fn element_count(&self) -> u32 {
@@ -310,18 +381,18 @@ where
 
 impl WasmFuncType for FuncType {
     fn len_inputs(&self) -> usize {
-        self.params.len()
+        self.params().len()
     }
 
     fn len_outputs(&self) -> usize {
-        self.returns.len()
+        self.results().len()
     }
 
     fn input_at(&self, at: u32) -> Option<ValType> {
-        self.params.get(at as usize).copied()
+        self.params().get(at as usize).copied()
     }
 
     fn output_at(&self, at: u32) -> Option<ValType> {
-        self.returns.get(at as usize).copied()
+        self.results().get(at as usize).copied()
     }
 }

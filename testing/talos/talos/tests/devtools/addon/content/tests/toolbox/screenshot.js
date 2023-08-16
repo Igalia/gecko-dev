@@ -13,9 +13,8 @@ const {
   testTeardown,
 } = require("damp-test/tests/head");
 const { Downloads } = require("resource://gre/modules/Downloads.jsm");
-const Services = require("Services");
 
-module.exports = async function() {
+module.exports = async function () {
   await testSetup(COMPLICATED_URL);
   // Enable the screenshot button
   Services.prefs.setBoolPref(
@@ -50,7 +49,7 @@ const allDownloads = new Set();
 async function waitUntilScreenshotDownloaded() {
   const list = await Downloads.getList(Downloads.ALL);
 
-  return new Promise(function(resolve) {
+  return new Promise(function (resolve) {
     const view = {
       onDownloadAdded: async download => {
         await download.whenSucceeded();

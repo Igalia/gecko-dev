@@ -5,8 +5,8 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
@@ -15,7 +15,7 @@ requestLongerTimeout(4);
 
 /* eslint-disable mozilla/no-arbitrary-setTimeout */
 
-const { fetch } = require("devtools/shared/DevToolsUtils");
+const { fetch } = require("resource://devtools/shared/DevToolsUtils.js");
 
 const debuggerHeadURL =
   CHROME_URL_ROOT + "../../../debugger/test/mochitest/shared-head.js";
@@ -32,9 +32,7 @@ add_task(async function runTest() {
 
   await pushPref("devtools.browsertoolbox.scope", "everything");
 
-  const ToolboxTask = await initBrowserToolboxTask({
-    enableBrowserToolboxFission: true,
-  });
+  const ToolboxTask = await initBrowserToolboxTask();
   await ToolboxTask.importFunctions({
     // head.js uses this method
     registerCleanupFunction: () => {},

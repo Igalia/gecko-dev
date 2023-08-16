@@ -5,8 +5,10 @@
 
 const {
   fetchProperties,
-} = require("devtools/client/dom/content/actions/grips");
-const { Property } = require("devtools/client/dom/content/reducers/grips");
+} = require("resource://devtools/client/dom/content/actions/grips.js");
+const {
+  Property,
+} = require("resource://devtools/client/dom/content/reducers/grips.js");
 
 // Implementation
 function GripProvider(grips, dispatch) {
@@ -62,7 +64,7 @@ GripProvider.prototype = {
         const k = preview.kind;
         const objectsWithProps = ["DOMNode", "ObjectWithURL"];
         hasChildren = hasChildren || objectsWithProps.includes(k);
-        hasChildren = hasChildren || (k == "ArrayLike" && preview.length > 0);
+        hasChildren = hasChildren || (k == "ArrayLike" && !!preview.length);
       }
 
       return grip.type == "object" && hasChildren;

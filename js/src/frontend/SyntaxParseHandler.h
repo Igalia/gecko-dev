@@ -21,8 +21,6 @@
 #include "frontend/ParserAtom.h"  // TaggedParserAtomIndex
 #include "frontend/TokenStream.h"
 
-struct JS_PUBLIC_API JSContext;
-
 namespace js {
 
 namespace frontend {
@@ -175,7 +173,7 @@ class SyntaxParseHandler {
   }
 
  public:
-  SyntaxParseHandler(JSContext* cx, CompilationState& compilationState) {
+  SyntaxParseHandler(FrontendContext* fc, CompilationState& compilationState) {
     MOZ_ASSERT(!compilationState.input.isDelazifying());
   }
 
@@ -302,18 +300,18 @@ class SyntaxParseHandler {
   void addArrayElement(ListNodeType literal, Node element) {}
 
   ListNodeType newArguments(const TokenPos& pos) { return NodeGeneric; }
-  CallNodeType newCall(Node callee, Node args, JSOp callOp) {
+  CallNodeType newCall(Node callee, ListNodeType args, JSOp callOp) {
     return NodeFunctionCall;
   }
 
-  CallNodeType newOptionalCall(Node callee, Node args, JSOp callOp) {
+  CallNodeType newOptionalCall(Node callee, ListNodeType args, JSOp callOp) {
     return NodeOptionalFunctionCall;
   }
 
-  CallNodeType newSuperCall(Node callee, Node args, bool isSpread) {
+  CallNodeType newSuperCall(Node callee, ListNodeType args, bool isSpread) {
     return NodeGeneric;
   }
-  CallNodeType newTaggedTemplate(Node tag, Node args, JSOp callOp) {
+  CallNodeType newTaggedTemplate(Node tag, ListNodeType args, JSOp callOp) {
     return NodeGeneric;
   }
 
@@ -332,6 +330,9 @@ class SyntaxParseHandler {
     return NodeGeneric;
   }
   ClassNodeType newClass(Node name, Node heritage, Node methodBlock,
+#ifdef ENABLE_DECORATORS
+                         ListNodeType decorators,
+#endif
                          const TokenPos& pos) {
     return NodeGeneric;
   }
@@ -385,12 +386,24 @@ class SyntaxParseHandler {
   }
   [[nodiscard]] Node newClassMethodDefinition(
       Node key, FunctionNodeType funNode, AccessorType atype, bool isStatic,
-      mozilla::Maybe<FunctionNodeType> initializerIfPrivate) {
+      mozilla::Maybe<FunctionNodeType> initializerIfPrivate
+#ifdef ENABLE_DECORATORS
+      ,
+      ListNodeType decorators
+#endif
+  ) {
     return NodeGeneric;
   }
   [[nodiscard]] Node newClassFieldDefinition(Node name,
                                              FunctionNodeType initializer,
-                                             bool isStatic) {
+                                             bool isStatic
+#ifdef ENABLE_DECORATORS
+                                             ,
+                                             ListNodeType decorators,
+                                             ClassMethodType accessorGetterNode,
+                                             ClassMethodType accessorSetterNode
+#endif
+  ) {
     return NodeGeneric;
   }
 
@@ -582,6 +595,8 @@ class SyntaxParseHandler {
 
   void checkAndSetIsDirectRHSAnonFunction(Node pn) {}
 
+  ParamsBodyNodeType newParamsBody(const TokenPos& pos) { return NodeGeneric; }
+
   FunctionNodeType newFunction(FunctionSyntaxKind syntaxKind,
                                const TokenPos& pos) {
     switch (syntaxKind) {
@@ -598,7 +613,7 @@ class SyntaxParseHandler {
   }
 
   void setFunctionFormalParametersAndBody(FunctionNodeType funNode,
-                                          ListNodeType paramsBody) {}
+                                          ParamsBodyNodeType paramsBody) {}
   void setFunctionBody(FunctionNodeType funNode, LexicalScopeNodeType body) {}
   void setFunctionBox(FunctionNodeType funNode, FunctionBox* funbox) {}
   void addFunctionFormalParameter(FunctionNodeType funNode, Node argpn) {}
@@ -642,6 +657,7 @@ class SyntaxParseHandler {
     MOZ_ASSERT(kind != ParseNodeKind::VarStmt);
     MOZ_ASSERT(kind != ParseNodeKind::LetDecl);
     MOZ_ASSERT(kind != ParseNodeKind::ConstDecl);
+    MOZ_ASSERT(kind != ParseNodeKind::ParamsBody);
     return NodeGeneric;
   }
 
@@ -649,7 +665,8 @@ class SyntaxParseHandler {
     return newList(kind, TokenPos());
   }
 
-  ListNodeType newDeclarationList(ParseNodeKind kind, const TokenPos& pos) {
+  DeclarationListNodeType newDeclarationList(ParseNodeKind kind,
+                                             const TokenPos& pos) {
     if (kind == ParseNodeKind::VarStmt) {
       return NodeVarDeclaration;
     }
@@ -657,13 +674,6 @@ class SyntaxParseHandler {
                kind == ParseNodeKind::ConstDecl);
     return NodeLexicalDeclaration;
   }
-
-  bool isDeclarationList(Node node) {
-    return node == NodeVarDeclaration || node == NodeLexicalDeclaration;
-  }
-
-  // This method should only be called from parsers using FullParseHandler.
-  Node singleBindingFromDeclaration(ListNodeType decl) = delete;
 
   ListNodeType newCommaExpressionList(Node kid) { return NodeGeneric; }
 
@@ -674,7 +684,7 @@ class SyntaxParseHandler {
                list == NodeFunctionCall);
   }
 
-  CallNodeType newNewExpression(uint32_t begin, Node ctor, Node args,
+  CallNodeType newNewExpression(uint32_t begin, Node ctor, ListNodeType args,
                                 bool isSpread) {
     return NodeGeneric;
   }
@@ -683,6 +693,8 @@ class SyntaxParseHandler {
     return kind == ParseNodeKind::AssignExpr ? NodeUnparenthesizedAssignment
                                              : NodeGeneric;
   }
+
+  AssignmentNodeType newInitExpr(Node lhs, Node rhs) { return NodeGeneric; }
 
   bool isUnparenthesizedAssignment(Node node) {
     return node == NodeUnparenthesizedAssignment;

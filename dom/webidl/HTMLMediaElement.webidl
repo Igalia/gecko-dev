@@ -33,7 +33,7 @@ interface HTMLMediaElement : HTMLElement {
            attribute DOMString preload;
   [NewObject]
   readonly attribute TimeRanges buffered;
-  void load();
+  undefined load();
   DOMString canPlayType(DOMString type);
 
   // ready state
@@ -49,7 +49,7 @@ interface HTMLMediaElement : HTMLElement {
   [SetterThrows]
            attribute double currentTime;
   [Throws]
-  void fastSeek(double time);
+  undefined fastSeek(double time);
   readonly attribute unrestricted double duration;
   [ChromeOnly]
   readonly attribute boolean isEncrypted;
@@ -69,9 +69,9 @@ interface HTMLMediaElement : HTMLElement {
   [CEReactions, SetterThrows]
            attribute boolean loop;
   [NewObject]
-  Promise<void> play();
+  Promise<undefined> play();
   [Throws]
-  void pause();
+  undefined pause();
 
   // TODO: Bug 847377 - mediaGroup and MediaController
   // media controller
@@ -108,15 +108,12 @@ partial interface HTMLMediaElement {
   Promise<HTMLMediaElementDebugInfo> mozRequestDebugInfo();
 
   [Func="HasDebuggerOrTabsPrivilege", NewObject]
-  static void mozEnableDebugLog();
+  static undefined mozEnableDebugLog();
   [Func="HasDebuggerOrTabsPrivilege", NewObject]
   Promise<DOMString> mozRequestDebugLog();
 
   attribute MediaStream? srcObject;
 
-  // TODO: Remove mozPreservesPitch. (bug 1765201)
-  [Deprecated="MozPreservesPitchDeprecatedPrefix", BinaryName="preservesPitch"]
-  attribute boolean mozPreservesPitch;
   attribute boolean preservesPitch;
 
   // NB: for internal use with the video controls:
@@ -146,9 +143,9 @@ partial interface HTMLMediaElement {
 partial interface HTMLMediaElement {
   readonly attribute MediaKeys? mediaKeys;
 
-  // void, not any: https://www.w3.org/Bugs/Public/show_bug.cgi?id=26457
+  // undefined, not any: https://www.w3.org/Bugs/Public/show_bug.cgi?id=26457
   [NewObject]
-  Promise<void> setMediaKeys(MediaKeys? mediaKeys);
+  Promise<undefined> setMediaKeys(MediaKeys? mediaKeys);
 
   attribute EventHandler onencrypted;
 
@@ -205,7 +202,7 @@ partial interface HTMLMediaElement {
  */
 partial interface HTMLMediaElement {
   [NewObject, Pref="media.seekToNextFrame.enabled"]
-  Promise<void> seekToNextFrame();
+  Promise<undefined> seekToNextFrame();
 };
 
 /* Internal testing only API */
@@ -221,7 +218,7 @@ partial interface HTMLMediaElement {
   // - isVideoDecodingSuspended() is used to know whether video decoding has
   //   suspended.
   [Pref="media.test.video-suspend"]
-  void setVisible(boolean aVisible);
+  undefined setVisible(boolean aVisible);
 
   [Pref="media.test.video-suspend"]
   boolean hasSuspendTaint();
@@ -234,6 +231,9 @@ partial interface HTMLMediaElement {
 
   [ChromeOnly]
   readonly attribute double totalVideoPlayTime;
+
+  [ChromeOnly]
+  readonly attribute double totalVideoHDRPlayTime;
 
   [ChromeOnly]
   readonly attribute double visiblePlayTime;
@@ -258,13 +258,13 @@ partial interface HTMLMediaElement {
 
   // These APIs are used for decoder doctor tests.
   [ChromeOnly]
-  void setFormatDiagnosticsReportForMimeType(DOMString mimeType, DecoderDoctorReportType error);
+  undefined setFormatDiagnosticsReportForMimeType(DOMString mimeType, DecoderDoctorReportType error);
 
   [Throws, ChromeOnly]
-  void setDecodeError(DOMString error);
+  undefined setDecodeError(DOMString error);
 
   [ChromeOnly]
-  void setAudioSinkFailedStartup();
+  undefined setAudioSinkFailedStartup();
 };
 
 /* Audio Output Devices API
@@ -274,7 +274,7 @@ partial interface HTMLMediaElement {
   [SecureContext, Pref="media.setsinkid.enabled"]
   readonly attribute DOMString sinkId;
   [NewObject, SecureContext, Pref="media.setsinkid.enabled"]
-  Promise<void> setSinkId(DOMString sinkId);
+  Promise<undefined> setSinkId(DOMString sinkId);
 };
 
 /*

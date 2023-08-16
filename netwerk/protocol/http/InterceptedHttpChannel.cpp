@@ -13,12 +13,18 @@
 #include "mozilla/dom/ChannelInfo.h"
 #include "mozilla/dom/PerformanceStorage.h"
 #include "nsHttpChannel.h"
+#include "nsIHttpHeaderVisitor.h"
 #include "nsIRedirectResultListener.h"
 #include "nsStringStream.h"
 #include "nsStreamUtils.h"
 #include "nsQueryObject.h"
+#include "mozilla/Logging.h"
 
 namespace mozilla::net {
+
+mozilla::LazyLogModule gInterceptedLog("Intercepted");
+
+#define INTERCEPTED_LOG(args) MOZ_LOG(gInterceptedLog, LogLevel::Debug, args)
 
 NS_IMPL_ISUPPORTS_INHERITED(InterceptedHttpChannel, HttpBaseChannel,
                             nsIInterceptedChannel, nsICacheInfoChannel,
@@ -40,6 +46,7 @@ InterceptedHttpChannel::InterceptedHttpChannel(
   // Pre-set the creation and AsyncOpen times based on the original channel
   // we are intercepting.  We don't want our extra internal redirect to mask
   // any time spent processing the channel.
+  INTERCEPTED_LOG(("Creating InterceptedHttpChannel [%p]", this));
   mChannelCreationTime = aCreationTime;
   mChannelCreationTimestamp = aCreationTimestamp;
   mInterceptedChannelCreationTimestamp = TimeStamp::Now();
@@ -65,6 +72,9 @@ void InterceptedHttpChannel::ReleaseListeners() {
 nsresult InterceptedHttpChannel::SetupReplacementChannel(
     nsIURI* aURI, nsIChannel* aChannel, bool aPreserveMethod,
     uint32_t aRedirectFlags) {
+  INTERCEPTED_LOG(
+      ("InterceptedHttpChannel::SetupReplacementChannel [%p] flag: %u", this,
+       aRedirectFlags));
   nsresult rv = HttpBaseChannel::SetupReplacementChannel(
       aURI, aChannel, aPreserveMethod, aRedirectFlags);
   if (NS_FAILED(rv)) {
@@ -91,6 +101,7 @@ nsresult InterceptedHttpChannel::SetupReplacementChannel(
 void InterceptedHttpChannel::AsyncOpenInternal() {
   // We save this timestamp from outside of the if block in case we enable the
   // profiler after AsyncOpen().
+  INTERCEPTED_LOG(("InterceptedHttpChannel::AsyncOpenInternal [%p]", this));
   mLastStatusReported = TimeStamp::Now();
   if (profiler_thread_is_being_profiled_for_markers()) {
     nsAutoCString requestMethod;
@@ -365,6 +376,9 @@ nsresult InterceptedHttpChannel::StartPump() {
 }
 
 nsresult InterceptedHttpChannel::OpenRedirectChannel() {
+  INTERCEPTED_LOG(
+      ("InterceptedHttpChannel::OpenRedirectChannel [%p], mRedirectChannel: %p",
+       this, mRedirectChannel.get()));
   nsresult rv = NS_OK;
 
   if (NS_FAILED(mStatus)) {
@@ -489,8 +503,24 @@ InterceptedHttpChannel::CreateForSynthesis(
   return ref.forget();
 }
 
+NS_IMETHODIMP InterceptedHttpChannel::SetCanceledReason(
+    const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP InterceptedHttpChannel::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP
+InterceptedHttpChannel::CancelWithReason(nsresult aStatus,
+                                         const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 InterceptedHttpChannel::Cancel(nsresult aStatus) {
+  INTERCEPTED_LOG(("InterceptedHttpChannel::Cancel [%p]", this));
   // Note: This class has been designed to send all error results through
   //       Cancel().  Don't add calls directly to AsyncAbort() or
   //       DoNotifyListener().  Instead call Cancel().
@@ -557,14 +587,17 @@ InterceptedHttpChannel::Resume(void) {
 }
 
 NS_IMETHODIMP
-InterceptedHttpChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
-  nsCOMPtr<nsISupports> ref(mSecurityInfo);
+InterceptedHttpChannel::GetSecurityInfo(
+    nsITransportSecurityInfo** aSecurityInfo) {
+  nsCOMPtr<nsITransportSecurityInfo> ref(mSecurityInfo);
   ref.forget(aSecurityInfo);
   return NS_OK;
 }
 
 NS_IMETHODIMP
 InterceptedHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
+  INTERCEPTED_LOG(("InterceptedHttpChannel::AsyncOpen [%p], listener: %p", this,
+                   aListener));
   nsCOMPtr<nsIStreamListener> listener(aListener);
 
   nsresult rv =
@@ -588,7 +621,8 @@ InterceptedHttpChannel::AsyncOpen(nsIStreamListener* aListener) {
 
 NS_IMETHODIMP
 InterceptedHttpChannel::LogBlockedCORSRequest(const nsAString& aMessage,
-                                              const nsACString& aCategory) {
+                                              const nsACString& aCategory,
+                                              bool aIsWarning) {
   // Synthetic responses should not trigger CORS blocking.
   return NS_ERROR_NOT_IMPLEMENTED;
 }
@@ -662,11 +696,48 @@ void InterceptedHttpChannel::DoAsyncAbort(nsresult aStatus) {
   Unused << AsyncAbort(aStatus);
 }
 
+namespace {
+
+class ResetInterceptionHeaderVisitor final : public nsIHttpHeaderVisitor {
+  nsCOMPtr<nsIHttpChannel> mTarget;
+
+  ~ResetInterceptionHeaderVisitor() = default;
+
+  NS_IMETHOD
+  VisitHeader(const nsACString& aHeader, const nsACString& aValue) override {
+    // We skip Cookie header here, since it will be added during
+    // nsHttpChannel::AsyncOpen.
+    if (aHeader.Equals(nsHttp::Cookie)) {
+      return NS_OK;
+    }
+    if (aValue.IsEmpty()) {
+      return mTarget->SetEmptyRequestHeader(aHeader);
+    }
+    return mTarget->SetRequestHeader(aHeader, aValue, false /* merge */);
+  }
+
+ public:
+  explicit ResetInterceptionHeaderVisitor(nsIHttpChannel* aTarget)
+      : mTarget(aTarget) {
+    MOZ_DIAGNOSTIC_ASSERT(mTarget);
+  }
+
+  NS_DECL_ISUPPORTS
+};
+
+NS_IMPL_ISUPPORTS(ResetInterceptionHeaderVisitor, nsIHttpHeaderVisitor)
+
+}  // anonymous namespace
+
 NS_IMETHODIMP
 InterceptedHttpChannel::ResetInterception(bool aBypass) {
+  INTERCEPTED_LOG(("InterceptedHttpChannel::ResetInterception [%p] bypass: %s",
+                   this, aBypass ? "true" : "false"));
   if (mCanceled) {
     return mStatus;
   }
+
+  mInterceptionReset = true;
 
   uint32_t flags = nsIChannelEventSink::REDIRECT_INTERNAL;
 
@@ -717,6 +788,13 @@ InterceptedHttpChannel::ResetInterception(bool aBypass) {
   }
 
   rv = SetupReplacementChannel(mURI, newChannel, true, flags);
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  // Restore the non-default headers for fallback channel.
+  nsCOMPtr<nsIHttpChannel> httpChannel(do_QueryInterface(newChannel));
+  nsCOMPtr<nsIHttpHeaderVisitor> visitor =
+      new ResetInterceptionHeaderVisitor(httpChannel);
+  rv = VisitNonDefaultRequestHeaders(visitor);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsCOMPtr<nsITimedChannel> newTimedChannel = do_QueryInterface(newChannel);
@@ -942,6 +1020,12 @@ InterceptedHttpChannel::SetFetchHandlerFinish(TimeStamp aTimeStamp) {
 }
 
 NS_IMETHODIMP
+InterceptedHttpChannel::GetIsReset(bool* aResult) {
+  *aResult = mInterceptionReset;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 InterceptedHttpChannel::SetReleaseHandle(nsISupports* aHandle) {
   mReleaseHandle = aHandle;
   return NS_OK;
@@ -958,7 +1042,7 @@ InterceptedHttpChannel::OnRedirectVerifyCallback(nsresult rv) {
   nsCOMPtr<nsIRedirectResultListener> hook;
   GetCallback(hook);
   if (hook) {
-    hook->OnRedirectResult(NS_SUCCEEDED(rv));
+    hook->OnRedirectResult(rv);
   }
 
   if (NS_FAILED(rv)) {
@@ -980,27 +1064,21 @@ InterceptedHttpChannel::OnRedirectVerifyCallback(nsresult rv) {
 
 NS_IMETHODIMP
 InterceptedHttpChannel::OnStartRequest(nsIRequest* aRequest) {
+  INTERCEPTED_LOG(("InterceptedHttpChannel::OnStartRequest [%p]", this));
   MOZ_ASSERT(NS_IsMainThread());
 
   if (!mProgressSink) {
     GetCallback(mProgressSink);
   }
 
-  if (!EnsureOpaqueResponseIsAllowed()) {
-    // XXXtt: Return an error code or make the response body null.
-    // We silence the error result now because we only want to get how many
-    // response will get allowed or blocked by ORB.
-  }
+  MOZ_ASSERT_IF(!mLoadInfo->GetServiceWorkerTaintingSynthesized(),
+                mLoadInfo->GetLoadingPrincipal());
+  // No need to do ORB checks if these conditions hold.
+  MOZ_DIAGNOSTIC_ASSERT(mLoadInfo->GetServiceWorkerTaintingSynthesized() ||
+                        mLoadInfo->GetLoadingPrincipal()->IsSystemPrincipal());
 
   if (mPump && mLoadFlags & LOAD_CALL_CONTENT_SNIFFERS) {
     mPump->PeekStream(CallTypeSniffers, static_cast<nsIChannel*>(this));
-  }
-
-  auto isAllowedOrErr = EnsureOpaqueResponseIsAllowedAfterSniff();
-  if (isAllowedOrErr.isErr() || !isAllowedOrErr.inspect()) {
-    // XXXtt: Return an error code or make the response body null.
-    // We silence the error result now because we only want to get how many
-    // response will get allowed or blocked by ORB.
   }
 
   nsresult rv = ProcessCrossOriginEmbedderPolicyHeader();
@@ -1036,6 +1114,7 @@ InterceptedHttpChannel::OnStartRequest(nsIRequest* aRequest) {
 
 NS_IMETHODIMP
 InterceptedHttpChannel::OnStopRequest(nsIRequest* aRequest, nsresult aStatus) {
+  INTERCEPTED_LOG(("InterceptedHttpChannel::OnStopRequest [%p]", this));
   MOZ_ASSERT(NS_IsMainThread());
 
   if (NS_SUCCEEDED(mStatus)) {
@@ -1117,7 +1196,7 @@ InterceptedHttpChannel::OnDataAvailable(nsIRequest* aRequest,
 }
 
 NS_IMETHODIMP
-InterceptedHttpChannel::RetargetDeliveryTo(nsIEventTarget* aNewTarget) {
+InterceptedHttpChannel::RetargetDeliveryTo(nsISerialEventTarget* aNewTarget) {
   MOZ_ASSERT(NS_IsMainThread());
   NS_ENSURE_ARG(aNewTarget);
 
@@ -1136,7 +1215,7 @@ InterceptedHttpChannel::RetargetDeliveryTo(nsIEventTarget* aNewTarget) {
 }
 
 NS_IMETHODIMP
-InterceptedHttpChannel::GetDeliveryTarget(nsIEventTarget** aEventTarget) {
+InterceptedHttpChannel::GetDeliveryTarget(nsISerialEventTarget** aEventTarget) {
   if (!mPump) {
     return NS_ERROR_NOT_AVAILABLE;
   }

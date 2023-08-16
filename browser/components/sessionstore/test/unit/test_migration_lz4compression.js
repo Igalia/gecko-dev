@@ -1,19 +1,19 @@
 "use strict";
 
-const { SessionWriter } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionWriter.jsm"
+const { SessionWriter } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionWriter.sys.mjs"
 );
 
 // Make sure that we have a profile before initializing SessionFile.
 const profd = do_get_profile();
-const { SessionFile } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionFile.jsm"
+const { SessionFile } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionFile.sys.mjs"
 );
 const Paths = SessionFile.Paths;
 
 // We need a XULAppInfo to initialize SessionFile
-const { updateAppInfo } = ChromeUtils.import(
-  "resource://testing-common/AppInfo.jsm"
+const { updateAppInfo } = ChromeUtils.importESModule(
+  "resource://testing-common/AppInfo.sys.mjs"
 );
 updateAppInfo({
   name: "SessionRestoreTest",
@@ -23,7 +23,7 @@ updateAppInfo({
 });
 
 function promise_check_exist(path, shouldExist) {
-  return (async function() {
+  return (async function () {
     info(
       "Ensuring that " + path + (shouldExist ? " exists" : " does not exist")
     );
@@ -36,7 +36,7 @@ function promise_check_exist(path, shouldExist) {
 }
 
 function promise_check_contents(path, expect) {
-  return (async function() {
+  return (async function () {
     info("Checking whether " + path + " has the right contents");
     let actual = await IOUtils.readJSON(path, {
       decompress: true,

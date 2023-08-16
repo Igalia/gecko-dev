@@ -71,6 +71,7 @@ OS_LIBS += [
     "userenv",
     "wininet",
     "ws2_32",
+    "ntdll",
 ]
 
 DEFINES["NS_NO_XPCOM"] = True
@@ -110,5 +111,3 @@ if CONFIG["ENABLE_TESTS"]:
 
 with Files("**"):
     BUG_COMPONENT = ("Toolkit", "Default Browser Agent")
-
-REQUIRES_UNIFIED_BUILD = True

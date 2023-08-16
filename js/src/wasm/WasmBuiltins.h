@@ -47,9 +47,12 @@ enum class SymbolicAddress {
   aeabi_uidivmod,
 #endif
   ModD,
-  SinD,
-  CosD,
-  TanD,
+  SinNativeD,
+  SinFdlibmD,
+  CosNativeD,
+  CosFdlibmD,
+  TanNativeD,
+  TanFdlibmD,
   ASinD,
   ACosD,
   ATanD,
@@ -102,11 +105,16 @@ enum class SymbolicAddress {
   MemCopySharedM32,
   MemCopyM64,
   MemCopySharedM64,
+  MemCopyAny,
   DataDrop,
   MemFillM32,
   MemFillSharedM32,
   MemFillM64,
   MemFillSharedM64,
+  MemDiscardM32,
+  MemDiscardSharedM32,
+  MemDiscardM64,
+  MemDiscardSharedM64,
   MemInitM32,
   MemInitM64,
   TableCopy,
@@ -118,16 +126,20 @@ enum class SymbolicAddress {
   TableSet,
   TableSize,
   RefFunc,
-  RefTest,
-  PreBarrierFiltering,
   PostBarrier,
   PostBarrierPrecise,
-  PostBarrierFiltering,
-  StructNew,
+  PostBarrierPreciseWithOffset,
   ExceptionNew,
   ThrowException,
-  ArrayNew,
-  InlineTypedObjectClass,
+  StructNewIL_true,
+  StructNewIL_false,
+  StructNewOOL_true,
+  StructNewOOL_false,
+  ArrayNew_true,
+  ArrayNew_false,
+  ArrayNewData,
+  ArrayNewElem,
+  ArrayCopy,
 #define DECL_INTRINSIC_SA(op, export, sa_name, abitype, entry, idx) sa_name,
   FOR_EACH_INTRINSIC(DECL_INTRINSIC_SA)
 #undef DECL_INTRINSIC_SA
@@ -192,9 +204,12 @@ static_assert(sizeof(SymbolicAddressSignature) <= 32,
 // These provide argument type information for a subset of the SymbolicAddress
 // targets, for which type info is needed to generate correct stackmaps.
 
-extern const SymbolicAddressSignature SASigSinD;
-extern const SymbolicAddressSignature SASigCosD;
-extern const SymbolicAddressSignature SASigTanD;
+extern const SymbolicAddressSignature SASigSinNativeD;
+extern const SymbolicAddressSignature SASigSinFdlibmD;
+extern const SymbolicAddressSignature SASigCosNativeD;
+extern const SymbolicAddressSignature SASigCosFdlibmD;
+extern const SymbolicAddressSignature SASigTanNativeD;
+extern const SymbolicAddressSignature SASigTanFdlibmD;
 extern const SymbolicAddressSignature SASigASinD;
 extern const SymbolicAddressSignature SASigACosD;
 extern const SymbolicAddressSignature SASigATanD;
@@ -224,11 +239,16 @@ extern const SymbolicAddressSignature SASigMemCopyM32;
 extern const SymbolicAddressSignature SASigMemCopySharedM32;
 extern const SymbolicAddressSignature SASigMemCopyM64;
 extern const SymbolicAddressSignature SASigMemCopySharedM64;
+extern const SymbolicAddressSignature SASigMemCopyAny;
 extern const SymbolicAddressSignature SASigDataDrop;
 extern const SymbolicAddressSignature SASigMemFillM32;
 extern const SymbolicAddressSignature SASigMemFillSharedM32;
 extern const SymbolicAddressSignature SASigMemFillM64;
 extern const SymbolicAddressSignature SASigMemFillSharedM64;
+extern const SymbolicAddressSignature SASigMemDiscardM32;
+extern const SymbolicAddressSignature SASigMemDiscardSharedM32;
+extern const SymbolicAddressSignature SASigMemDiscardM64;
+extern const SymbolicAddressSignature SASigMemDiscardSharedM64;
 extern const SymbolicAddressSignature SASigMemInitM32;
 extern const SymbolicAddressSignature SASigMemInitM64;
 extern const SymbolicAddressSignature SASigTableCopy;
@@ -240,15 +260,20 @@ extern const SymbolicAddressSignature SASigTableInit;
 extern const SymbolicAddressSignature SASigTableSet;
 extern const SymbolicAddressSignature SASigTableSize;
 extern const SymbolicAddressSignature SASigRefFunc;
-extern const SymbolicAddressSignature SASigPreBarrierFiltering;
 extern const SymbolicAddressSignature SASigPostBarrier;
 extern const SymbolicAddressSignature SASigPostBarrierPrecise;
-extern const SymbolicAddressSignature SASigPostBarrierFiltering;
-extern const SymbolicAddressSignature SASigStructNew;
+extern const SymbolicAddressSignature SASigPostBarrierPreciseWithOffset;
 extern const SymbolicAddressSignature SASigExceptionNew;
 extern const SymbolicAddressSignature SASigThrowException;
-extern const SymbolicAddressSignature SASigArrayNew;
-extern const SymbolicAddressSignature SASigRefTest;
+extern const SymbolicAddressSignature SASigStructNewIL_true;
+extern const SymbolicAddressSignature SASigStructNewIL_false;
+extern const SymbolicAddressSignature SASigStructNewOOL_true;
+extern const SymbolicAddressSignature SASigStructNewOOL_false;
+extern const SymbolicAddressSignature SASigArrayNew_true;
+extern const SymbolicAddressSignature SASigArrayNew_false;
+extern const SymbolicAddressSignature SASigArrayNewData;
+extern const SymbolicAddressSignature SASigArrayNewElem;
+extern const SymbolicAddressSignature SASigArrayCopy;
 #define EXT_INTR_SA_DECL(op, export, sa_name, abitype, entry, idx) \
   extern const SymbolicAddressSignature SASig##sa_name;
 FOR_EACH_INTRINSIC(EXT_INTR_SA_DECL)

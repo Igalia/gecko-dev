@@ -7,26 +7,56 @@
 #define _include_ipc_glue_UtilityAudioDecoderChild_h__
 
 #include "mozilla/ProcInfo.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/RefPtr.h"
 
 #include "mozilla/ipc/Endpoint.h"
 #include "mozilla/ipc/UtilityProcessParent.h"
+#include "mozilla/ipc/UtilityProcessSandboxing.h"
+#include "mozilla/ipc/UtilityAudioDecoder.h"
 #include "mozilla/ipc/PUtilityAudioDecoderChild.h"
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+#  include "mozilla/gfx/GPUProcessListener.h"
+#  include "mozilla/gfx/gfxVarReceiver.h"
+#endif
 
 #include "PDMFactory.h"
 
 namespace mozilla::ipc {
 
+class UtilityAudioDecoderChildShutdownObserver : public nsIObserver {
+ public:
+  explicit UtilityAudioDecoderChildShutdownObserver(SandboxingKind aKind)
+      : mSandbox(aKind){};
+
+  NS_DECL_ISUPPORTS
+
+  NS_IMETHOD Observe(nsISupports* aSubject, const char* aTopic,
+                     const char16_t* aData) override;
+
+ private:
+  virtual ~UtilityAudioDecoderChildShutdownObserver() = default;
+
+  const SandboxingKind mSandbox;
+};
+
 // This controls performing audio decoding on the utility process and it is
 // intended to live on the main process side
-class UtilityAudioDecoderChild final : public PUtilityAudioDecoderChild {
+class UtilityAudioDecoderChild final : public PUtilityAudioDecoderChild
+#ifdef MOZ_WMF_MEDIA_ENGINE
+    ,
+                                       public gfx::gfxVarReceiver,
+                                       public gfx::GPUProcessListener
+#endif
+{
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(UtilityAudioDecoderChild, override);
-
   mozilla::ipc::IPCResult RecvUpdateMediaCodecsSupported(
+      const RemoteDecodeIn& aLocation,
       const media::MediaCodecsSupported& aSupported);
 
-  UtilityActorName GetActorName() { return UtilityActorName::AudioDecoder; }
+  UtilityActorName GetActorName() { return GetAudioActorName(mSandbox); }
 
   nsresult BindToUtilityProcess(RefPtr<UtilityProcessParent> aUtilityParent) {
     Endpoint<PUtilityAudioDecoderChild> utilityAudioDecoderChildEnd;
@@ -47,6 +77,11 @@ class UtilityAudioDecoderChild final : public PUtilityAudioDecoderChild {
     }
 
     Bind(std::move(utilityAudioDecoderChildEnd));
+
+    PROFILER_MARKER_UNTYPED(
+        "UtilityAudioDecoderChild::BindToUtilityProcess", IPC,
+        MarkerOptions(
+            MarkerTiming::IntervalUntilNowFrom(mAudioDecoderChildStart)));
     return NS_OK;
   }
 
@@ -54,11 +89,37 @@ class UtilityAudioDecoderChild final : public PUtilityAudioDecoderChild {
 
   void Bind(Endpoint<PUtilityAudioDecoderChild>&& aEndpoint);
 
-  static RefPtr<UtilityAudioDecoderChild> GetSingleton();
+  static void Shutdown(SandboxingKind aKind);
+
+  static RefPtr<UtilityAudioDecoderChild> GetSingleton(SandboxingKind aKind);
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  mozilla::ipc::IPCResult RecvCompleteCreatedVideoBridge();
+
+  bool HasCreatedVideoBridge() const;
+
+  void OnVarChanged(const gfx::GfxVarUpdate& aVar) override;
+
+  void OnCompositorUnexpectedShutdown() override;
+
+  // True if creating a video bridge sucessfully. Currently only used for media
+  // engine cdm.
+  bool CreateVideoBridge();
+#endif
 
  private:
-  UtilityAudioDecoderChild();
+  explicit UtilityAudioDecoderChild(SandboxingKind aKind);
   ~UtilityAudioDecoderChild() = default;
+
+  const SandboxingKind mSandbox;
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  // True if the utility process has created a video bridge with the GPU prcess.
+  // Currently only used for media egine cdm. Main thread only.
+  bool mHasCreatedVideoBridge = false;
+#endif
+
+  TimeStamp mAudioDecoderChildStart;
 };
 
 }  // namespace mozilla::ipc

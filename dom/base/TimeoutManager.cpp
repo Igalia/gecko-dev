@@ -7,7 +7,6 @@
 #include "TimeoutManager.h"
 #include "nsGlobalWindow.h"
 #include "mozilla/Logging.h"
-#include "mozilla/PerformanceCounter.h"
 #include "mozilla/ProfilerMarkers.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -303,31 +302,18 @@ bool TimeoutManager::IsInvalidFiringId(uint32_t aFiringId) const {
   return !mFiringIdStack.Contains(aFiringId);
 }
 
-// The number of nested timeouts before we start clamping. HTML says 5.
-#define DOM_CLAMP_TIMEOUT_NESTING_LEVEL 5u
-
 TimeDuration TimeoutManager::CalculateDelay(Timeout* aTimeout) const {
   MOZ_DIAGNOSTIC_ASSERT(aTimeout);
   TimeDuration result = aTimeout->mInterval;
 
-  if (aTimeout->mNestingLevel >= DOM_CLAMP_TIMEOUT_NESTING_LEVEL) {
+  if (aTimeout->mNestingLevel >=
+      StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()) {
     uint32_t minTimeoutValue = StaticPrefs::dom_min_timeout_value();
     result = TimeDuration::Max(result,
                                TimeDuration::FromMilliseconds(minTimeoutValue));
   }
 
   return result;
-}
-
-PerformanceCounter* TimeoutManager::GetPerformanceCounter() {
-  Document* doc = mWindow.GetDocument();
-  if (doc) {
-    dom::DocGroup* docGroup = doc->GetDocGroup();
-    if (docGroup) {
-      return docGroup->GetPerformanceCounter();
-    }
-  }
-  return nullptr;
 }
 
 void TimeoutManager::RecordExecution(Timeout* aRunningTimeout,
@@ -341,22 +327,11 @@ void TimeoutManager::RecordExecution(Timeout* aRunningTimeout,
     TimeDuration duration = budgetManager.RecordExecution(now, aRunningTimeout);
 
     UpdateBudget(now, duration);
-
-    // This is an ad-hoc way to use the counters for the timers
-    // that should be removed at somepoint. See Bug 1482834
-    PerformanceCounter* counter = GetPerformanceCounter();
-    if (counter) {
-      counter->IncrementExecutionDuration(duration.ToMicroseconds());
-    }
   }
 
   if (aTimeout) {
     // If we're starting a new timeout callback, start recording.
     budgetManager.StartRecording(now);
-    PerformanceCounter* counter = GetPerformanceCounter();
-    if (counter) {
-      counter->IncrementDispatchCounter(DispatchCategory(TaskCategory::Timer));
-    }
   } else {
     // Else stop by clearing the start timestamp.
     budgetManager.StopRecording();
@@ -496,9 +471,10 @@ nsresult TimeoutManager::SetTimeout(TimeoutHandler* aHandler, int32_t interval,
   // XXX: Does eIdleCallbackTimeout need clamping?
   if (aReason == Timeout::Reason::eTimeoutOrInterval ||
       aReason == Timeout::Reason::eIdleCallbackTimeout) {
-    timeout->mNestingLevel = sNestingLevel < DOM_CLAMP_TIMEOUT_NESTING_LEVEL
-                                 ? sNestingLevel + 1
-                                 : sNestingLevel;
+    timeout->mNestingLevel =
+        sNestingLevel < StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()
+            ? sNestingLevel + 1
+            : sNestingLevel;
   }
 
   // Now clamp the actual interval we will use for the timer based on
@@ -835,22 +811,6 @@ void TimeoutManager::RunTimeout(const TimeStamp& aNow,
       // The timeout is on the list to run at this depth, go ahead and
       // process it.
 
-      // Record the first time we try to fire a timeout, and ensure that
-      // all actual firings occur in that order.  This ensures that we
-      // retain compliance with the spec language
-      // (https://html.spec.whatwg.org/#dom-settimeout) specifically items
-      // 15 ("If method context is a Window object, wait until the Document
-      // associated with method context has been fully active for a further
-      // timeout milliseconds (not necessarily consecutively)") and item 16
-      // ("Wait until any invocations of this algorithm that had the same
-      // method context, that started before this one, and whose timeout is
-      // equal to or less than this one's, have completed.").
-#ifdef DEBUG
-      if (timeout->mFiringIndex == -1) {
-        timeout->mFiringIndex = mFiringIndex++;
-      }
-#endif
-
       if (mIsLoading && !aProcessIdle) {
         // Any timeouts that would fire during a load will be deferred
         // until the load event occurs, but if there's an idle time,
@@ -873,6 +833,22 @@ void TimeoutManager::RunTimeout(const TimeStamp& aNow,
         }
         MOZ_ALWAYS_SUCCEEDS(mIdleExecutor->MaybeSchedule(now, TimeDuration()));
       } else {
+        // Record the first time we try to fire a timeout, and ensure that
+        // all actual firings occur in that order.  This ensures that we
+        // retain compliance with the spec language
+        // (https://html.spec.whatwg.org/#dom-settimeout) specifically items
+        // 15 ("If method context is a Window object, wait until the Document
+        // associated with method context has been fully active for a further
+        // timeout milliseconds (not necessarily consecutively)") and item 16
+        // ("Wait until any invocations of this algorithm that had the same
+        // method context, that started before this one, and whose timeout is
+        // equal to or less than this one's, have completed.").
+#ifdef DEBUG
+        if (timeout->mFiringIndex == -1) {
+          timeout->mFiringIndex = mFiringIndex++;
+        }
+#endif
+
         // Get the script context (a strong ref to prevent it going away)
         // for this timeout and ensure the script language is enabled.
         nsCOMPtr<nsIScriptContext> scx = mWindow.GetContextInternal();
@@ -991,7 +967,8 @@ bool TimeoutManager::RescheduleTimeout(Timeout* aTimeout,
 
   // Automatically increase the nesting level when a setInterval()
   // is rescheduled just as if it was using a chained setTimeout().
-  if (aTimeout->mNestingLevel < DOM_CLAMP_TIMEOUT_NESTING_LEVEL) {
+  if (aTimeout->mNestingLevel <
+      StaticPrefs::dom_clamp_timeout_nesting_level_AtStartup()) {
     aTimeout->mNestingLevel += 1;
   }
 

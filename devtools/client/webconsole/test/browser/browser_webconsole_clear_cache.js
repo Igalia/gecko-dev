@@ -10,7 +10,7 @@ const TEST_URI =
   "data:text/html;charset=utf8,<!DOCTYPE html>Test clear cache<script>abcdef</script>";
 const EXPECTED_REPORT = "ReferenceError: abcdef is not defined";
 
-add_task(async function() {
+add_task(async function () {
   const tab = await addTab(TEST_URI);
   let hud = await openConsole(tab);
 
@@ -77,9 +77,45 @@ add_task(async function() {
   );
 });
 
+add_task(async function consoleClearPersist() {
+  // persist logs
+  await pushPref("devtools.webconsole.persistlog", true);
+  const tab = await addTab(TEST_URI);
+  let hud = await openConsole(tab);
+
+  // Test that we also clear the cache when calling console.clear().
+  const CACHED_MESSAGE = "CACHED_MESSAGE_PERSIST";
+  await logTextToConsole(hud, CACHED_MESSAGE);
+
+  info("Send a console.clear() from the content page");
+
+  const onConsoleClearPrevented = waitForMessageByType(
+    hud,
+    "console.clear() was prevented",
+    ".console-api"
+  );
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
+    content.wrappedJSObject.console.clear();
+  });
+
+  await onConsoleClearPrevented;
+
+  info("Close and re-open the console");
+  await closeToolbox();
+  hud = await openConsole(tab);
+
+  info("Log a smoke message in order to know that the console is ready");
+  await logTextToConsole(hud, "smoke message for persist");
+  is(
+    findConsoleAPIMessage(hud, CACHED_MESSAGE),
+    undefined,
+    "The cached message is not visible anymore"
+  );
+});
+
 function logTextToConsole(hud, text) {
   const onMessage = waitForMessageByType(hud, text, ".console-api");
-  SpecialPowers.spawn(gBrowser.selectedBrowser, [text], function(str) {
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [text], function (str) {
     content.wrappedJSObject.console.log(str);
   });
   return onMessage;

@@ -16,7 +16,6 @@
 #include "chrome/common/ipc_message_utils.h"
 #include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtils.h"
-#include "mozilla/MotionPathUtils.h"
 #include "mozilla/ServoBindings.h"
 #include "mozilla/ipc/ByteBuf.h"
 #include "mozilla/layers/APZInputBridge.h"
@@ -26,11 +25,11 @@
 #include "mozilla/layers/FocusTarget.h"
 #include "mozilla/layers/GeckoContentControllerTypes.h"
 #include "mozilla/layers/KeyboardMap.h"
-#include "mozilla/layers/LayerAttributes.h"
 #include "mozilla/layers/LayersTypes.h"
 #include "mozilla/layers/MatrixMessage.h"
 #include "mozilla/layers/OverlayInfo.h"
 #include "mozilla/layers/RepaintRequest.h"
+#include "mozilla/layers/ScrollbarData.h"
 #include "nsSize.h"
 #include "mozilla/layers/DoubleTapToZoom.h"
 
@@ -208,7 +207,7 @@ struct ParamTraits<mozilla::layers::CompositableHandleOwner>
     : public ContiguousEnumSerializerInclusive<
           mozilla::layers::CompositableHandleOwner,
           mozilla::layers::CompositableHandleOwner::WebRenderBridge,
-          mozilla::layers::CompositableHandleOwner::InProcessManager> {};
+          mozilla::layers::CompositableHandleOwner::ImageBridge> {};
 
 template <>
 struct ParamTraits<mozilla::layers::RemoteTextureId> {
@@ -225,6 +224,18 @@ struct ParamTraits<mozilla::layers::RemoteTextureId> {
 template <>
 struct ParamTraits<mozilla::layers::RemoteTextureOwnerId> {
   typedef mozilla::layers::RemoteTextureOwnerId paramType;
+
+  static void Write(MessageWriter* writer, const paramType& param) {
+    WriteParam(writer, param.mId);
+  }
+  static bool Read(MessageReader* reader, paramType* result) {
+    return ReadParam(reader, &result->mId);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::layers::GpuProcessTextureId> {
+  typedef mozilla::layers::GpuProcessTextureId paramType;
 
   static void Write(MessageWriter* writer, const paramType& param) {
     WriteParam(writer, param.mId);
@@ -546,7 +557,6 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     WriteParam(aWriter, aParam.mMetrics);
     WriteParam(aWriter, aParam.mSnapInfo);
     WriteParam(aWriter, aParam.mScrollParentId);
-    WriteParam(aWriter, aParam.mBackgroundColor);
     WriteParam(aWriter, aParam.GetContentDescription());
     WriteParam(aWriter, aParam.mLineScrollAmount);
     WriteParam(aWriter, aParam.mPageScrollAmount);
@@ -557,7 +567,6 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     WriteParam(aWriter, aParam.mResolutionUpdated);
     WriteParam(aWriter, aParam.mIsRDMTouchSimulationActive);
     WriteParam(aWriter, aParam.mDidContentGetPainted);
-    WriteParam(aWriter, aParam.mPrefersReducedMotion);
     WriteParam(aWriter, aParam.mForceMousewheelAutodir);
     WriteParam(aWriter, aParam.mForceMousewheelAutodirHonourRoot);
     WriteParam(aWriter, aParam.mIsPaginatedPresentation);
@@ -580,7 +589,6 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
     return (ReadParam(aReader, &aResult->mMetrics) &&
             ReadParam(aReader, &aResult->mSnapInfo) &&
             ReadParam(aReader, &aResult->mScrollParentId) &&
-            ReadParam(aReader, &aResult->mBackgroundColor) &&
             ReadContentDescription(aReader, aResult) &&
             ReadParam(aReader, &aResult->mLineScrollAmount) &&
             ReadParam(aReader, &aResult->mPageScrollAmount) &&
@@ -598,8 +606,6 @@ struct ParamTraits<mozilla::layers::ScrollMetadata>
                                 &paramType::SetIsRDMTouchSimulationActive)) &&
            ReadBoolForBitfield(aReader, aResult,
                                &paramType::SetDidContentGetPainted) &&
-           ReadBoolForBitfield(aReader, aResult,
-                               &paramType::SetPrefersReducedMotion) &&
            ReadBoolForBitfield(aReader, aResult,
                                &paramType::SetForceMousewheelAutodir) &&
            ReadBoolForBitfield(
@@ -629,6 +635,7 @@ struct ParamTraits<mozilla::layers::TextureFactoryIdentifier> {
     WriteParam(aWriter, aParam.mSupportsTextureBlitting);
     WriteParam(aWriter, aParam.mSupportsPartialUploads);
     WriteParam(aWriter, aParam.mSupportsComponentAlpha);
+    WriteParam(aWriter, aParam.mSupportsD3D11NV12);
     WriteParam(aWriter, aParam.mSyncHandle);
   }
 
@@ -644,6 +651,7 @@ struct ParamTraits<mozilla::layers::TextureFactoryIdentifier> {
                   ReadParam(aReader, &aResult->mSupportsTextureBlitting) &&
                   ReadParam(aReader, &aResult->mSupportsPartialUploads) &&
                   ReadParam(aReader, &aResult->mSupportsComponentAlpha) &&
+                  ReadParam(aReader, &aResult->mSupportsD3D11NV12) &&
                   ReadParam(aReader, &aResult->mSyncHandle);
     return result;
   }
@@ -934,6 +942,13 @@ struct ParamTraits<mozilla::layers::AsyncDragMetrics> {
 };
 
 template <>
+struct ParamTraits<mozilla::layers::BrowserGestureResponse>
+    : public ContiguousEnumSerializerInclusive<
+          mozilla::layers::BrowserGestureResponse,
+          mozilla::layers::BrowserGestureResponse::NotConsumed,
+          mozilla::layers::BrowserGestureResponse::Consumed> {};
+
+template <>
 struct ParamTraits<mozilla::layers::CompositorOptions> {
   typedef mozilla::layers::CompositorOptions paramType;
 
@@ -985,6 +1000,19 @@ struct ParamTraits<mozilla::layers::OverlayInfo> {
 };
 
 template <>
+struct ParamTraits<mozilla::layers::SwapChainInfo> {
+  typedef mozilla::layers::SwapChainInfo paramType;
+
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteParam(aWriter, aParam.mTearingSupported);
+  }
+
+  static bool Read(MessageReader* aReader, paramType* aResult) {
+    return ReadParam(aReader, &aResult->mTearingSupported);
+  }
+};
+
+template <>
 struct ParamTraits<mozilla::layers::ScrollbarLayerType>
     : public ContiguousEnumSerializerInclusive<
           mozilla::layers::ScrollbarLayerType,
@@ -1001,6 +1029,7 @@ struct ParamTraits<mozilla::layers::ScrollbarData> {
     WriteParam(aWriter, aParam.mThumbRatio);
     WriteParam(aWriter, aParam.mThumbStart);
     WriteParam(aWriter, aParam.mThumbLength);
+    WriteParam(aWriter, aParam.mThumbMinLength);
     WriteParam(aWriter, aParam.mThumbIsAsyncDraggable);
     WriteParam(aWriter, aParam.mScrollTrackStart);
     WriteParam(aWriter, aParam.mScrollTrackLength);
@@ -1013,6 +1042,7 @@ struct ParamTraits<mozilla::layers::ScrollbarData> {
            ReadParam(aReader, &aResult->mThumbRatio) &&
            ReadParam(aReader, &aResult->mThumbStart) &&
            ReadParam(aReader, &aResult->mThumbLength) &&
+           ReadParam(aReader, &aResult->mThumbMinLength) &&
            ReadParam(aReader, &aResult->mThumbIsAsyncDraggable) &&
            ReadParam(aReader, &aResult->mScrollTrackStart) &&
            ReadParam(aReader, &aResult->mScrollTrackLength) &&
@@ -1039,21 +1069,6 @@ struct ParamTraits<mozilla::layers::CompositionPayload> {
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return ReadParam(aReader, &aResult->mType) &&
            ReadParam(aReader, &aResult->mTimeStamp);
-  }
-};
-
-template <>
-struct ParamTraits<mozilla::RayReferenceData> {
-  typedef mozilla::RayReferenceData paramType;
-
-  static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    WriteParam(aWriter, aParam.mInitialPosition);
-    WriteParam(aWriter, aParam.mContainingBlockRect);
-  }
-
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    return (ReadParam(aReader, &aResult->mInitialPosition) &&
-            ReadParam(aReader, &aResult->mContainingBlockRect));
   }
 };
 
@@ -1093,13 +1108,20 @@ struct ParamTraits<mozilla::layers::ZoomTarget> {
       MOZ_ASSERT(rv, "Serialize ##type_## failed");                         \
       WriteParam(aWriter, std::move(v));                                    \
     }                                                                       \
-    static bool Read(MessageReader* aReader, paramType* aResult) {          \
+    static ReadResult<paramType> Read(MessageReader* aReader) {             \
       mozilla::ipc::ByteBuf in;                                             \
-      bool rv = ReadParam(aReader, &in);                                    \
-      if (!rv) {                                                            \
-        return false;                                                       \
+      ReadResult<paramType> result;                                         \
+      if (!ReadParam(aReader, &in) || !in.mData) {                          \
+        return result;                                                      \
       }                                                                     \
-      return in.mData && Servo_##type_##_Deserialize(&in, aResult);         \
+      /* TODO: Should be able to initialize `result` in-place instead */    \
+      mozilla::AlignedStorage2<paramType> value;                            \
+      if (!Servo_##type_##_Deserialize(&in, value.addr())) {                \
+        return result;                                                      \
+      }                                                                     \
+      result = std::move(*value.addr());                                    \
+      value.addr()->~paramType();                                           \
+      return result;                                                        \
     }                                                                       \
   };
 
@@ -1107,6 +1129,7 @@ IMPL_PARAMTRAITS_BY_SERDE(LengthPercentage)
 IMPL_PARAMTRAITS_BY_SERDE(StyleOffsetPath)
 IMPL_PARAMTRAITS_BY_SERDE(StyleOffsetRotate)
 IMPL_PARAMTRAITS_BY_SERDE(StylePositionOrAuto)
+IMPL_PARAMTRAITS_BY_SERDE(StyleOffsetPosition)
 IMPL_PARAMTRAITS_BY_SERDE(StyleRotate)
 IMPL_PARAMTRAITS_BY_SERDE(StyleScale)
 IMPL_PARAMTRAITS_BY_SERDE(StyleTranslate)

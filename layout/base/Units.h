@@ -27,6 +27,7 @@ struct IsPixel : std::false_type {};
 
 // See struct declaration for a description of each unit type.
 struct CSSPixel;
+struct OuterCSSPixel;
 struct LayoutDevicePixel;
 struct LayerPixel;
 struct CSSTransformedLayerPixel;
@@ -39,6 +40,8 @@ struct ExternalPixel;
 
 template <>
 struct IsPixel<CSSPixel> : std::true_type {};
+template <>
+struct IsPixel<OuterCSSPixel> : std::true_type {};
 template <>
 struct IsPixel<LayoutDevicePixel> : std::true_type {};
 template <>
@@ -69,6 +72,18 @@ typedef gfx::IntRectTyped<CSSPixel> CSSIntRect;
 typedef gfx::MarginTyped<CSSPixel> CSSMargin;
 typedef gfx::IntMarginTyped<CSSPixel> CSSIntMargin;
 typedef gfx::IntRegionTyped<CSSPixel> CSSIntRegion;
+
+typedef gfx::CoordTyped<OuterCSSPixel> OuterCSSCoord;
+typedef gfx::IntCoordTyped<OuterCSSPixel> OuterCSSIntCoord;
+typedef gfx::PointTyped<OuterCSSPixel> OuterCSSPoint;
+typedef gfx::IntPointTyped<OuterCSSPixel> OuterCSSIntPoint;
+typedef gfx::SizeTyped<OuterCSSPixel> OuterCSSSize;
+typedef gfx::IntSizeTyped<OuterCSSPixel> OuterCSSIntSize;
+typedef gfx::RectTyped<OuterCSSPixel> OuterCSSRect;
+typedef gfx::IntRectTyped<OuterCSSPixel> OuterCSSIntRect;
+typedef gfx::MarginTyped<OuterCSSPixel> OuterCSSMargin;
+typedef gfx::IntMarginTyped<OuterCSSPixel> OuterCSSIntMargin;
+typedef gfx::IntRegionTyped<OuterCSSPixel> OuterCSSIntRegion;
 
 typedef gfx::CoordTyped<LayoutDevicePixel> LayoutDeviceCoord;
 typedef gfx::IntCoordTyped<LayoutDevicePixel> LayoutDeviceIntCoord;
@@ -174,11 +189,14 @@ typedef gfx::IntMarginTyped<ExternalPixel> ExternalIntMargin;
 typedef gfx::IntRegionTyped<ExternalPixel> ExternalIntRegion;
 
 typedef gfx::ScaleFactor<CSSPixel, CSSPixel> CSSToCSSScale;
+typedef gfx::ScaleFactor<CSSPixel, OuterCSSPixel> CSSToOuterCSSScale;
 typedef gfx::ScaleFactor<CSSPixel, LayoutDevicePixel> CSSToLayoutDeviceScale;
 typedef gfx::ScaleFactor<CSSPixel, LayerPixel> CSSToLayerScale;
 typedef gfx::ScaleFactor<CSSPixel, ScreenPixel> CSSToScreenScale;
 typedef gfx::ScaleFactor<CSSPixel, ParentLayerPixel> CSSToParentLayerScale;
 typedef gfx::ScaleFactor<CSSPixel, DesktopPixel> CSSToDesktopScale;
+typedef gfx::ScaleFactor<OuterCSSPixel, LayoutDevicePixel>
+    OuterCSSToLayoutDeviceScale;
 typedef gfx::ScaleFactor<LayoutDevicePixel, CSSPixel> LayoutDeviceToCSSScale;
 typedef gfx::ScaleFactor<LayoutDevicePixel, LayerPixel>
     LayoutDeviceToLayerScale;
@@ -348,7 +366,8 @@ struct CSSPixel {
   }
 
   static nsPoint ToAppUnits(const CSSIntPoint& aPoint) {
-    return nsPoint(ToAppUnits(aPoint.x), ToAppUnits(aPoint.y));
+    return nsPoint(ToAppUnits(CSSCoord(aPoint.x)),
+                   ToAppUnits(CSSCoord(aPoint.y)));
   }
 
   static nsSize ToAppUnits(const CSSSize& aSize) {
@@ -375,14 +394,28 @@ struct CSSPixel {
   }
 
   static nsMargin ToAppUnits(const CSSIntMargin& aMargin) {
-    return nsMargin(ToAppUnits(aMargin.top), ToAppUnits(aMargin.right),
-                    ToAppUnits(aMargin.bottom), ToAppUnits(aMargin.left));
+    return nsMargin(ToAppUnits(CSSCoord(aMargin.top)),
+                    ToAppUnits(CSSCoord(aMargin.right)),
+                    ToAppUnits(CSSCoord(aMargin.bottom)),
+                    ToAppUnits(CSSCoord(aMargin.left)));
   }
 
   // Conversion from a given CSS point value.
   static CSSCoord FromPoints(float aCoord) {
     // One inch / 72.
     return aCoord * 96.0f / 72.0f;
+  }
+};
+
+/*
+ * In the context of a scroll frame that is zoomable, OuterCSSPixel is
+ * used to disambiguate CSS pixels of the content outside of the scroll
+ * frame (which is not subject to the zoom) from CSS pixels of the content
+ * inside the scroll frame (which is, and for which CSSPixel is used).
+ */
+struct OuterCSSPixel {
+  static OuterCSSCoord FromAppUnits(nscoord aCoord) {
+    return NSAppUnitsToFloatPixels(aCoord, float(AppUnitsPerCSSPixel()));
   }
 };
 
@@ -846,8 +879,8 @@ template <class Src, class Dst>
 gfx::MarginTyped<Dst> operator*(const gfx::MarginTyped<Src>& aMargin,
                                 const gfx::ScaleFactor<Src, Dst>& aScale) {
   return gfx::MarginTyped<Dst>(
-      aMargin.top * aScale.scale, aMargin.right * aScale.scale,
-      aMargin.bottom * aScale.scale, aMargin.left * aScale.scale);
+      aMargin.top.value * aScale.scale, aMargin.right.value * aScale.scale,
+      aMargin.bottom.value * aScale.scale, aMargin.left.value * aScale.scale);
 }
 
 template <class Src, class Dst>
@@ -863,8 +896,8 @@ gfx::MarginTyped<Dst, F> operator*(
     const gfx::MarginTyped<Src, F>& aMargin,
     const gfx::BaseScaleFactors2D<Src, Dst, F>& aScale) {
   return gfx::MarginTyped<Dst, F>(
-      aMargin.top * aScale.yScale, aMargin.right * aScale.xScale,
-      aMargin.bottom * aScale.yScale, aMargin.left * aScale.xScale);
+      aMargin.top.value * aScale.yScale, aMargin.right.value * aScale.xScale,
+      aMargin.bottom.value * aScale.yScale, aMargin.left.value * aScale.xScale);
 }
 
 template <class Src, class Dst, class F>
@@ -872,8 +905,8 @@ gfx::MarginTyped<Dst, F> operator/(
     const gfx::MarginTyped<Src, F>& aMargin,
     const gfx::BaseScaleFactors2D<Dst, Src, F>& aScale) {
   return gfx::MarginTyped<Dst, F>(
-      aMargin.top / aScale.yScale, aMargin.right / aScale.xScale,
-      aMargin.bottom / aScale.yScale, aMargin.left / aScale.xScale);
+      aMargin.top.value / aScale.yScale, aMargin.right.value / aScale.xScale,
+      aMargin.bottom.value / aScale.yScale, aMargin.left.value / aScale.xScale);
 }
 
 // Calculate the max or min or the ratios of the widths and heights of two

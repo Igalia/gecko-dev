@@ -2,22 +2,19 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import copy
 import re
 import unittest
-
 from fnmatch import fnmatch
-import six
-from six import StringIO
 from textwrap import dedent
 
-from mozunit import main, MockedOpen
+import six
+from mozpack import path as mozpath
+from mozunit import MockedOpen, main
+from six import StringIO
 
 from mozbuild.preprocessor import Preprocessor
 from mozbuild.util import ReadOnlyNamespace
-from mozpack import path as mozpath
 
 
 class CompilerPreprocessor(Preprocessor):
@@ -217,8 +214,8 @@ class FakeCompiler(dict):
             if arg is None:
                 break
             if arg.startswith("-"):
-                # Ignore --sysroot and the argument that follows it.
-                if arg == "--sysroot":
+                # Ignore -isysroot/--sysroot and the argument that follows it.
+                if arg in ("-isysroot", "--sysroot"):
                     next(args, None)
                 else:
                     flags.append(arg)

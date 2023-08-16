@@ -3,16 +3,15 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 import React, { PureComponent } from "react";
-import ReactDOM from "react-dom";
 import PropTypes from "prop-types";
 import { connect } from "../../utils/connect";
 
 import {
+  getSourceTabs,
   getSelectedSource,
   getSourcesForTabs,
   getIsPaused,
   getCurrentThread,
-  getContext,
   getBlackBoxRanges,
 } from "../../selectors";
 import { isVisible } from "../../utils/ui";
@@ -60,7 +59,6 @@ class Tabs extends PureComponent {
 
   static get propTypes() {
     return {
-      cx: PropTypes.object.isRequired,
       endPanelCollapsed: PropTypes.bool.isRequired,
       horizontal: PropTypes.bool.isRequired,
       isPaused: PropTypes.bool.isRequired,
@@ -71,26 +69,9 @@ class Tabs extends PureComponent {
       blackBoxRanges: PropTypes.object.isRequired,
       startPanelCollapsed: PropTypes.bool.isRequired,
       tabSources: PropTypes.array.isRequired,
+      tabs: PropTypes.array.isRequired,
       togglePaneCollapse: PropTypes.func.isRequired,
     };
-  }
-
-  get draggedSource() {
-    return this._draggedSource == null
-      ? { url: null, id: null }
-      : this._draggedSource;
-  }
-
-  set draggedSource(source) {
-    this._draggedSource = source;
-  }
-
-  get draggedSourceIndex() {
-    return this._draggedSourceIndex == null ? -1 : this._draggedSourceIndex;
-  }
-
-  set draggedSourceIndex(index) {
-    this._draggedSourceIndex = index;
   }
 
   componentDidUpdate(prevProps) {
@@ -134,7 +115,8 @@ class Tabs extends PureComponent {
       isVisible() &&
       hiddenTabs.find(tab => tab.id == selectedSource.id)
     ) {
-      return moveTab(selectedSource.url, 0);
+      moveTab(selectedSource.url, 0);
+      return;
     }
 
     this.setState({ hiddenTabs });
@@ -157,10 +139,10 @@ class Tabs extends PureComponent {
   }
 
   renderDropdownSource = source => {
-    const { cx, selectSource } = this.props;
+    const { selectSource } = this.props;
     const filename = getFilename(source);
 
-    const onClick = () => selectSource(cx, source.id);
+    const onClick = () => selectSource(source);
     return (
       <li key={source.id} onClick={onClick} title={getFileURL(source, false)}>
         <AccessibleImage
@@ -171,27 +153,29 @@ class Tabs extends PureComponent {
     );
   };
 
-  onTabDragStart = (source, index) => {
-    this.draggedSource = source;
-    this.draggedSourceIndex = index;
+  // Note that these three listener will be called from Tab component
+  // so that e.target will be Tab's DOM (and not Tabs one).
+  onTabDragStart = e => {
+    this.draggedSourceId = e.target.dataset.sourceId;
+    this.draggedSourceIndex = e.target.dataset.index;
   };
 
   onTabDragEnd = () => {
-    this.draggedSource = null;
-    this.draggedSourceIndex = null;
+    this.draggedSourceId = null;
+    this.draggedSourceIndex = -1;
   };
 
-  onTabDragOver = (e, source, hoveredTabIndex) => {
+  onTabDragOver = e => {
+    e.preventDefault();
+
+    const hoveredTabIndex = e.target.dataset.index;
     const { moveTabBySourceId } = this.props;
+
     if (hoveredTabIndex === this.draggedSourceIndex) {
       return;
     }
 
-    const tabDOM = ReactDOM.findDOMNode(
-      this.refs[`tab_${source.id}`].getWrappedInstance()
-    );
-
-    const tabDOMRect = tabDOM.getBoundingClientRect();
+    const tabDOMRect = e.target.getBoundingClientRect();
     const { pageX: mouseCursorX } = e;
     if (
       /* Case: the mouse cursor moves into the left half of any target tab */
@@ -203,7 +187,7 @@ class Tabs extends PureComponent {
         hoveredTabIndex > this.draggedSourceIndex
           ? hoveredTabIndex - 1
           : hoveredTabIndex;
-      moveTabBySourceId(this.draggedSource.id, targetTab);
+      moveTabBySourceId(this.draggedSourceId, targetTab);
       this.draggedSourceIndex = targetTab;
     } else if (
       /* Case: the mouse cursor moves into the right half of any target tab */
@@ -215,31 +199,29 @@ class Tabs extends PureComponent {
         hoveredTabIndex < this.draggedSourceIndex
           ? hoveredTabIndex + 1
           : hoveredTabIndex;
-      moveTabBySourceId(this.draggedSource.id, targetTab);
+      moveTabBySourceId(this.draggedSourceId, targetTab);
       this.draggedSourceIndex = targetTab;
     }
   };
 
   renderTabs() {
-    const { tabSources } = this.props;
-    if (!tabSources) {
-      return;
+    const { tabs } = this.props;
+    if (!tabs) {
+      return null;
     }
 
     return (
       <div className="source-tabs" ref="sourceTabs">
-        {tabSources.map((source, index) => {
+        {tabs.map(({ source, sourceActor }, index) => {
           return (
             <Tab
-              onDragStart={_ => this.onTabDragStart(source, index)}
-              onDragOver={e => {
-                this.onTabDragOver(e, source, index);
-                e.preventDefault();
-              }}
+              onDragStart={this.onTabDragStart}
+              onDragOver={this.onTabDragOver}
               onDragEnd={this.onTabDragEnd}
-              key={index}
+              key={source.id + sourceActor?.id}
+              index={index}
               source={source}
-              ref={`tab_${source.id}`}
+              sourceActor={sourceActor}
             />
           );
         })}
@@ -249,7 +231,7 @@ class Tabs extends PureComponent {
 
   renderDropdown() {
     const { hiddenTabs } = this.state;
-    if (!hiddenTabs || hiddenTabs.length == 0) {
+    if (!hiddenTabs || !hiddenTabs.length) {
       return null;
     }
 
@@ -262,7 +244,7 @@ class Tabs extends PureComponent {
   renderCommandBar() {
     const { horizontal, endPanelCollapsed, isPaused } = this.props;
     if (!endPanelCollapsed || !isPaused) {
-      return;
+      return null;
     }
 
     return <CommandBar horizontal={horizontal} />;
@@ -281,7 +263,7 @@ class Tabs extends PureComponent {
   renderEndPanelToggleButton() {
     const { horizontal, endPanelCollapsed, togglePaneCollapse } = this.props;
     if (!horizontal) {
-      return;
+      return null;
     }
 
     return (
@@ -308,11 +290,10 @@ class Tabs extends PureComponent {
 }
 
 const mapStateToProps = state => {
-  const tabSources = getSourcesForTabs(state);
   return {
-    cx: getContext(state),
     selectedSource: getSelectedSource(state),
-    tabSources,
+    tabSources: getSourcesForTabs(state),
+    tabs: getSourceTabs(state),
     blackBoxRanges: getBlackBoxRanges(state),
     isPaused: getIsPaused(state, getCurrentThread(state)),
   };

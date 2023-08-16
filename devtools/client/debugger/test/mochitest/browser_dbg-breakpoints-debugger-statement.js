@@ -6,7 +6,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-pause-points.html", "pause-points.js");
   await selectSource(dbg, "pause-points.js");
   await waitForSelectedSource(dbg, "pause-points.js");
@@ -90,5 +90,5 @@ function waitForBreakpointWithoutCondition(dbg, url, line, index) {
 
 function findBreakpoints(dbg, url, line) {
   const source = findSource(dbg, url);
-  return dbg.selectors.getBreakpointsForSource(source.id, line);
+  return dbg.selectors.getBreakpointsForSource(source, line);
 }

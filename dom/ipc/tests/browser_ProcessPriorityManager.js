@@ -207,7 +207,7 @@ class TabPriorityWatcher {
 
 let gTabPriorityWatcher;
 
-add_setup(async function() {
+add_setup(async function () {
   // We need to turn on testMode for the process priority manager in
   // order to receive the observer notifications that this test relies on.
   await SpecialPowers.pushPrefEnv({
@@ -503,11 +503,13 @@ add_task(async function test_iframe_navigate() {
       // Do a cross-origin navigation in the iframe in the foreground tab.
       let iframe2URI = iframe2Host + "/browser/dom/ipc/tests/file_dummy.html";
       let loaded = BrowserTestUtils.browserLoaded(browser, true, iframe2URI);
-      await SpecialPowers.spawn(iframe, [iframe2URI], async function(
-        _iframe2URI
-      ) {
-        content.location = _iframe2URI;
-      });
+      await SpecialPowers.spawn(
+        iframe,
+        [iframe2URI],
+        async function (_iframe2URI) {
+          content.location = _iframe2URI;
+        }
+      );
       await loaded;
 
       let iframe2ChildID = browsingContextChildID(iframe);
@@ -607,7 +609,7 @@ add_task(async function test_cross_group_navigate() {
       let dotOrgChildID = browsingContextChildID(browser.browsingContext);
 
       // Do a cross-group navigation.
-      BrowserTestUtils.loadURI(browser, coopPage);
+      BrowserTestUtils.loadURIString(browser, coopPage);
       await BrowserTestUtils.browserLoaded(browser);
 
       let coopChildID = browsingContextChildID(browser.browsingContext);
@@ -865,7 +867,7 @@ add_task(async function test_audio_background_tab() {
       "Loading a new tab should make it prioritized."
     );
     let loaded = BrowserTestUtils.browserLoaded(browser, false, page2);
-    BrowserTestUtils.loadURI(browser, page2);
+    BrowserTestUtils.loadURIString(browser, page2);
     await loaded;
 
     childID = browsingContextChildID(browser.browsingContext);

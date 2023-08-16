@@ -36,7 +36,6 @@
 #include "nsRefreshDriver.h"
 #include "nsString.h"
 #include "nsView.h"
-#include "Layers.h"
 
 static mozilla::LazyLogModule sApzHlpLog("apz.helper");
 #define APZCCH_LOG(...) MOZ_LOG(sApzHlpLog, LogLevel::Debug, (__VA_ARGS__))
@@ -110,7 +109,7 @@ static CSSPoint ScrollFrameTo(nsIScrollableFrame* aFrame,
     NS_WARNING(
         nsPrintfCString(
             "APZCCH: targetScrollPosition.y (%f) != geckoScrollPosition.y (%f)",
-            targetScrollPosition.y, geckoScrollPosition.y)
+            targetScrollPosition.y.value, geckoScrollPosition.y.value)
             .get());
   }
   if (aFrame->GetScrollStyles().mHorizontal == StyleOverflow::Hidden &&
@@ -118,7 +117,7 @@ static CSSPoint ScrollFrameTo(nsIScrollableFrame* aFrame,
     NS_WARNING(
         nsPrintfCString(
             "APZCCH: targetScrollPosition.x (%f) != geckoScrollPosition.x (%f)",
-            targetScrollPosition.x, geckoScrollPosition.x)
+            targetScrollPosition.x.value, geckoScrollPosition.x.value)
             .get());
   }
 
@@ -179,9 +178,8 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
   // re-get it.
   sf = nsLayoutUtils::FindScrollableFrameFor(aRequest.GetScrollId());
   bool scrollUpdated = false;
-  auto displayPortMargins = DisplayPortMargins::ForScrollFrame(
-      sf, aRequest.GetDisplayPortMargins(),
-      Some(aRequest.DisplayportPixelsPerCSSPixel()));
+  auto displayPortMargins =
+      DisplayPortMargins::ForScrollFrame(sf, aRequest.GetDisplayPortMargins());
   CSSPoint apzScrollOffset = aRequest.GetVisualScrollOffset();
   CSSPoint actualScrollOffset = ScrollFrameTo(sf, aRequest, scrollUpdated);
   CSSPoint scrollDelta = apzScrollOffset - actualScrollOffset;
@@ -200,9 +198,9 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     } else {
       // Correct the display port due to the difference between the requested
       // and actual scroll offsets.
-      displayPortMargins = DisplayPortMargins::FromAPZ(
-          aRequest.GetDisplayPortMargins(), apzScrollOffset, actualScrollOffset,
-          aRequest.DisplayportPixelsPerCSSPixel());
+      displayPortMargins =
+          DisplayPortMargins::FromAPZ(aRequest.GetDisplayPortMargins(),
+                                      apzScrollOffset, actualScrollOffset);
     }
   } else if (aRequest.IsRootContent() &&
              apzScrollOffset != aRequest.GetLayoutScrollOffset()) {
@@ -214,8 +212,7 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     // offsets in repaints requested by
     // AsyncPanZoomController::NotifyLayersUpdated.
     displayPortMargins = DisplayPortMargins::FromAPZ(
-        aRequest.GetDisplayPortMargins(), apzScrollOffset, actualScrollOffset,
-        aRequest.DisplayportPixelsPerCSSPixel());
+        aRequest.GetDisplayPortMargins(), apzScrollOffset, actualScrollOffset);
   } else {
     // For whatever reason we couldn't update the scroll offset on the scroll
     // frame, which means the data APZ used for its displayport calculation is
@@ -224,8 +221,7 @@ static DisplayPortMargins ScrollFrame(nsIContent* aContent,
     // the scroll position, and the scroll position here is out of our control.
     // See bug 966507 comment 21 for a more detailed explanation.
     displayPortMargins = DisplayPortMargins::ForScrollFrame(
-        sf, RecenterDisplayPort(aRequest.GetDisplayPortMargins()),
-        Some(aRequest.DisplayportPixelsPerCSSPixel()));
+        sf, RecenterDisplayPort(aRequest.GetDisplayPortMargins()));
   }
 
   // APZ transforms inputs assuming we applied the exact scroll offset it
@@ -470,8 +466,6 @@ void APZCCallbackHelper::InitializeRootDisplayport(PresShell* aPresShell) {
       DisplayPortUtils::SetDisplayPortBaseIfNotSet(content, *baseRect);
     }
 
-    // Note that we also set the base rect that goes with these margins in
-    // nsRootBoxFrame::BuildDisplayList.
     DisplayPortUtils::SetDisplayPortMargins(
         content, aPresShell, DisplayPortMargins::Empty(content),
         DisplayPortUtils::ClearMinimalDisplayPortProperty::Yes, 0);
@@ -515,15 +509,14 @@ nsEventStatus APZCCallbackHelper::DispatchWidgetEvent(WidgetGUIEvent& aEvent) {
 }
 
 nsEventStatus APZCCallbackHelper::DispatchSynthesizedMouseEvent(
-    EventMessage aMsg, uint64_t aTime, const LayoutDevicePoint& aRefPoint,
-    Modifiers aModifiers, int32_t aClickCount, nsIWidget* aWidget) {
+    EventMessage aMsg, const LayoutDevicePoint& aRefPoint, Modifiers aModifiers,
+    int32_t aClickCount, nsIWidget* aWidget) {
   MOZ_ASSERT(aMsg == eMouseMove || aMsg == eMouseDown || aMsg == eMouseUp ||
              aMsg == eMouseLongTap);
 
   WidgetMouseEvent event(true, aMsg, aWidget, WidgetMouseEvent::eReal,
                          WidgetMouseEvent::eNormal);
   event.mRefPoint = LayoutDeviceIntPoint::Truncate(aRefPoint.x, aRefPoint.y);
-  event.mTime = aTime;
   event.mButton = MouseButton::ePrimary;
   event.mButtons |= MouseButtonsFlag::ePrimaryFlag;
   event.mInputSource = dom::MouseEvent_Binding::MOZ_SOURCE_TOUCH;
@@ -566,12 +559,11 @@ void APZCCallbackHelper::FireSingleTapEvent(const LayoutDevicePoint& aPoint,
   }
   APZCCH_LOG("Dispatching single-tap component events to %s\n",
              ToString(aPoint).c_str());
-  int time = 0;
-  DispatchSynthesizedMouseEvent(eMouseMove, time, aPoint, aModifiers,
-                                aClickCount, aWidget);
-  DispatchSynthesizedMouseEvent(eMouseDown, time, aPoint, aModifiers,
-                                aClickCount, aWidget);
-  DispatchSynthesizedMouseEvent(eMouseUp, time, aPoint, aModifiers, aClickCount,
+  DispatchSynthesizedMouseEvent(eMouseMove, aPoint, aModifiers, aClickCount,
+                                aWidget);
+  DispatchSynthesizedMouseEvent(eMouseDown, aPoint, aModifiers, aClickCount,
+                                aWidget);
+  DispatchSynthesizedMouseEvent(eMouseUp, aPoint, aModifiers, aClickCount,
                                 aWidget);
 }
 

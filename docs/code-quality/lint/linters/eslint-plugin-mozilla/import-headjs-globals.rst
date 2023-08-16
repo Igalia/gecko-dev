@@ -20,9 +20,9 @@ If path does not exist because it is generated e.g.
 The following patterns are supported:
 
 -  ``Cu.import("resource://devtools/client/shared/widgets/ViewHelpers.jsm");``
--  ``loader.lazyImporter(this, "name1");``
 -  ``loader.lazyRequireGetter(this, "name2"``
 -  ``loader.lazyServiceGetter(this, "name3"``
 -  ``XPCOMUtils.defineLazyModuleGetter(this, "setNamedTimeout", ...)``
 -  ``loader.lazyGetter(this, "toolboxStrings"``
 -  ``XPCOMUtils.defineLazyGetter(this, "clipboardHelper"``
+-  ``ChromeUtils.defineLazyGetter(this, "clipboardHelper"``

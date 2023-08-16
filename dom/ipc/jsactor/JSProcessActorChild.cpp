@@ -14,9 +14,6 @@ namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(JSProcessActorChild, JSActor, mManager)
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(JSProcessActorChild, JSActor)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
-
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(JSProcessActorChild)
 NS_INTERFACE_MAP_END_INHERITING(JSActor)
 
@@ -33,21 +30,6 @@ void JSProcessActorChild::SendRawMessage(
     Maybe<ipc::StructuredCloneData>&& aStack, ErrorResult& aRv) {
   if (NS_WARN_IF(!CanSend() || !mManager || !mManager->GetCanSend())) {
     aRv.ThrowInvalidStateError("JSProcessActorChild cannot send at the moment");
-    return;
-  }
-
-  size_t length = 0;
-  if (aData) {
-    length += aData->DataLength();
-  }
-  if (aStack) {
-    length += aStack->DataLength();
-  }
-  if (NS_WARN_IF(!AllowMessage(aMeta, length))) {
-    aRv.ThrowDataCloneError(
-        nsPrintfCString("JSProcessActorChild serialization error: data too "
-                        "large, in actor '%s'",
-                        PromiseFlatCString(aMeta.actorName()).get()));
     return;
   }
 

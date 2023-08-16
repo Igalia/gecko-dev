@@ -101,6 +101,8 @@ using u8 = unsigned char;
 */
 #define OBFS_PGSZ 8192
 
+#define WAL_FRAMEHDRSIZE 24
+
 using namespace mozilla;
 using namespace mozilla::dom::quota;
 
@@ -273,6 +275,7 @@ static void obfsDecode(ObfsFile* p, /* File containing page to be obfuscated */
       Span{a + nByte - kReservedBytes, kIvBytes},
       Span{a + i, static_cast<unsigned>(payloadLength)},
       Span{a + i, static_cast<unsigned>(payloadLength)});
+  memset(a + nByte - kReservedBytes, 0, kIvBytes);
 }
 
 /*
@@ -310,15 +313,24 @@ static int obfsRead(sqlite3_file* pFile, void* zBuf, int iAmt,
   pFile = ORIGFILE(pFile);
   rc = pFile->pMethods->xRead(pFile, zBuf, iAmt, iOfst);
   if (rc == SQLITE_OK) {
-    if (iAmt == OBFS_PGSZ && !p->inCkpt) {
-      obfsDecode(p, (u8*)zBuf, iAmt);
+    if ((iAmt == OBFS_PGSZ || iAmt == OBFS_PGSZ + WAL_FRAMEHDRSIZE) &&
+        !p->inCkpt) {
+      obfsDecode(p, ((u8*)zBuf) + iAmt - OBFS_PGSZ, OBFS_PGSZ);
     }
-  } else if (SQLITE_IOERR_SHORT_READ && iOfst == 0 && iAmt >= 100) {
+  } else if (rc == SQLITE_IOERR_SHORT_READ && iOfst == 0 && iAmt >= 100) {
     static const unsigned char aEmptyDb[] = {
-        0x53, 0x51, 0x4c, 0x69, 0x74,           0x65, 0x20, 0x66,
-        0x6f, 0x72, 0x6d, 0x61, 0x74,           0x20, 0x33, 0x00,
-        0x20, 0x00, 0x02, 0x02, kReservedBytes, 0x40, 0x20, 0x20,
-        0x00, 0x00, 0x00, 0x01, 0x00,           0x00, 0x00, 0x01};
+        // Offset 0, Size 16, The header string: "SQLite format 3\000"
+        0x53, 0x51, 0x4c, 0x69, 0x74, 0x65, 0x20, 0x66, 0x6f, 0x72, 0x6d, 0x61,
+        0x74, 0x20, 0x33, 0x00,
+        // XXX Add description for other fields
+        0x20, 0x00, 0x02, 0x02, kReservedBytes, 0x40, 0x20, 0x20, 0x00, 0x00,
+        0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00,
+        // Offset 52, Size 4, The page number of the largest root b-tree page
+        // when in auto-vacuum or incremental-vacuum modes, or zero otherwise.
+        0x00, 0x00, 0x00, 0x01};
+
     memcpy(zBuf, aEmptyDb, sizeof(aEmptyDb));
     memset(((u8*)zBuf) + sizeof(aEmptyDb), 0, iAmt - sizeof(aEmptyDb));
     rc = SQLITE_OK;
@@ -650,7 +662,7 @@ UniquePtr<sqlite3_vfs> ConstructObfuscatingVFS(const char* aBaseVFSName) {
   const sqlite3_vfs obfs_vfs = {
       pOrig->iVersion,                                      /* iVersion  */
       static_cast<int>(pOrig->szOsFile + sizeof(ObfsFile)), /* szOsFile */
-      1024,                                                 /* mxPathname */
+      pOrig->mxPathname,                                    /* mxPathname */
       nullptr,                                              /* pNext */
       GetObfuscatingVFSName(),                              /* zName */
       pOrig,                                                /* pAppData */

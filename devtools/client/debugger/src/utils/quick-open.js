@@ -42,12 +42,14 @@ export function parseLineColumn(query) {
   const [, line, column] = query.split(":");
   const lineNumber = parseInt(line, 10);
   const columnNumber = parseInt(column, 10);
-  if (!isNaN(lineNumber)) {
-    return {
-      line: lineNumber,
-      ...(!isNaN(columnNumber) ? { column: columnNumber } : null),
-    };
+  if (isNaN(lineNumber)) {
+    return null;
   }
+
+  return {
+    line: lineNumber,
+    ...(!isNaN(columnNumber) ? { column: columnNumber } : null),
+  };
 }
 
 export function formatSourceForList(
@@ -72,6 +74,7 @@ export function formatSourceForList(
       : `result-item-icon ${getSourceClassnames(source, null, isBlackBoxed)}`,
     id: source.id,
     url: source.url,
+    source,
   };
 }
 

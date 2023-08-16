@@ -90,6 +90,8 @@ NS_EVENT_MESSAGE(eContextMenu)
 
 NS_EVENT_MESSAGE(eCueChange)
 
+NS_EVENT_MESSAGE(eBeforeToggle)
+
 NS_EVENT_MESSAGE(eLoad)
 NS_EVENT_MESSAGE(eUnload)
 NS_EVENT_MESSAGE(eHashChange)
@@ -357,13 +359,14 @@ NS_EVENT_MESSAGE(eAfterPrint)
 
 NS_EVENT_MESSAGE(eMessage)
 NS_EVENT_MESSAGE(eMessageError)
+NS_EVENT_MESSAGE(eRTCTransform)
 
 // Menu open event
 NS_EVENT_MESSAGE(eOpen)
 
 // Device motion and orientation
 NS_EVENT_MESSAGE(eDeviceOrientation)
-NS_EVENT_MESSAGE(eAbsoluteDeviceOrientation)
+NS_EVENT_MESSAGE(eDeviceOrientationAbsolute)
 NS_EVENT_MESSAGE(eDeviceMotion)
 NS_EVENT_MESSAGE(eUserProximity)
 NS_EVENT_MESSAGE(eDeviceLight)
@@ -441,11 +444,14 @@ NS_EVENT_MESSAGE(eToggle)
 
 // Dialog element events.
 NS_EVENT_MESSAGE(eClose)
+NS_EVENT_MESSAGE(eCancel)
 
 // Marquee element events.
 NS_EVENT_MESSAGE(eMarqueeBounce)
 NS_EVENT_MESSAGE(eMarqueeStart)
 NS_EVENT_MESSAGE(eMarqueeFinish)
+
+NS_EVENT_MESSAGE(eScrollend)
 
 #ifdef UNDEF_NS_EVENT_MESSAGE_FIRST_LAST
 #  undef UNDEF_NS_EVENT_MESSAGE_FIRST_LAST

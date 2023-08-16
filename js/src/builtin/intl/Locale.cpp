@@ -10,14 +10,12 @@
 
 #include "mozilla/ArrayUtils.h"
 #include "mozilla/Assertions.h"
-#include "mozilla/Casting.h"
 #include "mozilla/intl/Locale.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/Span.h"
 #include "mozilla/TextUtils.h"
 
 #include <algorithm>
-#include <iterator>
 #include <string>
 #include <string.h>
 #include <utility>
@@ -30,13 +28,13 @@
 #include "builtin/String.h"
 #include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "js/Printer.h"
 #include "js/TypeDecls.h"
 #include "js/Wrapper.h"
-#include "util/StringBuffer.h"
+#include "vm/Compartment.h"
 #include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/Printer.h"
 #include "vm/StringType.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 

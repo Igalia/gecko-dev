@@ -20,6 +20,10 @@
 
 class nsDeviceContext;
 
+namespace mozilla {
+enum class RFPTarget : uint64_t;
+}
+
 // Script "screen" object
 class nsScreen : public mozilla::DOMEventTargetHelper {
   using ErrorResult = mozilla::ErrorResult;
@@ -124,7 +128,7 @@ class nsScreen : public mozilla::DOMEventTargetHelper {
   }
 
  protected:
-  nsDeviceContext* GetDeviceContext();
+  nsDeviceContext* GetDeviceContext() const;
   nsresult GetRect(mozilla::CSSIntRect& aRect);
   nsresult GetAvailRect(mozilla::CSSIntRect& aRect);
   nsresult GetWindowInnerRect(mozilla::CSSIntRect& aRect);
@@ -133,7 +137,7 @@ class nsScreen : public mozilla::DOMEventTargetHelper {
   explicit nsScreen(nsPIDOMWindowInner* aWindow);
   virtual ~nsScreen();
 
-  bool ShouldResistFingerprinting() const;
+  bool ShouldResistFingerprinting(mozilla::RFPTarget aTarget) const;
 
   mozilla::dom::Document* TopContentDocumentInRDMPane() const;
 

@@ -4,7 +4,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-react.html", "App.js");
   dbg.actions.toggleMapScopes();
 
@@ -21,7 +21,7 @@ add_task(async function() {
 
   await assertPreviewTextValue(dbg, 10, 22, {
     text: "size: 1",
-    expression: "_this.fields;",
+    expression: "fields",
   });
 
   info("Verify that the file is flagged as a React module");

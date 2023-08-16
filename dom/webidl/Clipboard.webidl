@@ -20,28 +20,27 @@ interface Clipboard : EventTarget {
   Promise<DOMString> readText();
 
   [Pref="dom.events.asyncClipboard.clipboardItem", NewObject, NeedsSubjectPrincipal]
-  Promise<void> write(ClipboardItems data);
+  Promise<undefined> write(ClipboardItems data);
 
   [NewObject, NeedsSubjectPrincipal]
-  Promise<void> writeText(DOMString data);
+  Promise<undefined> writeText(DOMString data);
 };
 
 partial interface Clipboard {
   // @param allowed true, if the user allowed (e.g. clicked) the "Paste" menuitem.
   //                false, when the menupopup was dismissed.
   [ChromeOnly]
-  void onUserReactedToPasteMenuPopup(boolean allowed);
+  undefined onUserReactedToPasteMenuPopup(boolean allowed);
 };
 
 typedef (DOMString or Blob) ClipboardItemDataType;
-// typedef Promise<ClipboardItemDataType> ClipboardItemData;
+typedef Promise<ClipboardItemDataType> ClipboardItemData;
 // callback ClipboardItemDelayedCallback = ClipboardItemData ();
 
 [SecureContext, Exposed=Window, Pref="dom.events.asyncClipboard.clipboardItem"]
 interface ClipboardItem {
-  // Note: The spec uses Promise<ClipboardItemDataType>.
   [Throws]
-  constructor(record<DOMString, ClipboardItemDataType> items,
+  constructor(record<DOMString, ClipboardItemData> items,
               optional ClipboardItemOptions options = {});
 
   // static ClipboardItem createDelayed(

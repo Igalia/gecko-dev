@@ -9,9 +9,13 @@
 
 #include "nsIEffectiveTLDService.h"
 #include "nsITrackingDBService.h"
+#include "nsIWebProgressListener.h"
+#include "nsNetCID.h"
+#include "nsNetUtil.h"
 #include "nsServiceManagerUtils.h"
 #include "nsTArray.h"
 #include "mozilla/BasePrincipal.h"
+#include "mozilla/ClearOnShutdown.h"
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/RandomNum.h"
@@ -19,88 +23,27 @@
 #include "mozilla/StaticPrefs_browser.h"
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/StaticPrefs_telemetry.h"
+#include "mozilla/StaticPtr.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/XorShift128PlusRNG.h"
 
 namespace mozilla {
 
-typedef Telemetry::OriginMetricID OriginMetricID;
+namespace {
 
-// sync with TelemetryOriginData.inc
-const nsLiteralCString ContentBlockingLog::kDummyOriginHash = "PAGELOAD"_ns;
+StaticAutoPtr<nsCString> gEmailWebAppDomainsPref;
+static constexpr char kEmailWebAppDomainPrefName[] =
+    "privacy.trackingprotection.emailtracking.webapp.domains";
 
-// randomly choose 1% users included in the content blocking measurement
-// based on their client id.
-static constexpr double kRatioReportUser = 0.01;
-
-// randomly choose 0.14% documents when the page is unload.
-static constexpr double kRatioReportDocument = 0.0014;
-
-static bool IsReportingPerUserEnabled() {
+void EmailWebAppDomainPrefChangeCallback(const char* aPrefName, void*) {
   MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!strcmp(aPrefName, kEmailWebAppDomainPrefName));
+  MOZ_ASSERT(gEmailWebAppDomainsPref);
 
-  static Maybe<bool> sIsReportingEnabled;
-
-  if (sIsReportingEnabled.isSome()) {
-    return sIsReportingEnabled.value();
-  }
-
-  nsAutoCString cachedClientId;
-  if (NS_FAILED(Preferences::GetCString("toolkit.telemetry.cachedClientID",
-                                        cachedClientId))) {
-    return false;
-  }
-
-  nsID clientId;
-  if (!clientId.Parse(cachedClientId.get())) {
-    return false;
-  }
-
-  /**
-   * UUID might not be uniform-distributed (although some part of it could be).
-   * In order to generate more random result, usually we use a hash function,
-   * but here we hope it's fast and doesn't have to be cryptographic-safe.
-   * |XorShift128PlusRNG| looks like a good alternative because it takes a
-   * 128-bit data as its seed and always generate identical sequence if the
-   * initial seed is the same.
-   */
-  static_assert(sizeof(nsID) == 16, "nsID is 128-bit");
-  uint64_t* init = reinterpret_cast<uint64_t*>(&clientId);
-  non_crypto::XorShift128PlusRNG rng(init[0], init[1]);
-  sIsReportingEnabled.emplace(rng.nextDouble() <= kRatioReportUser);
-
-  return sIsReportingEnabled.value();
+  Preferences::GetCString(kEmailWebAppDomainPrefName, *gEmailWebAppDomainsPref);
 }
 
-static bool IsReportingPerDocumentEnabled() {
-  constexpr double boundary =
-      kRatioReportDocument * double(std::numeric_limits<uint64_t>::max());
-  Maybe<uint64_t> randomNum = RandomUint64();
-  return randomNum.isSome() && randomNum.value() <= boundary;
-}
-
-static bool IsReportingEnabled() {
-  if (StaticPrefs::telemetry_origin_telemetry_test_mode_enabled()) {
-    return true;
-  } else if (!StaticPrefs::
-                 privacy_trackingprotection_origin_telemetry_enabled()) {
-    return false;
-  }
-
-  return IsReportingPerUserEnabled() && IsReportingPerDocumentEnabled();
-}
-
-static void ReportOriginSingleHash(OriginMetricID aId,
-                                   const nsACString& aOrigin) {
-  MOZ_ASSERT(XRE_IsParentProcess());
-  MOZ_ASSERT(NS_IsMainThread());
-
-  LOG(("ReportOriginSingleHash metric=%s",
-       Telemetry::MetricIDToString[static_cast<uint32_t>(aId)]));
-  LOG(("ReportOriginSingleHash origin=%s", PromiseFlatCString(aOrigin).get()));
-
-  Telemetry::RecordOrigin(aId, aOrigin);
-}
+}  // namespace
 
 Maybe<uint32_t> ContentBlockingLog::RecordLogParent(
     const nsACString& aOrigin, uint32_t aType, bool aBlocked,
@@ -160,6 +103,8 @@ Maybe<uint32_t> ContentBlockingLog::RecordLogParent(
                         aTrackingFullHashes);
       break;
 
+    case nsIWebProgressListener::STATE_REPLACED_FINGERPRINTING_CONTENT:
+    case nsIWebProgressListener::STATE_ALLOWED_FINGERPRINTING_CONTENT:
     case nsIWebProgressListener::STATE_REPLACED_TRACKING_CONTENT:
     case nsIWebProgressListener::STATE_ALLOWED_TRACKING_CONTENT:
       RecordLogInternal(aOrigin, aType, blockedValue);
@@ -220,82 +165,6 @@ void ContentBlockingLog::ReportLog(nsIPrincipal* aFirstPartyPrincipal) {
   }
 
   trackingDBService->RecordContentBlockingLog(Stringify());
-}
-
-void ContentBlockingLog::ReportOrigins() {
-  if (!IsReportingEnabled()) {
-    return;
-  }
-  LOG(("ContentBlockingLog::ReportOrigins [this=%p]", this));
-  const bool testMode =
-      StaticPrefs::telemetry_origin_telemetry_test_mode_enabled();
-  OriginMetricID metricId =
-      testMode ? OriginMetricID::ContentBlocking_Blocked_TestOnly
-               : OriginMetricID::ContentBlocking_Blocked;
-  ReportOriginSingleHash(metricId, kDummyOriginHash);
-
-  nsTArray<HashNumber> lookupTable;
-  for (const auto& originEntry : mLog) {
-    if (!originEntry.mData) {
-      continue;
-    }
-
-    for (const auto& logEntry : Reversed(originEntry.mData->mLogs)) {
-      if ((logEntry.mType !=
-               nsIWebProgressListener::STATE_COOKIES_BLOCKED_TRACKER &&
-           logEntry.mType !=
-               nsIWebProgressListener::STATE_COOKIES_BLOCKED_SOCIALTRACKER) ||
-          logEntry.mTrackingFullHashes.IsEmpty()) {
-        continue;
-      }
-
-      const bool isBlocked = logEntry.mBlocked;
-      Maybe<StorageAccessPermissionGrantedReason> reason = logEntry.mReason;
-
-      metricId = testMode ? OriginMetricID::ContentBlocking_Blocked_TestOnly
-                          : OriginMetricID::ContentBlocking_Blocked;
-      if (!isBlocked) {
-        MOZ_ASSERT(reason.isSome());
-        switch (reason.value()) {
-          case StorageAccessPermissionGrantedReason::eStorageAccessAPI:
-            metricId =
-                testMode
-                    ? OriginMetricID::
-                          ContentBlocking_StorageAccessAPIExempt_TestOnly
-                    : OriginMetricID::ContentBlocking_StorageAccessAPIExempt;
-            break;
-          case StorageAccessPermissionGrantedReason::
-              eOpenerAfterUserInteraction:
-            metricId =
-                testMode
-                    ? OriginMetricID::
-                          ContentBlocking_OpenerAfterUserInteractionExempt_TestOnly
-                    : OriginMetricID::
-                          ContentBlocking_OpenerAfterUserInteractionExempt;
-            break;
-          case StorageAccessPermissionGrantedReason::eOpener:
-            metricId =
-                testMode ? OriginMetricID::ContentBlocking_OpenerExempt_TestOnly
-                         : OriginMetricID::ContentBlocking_OpenerExempt;
-            break;
-          default:
-            MOZ_ASSERT_UNREACHABLE(
-                "Unknown StorageAccessPermissionGrantedReason");
-        }
-      }
-
-      for (const auto& hash : logEntry.mTrackingFullHashes) {
-        HashNumber key = AddToHash(HashString(hash.get(), hash.Length()),
-                                   static_cast<uint32_t>(metricId));
-        if (lookupTable.Contains(key)) {
-          continue;
-        }
-        lookupTable.AppendElement(key);
-        ReportOriginSingleHash(metricId, hash);
-      }
-      break;
-    }
-  }
 }
 
 void ContentBlockingLog::ReportEmailTrackingLog(
@@ -369,8 +238,22 @@ void ContentBlockingLog::ReportEmailTrackingLog(
     }
   }
 
-  bool isTopEmailWebApp = aFirstPartyPrincipal->IsURIInPrefList(
-      "privacy.trackingprotection.emailtracking.webapp.domains");
+  // Cache the email webapp domains pref value and register the callback
+  // function to update the cached value when the pref changes.
+  if (!gEmailWebAppDomainsPref) {
+    gEmailWebAppDomainsPref = new nsCString();
+
+    Preferences::RegisterCallbackAndCall(EmailWebAppDomainPrefChangeCallback,
+                                         kEmailWebAppDomainPrefName);
+    RunOnShutdown([]() {
+      Preferences::UnregisterCallback(EmailWebAppDomainPrefChangeCallback,
+                                      kEmailWebAppDomainPrefName);
+      gEmailWebAppDomainsPref = nullptr;
+    });
+  }
+
+  bool isTopEmailWebApp =
+      aFirstPartyPrincipal->IsURIInList(*gEmailWebAppDomainsPref);
   uint32_t level1Count = level1SiteSet.Count();
   uint32_t level2Count = level2SiteSet.Count();
 

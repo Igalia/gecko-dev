@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,8 +9,7 @@ includes: [temporalHelpers.js]
 features: [Temporal]
 ---*/
 
-const calendar = new Temporal.Calendar("iso8601");
-const orig = new Temporal.PlainDate(2000, 5, 2, calendar);
+const orig = new Temporal.PlainDate(2000, 5, 2);
 const result = Temporal.PlainDate.from(orig);
 
 TemporalHelpers.assertPlainDate(
@@ -19,11 +18,7 @@ TemporalHelpers.assertPlainDate(
   "PlainDate is copied"
 );
 
-assert.sameValue(
-  result.calendar,
-  calendar,
-  "Calendar is copied"
-);
+assert.sameValue(result.getISOFields().calendar, orig.getISOFields().calendar, "Calendar is copied");
 
 assert.notSameValue(
   result,

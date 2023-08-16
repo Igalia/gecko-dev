@@ -2,28 +2,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import logging
 import os
+import sys
 
 import mozpack.path as mozpath
-
-from mozbuild.base import (
-    MachCommandConditions as conditions,
-)
-
-from mozbuild.shellutil import (
-    split as shell_split,
-)
-
-from mach.decorators import (
-    CommandArgument,
-    Command,
-    SubCommand,
-)
-
+from mach.decorators import Command, CommandArgument, SubCommand
+from mozbuild.base import MachCommandConditions as conditions
+from mozbuild.shellutil import split as shell_split
 
 # Mach's conditions facility doesn't support subcommands.  Print a
 # deprecation message ourselves instead.
@@ -506,6 +493,8 @@ def gradle(command_context, args, verbose=False):
             "GRADLE_OPTS": "-Dfile.encoding=utf-8",
             "JAVA_HOME": java_home,
             "JAVA_TOOL_OPTIONS": "-Dfile.encoding=utf-8",
+            # Let Gradle get the right Python path on Windows
+            "GRADLE_MACH_PYTHON": sys.executable,
         }
     )
     # Set ANDROID_SDK_ROOT if --with-android-sdk was set.

@@ -16,11 +16,12 @@ const SOURCES = [
  * Test navigating
  * navigating while paused will reset the pause state and sources
  */
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-script-switching.html");
   const {
     selectors: { getSelectedSource, getIsPaused, getCurrentThread },
   } = dbg;
+  ok(getCurrentThread(), "We get a thread selected on debugger opening");
 
   info("Pause in the first document");
   invokeInTab("firstCall");
@@ -28,6 +29,10 @@ add_task(async function() {
 
   info("Navigate while being paused in the first document");
   await navigate(dbg, "doc-scripts.html", "simple1.js");
+  ok(
+    getCurrentThread(),
+    "The new top level thread is selected after navigation"
+  );
 
   info("Set a breakpoint on the second document and pause on it");
   await selectSource(dbg, "simple1.js");

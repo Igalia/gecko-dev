@@ -1,11 +1,9 @@
-from __future__ import absolute_import, unicode_literals
+import os
+import sys
 
 import mozinfo
 import mozunit
-import os
 import pytest
-import sys
-
 from six.moves.urllib.parse import parse_qs, urlsplit
 
 # need this so raptor imports work both from /raptor and via mach
@@ -170,12 +168,7 @@ def test_get_raptor_test_list_firefox(create_args):
     test_list = get_raptor_test_list(args, mozinfo.os)
     assert len(test_list) == 4
 
-    subtests = [
-        "raptor-tp6-unittest-google-firefox",
-        "raptor-tp6-unittest-amazon-firefox",
-        "raptor-tp6-unittest-facebook-firefox",
-        "raptor-tp6-unittest-youtube-firefox",
-    ]
+    subtests = ["google", "amazon", "facebook", "youtube"]
 
     for next_subtest in test_list:
         assert next_subtest["name"] in subtests
@@ -291,6 +284,24 @@ def test_get_raptor_test_list_gecko_profiling_disabled_args_override(create_args
     assert test_list[0].get("gecko_profile_interval") is None
     assert test_list[0].get("gecko_profile_threads") is None
     assert test_list[0].get("gecko_profile_features") is None
+
+
+def test_get_raptor_test_list_extra_profiler_run_enabled(create_args):
+    args = create_args(test="amazon", extra_profiler_run=True, browser_cycles=1)
+
+    test_list = get_raptor_test_list(args, mozinfo.os)
+    assert len(test_list) == 1
+    assert test_list[0]["name"] == "amazon"
+    assert test_list[0]["extra_profiler_run"] is True
+
+
+def test_get_raptor_test_list_extra_profiler_run_disabled(create_args):
+    args = create_args(test="amazon", browser_cycles=1)
+
+    test_list = get_raptor_test_list(args, mozinfo.os)
+    assert len(test_list) == 1
+    assert test_list[0]["name"] == "amazon"
+    assert test_list[0].get("extra_profiler_run") is None
 
 
 def test_get_raptor_test_list_debug_mode(create_args):

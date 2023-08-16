@@ -11,19 +11,53 @@
 #include "mozilla/dom/HTMLCanvasElement.h"
 #include "mozilla/gfx/CanvasManagerChild.h"
 #include "mozilla/layers/CanvasRenderer.h"
-#include "mozilla/layers/CompositableInProcessManager.h"
 #include "mozilla/layers/ImageDataSerializer.h"
 #include "mozilla/layers/LayersSurfaces.h"
 #include "mozilla/layers/RenderRootStateManager.h"
+#include "mozilla/layers/WebRenderCanvasRenderer.h"
+#include "mozilla/StaticPrefs_privacy.h"
 #include "ipc/WebGPUChild.h"
+
+namespace mozilla {
+
+inline void ImplCycleCollectionTraverse(
+    nsCycleCollectionTraversalCallback& aCallback,
+    dom::GPUCanvasConfiguration& aField, const char* aName, uint32_t aFlags) {
+  aField.TraverseForCC(aCallback, aFlags);
+}
+
+inline void ImplCycleCollectionUnlink(dom::GPUCanvasConfiguration& aField) {
+  aField.UnlinkForCC();
+}
+
+// -
+
+template <class T>
+inline void ImplCycleCollectionTraverse(
+    nsCycleCollectionTraversalCallback& aCallback,
+    const std::unique_ptr<T>& aField, const char* aName, uint32_t aFlags) {
+  if (aField) {
+    ImplCycleCollectionTraverse(aCallback, *aField, aName, aFlags);
+  }
+}
+
+template <class T>
+inline void ImplCycleCollectionUnlink(std::unique_ptr<T>& aField) {
+  aField = nullptr;
+}
+
+}  // namespace mozilla
+
+// -
 
 namespace mozilla::webgpu {
 
 NS_IMPL_CYCLE_COLLECTING_ADDREF(CanvasContext)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(CanvasContext)
 
-GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(CanvasContext, mTexture,
-                                                mBridge, mCanvasElement,
+GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(CanvasContext, mConfig,
+                                                mTexture, mBridge,
+                                                mCanvasElement,
                                                 mOffscreenCanvas)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CanvasContext)
@@ -31,6 +65,8 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(CanvasContext)
   NS_INTERFACE_MAP_ENTRY(nsICanvasRenderingContextInternal)
   NS_INTERFACE_MAP_ENTRY(nsISupports)
 NS_INTERFACE_MAP_END
+
+// -
 
 CanvasContext::CanvasContext() = default;
 
@@ -44,6 +80,21 @@ void CanvasContext::Cleanup() { Unconfigure(); }
 JSObject* CanvasContext::WrapObject(JSContext* aCx,
                                     JS::Handle<JSObject*> aGivenProto) {
   return dom::GPUCanvasContext_Binding::Wrap(aCx, this, aGivenProto);
+}
+
+// -
+
+void CanvasContext::GetCanvas(
+    dom::OwningHTMLCanvasElementOrOffscreenCanvas& aRetVal) const {
+  if (mCanvasElement) {
+    aRetVal.SetAsHTMLCanvasElement() = mCanvasElement;
+  } else if (mOffscreenCanvas) {
+    aRetVal.SetAsOffscreenCanvas() = mOffscreenCanvas;
+  } else {
+    MOZ_CRASH(
+        "This should only happen briefly during CC Unlink, and no JS should "
+        "happen then.");
+  }
 }
 
 void CanvasContext::Configure(const dom::GPUCanvasConfiguration& aDesc) {
@@ -64,10 +115,10 @@ void CanvasContext::Configure(const dom::GPUCanvasConfiguration& aDesc) {
       return;
   }
 
-  gfx::IntSize actualSize(mWidth, mHeight);
-  mHandle = layers::CompositableInProcessManager::GetNextHandle();
-  mTexture =
-      aDesc.mDevice->InitSwapChain(aDesc, mHandle, mGfxFormat, &actualSize);
+  mConfig.reset(new dom::GPUCanvasConfiguration(aDesc));
+  mRemoteTextureOwnerId = Some(layers::RemoteTextureOwnerId::GetNext());
+  mTexture = aDesc.mDevice->InitSwapChain(aDesc, *mRemoteTextureOwnerId,
+                                          mGfxFormat, mCanvasSize);
   if (!mTexture) {
     Unconfigure();
     return;
@@ -75,34 +126,34 @@ void CanvasContext::Configure(const dom::GPUCanvasConfiguration& aDesc) {
 
   mTexture->mTargetContext = this;
   mBridge = aDesc.mDevice->GetBridge();
-  mGfxSize = actualSize;
 
-  // Force a new frame to be built, which will execute the
-  // `CanvasContextType::WebGPU` switch case in `CreateWebRenderCommands` and
-  // populate the WR user data.
-  if (mCanvasElement) {
-    mCanvasElement->InvalidateCanvas();
-  } else if (mOffscreenCanvas) {
-    dom::OffscreenCanvasDisplayData data;
-    data.mSize = {mWidth, mHeight};
-    data.mIsOpaque = false;
-    data.mHandle = mHandle;
-    mOffscreenCanvas->UpdateDisplayData(data);
-  }
+  ForceNewFrame();
 }
 
 void CanvasContext::Unconfigure() {
-  if (mBridge && mBridge->IsOpen() && mHandle) {
-    mBridge->SendSwapChainDestroy(mHandle);
+  if (mBridge && mBridge->IsOpen() && mRemoteTextureOwnerId.isSome()) {
+    mBridge->SendSwapChainDestroy(*mRemoteTextureOwnerId);
   }
-  mHandle = layers::CompositableHandle();
+  mRemoteTextureOwnerId = Nothing();
   mBridge = nullptr;
+  mConfig = nullptr;
   mTexture = nullptr;
   mGfxFormat = gfx::SurfaceFormat::UNKNOWN;
 }
 
-dom::GPUTextureFormat CanvasContext::GetPreferredFormat(Adapter&) const {
-  return dom::GPUTextureFormat::Bgra8unorm;
+NS_IMETHODIMP CanvasContext::SetDimensions(int32_t aWidth, int32_t aHeight) {
+  aWidth = std::max(1, aWidth);
+  aHeight = std::max(1, aHeight);
+  const auto newSize = gfx::IntSize{aWidth, aHeight};
+  if (newSize == mCanvasSize) return NS_OK;  // No-op no-change resizes.
+
+  mCanvasSize = newSize;
+  if (mConfig) {
+    const auto copy = dom::GPUCanvasConfiguration{
+        *mConfig};  // So we can't null it out on ourselves.
+    Configure(copy);
+  }
+  return NS_OK;
 }
 
 RefPtr<Texture> CanvasContext::GetCurrentTexture(ErrorResult& aRv) {
@@ -126,40 +177,73 @@ void CanvasContext::MaybeQueueSwapChainPresent() {
 
 void CanvasContext::SwapChainPresent() {
   mPendingSwapChainPresent = false;
-  if (mBridge && mBridge->IsOpen() && mHandle && mTexture) {
-    mBridge->SwapChainPresent(mHandle, mTexture->mId);
+  if (!mBridge || !mBridge->IsOpen() || mRemoteTextureOwnerId.isNothing() ||
+      !mTexture) {
+    return;
   }
+  mLastRemoteTextureId = Some(layers::RemoteTextureId::GetNext());
+  mBridge->SwapChainPresent(mTexture->mId, *mLastRemoteTextureId,
+                            *mRemoteTextureOwnerId);
+}
+
+bool CanvasContext::UpdateWebRenderCanvasData(
+    mozilla::nsDisplayListBuilder* aBuilder, WebRenderCanvasData* aCanvasData) {
+  auto* renderer = aCanvasData->GetCanvasRenderer();
+
+  if (renderer && mRemoteTextureOwnerId.isSome() &&
+      renderer->GetRemoteTextureOwnerIdOfPushCallback() ==
+          mRemoteTextureOwnerId) {
+    return true;
+  }
+
+  renderer = aCanvasData->CreateCanvasRenderer();
+  if (!InitializeCanvasRenderer(aBuilder, renderer)) {
+    // Clear CanvasRenderer of WebRenderCanvasData
+    aCanvasData->ClearCanvasRenderer();
+    return false;
+  }
+  return true;
 }
 
 bool CanvasContext::InitializeCanvasRenderer(
     nsDisplayListBuilder* aBuilder, layers::CanvasRenderer* aRenderer) {
-  // This path is only used for rendering when we use the fallback Paint path,
-  // used by reftest-snapshot, printing and Firefox Screenshot.
-  if (!mHandle) {
+  if (mRemoteTextureOwnerId.isNothing()) {
     return false;
   }
 
   layers::CanvasRendererData data;
   data.mContext = this;
-  data.mSize = mGfxSize;
+  data.mSize = mCanvasSize;
   data.mIsOpaque = false;
+  data.mRemoteTextureOwnerIdOfPushCallback = mRemoteTextureOwnerId;
 
   aRenderer->Initialize(data);
   aRenderer->SetDirty();
   return true;
 }
 
-mozilla::UniquePtr<uint8_t[]> CanvasContext::GetImageBuffer(int32_t* aFormat) {
+mozilla::UniquePtr<uint8_t[]> CanvasContext::GetImageBuffer(
+    int32_t* out_format, gfx::IntSize* out_imageSize) {
+  *out_format = 0;
+  *out_imageSize = {};
+
   gfxAlphaType any;
   RefPtr<gfx::SourceSurface> snapshot = GetSurfaceSnapshot(&any);
   if (!snapshot) {
-    *aFormat = 0;
     return nullptr;
   }
 
   RefPtr<gfx::DataSourceSurface> dataSurface = snapshot->GetDataSurface();
+  *out_imageSize = dataSurface->GetSize();
+
+  if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
+    gfxUtils::GetImageBufferWithRandomNoise(
+        dataSurface,
+        /* aIsAlphaPremultiplied */ true, GetCookieJarSettings(), &*out_format);
+  }
+
   return gfxUtils::GetImageBuffer(dataSurface, /* aIsAlphaPremultiplied */ true,
-                                  aFormat);
+                                  &*out_format);
 }
 
 NS_IMETHODIMP CanvasContext::GetInputStream(const char* aMimeType,
@@ -172,6 +256,13 @@ NS_IMETHODIMP CanvasContext::GetInputStream(const char* aMimeType,
   }
 
   RefPtr<gfx::DataSourceSurface> dataSurface = snapshot->GetDataSurface();
+
+  if (ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
+    gfxUtils::GetInputStreamWithRandomNoise(
+        dataSurface, /* aIsAlphaPremultiplied */ true, aMimeType,
+        aEncoderOptions, GetCookieJarSettings(), aStream);
+  }
+
   return gfxUtils::GetInputStream(dataSurface, /* aIsAlphaPremultiplied */ true,
                                   aMimeType, aEncoderOptions, aStream);
 }
@@ -187,12 +278,33 @@ already_AddRefed<mozilla::gfx::SourceSurface> CanvasContext::GetSurfaceSnapshot(
     return nullptr;
   }
 
-  if (!mBridge || !mBridge->IsOpen() || !mHandle) {
+  if (!mBridge || !mBridge->IsOpen() || mRemoteTextureOwnerId.isNothing()) {
     return nullptr;
   }
 
-  return cm->GetSnapshot(cm->Id(), mBridge->Id(), mHandle, mGfxFormat,
-                         /* aPremultiply */ false, /* aYFlip */ false);
+  MOZ_ASSERT(mRemoteTextureOwnerId.isSome());
+  return cm->GetSnapshot(cm->Id(), mBridge->Id(), mRemoteTextureOwnerId,
+                         mGfxFormat, /* aPremultiply */ false,
+                         /* aYFlip */ false);
+}
+
+void CanvasContext::ForceNewFrame() {
+  if (!mCanvasElement && !mOffscreenCanvas) {
+    return;
+  }
+
+  // Force a new frame to be built, which will execute the
+  // `CanvasContextType::WebGPU` switch case in `CreateWebRenderCommands` and
+  // populate the WR user data.
+  if (mCanvasElement) {
+    mCanvasElement->InvalidateCanvas();
+  } else if (mOffscreenCanvas) {
+    dom::OffscreenCanvasDisplayData data;
+    data.mSize = mCanvasSize;
+    data.mIsOpaque = false;
+    data.mOwnerId = mRemoteTextureOwnerId;
+    mOffscreenCanvas->UpdateDisplayData(data);
+  }
 }
 
 }  // namespace mozilla::webgpu

@@ -9,7 +9,7 @@ const {
   TAB_SIZE,
   DETECT_INDENT,
   getIndentationFromIteration,
-} = require("devtools/shared/indentation");
+} = require("resource://devtools/shared/indentation.js");
 
 const ENABLE_CODE_FOLDING = "devtools.editor.enableCodeFolding";
 const KEYMAP_PREF = "devtools.editor.keymap";
@@ -40,12 +40,11 @@ const MAX_VERTICAL_OFFSET = 3;
 const RE_JUMP_TO_LINE = /^(\d+):?(\d+)?/;
 const AUTOCOMPLETE_MARK_CLASSNAME = "cm-auto-complete-shadow-text";
 
-const Services = require("Services");
-const EventEmitter = require("devtools/shared/event-emitter");
-const { PrefObserver } = require("devtools/client/shared/prefs");
-const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const { PrefObserver } = require("resource://devtools/client/shared/prefs.js");
+const KeyShortcuts = require("resource://devtools/client/shared/key-shortcuts.js");
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
+const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/sourceeditor.properties"
 );
@@ -53,7 +52,7 @@ const L10N = new LocalizationHelper(
 loader.lazyRequireGetter(
   this,
   "wasm",
-  "devtools/client/shared/sourceeditor/wasm"
+  "resource://devtools/client/shared/sourceeditor/wasm.js"
 );
 
 const { OS } = Services.appinfo;
@@ -168,8 +167,9 @@ function Editor(config) {
     // - \u2066 LEFT-TO-RIGHT ISOLATE
     // - \u2067 RIGHT-TO-LEFT ISOLATE
     // - \u2069 POP DIRECTIONAL ISOLATE
-    // eslint-disable-next-line no-control-regex
-    specialChars: /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\u202d\u202e\u2066\u2067\u2069\ufeff\ufff9-\ufffc]/,
+    specialChars:
+      // eslint-disable-next-line no-control-regex
+      /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u200b-\u200f\u2028\u2029\u202d\u202e\u2066\u2067\u2069\ufeff\ufff9-\ufffc]/,
     specialCharPlaceholder: char => {
       // Use the doc provided to the setup function if we don't have a reference to a codeMirror
       // editor yet (this can happen when an Editor is being created with existing content)
@@ -185,9 +185,8 @@ function Editor(config) {
   this.config.extraKeys[Editor.keyFor("jumpToLine")] = () => this.jumpToLine();
   this.config.extraKeys[Editor.keyFor("moveLineUp", { noaccel: true })] = () =>
     this.moveLineUp();
-  this.config.extraKeys[
-    Editor.keyFor("moveLineDown", { noaccel: true })
-  ] = () => this.moveLineDown();
+  this.config.extraKeys[Editor.keyFor("moveLineDown", { noaccel: true })] =
+    () => this.moveLineDown();
   this.config.extraKeys[Editor.keyFor("toggleComment")] = "toggleComment";
 
   // Disable ctrl-[ and ctrl-] because toolbox uses those shortcuts.
@@ -204,6 +203,13 @@ function Editor(config) {
   // the underlying command, `undoSelection`, isn't standard in input fields and isn't
   // widely known.
   this.config.extraKeys[Editor.accel("U")] = false;
+
+  // Disable keys that trigger events with a null-string `which` property.
+  // It looks like some of those (e.g. the Function key), can trigger a poll
+  // which fails to see that there's a selection, which end up replacing the
+  // selected text with an empty string.
+  // TODO: We should investigate the root cause.
+  this.config.extraKeys["'\u0000'"] = false;
 
   // Overwrite default config with user-provided, if needed.
   Object.keys(config).forEach(k => {
@@ -327,7 +333,7 @@ Editor.prototype = {
         env = el.ownerDocument.createElementNS(el.namespaceURI, "iframe");
 
         if (el.namespaceURI === XUL_NS) {
-          env.flex = 1;
+          env.setAttribute("flex", "1");
         }
       }
 
@@ -564,10 +570,13 @@ Editor.prototype = {
 
   /**
    * Creates a CodeMirror Document
+   *
+   * @param {String} text: Initial text of the document
+   * @param {Object|String} mode: Mode of the document. See https://codemirror.net/5/doc/manual.html#option_mode
    * @returns CodeMirror.Doc
    */
-  createDocument() {
-    return new this.Doc("");
+  createDocument(text = "", mode) {
+    return new this.Doc(text, mode);
   },
 
   /**
@@ -600,7 +609,7 @@ Editor.prototype = {
   insertCommandsController() {
     const {
       insertCommandsController,
-    } = require("devtools/client/shared/sourceeditor/editor-commands-controller");
+    } = require("resource://devtools/client/shared/sourceeditor/editor-commands-controller.js");
     insertCommandsController(this);
   },
 
@@ -739,7 +748,7 @@ Editor.prototype = {
   resetIndentUnit() {
     const cm = editors.get(this);
 
-    const iterFn = function(start, end, callback) {
+    const iterFn = function (start, end, callback) {
       cm.eachLine(start, end, line => {
         return callback(line.text);
       });
@@ -1367,7 +1376,9 @@ Editor.prototype = {
     // The autocomplete module will overwrite this.initializeAutoCompletion
     // with a mode specific autocompletion handler.
     if (!this.initializeAutoCompletion) {
-      this.extend(require("devtools/client/shared/sourceeditor/autocomplete"));
+      this.extend(
+        require("resource://devtools/client/shared/sourceeditor/autocomplete.js")
+      );
     }
 
     if (this.config.autocomplete && Services.prefs.getBoolPref(AUTOCOMPLETE)) {
@@ -1581,7 +1592,7 @@ Editor.prototype = {
 // are mapped directly—without any changes.
 
 CM_MAPPING.forEach(name => {
-  Editor.prototype[name] = function(...args) {
+  Editor.prototype[name] = function (...args) {
     const cm = editors.get(this);
     return cm[name].apply(cm, args);
   };
@@ -1597,7 +1608,7 @@ CM_MAPPING.forEach(name => {
  * CodeMirror defines all keys with modifiers in the following
  * order: Shift - Ctrl/Cmd - Alt - Key
  */
-Editor.accel = function(key, modifiers = {}) {
+Editor.accel = function (key, modifiers = {}) {
   return (
     (modifiers.shift ? "Shift-" : "") +
     (Services.appinfo.OS == "Darwin" ? "Cmd-" : "Ctrl-") +
@@ -1612,7 +1623,7 @@ Editor.accel = function(key, modifiers = {}) {
  * platforms unless noaccel is specified in the options. Useful when overwriting
  * or disabling default shortcuts.
  */
-Editor.keyFor = function(cmd, opts = { noaccel: false }) {
+Editor.keyFor = function (cmd, opts = { noaccel: false }) {
   const key = L10N.getStr(cmd + ".commandkey");
   return opts.noaccel ? key : Editor.accel(key);
 };

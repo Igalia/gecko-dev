@@ -34,6 +34,13 @@ class RaiiShmem final {
     return {allocator, shmem};
   }
 
+  static RaiiShmem AllocUnsafe(mozilla::ipc::IProtocol* const allocator,
+                               const size_t size) {
+    mozilla::ipc::Shmem shmem;
+    if (!allocator->AllocUnsafeShmem(size, &shmem)) return {};
+    return {allocator, shmem};
+  }
+
   // -
 
   RaiiShmem() = default;
@@ -247,7 +254,10 @@ struct ParamTraits<mozilla::WebGLContextOptions> final
   using T = mozilla::WebGLContextOptions;
 
   static bool Validate(const T& val) {
-    return ValidateParam(val.powerPreference) && ValidateParam(val.colorSpace);
+    bool ok = true;
+    ok &= ValidateParam(val.powerPreference);
+    ok &= ValidateParam(val.colorSpace);
+    return ok;
   }
 };
 
@@ -276,6 +286,13 @@ struct ParamTraits<mozilla::webgl::OpaqueFramebufferOptions> final
 
 // -
 
+template <>
+struct ParamTraits<mozilla::gl::GLVendor>
+    : public ContiguousEnumSerializerInclusive<mozilla::gl::GLVendor,
+                                               mozilla::gl::GLVendor::Intel,
+                                               mozilla::gl::kHighestGLVendor> {
+};
+
 template <typename T>
 struct ParamTraits<mozilla::webgl::EnumMask<T>> final
     : public PlainOldDataSerializer<mozilla::webgl::EnumMask<T>> {};
@@ -289,12 +306,14 @@ struct ParamTraits<mozilla::webgl::InitContextResult> final {
     WriteParam(writer, in.options);
     WriteParam(writer, in.limits);
     WriteParam(writer, in.uploadableSdTypes);
+    WriteParam(writer, in.vendor);
   }
 
   static bool Read(MessageReader* const reader, T* const out) {
     return ReadParam(reader, &out->error) && ReadParam(reader, &out->options) &&
            ReadParam(reader, &out->limits) &&
-           ReadParam(reader, &out->uploadableSdTypes);
+           ReadParam(reader, &out->uploadableSdTypes) &&
+           ReadParam(reader, &out->vendor);
   }
 };
 

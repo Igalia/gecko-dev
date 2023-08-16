@@ -49,7 +49,7 @@ function parseTestManifest(testManifest, params, callback) {
       });
     }
   }
-  if (paths.length > 0) {
+  if (paths.length) {
     callback(paths);
   } else {
     callback(links);
@@ -59,7 +59,7 @@ function parseTestManifest(testManifest, params, callback) {
 function getTestManifest(url, params, callback) {
   let req = new XMLHttpRequest();
   req.open("GET", url);
-  req.onload = function() {
+  req.onload = function () {
     if (req.readyState == 4) {
       if (req.status == 200) {
         try {

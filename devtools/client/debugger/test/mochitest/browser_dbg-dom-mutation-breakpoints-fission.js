@@ -7,7 +7,6 @@
 "use strict";
 
 // Import helpers for the inspector
-/* import-globals-from ../../../inspector/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/test/shared-head.js",
   this
@@ -32,10 +31,7 @@ const TEST_COM_URI = `https://example.com/document-builder.sjs?html=${encodeURI(
 const TEST_URI = `https://example.org/document-builder.sjs?html=
 <iframe src="${encodeURI(TEST_COM_URI)}"></iframe><body>`;
 
-add_task(async function() {
-  // Enable features
-  await pushPref("devtools.debugger.features.dom-mutation-breakpoints", true);
-  await pushPref("devtools.markup.mutationBreakpoints.enabled", true);
+add_task(async function () {
   await pushPref("devtools.debugger.dom-mutation-breakpoints-visible", true);
 
   const { inspector, toolbox } = await openInspectorForURL(TEST_URI);
@@ -58,7 +54,7 @@ add_task(async function() {
   const frameBC = await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [],
-    function() {
+    function () {
       return content.document.querySelector("iframe").browsingContext;
     }
   );
@@ -88,7 +84,7 @@ add_task(async function() {
   assertNotPaused(dbg, "DOM breakpoint should not have been hit");
 
   info("Restore the disabled attribute");
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     return SpecialPowers.spawn(
       content.document.querySelector("iframe"),
       [],

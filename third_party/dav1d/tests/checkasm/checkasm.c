@@ -42,6 +42,10 @@
 #include <unistd.h>
 #include <signal.h>
 #include <time.h>
+#include <pthread.h>
+#ifdef HAVE_PTHREAD_NP_H
+#include <pthread_np.h>
+#endif
 #ifdef __APPLE__
 #include <mach/mach_time.h>
 #endif
@@ -121,19 +125,21 @@ static struct {
     CheckasmFunc *current_func;
     CheckasmFuncVersion *current_func_ver;
     const char *current_test_name;
-    const char *bench_pattern;
-    size_t bench_pattern_len;
     int num_checked;
     int num_failed;
-    int nop_time;
+    double nop_time;
     unsigned cpu_flag;
     const char *cpu_flag_name;
-    const char *test_name;
+    const char *test_pattern;
+    const char *function_pattern;
     unsigned seed;
+    int bench;
     int bench_c;
     int verbose;
     int function_listing;
     int catch_signals;
+    int suffix_length;
+    int max_function_name_length;
 #if ARCH_X86_64
     void (*simd_warmup)(void);
 #endif
@@ -321,7 +327,7 @@ static int cmp_nop(const void *a, const void *b) {
 }
 
 /* Measure the overhead of the timing code (in decicycles) */
-static int measure_nop_time(void) {
+static double measure_nop_time(void) {
     uint16_t nops[10000];
     int nop_sum = 0;
 
@@ -334,7 +340,16 @@ static int measure_nop_time(void) {
     for (int i = 2500; i < 7500; i++)
         nop_sum += nops[i];
 
-    return nop_sum / 500;
+    return nop_sum / 5000.0;
+}
+
+static double avg_cycles_per_call(const CheckasmFuncVersion *const v) {
+    if (v->iterations) {
+        const double cycles = (double)v->cycles / v->iterations - state.nop_time;
+        if (cycles > 0.0)
+            return cycles / 4.0; /* 4 calls per iteration */
+    }
+    return 0.0;
 }
 
 /* Print benchmark results */
@@ -343,15 +358,15 @@ static void print_benchs(const CheckasmFunc *const f) {
         print_benchs(f->child[0]);
 
         /* Only print functions with at least one assembly version */
-        if (state.bench_c || f->versions.cpu || f->versions.next) {
-            const CheckasmFuncVersion *v = &f->versions;
+        const CheckasmFuncVersion *v = &f->versions;
+        if ((state.bench_c || v->cpu || v->next) && v->iterations) {
+            const double baseline = avg_cycles_per_call(v);
             do {
-                if (v->iterations) {
-                    const int decicycles = (int) (10*v->cycles/v->iterations -
-                                                  state.nop_time) / 4;
-                    printf("%s_%s: %d.%d\n", f->name, cpu_suffix(v->cpu),
-                           decicycles/10, decicycles%10);
-                }
+                const int pad_length = 10 + state.max_function_name_length -
+                    printf("%s_%s:", f->name, cpu_suffix(v->cpu));
+                const double cycles = avg_cycles_per_call(v);
+                const double ratio = cycles ? baseline / cycles : 0.0;
+                printf("%*.1f (%5.2fx)\n", imax(pad_length, 0), cycles, ratio);
             } while ((v = v->next));
         }
 
@@ -363,7 +378,11 @@ static void print_benchs(const CheckasmFunc *const f) {
 static void print_functions(const CheckasmFunc *const f) {
     if (f) {
         print_functions(f->child[0]);
-        printf("%s\n", f->name);
+        const CheckasmFuncVersion *v = &f->versions;
+        printf("%s (%s", f->name, cpu_suffix(v->cpu));
+        while ((v = v->next))
+            printf(", %s", cpu_suffix(v->cpu));
+        printf(")\n");
         print_functions(f->child[1]);
     }
 }
@@ -489,6 +508,21 @@ static void signal_handler(const int s) {
 }
 #endif
 
+/* Compares a string with a wildcard pattern. */
+static int wildstrcmp(const char *str, const char *pattern) {
+    const char *wild = strchr(pattern, '*');
+    if (wild) {
+        const size_t len = wild - pattern;
+        if (strncmp(str, pattern, len)) return 1;
+        while (*++wild == '*');
+        if (!*wild) return 0;
+        str += len;
+        while (*str && wildstrcmp(str, wild)) str++;
+        return !*str;
+    }
+    return strcmp(str, pattern);
+}
+
 /* Perform tests and benchmarks for the specified
  * cpu flag if supported by the host */
 static void check_cpu_flag(const char *const name, unsigned flag) {
@@ -500,8 +534,9 @@ static void check_cpu_flag(const char *const name, unsigned flag) {
 
     if (!flag || state.cpu_flag != old_cpu_flag) {
         state.cpu_flag_name = name;
+        state.suffix_length = (int)strlen(cpu_suffix(flag)) + 1;
         for (int i = 0; tests[i].func; i++) {
-            if (state.test_name && strcmp(tests[i].name, state.test_name))
+            if (state.test_pattern && wildstrcmp(tests[i].name, state.test_pattern))
                 continue;
             xor128_srand(state.seed);
             state.current_test_name = tests[i].name;
@@ -536,33 +571,41 @@ int main(int argc, char *argv[]) {
     state.seed = get_seed();
 
     while (argc > 1) {
-        if (!strncmp(argv[1], "--help", 6)) {
+        if (!strncmp(argv[1], "--help", 6) || !strcmp(argv[1], "-h")) {
             fprintf(stderr,
                     "checkasm [options] <random seed>\n"
-                    "    <random seed>       Numeric value to seed the rng\n"
+                    "    <random seed>              Numeric value to seed the rng\n"
                     "Options:\n"
-                    "    --test=<test_name>  Test only <test_name>\n"
-                    "    --bench=<pattern>   Test and benchmark the functions matching <pattern>\n"
-                    "    --list-functions    List available functions\n"
-                    "    --list-tests        List available tests\n"
-                    "    --bench-c           Benchmark the C-only functions\n"
-                    "    --verbose -v        Print failures verbosely\n");
+                    "    --affinity=<cpu>           Run the process on CPU <cpu>\n"
+                    "    --test=<pattern>           Test only <pattern>\n"
+                    "    --function=<pattern> -f    Test only the functions matching <pattern>\n"
+                    "    --bench -b                 Benchmark the tested functions\n"
+                    "    --list-functions           List available functions\n"
+                    "    --list-tests               List available tests\n"
+                    "    --bench-c -c               Benchmark the C-only functions\n"
+                    "    --verbose -v               Print verbose output\n");
             return 0;
-        } else if (!strncmp(argv[1], "--bench-c", 9)) {
+        } else if (!strcmp(argv[1], "--bench-c") || !strcmp(argv[1], "-c")) {
             state.bench_c = 1;
-        } else if (!strncmp(argv[1], "--bench", 7)) {
+        } else if (!strcmp(argv[1], "--bench") || !strcmp(argv[1], "-b")) {
 #ifndef readtime
             fprintf(stderr,
                     "checkasm: --bench is not supported on your system\n");
             return 1;
 #endif
-            if (argv[1][7] == '=') {
-                state.bench_pattern = argv[1] + 8;
-                state.bench_pattern_len = strlen(state.bench_pattern);
-            } else
-                state.bench_pattern = "";
+            state.bench = 1;
         } else if (!strncmp(argv[1], "--test=", 7)) {
-            state.test_name = argv[1] + 7;
+            state.test_pattern = argv[1] + 7;
+        } else if (!strcmp(argv[1], "-t")) {
+            state.test_pattern = argc > 1 ? argv[2] : "";
+            argc--;
+            argv++;
+        } else if (!strncmp(argv[1], "--function=", 11)) {
+            state.function_pattern = argv[1] + 11;
+        } else if (!strcmp(argv[1], "-f")) {
+            state.function_pattern = argc > 1 ? argv[2] : "";
+            argc--;
+            argv++;
         } else if (!strcmp(argv[1], "--list-functions")) {
             state.function_listing = 1;
         } else if (!strcmp(argv[1], "--list-tests")) {
@@ -571,6 +614,43 @@ int main(int argc, char *argv[]) {
             return 0;
         } else if (!strcmp(argv[1], "--verbose") || !strcmp(argv[1], "-v")) {
             state.verbose = 1;
+        } else if (!strncmp(argv[1], "--affinity=", 11)) {
+            unsigned long affinity = strtoul(argv[1] + 11, NULL, 16);
+#ifdef _WIN32
+            BOOL (WINAPI *spdcs)(HANDLE, const ULONG*, ULONG) =
+                (void*)GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "SetProcessDefaultCpuSets");
+            HANDLE process = GetCurrentProcess();
+            int affinity_err;
+            if (spdcs) {
+                affinity_err = !spdcs(process, (ULONG[]){ affinity + 256 }, 1);
+            } else {
+                if (affinity < sizeof(DWORD_PTR) * 8)
+                    affinity_err = !SetProcessAffinityMask(process, (DWORD_PTR)1 << affinity);
+                else
+                    affinity_err = 1;
+            }
+            if (affinity_err) {
+                fprintf(stderr, "checkasm: invalid cpu affinity (%lu)\n", affinity);
+                return 1;
+            } else {
+                fprintf(stderr, "checkasm: running on cpu %lu\n", affinity);
+            }
+#elif defined(HAVE_PTHREAD_SETAFFINITY_NP) && defined(CPU_SET)
+            cpu_set_t set;
+            CPU_ZERO(&set);
+            CPU_SET(affinity, &set);
+            if (pthread_setaffinity_np(pthread_self(), sizeof(set), &set)) {
+                fprintf(stderr, "checkasm: invalid cpu affinity (%lu)\n", affinity);
+                return 1;
+            } else {
+                fprintf(stderr, "checkasm: running on cpu %lu\n", affinity);
+            }
+#else
+            (void)affinity;
+            fprintf(stderr,
+                    "checkasm: --affinity is not supported on your system\n");
+            return 1;
+#endif
         } else {
             state.seed = (unsigned) strtoul(argv[1], NULL, 10);
         }
@@ -602,7 +682,7 @@ int main(int argc, char *argv[]) {
 #endif
 
 #ifdef readtime
-    if (state.bench_pattern) {
+    if (state.bench) {
         static int testing = 0;
         checkasm_save_context();
         if (!testing) {
@@ -643,28 +723,28 @@ int main(int argc, char *argv[]) {
     }
 
     check_cpu_flag(NULL, 0);
+    for (int i = 0; cpus[i].flag; i++)
+        check_cpu_flag(cpus[i].name, cpus[i].flag);
 
     if (state.function_listing) {
         print_functions(state.funcs);
+    } else if (state.num_failed) {
+        fprintf(stderr, "checkasm: %d of %d tests failed\n",
+                state.num_failed, state.num_checked);
+        ret = 1;
     } else {
-        for (int i = 0; cpus[i].flag; i++)
-            check_cpu_flag(cpus[i].name, cpus[i].flag);
-        if (!state.num_checked) {
-            fprintf(stderr, "checkasm: no tests to perform\n");
-        } else if (state.num_failed) {
-            fprintf(stderr, "checkasm: %d of %d tests have failed\n",
-                    state.num_failed, state.num_checked);
-            ret = 1;
-        } else {
+        if (state.num_checked)
             fprintf(stderr, "checkasm: all %d tests passed\n", state.num_checked);
+        else
+            fprintf(stderr, "checkasm: no tests to perform\n");
 #ifdef readtime
-            if (state.bench_pattern) {
-                state.nop_time = measure_nop_time();
-                printf("nop: %d.%d\n", state.nop_time/10, state.nop_time%10);
-                print_benchs(state.funcs);
-            }
-#endif
+        if (state.bench && state.max_function_name_length) {
+            state.nop_time = measure_nop_time();
+            if (state.verbose)
+                printf("nop:%*.1f\n", state.max_function_name_length + 6, state.nop_time);
+            print_benchs(state.funcs);
         }
+#endif
     }
 
     destroy_func_tree(state.funcs);
@@ -679,16 +759,16 @@ void *checkasm_check_func(void *const func, const char *const name, ...) {
     va_list arg;
 
     va_start(arg, name);
-    const int name_length = vsnprintf(name_buf, sizeof(name_buf), name, arg);
+    int name_length = vsnprintf(name_buf, sizeof(name_buf), name, arg);
     va_end(arg);
 
-    if (!func || name_length <= 0 || (size_t)name_length >= sizeof(name_buf))
+    if (!func || name_length <= 0 || (size_t)name_length >= sizeof(name_buf) ||
+        (state.function_pattern && wildstrcmp(name_buf, state.function_pattern)))
+    {
         return NULL;
+    }
 
     state.current_func = get_func(&state.funcs, name_buf);
-
-    if (state.function_listing) /* Save function names without running tests */
-        return NULL;
 
     state.funcs->color = 1;
     CheckasmFuncVersion *v = &state.current_func->versions;
@@ -710,13 +790,20 @@ void *checkasm_check_func(void *const func, const char *const name, ...) {
         v = prev->next = checkasm_malloc(sizeof(CheckasmFuncVersion));
     }
 
+    name_length += state.suffix_length;
+    if (name_length > state.max_function_name_length)
+        state.max_function_name_length = name_length;
+
     v->func = func;
     v->ok = 1;
     v->cpu = state.cpu_flag;
     state.current_func_ver = v;
+    if (state.function_listing) /* Save function names without running tests */
+        return NULL;
+
     xor128_srand(state.seed);
 
-    if (state.cpu_flag || state.bench_c)
+    if (state.cpu_flag)
         state.num_checked++;
 
     return ref;
@@ -724,9 +811,7 @@ void *checkasm_check_func(void *const func, const char *const name, ...) {
 
 /* Decide whether or not the current function needs to be benchmarked */
 int checkasm_bench_func(void) {
-    return !state.num_failed && state.bench_pattern &&
-           !strncmp(state.current_func->name, state.bench_pattern,
-                    state.bench_pattern_len);
+    return !state.num_failed && state.bench;
 }
 
 /* Indicate that the current test has failed, return whether verbose printing

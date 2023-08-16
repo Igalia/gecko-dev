@@ -21,7 +21,8 @@ interface HTMLElement : Element {
            attribute DOMString title;
   [CEReactions]
            attribute DOMString lang;
-  //         attribute boolean translate;
+  [CEReactions, SetterThrows, Pure]
+           attribute boolean translate;
   [CEReactions, SetterThrows, Pure]
            attribute DOMString dir;
 
@@ -36,7 +37,7 @@ interface HTMLElement : Element {
   [CEReactions, SetterThrows, Pure, Pref="html5.inert.enabled"]
            attribute boolean inert;
   [NeedsCallerType]
-  void click();
+  undefined click();
   [CEReactions, SetterThrows, Pure]
            attribute DOMString accessKey;
   [Pure]
@@ -48,6 +49,8 @@ interface HTMLElement : Element {
            attribute DOMString contentEditable;
   [Pure]
   readonly attribute boolean isContentEditable;
+  [CEReactions, SetterThrows, Pure, Pref="dom.element.popover.enabled"]
+           attribute DOMString? popover;
   [CEReactions, SetterThrows, Pure]
            attribute boolean spellcheck;
   [CEReactions, Pure, SetterThrows, Pref="dom.forms.inputmode"]
@@ -70,6 +73,13 @@ interface HTMLElement : Element {
   // https://html.spec.whatwg.org/multipage/custom-elements.html#dom-attachinternals
   [Throws]
   ElementInternals attachInternals();
+
+  [Throws, Pref="dom.element.popover.enabled"]
+  undefined showPopover();
+  [Throws, Pref="dom.element.popover.enabled"]
+  undefined hidePopover();
+  [Throws, Pref="dom.element.popover.enabled"]
+  boolean togglePopover(optional boolean force);
 };
 
 // http://dev.w3.org/csswg/cssom-view/#extensions-to-the-htmlelement-interface
@@ -103,7 +113,6 @@ interface mixin TouchEventHandlers {
 
 HTMLElement includes GlobalEventHandlers;
 HTMLElement includes HTMLOrForeignElement;
-HTMLElement includes DocumentAndElementEventHandlers;
 HTMLElement includes ElementCSSInlineStyle;
 HTMLElement includes TouchEventHandlers;
 HTMLElement includes OnErrorEventHandlerForNodes;

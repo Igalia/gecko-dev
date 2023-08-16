@@ -7,6 +7,7 @@
 #define ToastNotification_h__
 
 #include "mozilla/Maybe.h"
+#include "mozilla/MozPromise.h"
 #include "nsIAlertsService.h"
 #include "nsIObserver.h"
 #include "nsIThread.h"
@@ -15,6 +16,8 @@
 
 namespace mozilla {
 namespace widget {
+
+using ToastHandledPromise = MozPromise<bool, bool, true>;
 
 class ToastNotificationHandler;
 
@@ -48,6 +51,10 @@ class ToastNotification final : public nsIWindowsAlertsService,
                                 Maybe<nsAutoString>& aAumid);
   static bool RegisterRuntimeAumid(nsAutoString& aInstallHash,
                                    Maybe<nsAutoString>& aAumid);
+
+  RefPtr<ToastHandledPromise> VerifyTagPresentOrFallback(
+      const nsAString& aWindowsTag);
+  static void SignalComNotificationHandled(const nsAString& aWindowsTag);
 
   nsRefPtrHashtable<nsStringHashKey, ToastNotificationHandler> mActiveHandlers;
   Maybe<nsAutoString> mAumid;

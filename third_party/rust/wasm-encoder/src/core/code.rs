@@ -1,4 +1,4 @@
-use crate::{encode_section, Encode, Section, SectionId, ValType};
+use crate::{encode_section, Encode, HeapType, Section, SectionId, ValType};
 use std::borrow::Cow;
 
 /// An encoder for the code section.
@@ -51,6 +51,15 @@ impl CodeSection {
         self.num_added
     }
 
+    /// The number of bytes already added to this section.
+    ///
+    /// This number doesn't include the vector length that precedes the
+    /// code entries, since it has a variable size that isn't known until all
+    /// functions are added.
+    pub fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
+
     /// Determines if the section is empty.
     pub fn is_empty(&self) -> bool {
         self.num_added == 0
@@ -78,8 +87,8 @@ impl CodeSection {
     /// let code_section = [10, 6,    1,         4, 0, 65, 0, 11];
     ///
     /// // Parse the code section.
-    /// let mut reader = wasmparser::CodeSectionReader::new(&code_section, 0).unwrap();
-    /// let body = reader.read().unwrap();
+    /// let reader = wasmparser::CodeSectionReader::new(&code_section, 0).unwrap();
+    /// let body = reader.into_iter().next().unwrap().unwrap();
     /// let body_range = body.range();
     ///
     /// // Add the body to a new code section encoder by copying bytes rather
@@ -129,7 +138,7 @@ impl Section for CodeSection {
 /// let mut code = CodeSection::new();
 /// code.function(&func);
 /// ```
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Function {
     bytes: Vec<u8>,
 }
@@ -217,6 +226,15 @@ impl Function {
         self.bytes.extend(bytes);
         self
     }
+
+    /// The number of bytes already added to this function.
+    ///
+    /// This number doesn't include the variable-width size field that `encode`
+    /// will write before the added bytes, since the size of that field isn't
+    /// known until all the instructions are added to this function.
+    pub fn byte_len(&self) -> usize {
+        self.bytes.len()
+    }
 }
 
 impl Encode for Function {
@@ -300,9 +318,15 @@ pub enum Instruction<'a> {
     Br(u32),
     BrIf(u32),
     BrTable(Cow<'a, [u32]>, u32),
+    BrOnNull(u32),
+    BrOnNonNull(u32),
     Return,
     Call(u32),
+    CallRef(u32),
     CallIndirect { ty: u32, table: u32 },
+    ReturnCallRef(u32),
+    ReturnCall(u32),
+    ReturnCallIndirect { ty: u32, table: u32 },
     Throw(u32),
     Rethrow(u32),
 
@@ -322,16 +346,16 @@ pub enum Instruction<'a> {
     I64Load(MemArg),
     F32Load(MemArg),
     F64Load(MemArg),
-    I32Load8_S(MemArg),
-    I32Load8_U(MemArg),
-    I32Load16_S(MemArg),
-    I32Load16_U(MemArg),
-    I64Load8_S(MemArg),
-    I64Load8_U(MemArg),
-    I64Load16_S(MemArg),
-    I64Load16_U(MemArg),
-    I64Load32_S(MemArg),
-    I64Load32_U(MemArg),
+    I32Load8S(MemArg),
+    I32Load8U(MemArg),
+    I32Load16S(MemArg),
+    I32Load16U(MemArg),
+    I64Load8S(MemArg),
+    I64Load8U(MemArg),
+    I64Load16S(MemArg),
+    I64Load16U(MemArg),
+    I64Load32S(MemArg),
+    I64Load32U(MemArg),
     I32Store(MemArg),
     I64Store(MemArg),
     F32Store(MemArg),
@@ -343,10 +367,11 @@ pub enum Instruction<'a> {
     I64Store32(MemArg),
     MemorySize(u32),
     MemoryGrow(u32),
-    MemoryInit { mem: u32, data: u32 },
+    MemoryInit { mem: u32, data_index: u32 },
     DataDrop(u32),
-    MemoryCopy { src: u32, dst: u32 },
+    MemoryCopy { src_mem: u32, dst_mem: u32 },
     MemoryFill(u32),
+    MemoryDiscard(u32),
 
     // Numeric instructions.
     I32Const(i32),
@@ -492,35 +517,41 @@ pub enum Instruction<'a> {
 
     // Reference types instructions.
     TypedSelect(ValType),
-    RefNull(ValType),
+    RefNull(HeapType),
     RefIsNull,
     RefFunc(u32),
+    RefAsNonNull,
+
+    // GC types instructions.
+    I31New,
+    I31GetS,
+    I31GetU,
 
     // Bulk memory instructions.
-    TableInit { segment: u32, table: u32 },
-    ElemDrop { segment: u32 },
-    TableFill { table: u32 },
-    TableSet { table: u32 },
-    TableGet { table: u32 },
-    TableGrow { table: u32 },
-    TableSize { table: u32 },
-    TableCopy { src: u32, dst: u32 },
+    TableInit { elem_index: u32, table: u32 },
+    ElemDrop(u32),
+    TableFill(u32),
+    TableSet(u32),
+    TableGet(u32),
+    TableGrow(u32),
+    TableSize(u32),
+    TableCopy { src_table: u32, dst_table: u32 },
 
     // SIMD instructions.
-    V128Load { memarg: MemArg },
-    V128Load8x8S { memarg: MemArg },
-    V128Load8x8U { memarg: MemArg },
-    V128Load16x4S { memarg: MemArg },
-    V128Load16x4U { memarg: MemArg },
-    V128Load32x2S { memarg: MemArg },
-    V128Load32x2U { memarg: MemArg },
-    V128Load8Splat { memarg: MemArg },
-    V128Load16Splat { memarg: MemArg },
-    V128Load32Splat { memarg: MemArg },
-    V128Load64Splat { memarg: MemArg },
-    V128Load32Zero { memarg: MemArg },
-    V128Load64Zero { memarg: MemArg },
-    V128Store { memarg: MemArg },
+    V128Load(MemArg),
+    V128Load8x8S(MemArg),
+    V128Load8x8U(MemArg),
+    V128Load16x4S(MemArg),
+    V128Load16x4U(MemArg),
+    V128Load32x2S(MemArg),
+    V128Load32x2U(MemArg),
+    V128Load8Splat(MemArg),
+    V128Load16Splat(MemArg),
+    V128Load32Splat(MemArg),
+    V128Load64Splat(MemArg),
+    V128Load32Zero(MemArg),
+    V128Load64Zero(MemArg),
+    V128Store(MemArg),
     V128Load8Lane { memarg: MemArg, lane: Lane },
     V128Load16Lane { memarg: MemArg, lane: Lane },
     V128Load32Lane { memarg: MemArg, lane: Lane },
@@ -530,21 +561,21 @@ pub enum Instruction<'a> {
     V128Store32Lane { memarg: MemArg, lane: Lane },
     V128Store64Lane { memarg: MemArg, lane: Lane },
     V128Const(i128),
-    I8x16Shuffle { lanes: [Lane; 16] },
-    I8x16ExtractLaneS { lane: Lane },
-    I8x16ExtractLaneU { lane: Lane },
-    I8x16ReplaceLane { lane: Lane },
-    I16x8ExtractLaneS { lane: Lane },
-    I16x8ExtractLaneU { lane: Lane },
-    I16x8ReplaceLane { lane: Lane },
-    I32x4ExtractLane { lane: Lane },
-    I32x4ReplaceLane { lane: Lane },
-    I64x2ExtractLane { lane: Lane },
-    I64x2ReplaceLane { lane: Lane },
-    F32x4ExtractLane { lane: Lane },
-    F32x4ReplaceLane { lane: Lane },
-    F64x2ExtractLane { lane: Lane },
-    F64x2ReplaceLane { lane: Lane },
+    I8x16Shuffle([Lane; 16]),
+    I8x16ExtractLaneS(Lane),
+    I8x16ExtractLaneU(Lane),
+    I8x16ReplaceLane(Lane),
+    I16x8ExtractLaneS(Lane),
+    I16x8ExtractLaneU(Lane),
+    I16x8ReplaceLane(Lane),
+    I32x4ExtractLane(Lane),
+    I32x4ReplaceLane(Lane),
+    I64x2ExtractLane(Lane),
+    I64x2ReplaceLane(Lane),
+    F32x4ExtractLane(Lane),
+    F32x4ReplaceLane(Lane),
+    F64x2ExtractLane(Lane),
+    F64x2ReplaceLane(Lane),
     I8x16Swizzle,
     I8x16Splat,
     I16x8Splat,
@@ -627,7 +658,7 @@ pub enum Instruction<'a> {
     I8x16MinU,
     I8x16MaxS,
     I8x16MaxU,
-    I8x16RoundingAverageU,
+    I8x16AvgrU,
     I16x8ExtAddPairwiseI8x16S,
     I16x8ExtAddPairwiseI8x16U,
     I16x8Abs,
@@ -655,7 +686,7 @@ pub enum Instruction<'a> {
     I16x8MinU,
     I16x8MaxS,
     I16x8MaxU,
-    I16x8RoundingAverageU,
+    I16x8AvgrU,
     I16x8ExtMulLowI8x16S,
     I16x8ExtMulHighI8x16S,
     I16x8ExtMulLowI8x16U,
@@ -743,23 +774,97 @@ pub enum Instruction<'a> {
     F64x2ConvertLowI32x4U,
     F32x4DemoteF64x2Zero,
     F64x2PromoteLowF32x4,
+
+    // Relaxed simd proposal
     I8x16RelaxedSwizzle,
-    I32x4RelaxedTruncSatF32x4S,
-    I32x4RelaxedTruncSatF32x4U,
-    I32x4RelaxedTruncSatF64x2SZero,
-    I32x4RelaxedTruncSatF64x2UZero,
-    F32x4Fma,
-    F32x4Fms,
-    F64x2Fma,
-    F64x2Fms,
-    I8x16LaneSelect,
-    I16x8LaneSelect,
-    I32x4LaneSelect,
-    I64x2LaneSelect,
+    I32x4RelaxedTruncF32x4S,
+    I32x4RelaxedTruncF32x4U,
+    I32x4RelaxedTruncF64x2SZero,
+    I32x4RelaxedTruncF64x2UZero,
+    F32x4RelaxedMadd,
+    F32x4RelaxedNmadd,
+    F64x2RelaxedMadd,
+    F64x2RelaxedNmadd,
+    I8x16RelaxedLaneselect,
+    I16x8RelaxedLaneselect,
+    I32x4RelaxedLaneselect,
+    I64x2RelaxedLaneselect,
     F32x4RelaxedMin,
     F32x4RelaxedMax,
     F64x2RelaxedMin,
     F64x2RelaxedMax,
+    I16x8RelaxedQ15mulrS,
+    I16x8RelaxedDotI8x16I7x16S,
+    I32x4RelaxedDotI8x16I7x16AddS,
+
+    // Atomic instructions (the threads proposal)
+    MemoryAtomicNotify(MemArg),
+    MemoryAtomicWait32(MemArg),
+    MemoryAtomicWait64(MemArg),
+    AtomicFence,
+    I32AtomicLoad(MemArg),
+    I64AtomicLoad(MemArg),
+    I32AtomicLoad8U(MemArg),
+    I32AtomicLoad16U(MemArg),
+    I64AtomicLoad8U(MemArg),
+    I64AtomicLoad16U(MemArg),
+    I64AtomicLoad32U(MemArg),
+    I32AtomicStore(MemArg),
+    I64AtomicStore(MemArg),
+    I32AtomicStore8(MemArg),
+    I32AtomicStore16(MemArg),
+    I64AtomicStore8(MemArg),
+    I64AtomicStore16(MemArg),
+    I64AtomicStore32(MemArg),
+    I32AtomicRmwAdd(MemArg),
+    I64AtomicRmwAdd(MemArg),
+    I32AtomicRmw8AddU(MemArg),
+    I32AtomicRmw16AddU(MemArg),
+    I64AtomicRmw8AddU(MemArg),
+    I64AtomicRmw16AddU(MemArg),
+    I64AtomicRmw32AddU(MemArg),
+    I32AtomicRmwSub(MemArg),
+    I64AtomicRmwSub(MemArg),
+    I32AtomicRmw8SubU(MemArg),
+    I32AtomicRmw16SubU(MemArg),
+    I64AtomicRmw8SubU(MemArg),
+    I64AtomicRmw16SubU(MemArg),
+    I64AtomicRmw32SubU(MemArg),
+    I32AtomicRmwAnd(MemArg),
+    I64AtomicRmwAnd(MemArg),
+    I32AtomicRmw8AndU(MemArg),
+    I32AtomicRmw16AndU(MemArg),
+    I64AtomicRmw8AndU(MemArg),
+    I64AtomicRmw16AndU(MemArg),
+    I64AtomicRmw32AndU(MemArg),
+    I32AtomicRmwOr(MemArg),
+    I64AtomicRmwOr(MemArg),
+    I32AtomicRmw8OrU(MemArg),
+    I32AtomicRmw16OrU(MemArg),
+    I64AtomicRmw8OrU(MemArg),
+    I64AtomicRmw16OrU(MemArg),
+    I64AtomicRmw32OrU(MemArg),
+    I32AtomicRmwXor(MemArg),
+    I64AtomicRmwXor(MemArg),
+    I32AtomicRmw8XorU(MemArg),
+    I32AtomicRmw16XorU(MemArg),
+    I64AtomicRmw8XorU(MemArg),
+    I64AtomicRmw16XorU(MemArg),
+    I64AtomicRmw32XorU(MemArg),
+    I32AtomicRmwXchg(MemArg),
+    I64AtomicRmwXchg(MemArg),
+    I32AtomicRmw8XchgU(MemArg),
+    I32AtomicRmw16XchgU(MemArg),
+    I64AtomicRmw8XchgU(MemArg),
+    I64AtomicRmw16XchgU(MemArg),
+    I64AtomicRmw32XchgU(MemArg),
+    I32AtomicRmwCmpxchg(MemArg),
+    I64AtomicRmwCmpxchg(MemArg),
+    I32AtomicRmw8CmpxchgU(MemArg),
+    I32AtomicRmw16CmpxchgU(MemArg),
+    I64AtomicRmw8CmpxchgU(MemArg),
+    I64AtomicRmw16CmpxchgU(MemArg),
+    I64AtomicRmw32CmpxchgU(MemArg),
 }
 
 impl Encode for Instruction<'_> {
@@ -811,13 +916,39 @@ impl Encode for Instruction<'_> {
                 ls.encode(sink);
                 l.encode(sink);
             }
+            Instruction::BrOnNull(l) => {
+                sink.push(0xD4);
+                l.encode(sink);
+            }
+            Instruction::BrOnNonNull(l) => {
+                sink.push(0xD6);
+                l.encode(sink);
+            }
             Instruction::Return => sink.push(0x0F),
             Instruction::Call(f) => {
                 sink.push(0x10);
                 f.encode(sink);
             }
+            Instruction::CallRef(ty) => {
+                sink.push(0x14);
+                ty.encode(sink);
+            }
             Instruction::CallIndirect { ty, table } => {
                 sink.push(0x11);
+                ty.encode(sink);
+                table.encode(sink);
+            }
+            Instruction::ReturnCallRef(ty) => {
+                sink.push(0x15);
+                ty.encode(sink);
+            }
+
+            Instruction::ReturnCall(f) => {
+                sink.push(0x12);
+                f.encode(sink);
+            }
+            Instruction::ReturnCallIndirect { ty, table } => {
+                sink.push(0x13);
                 ty.encode(sink);
                 table.encode(sink);
             }
@@ -858,11 +989,11 @@ impl Encode for Instruction<'_> {
                 sink.push(0x24);
                 g.encode(sink);
             }
-            Instruction::TableGet { table } => {
+            Instruction::TableGet(table) => {
                 sink.push(0x25);
                 table.encode(sink);
             }
-            Instruction::TableSet { table } => {
+            Instruction::TableSet(table) => {
                 sink.push(0x26);
                 table.encode(sink);
             }
@@ -884,43 +1015,43 @@ impl Encode for Instruction<'_> {
                 sink.push(0x2B);
                 m.encode(sink);
             }
-            Instruction::I32Load8_S(m) => {
+            Instruction::I32Load8S(m) => {
                 sink.push(0x2C);
                 m.encode(sink);
             }
-            Instruction::I32Load8_U(m) => {
+            Instruction::I32Load8U(m) => {
                 sink.push(0x2D);
                 m.encode(sink);
             }
-            Instruction::I32Load16_S(m) => {
+            Instruction::I32Load16S(m) => {
                 sink.push(0x2E);
                 m.encode(sink);
             }
-            Instruction::I32Load16_U(m) => {
+            Instruction::I32Load16U(m) => {
                 sink.push(0x2F);
                 m.encode(sink);
             }
-            Instruction::I64Load8_S(m) => {
+            Instruction::I64Load8S(m) => {
                 sink.push(0x30);
                 m.encode(sink);
             }
-            Instruction::I64Load8_U(m) => {
+            Instruction::I64Load8U(m) => {
                 sink.push(0x31);
                 m.encode(sink);
             }
-            Instruction::I64Load16_S(m) => {
+            Instruction::I64Load16S(m) => {
                 sink.push(0x32);
                 m.encode(sink);
             }
-            Instruction::I64Load16_U(m) => {
+            Instruction::I64Load16U(m) => {
                 sink.push(0x33);
                 m.encode(sink);
             }
-            Instruction::I64Load32_S(m) => {
+            Instruction::I64Load32S(m) => {
                 sink.push(0x34);
                 m.encode(sink);
             }
-            Instruction::I64Load32_U(m) => {
+            Instruction::I64Load32U(m) => {
                 sink.push(0x35);
                 m.encode(sink);
             }
@@ -968,10 +1099,10 @@ impl Encode for Instruction<'_> {
                 sink.push(0x40);
                 i.encode(sink);
             }
-            Instruction::MemoryInit { mem, data } => {
+            Instruction::MemoryInit { mem, data_index } => {
                 sink.push(0xfc);
                 sink.push(0x08);
-                data.encode(sink);
+                data_index.encode(sink);
                 mem.encode(sink);
             }
             Instruction::DataDrop(data) => {
@@ -979,15 +1110,20 @@ impl Encode for Instruction<'_> {
                 sink.push(0x09);
                 data.encode(sink);
             }
-            Instruction::MemoryCopy { src, dst } => {
+            Instruction::MemoryCopy { src_mem, dst_mem } => {
                 sink.push(0xfc);
                 sink.push(0x0a);
-                dst.encode(sink);
-                src.encode(sink);
+                dst_mem.encode(sink);
+                src_mem.encode(sink);
             }
             Instruction::MemoryFill(mem) => {
                 sink.push(0xfc);
                 sink.push(0x0b);
+                mem.encode(sink);
+            }
+            Instruction::MemoryDiscard(mem) => {
+                sink.push(0xfc);
+                sink.push(0x12);
                 mem.encode(sink);
             }
 
@@ -1182,98 +1318,116 @@ impl Encode for Instruction<'_> {
                 sink.push(0xd2);
                 f.encode(sink);
             }
+            Instruction::RefAsNonNull => sink.push(0xD3),
+
+            // GC instructions.
+            Instruction::I31New => {
+                sink.push(0xfb);
+                sink.push(0x20)
+            }
+            Instruction::I31GetS => {
+                sink.push(0xfb);
+                sink.push(0x21)
+            }
+            Instruction::I31GetU => {
+                sink.push(0xfb);
+                sink.push(0x22)
+            }
 
             // Bulk memory instructions.
-            Instruction::TableInit { segment, table } => {
+            Instruction::TableInit { elem_index, table } => {
                 sink.push(0xfc);
                 sink.push(0x0c);
-                segment.encode(sink);
+                elem_index.encode(sink);
                 table.encode(sink);
             }
-            Instruction::ElemDrop { segment } => {
+            Instruction::ElemDrop(segment) => {
                 sink.push(0xfc);
                 sink.push(0x0d);
                 segment.encode(sink);
             }
-            Instruction::TableCopy { src, dst } => {
+            Instruction::TableCopy {
+                src_table,
+                dst_table,
+            } => {
                 sink.push(0xfc);
                 sink.push(0x0e);
-                dst.encode(sink);
-                src.encode(sink);
+                dst_table.encode(sink);
+                src_table.encode(sink);
             }
-            Instruction::TableGrow { table } => {
+            Instruction::TableGrow(table) => {
                 sink.push(0xfc);
                 sink.push(0x0f);
                 table.encode(sink);
             }
-            Instruction::TableSize { table } => {
+            Instruction::TableSize(table) => {
                 sink.push(0xfc);
                 sink.push(0x10);
                 table.encode(sink);
             }
-            Instruction::TableFill { table } => {
+            Instruction::TableFill(table) => {
                 sink.push(0xfc);
                 sink.push(0x11);
                 table.encode(sink);
             }
 
             // SIMD instructions.
-            Instruction::V128Load { memarg } => {
+            Instruction::V128Load(memarg) => {
                 sink.push(0xFD);
                 0x00u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load8x8S { memarg } => {
+            Instruction::V128Load8x8S(memarg) => {
                 sink.push(0xFD);
                 0x01u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load8x8U { memarg } => {
+            Instruction::V128Load8x8U(memarg) => {
                 sink.push(0xFD);
                 0x02u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load16x4S { memarg } => {
+            Instruction::V128Load16x4S(memarg) => {
                 sink.push(0xFD);
                 0x03u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load16x4U { memarg } => {
+            Instruction::V128Load16x4U(memarg) => {
                 sink.push(0xFD);
                 0x04u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load32x2S { memarg } => {
+            Instruction::V128Load32x2S(memarg) => {
                 sink.push(0xFD);
                 0x05u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load32x2U { memarg } => {
+            Instruction::V128Load32x2U(memarg) => {
                 sink.push(0xFD);
                 0x06u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load8Splat { memarg } => {
+            Instruction::V128Load8Splat(memarg) => {
                 sink.push(0xFD);
                 0x07u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load16Splat { memarg } => {
+            Instruction::V128Load16Splat(memarg) => {
                 sink.push(0xFD);
                 0x08u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load32Splat { memarg } => {
+            Instruction::V128Load32Splat(memarg) => {
                 sink.push(0xFD);
                 0x09u32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load64Splat { memarg } => {
+            Instruction::V128Load64Splat(memarg) => {
                 sink.push(0xFD);
                 0x0Au32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Store { memarg } => {
+            Instruction::V128Store(memarg) => {
                 sink.push(0xFD);
                 0x0Bu32.encode(sink);
                 memarg.encode(sink);
@@ -1283,7 +1437,7 @@ impl Encode for Instruction<'_> {
                 0x0Cu32.encode(sink);
                 sink.extend(x.to_le_bytes().iter().copied());
             }
-            Instruction::I8x16Shuffle { lanes } => {
+            Instruction::I8x16Shuffle(lanes) => {
                 sink.push(0xFD);
                 0x0Du32.encode(sink);
                 assert!(lanes.iter().all(|l: &u8| *l < 32));
@@ -1317,85 +1471,85 @@ impl Encode for Instruction<'_> {
                 sink.push(0xFD);
                 0x14u32.encode(sink);
             }
-            Instruction::I8x16ExtractLaneS { lane } => {
+            Instruction::I8x16ExtractLaneS(lane) => {
                 sink.push(0xFD);
                 0x15u32.encode(sink);
                 assert!(lane < 16);
                 sink.push(lane);
             }
-            Instruction::I8x16ExtractLaneU { lane } => {
+            Instruction::I8x16ExtractLaneU(lane) => {
                 sink.push(0xFD);
                 0x16u32.encode(sink);
                 assert!(lane < 16);
                 sink.push(lane);
             }
-            Instruction::I8x16ReplaceLane { lane } => {
+            Instruction::I8x16ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x17u32.encode(sink);
                 assert!(lane < 16);
                 sink.push(lane);
             }
-            Instruction::I16x8ExtractLaneS { lane } => {
+            Instruction::I16x8ExtractLaneS(lane) => {
                 sink.push(0xFD);
                 0x18u32.encode(sink);
                 assert!(lane < 8);
                 sink.push(lane);
             }
-            Instruction::I16x8ExtractLaneU { lane } => {
+            Instruction::I16x8ExtractLaneU(lane) => {
                 sink.push(0xFD);
                 0x19u32.encode(sink);
                 assert!(lane < 8);
                 sink.push(lane);
             }
-            Instruction::I16x8ReplaceLane { lane } => {
+            Instruction::I16x8ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x1Au32.encode(sink);
                 assert!(lane < 8);
                 sink.push(lane);
             }
-            Instruction::I32x4ExtractLane { lane } => {
+            Instruction::I32x4ExtractLane(lane) => {
                 sink.push(0xFD);
                 0x1Bu32.encode(sink);
                 assert!(lane < 4);
                 sink.push(lane);
             }
-            Instruction::I32x4ReplaceLane { lane } => {
+            Instruction::I32x4ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x1Cu32.encode(sink);
                 assert!(lane < 4);
                 sink.push(lane);
             }
-            Instruction::I64x2ExtractLane { lane } => {
+            Instruction::I64x2ExtractLane(lane) => {
                 sink.push(0xFD);
                 0x1Du32.encode(sink);
                 assert!(lane < 2);
                 sink.push(lane);
             }
-            Instruction::I64x2ReplaceLane { lane } => {
+            Instruction::I64x2ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x1Eu32.encode(sink);
                 assert!(lane < 2);
                 sink.push(lane);
             }
-            Instruction::F32x4ExtractLane { lane } => {
+            Instruction::F32x4ExtractLane(lane) => {
                 sink.push(0xFD);
                 0x1Fu32.encode(sink);
                 assert!(lane < 4);
                 sink.push(lane);
             }
-            Instruction::F32x4ReplaceLane { lane } => {
+            Instruction::F32x4ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x20u32.encode(sink);
                 assert!(lane < 4);
                 sink.push(lane);
             }
-            Instruction::F64x2ExtractLane { lane } => {
+            Instruction::F64x2ExtractLane(lane) => {
                 sink.push(0xFD);
                 0x21u32.encode(sink);
                 assert!(lane < 2);
                 sink.push(lane);
             }
-            Instruction::F64x2ReplaceLane { lane } => {
+            Instruction::F64x2ReplaceLane(lane) => {
                 sink.push(0xFD);
                 0x22u32.encode(sink);
                 assert!(lane < 2);
@@ -1678,7 +1832,7 @@ impl Encode for Instruction<'_> {
                 sink.push(0xFD);
                 0x79u32.encode(sink);
             }
-            Instruction::I8x16RoundingAverageU => {
+            Instruction::I8x16AvgrU => {
                 sink.push(0xFD);
                 0x7Bu32.encode(sink);
             }
@@ -1798,7 +1952,7 @@ impl Encode for Instruction<'_> {
                 sink.push(0xFD);
                 0x99u32.encode(sink);
             }
-            Instruction::I16x8RoundingAverageU => {
+            Instruction::I16x8AvgrU => {
                 sink.push(0xFD);
                 0x9Bu32.encode(sink);
             }
@@ -2142,12 +2296,12 @@ impl Encode for Instruction<'_> {
                 sink.push(0xFD);
                 0x5Fu32.encode(sink);
             }
-            Instruction::V128Load32Zero { memarg } => {
+            Instruction::V128Load32Zero(memarg) => {
                 sink.push(0xFD);
                 0x5Cu32.encode(sink);
                 memarg.encode(sink);
             }
-            Instruction::V128Load64Zero { memarg } => {
+            Instruction::V128Load64Zero(memarg) => {
                 sink.push(0xFD);
                 0x5Du32.encode(sink);
                 memarg.encode(sink);
@@ -2226,7 +2380,7 @@ impl Encode for Instruction<'_> {
             }
             Instruction::I64x2LeS => {
                 sink.push(0xFD);
-                0xDDu32.encode(sink);
+                0xDAu32.encode(sink);
             }
             Instruction::I64x2GeS => {
                 sink.push(0xFD);
@@ -2234,73 +2388,497 @@ impl Encode for Instruction<'_> {
             }
             Instruction::I8x16RelaxedSwizzle => {
                 sink.push(0xFD);
-                0xA2u32.encode(sink);
+                0x100u32.encode(sink);
             }
-            Instruction::I32x4RelaxedTruncSatF32x4S => {
+            Instruction::I32x4RelaxedTruncF32x4S => {
                 sink.push(0xFD);
-                0xA5u32.encode(sink);
+                0x101u32.encode(sink);
             }
-            Instruction::I32x4RelaxedTruncSatF32x4U => {
+            Instruction::I32x4RelaxedTruncF32x4U => {
                 sink.push(0xFD);
-                0xA6u32.encode(sink);
+                0x102u32.encode(sink);
             }
-            Instruction::I32x4RelaxedTruncSatF64x2SZero => {
+            Instruction::I32x4RelaxedTruncF64x2SZero => {
                 sink.push(0xFD);
-                0xC5u32.encode(sink);
+                0x103u32.encode(sink);
             }
-            Instruction::I32x4RelaxedTruncSatF64x2UZero => {
+            Instruction::I32x4RelaxedTruncF64x2UZero => {
                 sink.push(0xFD);
-                0xC6u32.encode(sink);
+                0x104u32.encode(sink);
             }
-            Instruction::F32x4Fma => {
+            Instruction::F32x4RelaxedMadd => {
                 sink.push(0xFD);
-                0xAFu32.encode(sink);
+                0x105u32.encode(sink);
             }
-            Instruction::F32x4Fms => {
+            Instruction::F32x4RelaxedNmadd => {
                 sink.push(0xFD);
-                0xB0u32.encode(sink);
+                0x106u32.encode(sink);
             }
-            Instruction::F64x2Fma => {
+            Instruction::F64x2RelaxedMadd => {
                 sink.push(0xFD);
-                0xCFu32.encode(sink);
+                0x107u32.encode(sink);
             }
-            Instruction::F64x2Fms => {
+            Instruction::F64x2RelaxedNmadd => {
                 sink.push(0xFD);
-                0xD0u32.encode(sink);
+                0x108u32.encode(sink);
             }
-            Instruction::I8x16LaneSelect => {
+            Instruction::I8x16RelaxedLaneselect => {
                 sink.push(0xFD);
-                0xB2u32.encode(sink);
+                0x109u32.encode(sink);
             }
-            Instruction::I16x8LaneSelect => {
+            Instruction::I16x8RelaxedLaneselect => {
                 sink.push(0xFD);
-                0xB3u32.encode(sink);
+                0x10Au32.encode(sink);
             }
-            Instruction::I32x4LaneSelect => {
+            Instruction::I32x4RelaxedLaneselect => {
                 sink.push(0xFD);
-                0xD2u32.encode(sink);
+                0x10Bu32.encode(sink);
             }
-            Instruction::I64x2LaneSelect => {
+            Instruction::I64x2RelaxedLaneselect => {
                 sink.push(0xFD);
-                0xD3u32.encode(sink);
+                0x10Cu32.encode(sink);
             }
             Instruction::F32x4RelaxedMin => {
                 sink.push(0xFD);
-                0xB4u32.encode(sink);
+                0x10Du32.encode(sink);
             }
             Instruction::F32x4RelaxedMax => {
                 sink.push(0xFD);
-                0xE2u32.encode(sink);
+                0x10Eu32.encode(sink);
             }
             Instruction::F64x2RelaxedMin => {
                 sink.push(0xFD);
-                0xD4u32.encode(sink);
+                0x10Fu32.encode(sink);
             }
             Instruction::F64x2RelaxedMax => {
                 sink.push(0xFD);
-                0xEEu32.encode(sink);
+                0x110u32.encode(sink);
+            }
+            Instruction::I16x8RelaxedQ15mulrS => {
+                sink.push(0xFD);
+                0x111u32.encode(sink);
+            }
+            Instruction::I16x8RelaxedDotI8x16I7x16S => {
+                sink.push(0xFD);
+                0x112u32.encode(sink);
+            }
+            Instruction::I32x4RelaxedDotI8x16I7x16AddS => {
+                sink.push(0xFD);
+                0x113u32.encode(sink);
+            }
+
+            // Atmoic instructions from the thread proposal
+            Instruction::MemoryAtomicNotify(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x00);
+                memarg.encode(sink);
+            }
+            Instruction::MemoryAtomicWait32(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x01);
+                memarg.encode(sink);
+            }
+            Instruction::MemoryAtomicWait64(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x02);
+                memarg.encode(sink);
+            }
+            Instruction::AtomicFence => {
+                sink.push(0xFE);
+                sink.push(0x03);
+                sink.push(0x00);
+            }
+            Instruction::I32AtomicLoad(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x10);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicLoad(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x11);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicLoad8U(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x12);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicLoad16U(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x13);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicLoad8U(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x14);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicLoad16U(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x15);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicLoad32U(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x16);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicStore(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x17);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicStore(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x18);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicStore8(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x19);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicStore16(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1A);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicStore8(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1B);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicStore16(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1C);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicStore32(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1D);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwAdd(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1E);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwAdd(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x1F);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8AddU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x20);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16AddU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x21);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8AddU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x22);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16AddU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x23);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32AddU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x24);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwSub(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x25);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwSub(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x26);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8SubU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x27);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16SubU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x28);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8SubU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x29);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16SubU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2A);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32SubU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2B);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwAnd(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2C);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwAnd(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2D);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8AndU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2E);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16AndU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x2F);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8AndU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x30);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16AndU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x31);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32AndU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x32);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwOr(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x33);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwOr(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x34);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8OrU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x35);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16OrU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x36);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8OrU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x37);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16OrU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x38);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32OrU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x39);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwXor(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3A);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwXor(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3B);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8XorU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3C);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16XorU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3D);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8XorU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3E);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16XorU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x3F);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32XorU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x40);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwXchg(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x41);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwXchg(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x42);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8XchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x43);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16XchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x44);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8XchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x45);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16XchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x46);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32XchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x47);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmwCmpxchg(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x48);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmwCmpxchg(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x49);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw8CmpxchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x4A);
+                memarg.encode(sink);
+            }
+            Instruction::I32AtomicRmw16CmpxchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x4B);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw8CmpxchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x4C);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw16CmpxchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x4D);
+                memarg.encode(sink);
+            }
+            Instruction::I64AtomicRmw32CmpxchgU(memarg) => {
+                sink.push(0xFE);
+                sink.push(0x4E);
+                memarg.encode(sink);
             }
         }
+    }
+}
+
+/// A constant expression.
+///
+/// Usable in contexts such as offsets or initializers.
+#[derive(Debug)]
+pub struct ConstExpr {
+    bytes: Vec<u8>,
+}
+
+impl ConstExpr {
+    /// Create a new empty constant expression builder.
+    pub fn empty() -> Self {
+        Self { bytes: Vec::new() }
+    }
+
+    /// Create a constant expression with the specified raw encoding of instructions.
+    pub fn raw(bytes: impl IntoIterator<Item = u8>) -> Self {
+        Self {
+            bytes: bytes.into_iter().collect(),
+        }
+    }
+
+    fn new_insn(insn: Instruction) -> Self {
+        let mut bytes = vec![];
+        insn.encode(&mut bytes);
+        Self { bytes }
+    }
+
+    /// Create a constant expression containing a single `global.get` instruction.
+    pub fn global_get(index: u32) -> Self {
+        Self::new_insn(Instruction::GlobalGet(index))
+    }
+
+    /// Create a constant expression containing a single `ref.null` instruction.
+    pub fn ref_null(ty: HeapType) -> Self {
+        Self::new_insn(Instruction::RefNull(ty))
+    }
+
+    /// Create a constant expression containing a single `ref.func` instruction.
+    pub fn ref_func(func: u32) -> Self {
+        Self::new_insn(Instruction::RefFunc(func))
+    }
+
+    /// Create a constant expression containing a single `i32.const` instruction.
+    pub fn i32_const(value: i32) -> Self {
+        Self::new_insn(Instruction::I32Const(value))
+    }
+
+    /// Create a constant expression containing a single `i64.const` instruction.
+    pub fn i64_const(value: i64) -> Self {
+        Self::new_insn(Instruction::I64Const(value))
+    }
+
+    /// Create a constant expression containing a single `f32.const` instruction.
+    pub fn f32_const(value: f32) -> Self {
+        Self::new_insn(Instruction::F32Const(value))
+    }
+
+    /// Create a constant expression containing a single `f64.const` instruction.
+    pub fn f64_const(value: f64) -> Self {
+        Self::new_insn(Instruction::F64Const(value))
+    }
+
+    /// Create a constant expression containing a single `v128.const` instruction.
+    pub fn v128_const(value: i128) -> Self {
+        Self::new_insn(Instruction::V128Const(value))
+    }
+}
+
+impl Encode for ConstExpr {
+    fn encode(&self, sink: &mut Vec<u8>) {
+        sink.extend(&self.bytes);
+        Instruction::End.encode(sink);
     }
 }
 

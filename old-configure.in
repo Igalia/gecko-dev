@@ -26,23 +26,6 @@ HOST_CFLAGS="${HOST_CFLAGS=}"
 HOST_CXXFLAGS="${HOST_CXXFLAGS=}"
 HOST_LDFLAGS="${HOST_LDFLAGS=}"
 
-dnl ========================================================
-dnl = Preserve certain environment flags passed to configure
-dnl = We want sub projects to receive the same flags
-dnl = untainted by this configure script
-dnl ========================================================
-_SUBDIR_CC="$CC"
-_SUBDIR_CXX="$CXX"
-_SUBDIR_CFLAGS="$CFLAGS"
-_SUBDIR_CPPFLAGS="$CPPFLAGS"
-_SUBDIR_CXXFLAGS="$CXXFLAGS"
-_SUBDIR_LDFLAGS="$LDFLAGS"
-_SUBDIR_HOST_CC="$HOST_CC"
-_SUBDIR_HOST_CFLAGS="$HOST_CFLAGS"
-_SUBDIR_HOST_CXXFLAGS="$HOST_CXXFLAGS"
-_SUBDIR_HOST_LDFLAGS="$HOST_LDFLAGS"
-_SUBDIR_CONFIG_ARGS="$ac_configure_args"
-
 dnl Set the minimum version of toolkit libs used by mozilla
 dnl ========================================================
 W32API_VERSION=3.14
@@ -57,7 +40,8 @@ dnl ========================================================
 MOZ_USE_PTHREADS=
 _PTHREAD_LDFLAGS=""
 
-LDFLAGS="$LDFLAGS $LINKER_LDFLAGS"
+LDFLAGS="$LDFLAGS $LINKER_LDFLAGS $PACK_REL_RELOC_FLAGS"
+HOST_LDFLAGS="$HOST_LDFLAGS $HOST_LINKER_LDFLAGS"
 
 if test "$COMPILE_ENVIRONMENT"; then
     MOZ_ANDROID_NDK
@@ -82,7 +66,6 @@ else
       sleep 2
     esac
     AC_PROG_CXX
-    AC_CHECK_PROGS(OTOOL, otool, :)
 fi
 
 MOZ_TOOL_VARIABLES
@@ -115,22 +98,18 @@ case "$target" in
 
         AC_DEFINE(_CRT_SECURE_NO_WARNINGS)
         AC_DEFINE(_CRT_NONSTDC_NO_WARNINGS)
-        AC_DEFINE(_USE_MATH_DEFINES) # Otherwise MSVC's math.h doesn't #define M_PI.
 
         MSVC_C_RUNTIME_DLL=vcruntime140.dll
+        if test -n "$IS_VS2019_OR_MORE" -a "$CPU_ARCH" != "x86"; then
+            MSVC_C_RUNTIME_1_DLL=vcruntime140_1.dll
+        fi
         MSVC_CXX_RUNTIME_DLL=msvcp140.dll
 
         # -Zc:sizedDealloc- disables C++14 global sized deallocation (see bug 1160146)
         CXXFLAGS="$CXXFLAGS -Zc:sizedDealloc-"
 
-        if test -n "$WIN_UCRT_REDIST_DIR"; then
-          if test ! -d "$WIN_UCRT_REDIST_DIR"; then
-            AC_MSG_ERROR([Invalid Windows UCRT Redist directory: ${WIN_UCRT_REDIST_DIR}])
-          fi
-          WIN_UCRT_REDIST_DIR=`cd "$WIN_UCRT_REDIST_DIR" && (pwd -W 2>/dev/null || pwd)`
-        fi
-
         AC_SUBST(MSVC_C_RUNTIME_DLL)
+        AC_SUBST(MSVC_C_RUNTIME_1_DLL)
         AC_SUBST(MSVC_CXX_RUNTIME_DLL)
 
         AC_DEFINE(HAVE_SEH_EXCEPTIONS)
@@ -141,9 +120,6 @@ case "$target" in
           fi
           WIN32_REDIST_DIR=`cd "$WIN32_REDIST_DIR" && (pwd -W 2>/dev/null || pwd)`
         fi
-
-        WRAP_STL_INCLUDES=1
-        STL_FLAGS="-I${DIST}/stl_wrappers"
     else
         # Check w32api version
         _W32API_MAJOR_VERSION=`echo $W32API_VERSION | $AWK -F\. '{ print $1 }'`
@@ -164,6 +140,8 @@ case "$target" in
         # causing problems with local implementations with the same name.
         AC_DEFINE(STRSAFE_NO_DEPRECATE)
     fi # !GNU_CC
+
+    AC_DEFINE(_USE_MATH_DEFINES) # Otherwise Windows' math.h doesn't #define M_PI.
 
     CFLAGS="$CFLAGS -D_HAS_EXCEPTIONS=0"
     CXXFLAGS="$CXXFLAGS -D_HAS_EXCEPTIONS=0"
@@ -192,9 +170,6 @@ fi # COMPILE_ENVIRONMENT
 AC_SUBST(GNU_CC)
 AC_SUBST(GNU_CXX)
 
-AC_SUBST_LIST(STL_FLAGS)
-AC_SUBST(WRAP_STL_INCLUDES)
-
 dnl ========================================================
 dnl set the defaults first
 dnl ========================================================
@@ -205,26 +180,6 @@ dnl ==============================================================
 if test "$COMPILE_ENVIRONMENT"; then
     MOZ_ARCH_OPTS
 fi # COMPILE_ENVIRONMENT
-
-dnl ========================================================
-dnl Android libstdc++
-dnl ========================================================
-
-if test "$COMPILE_ENVIRONMENT"; then
-    MOZ_ANDROID_STLPORT
-fi # COMPILE_ENVIRONMENT
-
-dnl ========================================================
-dnl Suppress Clang Argument Warnings
-dnl ========================================================
-WARNINGS_CFLAGS="$_WARNINGS_CFLAGS"
-if test -n "${CLANG_CC}${CLANG_CL}"; then
-    WARNINGS_CFLAGS="-Qunused-arguments $WARNINGS_CFLAGS"
-    CPPFLAGS="-Qunused-arguments ${CPPFLAGS}"
-fi
-if test -n "${CLANG_CXX}${CLANG_CL}"; then
-    _WARNINGS_CXXFLAGS="-Qunused-arguments ${_WARNINGS_CXXFLAGS}"
-fi
 
 if test -n "$COMPILE_ENVIRONMENT"; then
    MOZ_CONFIG_SANITIZE
@@ -281,9 +236,15 @@ if test "$GNU_CC"; then
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
 
-    AC_MSG_CHECKING([for --build-id=sha1 option to ld])
+    # While sha1 is deterministic, it is slower.
+    if test -z "$DEVELOPER_OPTIONS"; then
+        build_id=sha1
+    else
+        build_id=uuid
+    fi
+    AC_MSG_CHECKING([for --build-id=$build_id option to ld])
     _SAVE_LDFLAGS=$LDFLAGS
-    LDFLAGS="$LDFLAGS -Wl,--build-id=sha1"
+    LDFLAGS="$LDFLAGS -Wl,--build-id=$build_id"
     AC_TRY_LINK(,,AC_MSG_RESULT([yes]),
                   AC_MSG_RESULT([no])
                   LDFLAGS=$_SAVE_LDFLAGS)
@@ -411,23 +372,27 @@ case "$target" in
     if test -z "$CLANG_CC"; then
         MOZ_OPTIMIZE_FLAGS="-freorder-blocks -fno-reorder-functions -Os"
     else
-        # From https://github.com/android-ndk/ndk/issues/133#issuecomment-308549264
-        # -Oz is smaller than -Os on clang.
-        MOZ_OPTIMIZE_FLAGS="-Oz"
-        # Disable the outliner, which causes performance regressions, and is
-        # enabled on some platforms at -Oz.
-        if test -z "$MOZ_LTO"; then
-            DISABLE_OUTLINER="-mno-outline"
-            _SAVE_CFLAGS=$CFLAGS
-            CFLAGS="$CFLAGS $DISABLE_OUTLINER"
-            AC_TRY_COMPILE(,,[MOZ_OPTIMIZE_FLAGS="$MOZ_OPTIMIZE_FLAGS $DISABLE_OUTLINER"])
-            CFLAGS="$_SAVE_CFLAGS"
+        if test -n "$NIGHTLY_BUILD"; then
+            MOZ_OPTIMIZE_FLAGS="-O2"
         else
-            DISABLE_OUTLINER="-Wl,-plugin-opt=-enable-machine-outliner=never"
-            _SAVE_LDFLAGS=$LDFLAGS
-            LDFLAGS="$LDFLAGS $MOZ_LTO_LDFLAGS $DISABLE_OUTLINER"
-            AC_TRY_LINK(,,[MOZ_OPTIMIZE_LDFLAGS="$MOZ_OPTIMIZE_LDFLAGS $DISABLE_OUTLINER"])
-            LDFLAGS="$_SAVE_LDFLAGS"
+            # From https://github.com/android-ndk/ndk/issues/133#issuecomment-308549264
+            # -Oz is smaller than -Os on clang.
+            MOZ_OPTIMIZE_FLAGS="-Oz"
+            # Disable the outliner, which causes performance regressions, and is
+            # enabled on some platforms at -Oz.
+            if test -z "$MOZ_LTO"; then
+                DISABLE_OUTLINER="-mno-outline"
+                _SAVE_CFLAGS=$CFLAGS
+                CFLAGS="$CFLAGS $DISABLE_OUTLINER"
+                AC_TRY_COMPILE(,,[MOZ_OPTIMIZE_FLAGS="$MOZ_OPTIMIZE_FLAGS $DISABLE_OUTLINER"])
+                CFLAGS="$_SAVE_CFLAGS"
+            else
+                DISABLE_OUTLINER="-Wl,-plugin-opt=-enable-machine-outliner=never"
+                _SAVE_LDFLAGS=$LDFLAGS
+                LDFLAGS="$LDFLAGS $MOZ_LTO_LDFLAGS $DISABLE_OUTLINER"
+                AC_TRY_LINK(,,[MOZ_OPTIMIZE_LDFLAGS="$MOZ_OPTIMIZE_LDFLAGS $DISABLE_OUTLINER"])
+                LDFLAGS="$_SAVE_LDFLAGS" 
+            fi
         fi
     fi
     ;;
@@ -475,12 +440,7 @@ case "$target" in
         LDFLAGS="$LDFLAGS -Wl,--no-insert-timestamp"
     else
         TARGET_COMPILER_ABI=msvc
-        # aarch64 doesn't support subsystems below 6.02
-        if test "$CPU_ARCH" = "aarch64"; then
-            WIN32_SUBSYSTEM_VERSION=6.02
-        else
-            WIN32_SUBSYSTEM_VERSION=6.01
-        fi
+        WIN32_SUBSYSTEM_VERSION=10.0
         WIN32_CONSOLE_EXE_LDFLAGS=-SUBSYSTEM:CONSOLE,$WIN32_SUBSYSTEM_VERSION
         WIN32_GUI_EXE_LDFLAGS=-SUBSYSTEM:WINDOWS,$WIN32_SUBSYSTEM_VERSION
         DSO_LDOPTS=-SUBSYSTEM:WINDOWS,$WIN32_SUBSYSTEM_VERSION
@@ -632,19 +592,6 @@ AC_LANG_CPLUSPLUS
 MOZ_CXX11
 
 AC_LANG_C
-
-case "${OS_TARGET}" in
-Darwin)
-  ;;
-*)
-  STL_FLAGS="-I${DIST}/stl_wrappers"
-  WRAP_STL_INCLUDES=1
-  ;;
-esac
-
-if test "$MOZ_BUILD_APP" = "tools/crashreporter/injector"; then
-    WRAP_STL_INCLUDES=
-fi
 
 dnl Checks for header files.
 dnl ========================================================
@@ -1021,7 +968,6 @@ if test -z "$MOZ_DISTRIBUTION_ID"; then
    MOZ_DISTRIBUTION_ID="org.mozilla"
 fi
 
-AC_DEFINE_UNQUOTED(MOZ_DISTRIBUTION_ID,"$MOZ_DISTRIBUTION_ID")
 AC_SUBST(MOZ_DISTRIBUTION_ID)
 
 dnl ========================================================
@@ -1163,7 +1109,6 @@ dnl ========================================================
 
 AC_SUBST_LIST(ASFLAGS)
 AC_SUBST_LIST(MOZ_DEBUG_LDFLAGS)
-AC_SUBST_LIST(WARNINGS_CFLAGS)
 
 AC_SUBST(MOZ_STUB_INSTALLER)
 
@@ -1222,11 +1167,33 @@ else
   MOZ_CHILD_PROCESS_NAME="libplugin-container.so"
 fi
 MOZ_CHILD_PROCESS_BUNDLE="plugin-container.app/Contents/MacOS/"
-MOZ_CHILD_PROCESS_BUNDLENAME="${MOZ_APP_DISPLAYNAME}CP"
+MOZ_CHILD_PROCESS_BUNDLEID=${MOZ_DISTRIBUTION_ID}.plugincontainer
+MOZ_CHILD_PROCESS_BUNDLENAME="plugin-container.app"
+MOZ_CHILD_PROCESS_APPNAME="${MOZ_APP_DISPLAYNAME}CP"
 
 AC_SUBST(MOZ_CHILD_PROCESS_NAME)
 AC_SUBST(MOZ_CHILD_PROCESS_BUNDLE)
+AC_SUBST(MOZ_CHILD_PROCESS_BUNDLEID)
+AC_SUBST(MOZ_CHILD_PROCESS_APPNAME)
 AC_SUBST(MOZ_CHILD_PROCESS_BUNDLENAME)
+
+dnl ==========================================================
+dnl = Mac Media Plugin Helper (GMP Child) Process Name for IPC
+dnl ==========================================================
+MOZ_EME_PROCESS_NAME="media-plugin-helper"
+MOZ_EME_PROCESS_NAME_BRANDED="$MOZ_APP_DISPLAYNAME Media Plugin Helper"
+MOZ_EME_PROCESS_BUNDLENAME="${MOZ_EME_PROCESS_NAME}.app"
+# Generate a lower case string with no spaces to be used as the bundle ID
+# for the EME helper .app of the form org.mozilla.<executable-name>.
+MOZ_EME_PROCESS_BUNDLEID=`echo "$MOZ_APP_DISPLAYNAME" | tr ' ' '-'`
+MOZ_EME_PROCESS_BUNDLEID=`echo "$MOZ_EME_PROCESS_BUNDLEID" | tr 'A-Z' 'a-z'`
+MOZ_EME_PROCESS_BUNDLEID=${MOZ_EME_PROCESS_BUNDLEID}-${MOZ_EME_PROCESS_NAME}
+MOZ_EME_PROCESS_BUNDLEID=${MOZ_DISTRIBUTION_ID}.${MOZ_EME_PROCESS_BUNDLEID}
+
+AC_SUBST(MOZ_EME_PROCESS_NAME)
+AC_SUBST(MOZ_EME_PROCESS_NAME_BRANDED)
+AC_SUBST(MOZ_EME_PROCESS_BUNDLENAME)
+AC_SUBST(MOZ_EME_PROCESS_BUNDLEID)
 
 # The following variables are available to branding and application
 # configuration ($BRANDING/configure.sh and $APPLICATION/confvars.sh):
@@ -1296,18 +1263,8 @@ AC_SUBST(MOZ_SOURCE_REPO)
 AC_SUBST(MOZ_SOURCE_CHANGESET)
 AC_SUBST(MOZ_INCLUDE_SOURCE_INFO)
 
-dnl If we have any service that uploads data (and requires data submission
-dnl policy alert), set MOZ_DATA_REPORTING.
-dnl We need SUBST for build system and DEFINE for xul preprocessor.
-if test -n "$MOZ_TELEMETRY_REPORTING" || test -n "$MOZ_SERVICES_HEALTHREPORT" || test -n "$MOZ_CRASHREPORTER"  || test -n "$MOZ_NORMANDY"; then
-  MOZ_DATA_REPORTING=1
-  AC_DEFINE(MOZ_DATA_REPORTING)
-  AC_SUBST(MOZ_DATA_REPORTING)
-fi
-
 dnl win32 options
 AC_SUBST(WIN32_REDIST_DIR)
-AC_SUBST(WIN_UCRT_REDIST_DIR)
 
 dnl Echo the CFLAGS to remove extra whitespace.
 CFLAGS=`echo \
@@ -1315,7 +1272,6 @@ CFLAGS=`echo \
     $CFLAGS`
 
 CXXFLAGS=`echo \
-    $_WARNINGS_CXXFLAGS \
     $_COMPILATION_CXXFLAGS \
     $CXXFLAGS`
 
@@ -1328,12 +1284,10 @@ COMPILE_CXXFLAGS=`echo \
     $COMPILE_CXXFLAGS`
 
 HOST_CFLAGS=`echo \
-    $_WARNINGS_HOST_CFLAGS \
     $_COMPILATION_HOST_CFLAGS \
     $HOST_CFLAGS`
 
 HOST_CXXFLAGS=`echo \
-    $_WARNINGS_HOST_CXXFLAGS \
     $_COMPILATION_HOST_CXXFLAGS \
     $HOST_CXXFLAGS`
 
@@ -1400,21 +1354,6 @@ AC_SUBST(MOZ_DEV_EDITION)
 if test -n "$MOZ_DEV_EDITION"; then
     AC_DEFINE(MOZ_DEV_EDITION)
 fi
-
-dnl Windows AccessibilityHandler
-dnl ========================================================
-
-if test -z "$MOZ_HANDLER_CLSID"; then
-    MOZ_HANDLER_CLSID="4a195748-dca2-45fb-9295-0a139e76a9e7"
-    MOZ_IHANDLERCONTROL_IID="3316ce35-f892-4832-97c5-06c52c03cdba"
-    MOZ_ASYNCIHANDLERCONTROL_IID="15b48b76-ad38-4ad3-bd1a-d3c48a5a9947"
-    MOZ_IGECKOBACKCHANNEL_IID="dd2e4a89-999e-4d65-8b65-440c923ddb61"
-fi
-
-AC_SUBST(MOZ_HANDLER_CLSID)
-AC_SUBST(MOZ_IHANDLERCONTROL_IID)
-AC_SUBST(MOZ_ASYNCIHANDLERCONTROL_IID)
-AC_SUBST(MOZ_IGECKOBACKCHANNEL_IID)
 
 dnl Spit out some output
 dnl ========================================================

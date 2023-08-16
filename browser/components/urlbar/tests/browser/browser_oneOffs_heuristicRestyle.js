@@ -84,7 +84,7 @@ async function heuristicIsNotRestyled(expectedType, resultDetails) {
   if (
     expectedType === UrlbarUtils.RESULT_TYPE.URL &&
     resultDetails.result.heuristic &&
-    resultDetails.result.autofill?.hasTitle
+    resultDetails.result.payload.title
   ) {
     Assert.equal(
       resultDetails.displayed.url,
@@ -138,7 +138,7 @@ async function heuristicIsRestyled(
   let engine = selectedOneOff.engine;
   let source = selectedOneOff.source;
   if (!engine && !source) {
-    Assert.fail("An invalid one-off was passed to urlbarResultIsRestyled");
+    Assert.ok(false, "An invalid one-off was passed to urlbarResultIsRestyled");
     return;
   }
   Assert.equal(
@@ -239,14 +239,15 @@ async function assertState(
   }
 }
 
-add_task(async function init() {
-  let oldDefaultEngine = await Services.search.getDefault();
-  await SearchTestUtils.installSearchExtension({
-    name: TEST_DEFAULT_ENGINE_NAME,
-    keyword: "@test",
-  });
+add_setup(async function () {
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: TEST_DEFAULT_ENGINE_NAME,
+      keyword: "@test",
+    },
+    { setAsDefault: true }
+  );
   let engine = Services.search.getEngineByName(TEST_DEFAULT_ENGINE_NAME);
-  await Services.search.setDefault(engine);
   await Services.search.moveEngine(engine, 0);
 
   for (let i = 0; i < 5; i++) {
@@ -258,8 +259,7 @@ add_task(async function init() {
     url: KEYWORD_URL,
   });
 
-  registerCleanupFunction(async function() {
-    await Services.search.setDefault(oldDefaultEngine);
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
     await PlacesUtils.keywords.remove(KEYWORD);
   });
@@ -454,7 +454,7 @@ async function doAltArrowTest(searchString, expectedHeuristicType, useLocal) {
  * @param {boolean} useLocal
  *   Whether to test a local one-off or an engine one-off.  If true, test a
  *   local one-off.  If false, test an engine one-off.
- * @param {function} callback
+ * @param {Function} callback
  *   This is called after the search completes.  It should perform whatever
  *   checks are necessary for the test task.  Important: When it returns, it
  *   should make sure that the first one-off is selected.

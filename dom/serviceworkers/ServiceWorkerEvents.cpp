@@ -226,10 +226,10 @@ class BodyCopyHandle final : public nsIInterceptedBodyCallback {
 
     nsCOMPtr<nsIRunnable> event;
     if (NS_WARN_IF(NS_FAILED(aRv))) {
-      AsyncLog(mClosure->mInterceptedChannel, mClosure->mRespondWithScriptSpec,
-               mClosure->mRespondWithLineNumber,
-               mClosure->mRespondWithColumnNumber,
-               "InterceptionFailedWithURL"_ns, mClosure->mRequestURL);
+      ::AsyncLog(
+          mClosure->mInterceptedChannel, mClosure->mRespondWithScriptSpec,
+          mClosure->mRespondWithLineNumber, mClosure->mRespondWithColumnNumber,
+          "InterceptionFailedWithURL"_ns, mClosure->mRequestURL);
       event = new CancelChannelRunnable(mClosure->mInterceptedChannel,
                                         mClosure->mRegistration,
                                         NS_ERROR_INTERCEPTION_FAILED);
@@ -646,19 +646,10 @@ void RespondWithHandler::ResolvedCallback(JSContext* aCx,
     return;
   }
 
-  {
-    ErrorResult error;
-    bool bodyUsed = response->GetBodyUsed(error);
-    error.WouldReportJSException();
-    if (NS_WARN_IF(error.Failed())) {
-      autoCancel.SetCancelErrorResult(aCx, error);
-      return;
-    }
-    if (NS_WARN_IF(bodyUsed)) {
-      autoCancel.SetCancelMessage("InterceptedUsedResponseWithURL"_ns,
-                                  mRequestURL);
-      return;
-    }
+  if (NS_WARN_IF(response->BodyUsed())) {
+    autoCancel.SetCancelMessage("InterceptedUsedResponseWithURL"_ns,
+                                mRequestURL);
+    return;
   }
 
   SafeRefPtr<InternalResponse> ir = response->GetInternalResponse();
@@ -1102,7 +1093,9 @@ void PushMessageData::ArrayBuffer(JSContext* cx,
                                   ErrorResult& aRv) {
   uint8_t* data = GetContentsCopy();
   if (data) {
-    BodyUtil::ConsumeArrayBuffer(cx, aRetval, mBytes.Length(), data, aRv);
+    UniquePtr<uint8_t[], JS::FreePolicy> dataPtr(data);
+    BodyUtil::ConsumeArrayBuffer(cx, aRetval, mBytes.Length(),
+                                 std::move(dataPtr), aRv);
   }
 }
 
@@ -1248,7 +1241,7 @@ void ExtendableMessageEvent::GetPorts(nsTArray<RefPtr<MessagePort>>& aPorts) {
   aPorts = mPorts.Clone();
 }
 
-NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS(ExtendableMessageEvent)
+NS_IMPL_CYCLE_COLLECTION_CLASS(ExtendableMessageEvent)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(ExtendableMessageEvent, Event)
   tmp->mData.setUndefined();

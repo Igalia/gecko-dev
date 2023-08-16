@@ -3,26 +3,22 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
-const { getDomain } = ChromeUtils.import(
-  "resource://activity-stream/lib/TippyTopProvider.jsm"
+const { getDomain } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/TippyTopProvider.sys.mjs"
 );
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
 
 const MIN_FAVICON_SIZE = 96;
 
@@ -87,13 +83,11 @@ async function fetchVisitPaths(url) {
     FROM path
   `;
 
-  const visits = await lazy.NewTabUtils.activityStreamProvider.executePlacesQuery(
-    query,
-    {
+  const visits =
+    await lazy.NewTabUtils.activityStreamProvider.executePlacesQuery(query, {
       columns: ["visit_id", "url"],
       params: { url },
-    }
-  );
+    });
   return visits;
 }
 
@@ -152,10 +146,7 @@ class FaviconFeed {
 
     let iconUri = Services.io.newURI(site.image_url);
     // The #tippytop is to be able to identify them for telemetry.
-    iconUri = iconUri
-      .mutate()
-      .setRef("tippytop")
-      .finalize();
+    iconUri = iconUri.mutate().setRef("tippytop").finalize();
     lazy.PlacesUtils.favicons.setAndFetchFaviconForPage(
       Services.io.newURI(url),
       iconUri,

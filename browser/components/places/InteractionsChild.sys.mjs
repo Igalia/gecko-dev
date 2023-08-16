@@ -2,18 +2,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-
 ChromeUtils.defineESModuleGetters(lazy, {
-  InteractionsBlocklist: "resource:///modules/InteractionsBlocklist.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 
 /**
@@ -25,9 +17,8 @@ export class InteractionsChild extends JSWindowActorChild {
   #currentURL;
 
   actorCreated() {
-    this.isContentWindowPrivate = lazy.PrivateBrowsingUtils.isContentWindowPrivate(
-      this.contentWindow
-    );
+    this.isContentWindowPrivate =
+      lazy.PrivateBrowsingUtils.isContentWindowPrivate(this.contentWindow);
 
     if (this.isContentWindowPrivate) {
       return;
@@ -83,14 +74,15 @@ export class InteractionsChild extends JSWindowActorChild {
   }
 
   #recordNewPage() {
-    let docInfo = this.#getDocumentInfo();
-    if (!docInfo || !this.docShell.currentDocumentChannel) {
+    if (!this.docShell.currentDocumentChannel) {
       // If there is no document channel, then it is something we're not
       // interested in, but we do need to know that the previous interaction
       // has ended.
       this.sendAsyncMessage("Interactions:PageHide");
       return;
     }
+
+    let docInfo = this.#getDocumentInfo();
 
     // This may happen when the page calls replaceState or pushState with the
     // same URL. We'll just consider this to not be a new page.
@@ -129,10 +121,7 @@ export class InteractionsChild extends JSWindowActorChild {
           return;
         }
 
-        let docInfo = await this.#getDocumentInfo();
-        if (docInfo) {
-          this.sendAsyncMessage("Interactions:PageHide");
-        }
+        this.sendAsyncMessage("Interactions:PageHide");
         break;
       }
     }
@@ -141,23 +130,11 @@ export class InteractionsChild extends JSWindowActorChild {
   /**
    * Returns the current document information for sending to the parent process.
    *
-   * @returns {object|null} [docInfo]
-   * @returns {string} docInfo.url
-   *   The url of the document.
+   * @returns {{ isActive: boolean, url: string, referrer: * }?}
    */
   #getDocumentInfo() {
     let doc = this.document;
 
-    let requirements = lazy.InteractionsBlocklist.urlRequirements.get(
-      doc.documentURIObject.scheme + ":"
-    );
-    if (
-      !requirements ||
-      (requirements.extension &&
-        !doc.documentURIObject.spec.endsWith(requirements.extension))
-    ) {
-      return null;
-    }
     let referrer;
     if (doc.referrer) {
       referrer = Services.io.newURI(doc.referrer);

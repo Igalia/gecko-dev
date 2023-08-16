@@ -4,34 +4,30 @@
 
 package org.mozilla.geckoview.test
 
-
-import android.graphics.*
-import androidx.test.filters.MediumTest
-import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.graphics.* // ktlint-disable no-wildcard-imports
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.view.Surface
-import org.hamcrest.Matchers.*
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.filters.MediumTest
+import androidx.test.platform.app.InstrumentationRegistry
+import org.hamcrest.Matchers.* // ktlint-disable no-wildcard-imports
 import org.junit.Assert
-import org.junit.Rule
+import org.junit.Assume.assumeThat
 import org.junit.Test
-import org.junit.rules.ExpectedException
 import org.junit.runner.RunWith
+import org.mozilla.geckoview.GeckoDisplay.SurfaceInfo
 import org.mozilla.geckoview.GeckoResult
 import org.mozilla.geckoview.GeckoResult.OnExceptionListener
 import org.mozilla.geckoview.GeckoResult.fromException
 import org.mozilla.geckoview.GeckoSession
-import org.mozilla.geckoview.GeckoSession.ProgressDelegate
 import org.mozilla.geckoview.GeckoSession.ContentDelegate
+import org.mozilla.geckoview.GeckoSession.ProgressDelegate
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.AssertCalled
 import org.mozilla.geckoview.test.rule.GeckoSessionTestRule.WithDisplay
+import java.lang.IllegalStateException
 import kotlin.math.absoluteValue
 import kotlin.math.max
-import android.graphics.BitmapFactory
-import android.graphics.Bitmap
-import androidx.test.platform.app.InstrumentationRegistry
-import org.junit.Assume.assumeThat
-import org.junit.Assume.assumeTrue
-import org.mozilla.geckoview.GeckoDisplay.SurfaceInfo
-import java.lang.IllegalStateException
 
 private const val SCREEN_HEIGHT = 800
 private const val SCREEN_WIDTH = 800
@@ -41,10 +37,6 @@ private const val BIG_SCREEN_WIDTH = 999999
 @RunWith(AndroidJUnit4::class)
 @MediumTest
 class ScreenshotTest : BaseSessionTest() {
-
-    @get:Rule
-    val expectedEx: ExpectedException = ExpectedException.none()
-
     private fun getComparisonScreenshot(width: Int, height: Int): Bitmap {
         val screenshotFile = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(screenshotFile)
@@ -80,14 +72,20 @@ class ScreenshotTest : BaseSessionTest() {
 
     private fun assertScreenshotResult(result: GeckoResult<Bitmap>, comparisonImage: Bitmap) {
         sessionRule.waitForResult(result).let {
-            assertThat("Screenshot is not null",
-                    it, notNullValue())
+            assertThat(
+                "Screenshot is not null",
+                it,
+                notNullValue(),
+            )
             assertThat("Widths are the same", comparisonImage.width, equalTo(it.width))
             assertThat("Heights are the same", comparisonImage.height, equalTo(it.height))
             assertThat("Byte counts are the same", comparisonImage.byteCount, equalTo(it.byteCount))
             assertThat("Configs are the same", comparisonImage.config, equalTo(it.config))
-            assertThat("Images are almost identical",
-                    imageElementDifference(comparisonImage, it), lessThanOrEqualTo(1))
+            assertThat(
+                "Images are almost identical",
+                imageElementDifference(comparisonImage, it),
+                lessThanOrEqualTo(1),
+            )
         }
     }
 
@@ -221,29 +219,14 @@ class ScreenshotTest : BaseSessionTest() {
         // Deactivating the session should trigger a flush state change
         sessionRule.waitUntilCalled(object : ProgressDelegate {
             @AssertCalled(count = 1)
-            override fun onSessionStateChange(session: GeckoSession,
-                                              sessionState: GeckoSession.SessionState) {}
+            override fun onSessionStateChange(
+                session: GeckoSession,
+                sessionState: GeckoSession.SessionState,
+            ) {}
         })
 
         sessionRule.display?.let {
             assertScreenshotResult(it.capturePixels(), screenshotFile)
-        }
-    }
-
-    @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
-    @Test(expected = IllegalStateException::class)
-    fun capturePixelsAfterGpuProcessCrash() {
-        // We need the GPU process for this test
-        assumeTrue(sessionRule.usingGpuProcess())
-
-        sessionRule.display?.let {
-            // Kill the GPU process then immediately request screen pixels. Requesting the pixels
-            // *before* killing the process will often result in the same error, but sometimes the
-            // screenshot request will complete successfully before the crash.
-            sessionRule.killGpuProcess()
-            val result = it.capturePixels()
-
-            sessionRule.waitForResult(result)
         }
     }
 
@@ -267,7 +250,7 @@ class ScreenshotTest : BaseSessionTest() {
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun screenshotScaledToSize() {
-        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
+        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
 
         mainSession.loadTestPath(COLORS_HTML_PATH)
         sessionRule.waitUntilCalled(object : ContentDelegate {
@@ -277,14 +260,14 @@ class ScreenshotTest : BaseSessionTest() {
         })
 
         sessionRule.display?.let {
-            assertScreenshotResult(it.screenshot().size(SCREEN_WIDTH/2, SCREEN_HEIGHT/2).capture(), screenshotFile)
+            assertScreenshotResult(it.screenshot().size(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2).capture(), screenshotFile)
         }
     }
 
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun screenShotScaledWithScale() {
-        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
+        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
 
         mainSession.loadTestPath(COLORS_HTML_PATH)
         sessionRule.waitUntilCalled(object : ContentDelegate {
@@ -301,7 +284,7 @@ class ScreenshotTest : BaseSessionTest() {
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun screenShotScaledWithAspectPreservingSize() {
-        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
+        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
 
         mainSession.loadTestPath(COLORS_HTML_PATH)
         sessionRule.waitUntilCalled(object : ContentDelegate {
@@ -311,7 +294,7 @@ class ScreenshotTest : BaseSessionTest() {
         })
 
         sessionRule.display?.let {
-            assertScreenshotResult(it.screenshot().aspectPreservingSize(SCREEN_WIDTH/2).capture(), screenshotFile)
+            assertScreenshotResult(it.screenshot().aspectPreservingSize(SCREEN_WIDTH / 2).capture(), screenshotFile)
         }
     }
 
@@ -350,14 +333,14 @@ class ScreenshotTest : BaseSessionTest() {
         })
 
         sessionRule.display?.let {
-            assertScreenshotResult(it.screenshot().source(0,0,SCREEN_WIDTH, SCREEN_HEIGHT).capture(), screenshotFile)
+            assertScreenshotResult(it.screenshot().source(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT).capture(), screenshotFile)
         }
     }
 
     @WithDisplay(height = SCREEN_HEIGHT, width = SCREEN_WIDTH)
     @Test
     fun screenshotWholeRegionScaled() {
-        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
+        val screenshotFile = getComparisonScreenshot(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
 
         mainSession.loadTestPath(COLORS_HTML_PATH)
         sessionRule.waitUntilCalled(object : ContentDelegate {
@@ -367,10 +350,13 @@ class ScreenshotTest : BaseSessionTest() {
         })
 
         sessionRule.display?.let {
-            assertScreenshotResult(it.screenshot()
-                    .source(0,0,SCREEN_WIDTH, SCREEN_HEIGHT)
-                    .size(SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-                    .capture(), screenshotFile)
+            assertScreenshotResult(
+                it.screenshot()
+                    .source(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
+                    .size(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+                    .capture(),
+                screenshotFile,
+            )
         }
     }
 
@@ -387,13 +373,17 @@ class ScreenshotTest : BaseSessionTest() {
 
         sessionRule.display?.let {
             assertScreenshotResult(
-                    it.screenshot()
-                            .source(0,0,SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-                            .capture(), BitmapFactory.decodeResource(res, R.drawable.colors_tl))
+                it.screenshot()
+                    .source(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+                    .capture(),
+                BitmapFactory.decodeResource(res, R.drawable.colors_tl),
+            )
             assertScreenshotResult(
-                    it.screenshot()
-                            .source(SCREEN_WIDTH/2,SCREEN_HEIGHT/2,SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-                            .capture(), BitmapFactory.decodeResource(res, R.drawable.colors_br))
+                it.screenshot()
+                    .source(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+                    .capture(),
+                BitmapFactory.decodeResource(res, R.drawable.colors_br),
+            )
         }
     }
 
@@ -410,15 +400,19 @@ class ScreenshotTest : BaseSessionTest() {
 
         sessionRule.display?.let {
             assertScreenshotResult(
-                    it.screenshot()
-                            .source(0,0,SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-                            .size(SCREEN_WIDTH/4, SCREEN_WIDTH/4)
-                            .capture(), BitmapFactory.decodeResource(res, R.drawable.colors_tl_scaled))
+                it.screenshot()
+                    .source(0, 0, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+                    .size(SCREEN_WIDTH / 4, SCREEN_WIDTH / 4)
+                    .capture(),
+                BitmapFactory.decodeResource(res, R.drawable.colors_tl_scaled),
+            )
             assertScreenshotResult(
-                    it.screenshot()
-                            .source(SCREEN_WIDTH/2,SCREEN_HEIGHT/2,SCREEN_WIDTH/2, SCREEN_HEIGHT/2)
-                            .size(SCREEN_WIDTH/4, SCREEN_WIDTH/4)
-                            .capture(), BitmapFactory.decodeResource(res, R.drawable.colors_br_scaled))
+                it.screenshot()
+                    .source(SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2, SCREEN_WIDTH / 2, SCREEN_HEIGHT / 2)
+                    .size(SCREEN_WIDTH / 4, SCREEN_WIDTH / 4)
+                    .capture(),
+                BitmapFactory.decodeResource(res, R.drawable.colors_br_scaled),
+            )
         }
     }
 
@@ -426,12 +420,14 @@ class ScreenshotTest : BaseSessionTest() {
     @Test
     fun giantScreenshot() {
         mainSession.loadTestPath(COLORS_HTML_PATH)
-        sessionRule.display?.screenshot()!!.source(0,0, BIG_SCREEN_WIDTH, BIG_SCREEN_HEIGHT)
-                .size(BIG_SCREEN_WIDTH, BIG_SCREEN_HEIGHT)
-                .capture()
-                .exceptionally(OnExceptionListener<Throwable> { error: Throwable ->
+        sessionRule.display?.screenshot()!!.source(0, 0, BIG_SCREEN_WIDTH, BIG_SCREEN_HEIGHT)
+            .size(BIG_SCREEN_WIDTH, BIG_SCREEN_HEIGHT)
+            .capture()
+            .exceptionally(
+                OnExceptionListener<Throwable> { error: Throwable ->
                     Assert.assertTrue(error is OutOfMemoryError)
                     fromException(error)
-                })
+                },
+            )
     }
 }

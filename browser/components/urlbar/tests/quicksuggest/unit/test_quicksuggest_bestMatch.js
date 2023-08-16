@@ -2,7 +2,19 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-// Tests best match quick suggest results.
+// Tests best match quick suggest results. "Best match" refers to two different
+// concepts:
+//
+// (1) The "best match" UI treatment (labeled "top pick" in the UI) that makes a
+//     result's row larger than usual and sets `suggestedIndex` to 1.
+// (2) The quick suggest config in remote settings can contain a `best_match`
+//     object that tells Firefox to use the best match UI treatment if the
+//     user's search string is a certain length.
+//
+// This file tests aspects of both concepts.
+//
+// See also test_quicksuggest_topPicks.js. "Top picks" refer to a similar
+// concept but it is not related to (2).
 
 "use strict";
 
@@ -13,7 +25,7 @@ const MAX_RESULT_COUNT = UrlbarPrefs.get("maxRichResults");
 const BEST_MATCH_POSITION_SEARCH_STRING = "bestmatchposition";
 const BEST_MATCH_POSITION = Math.round(MAX_RESULT_COUNT / 2);
 
-const SUGGESTIONS = [
+const REMOTE_SETTINGS_RESULTS = [
   {
     id: 1,
     url: "http://example.com/",
@@ -46,12 +58,13 @@ const SUGGESTIONS = [
   },
 ];
 
-const EXPECTED_BEST_MATCH_RESULT = {
+const EXPECTED_BEST_MATCH_URLBAR_RESULT = {
   type: UrlbarUtils.RESULT_TYPE.URL,
   source: UrlbarUtils.RESULT_SOURCE.SEARCH,
   heuristic: false,
   isBestMatch: true,
   payload: {
+    telemetryType: "adm_sponsored",
     url: "http://example.com/",
     originalUrl: "http://example.com/",
     title: "Fullkeyword title",
@@ -61,18 +74,31 @@ const EXPECTED_BEST_MATCH_RESULT = {
     sponsoredClickUrl: "http://example.com/click",
     sponsoredBlockId: 1,
     sponsoredAdvertiser: "TestAdvertiser",
-    helpUrl: UrlbarProviderQuickSuggest.helpUrl,
-    helpL10nId: "firefox-suggest-urlbar-learn-more",
+    descriptionL10n: { id: "urlbar-result-action-sponsored" },
+    helpUrl: QuickSuggest.HELP_URL,
+    helpL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-learn-more-about-firefox-suggest"
+        : "firefox-suggest-urlbar-learn-more",
+    },
+    isBlockable: UrlbarPrefs.get("bestMatchBlockingEnabled"),
+    blockL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-dismiss-firefox-suggest"
+        : "firefox-suggest-urlbar-block",
+    },
     displayUrl: "http://example.com",
     source: "remote-settings",
+    provider: "AdmWikipedia",
   },
 };
 
-const EXPECTED_NON_BEST_MATCH_RESULT = {
+const EXPECTED_NON_BEST_MATCH_URLBAR_RESULT = {
   type: UrlbarUtils.RESULT_TYPE.URL,
   source: UrlbarUtils.RESULT_SOURCE.SEARCH,
   heuristic: false,
   payload: {
+    telemetryType: "adm_sponsored",
     url: "http://example.com/",
     originalUrl: "http://example.com/",
     title: "Fullkeyword title",
@@ -83,19 +109,32 @@ const EXPECTED_NON_BEST_MATCH_RESULT = {
     sponsoredClickUrl: "http://example.com/click",
     sponsoredBlockId: 1,
     sponsoredAdvertiser: "TestAdvertiser",
-    helpUrl: UrlbarProviderQuickSuggest.helpUrl,
-    helpL10nId: "firefox-suggest-urlbar-learn-more",
+    descriptionL10n: { id: "urlbar-result-action-sponsored" },
+    helpUrl: QuickSuggest.HELP_URL,
+    helpL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-learn-more-about-firefox-suggest"
+        : "firefox-suggest-urlbar-learn-more",
+    },
+    isBlockable: UrlbarPrefs.get("quickSuggestBlockingEnabled"),
+    blockL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-dismiss-firefox-suggest"
+        : "firefox-suggest-urlbar-block",
+    },
     displayUrl: "http://example.com",
     source: "remote-settings",
+    provider: "AdmWikipedia",
   },
 };
 
-const EXPECTED_BEST_MATCH_POSITION_RESULT = {
+const EXPECTED_BEST_MATCH_POSITION_URLBAR_RESULT = {
   type: UrlbarUtils.RESULT_TYPE.URL,
   source: UrlbarUtils.RESULT_SOURCE.SEARCH,
   heuristic: false,
   isBestMatch: true,
   payload: {
+    telemetryType: "adm_sponsored",
     url: "http://example.com/best-match-position",
     originalUrl: "http://example.com/best-match-position",
     title: `${BEST_MATCH_POSITION_SEARCH_STRING} title`,
@@ -105,10 +144,22 @@ const EXPECTED_BEST_MATCH_POSITION_RESULT = {
     sponsoredClickUrl: "http://example.com/click",
     sponsoredBlockId: 2,
     sponsoredAdvertiser: "TestAdvertiser",
-    helpUrl: UrlbarProviderQuickSuggest.helpUrl,
-    helpL10nId: "firefox-suggest-urlbar-learn-more",
+    descriptionL10n: { id: "urlbar-result-action-sponsored" },
+    helpUrl: QuickSuggest.HELP_URL,
+    helpL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-learn-more-about-firefox-suggest"
+        : "firefox-suggest-urlbar-learn-more",
+    },
+    isBlockable: UrlbarPrefs.get("bestMatchBlockingEnabled"),
+    blockL10n: {
+      id: UrlbarPrefs.get("resultMenu")
+        ? "urlbar-result-menu-dismiss-firefox-suggest"
+        : "firefox-suggest-urlbar-block",
+    },
     displayUrl: "http://example.com/best-match-position",
     source: "remote-settings",
+    provider: "AdmWikipedia",
   },
 };
 
@@ -122,7 +173,15 @@ add_task(async function init() {
   // Disable search suggestions so we don't hit the network.
   Services.prefs.setBoolPref("browser.search.suggest.enabled", false);
 
-  await QuickSuggestTestUtils.ensureQuickSuggestInit(SUGGESTIONS);
+  await QuickSuggestTestUtils.ensureQuickSuggestInit({
+    remoteSettingsResults: [
+      {
+        type: "data",
+        attachment: REMOTE_SETTINGS_RESULTS,
+      },
+    ],
+    config: QuickSuggestTestUtils.BEST_MATCH_CONFIG,
+  });
 });
 
 // Tests a best match result.
@@ -133,7 +192,7 @@ add_task(async function bestMatch() {
   });
   await check_results({
     context,
-    matches: [EXPECTED_BEST_MATCH_RESULT],
+    matches: [EXPECTED_BEST_MATCH_URLBAR_RESULT],
   });
 
   let result = context.results[0];
@@ -165,7 +224,7 @@ add_task(async function nonBestMatch() {
   });
   await check_results({
     context,
-    matches: [EXPECTED_NON_BEST_MATCH_RESULT],
+    matches: [EXPECTED_NON_BEST_MATCH_URLBAR_RESULT],
   });
 
   let result = context.results[0];
@@ -191,7 +250,7 @@ add_task(async function nonBestMatch() {
 add_task(async function prefixKeywords() {
   let sawNonBestMatch = false;
   let sawBestMatch = false;
-  for (let keyword of SUGGESTIONS[0].keywords) {
+  for (let keyword of REMOTE_SETTINGS_RESULTS[0].keywords) {
     info(`Searching for "${keyword}"`);
     let context = createContext(keyword, {
       providers: [UrlbarProviderQuickSuggest.name],
@@ -200,10 +259,10 @@ add_task(async function prefixKeywords() {
 
     let expectedResult;
     if (keyword.length < 4) {
-      expectedResult = EXPECTED_NON_BEST_MATCH_RESULT;
+      expectedResult = EXPECTED_NON_BEST_MATCH_URLBAR_RESULT;
       sawNonBestMatch = true;
     } else {
-      expectedResult = EXPECTED_BEST_MATCH_RESULT;
+      expectedResult = EXPECTED_BEST_MATCH_URLBAR_RESULT;
       sawBestMatch = true;
     }
 
@@ -232,7 +291,7 @@ add_task(async function tabToSearch() {
       name: "Test",
       search_url: engineURL,
     },
-    true
+    { skipUnload: true }
   );
   let engine = Services.search.getEngineByName("Test");
 
@@ -255,14 +314,14 @@ add_task(async function tabToSearch() {
       makeSearchResult(context, {
         engineName: engine.name,
         engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
-        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.getResultDomain()),
+        uri: UrlbarUtils.stripPublicSuffixFromHost(engine.searchUrlDomain),
         providesSearchMode: true,
         query: "",
         providerName: "TabToSearch",
         satisfiesAutofillThreshold: true,
       }),
       // best match
-      EXPECTED_BEST_MATCH_RESULT,
+      EXPECTED_BEST_MATCH_URLBAR_RESULT,
       // visit
       makeVisitResult(context, {
         uri: engineURL,
@@ -302,7 +361,7 @@ async function doDisabledTest() {
   });
   await check_results({
     context,
-    matches: [EXPECTED_NON_BEST_MATCH_RESULT],
+    matches: [EXPECTED_NON_BEST_MATCH_URLBAR_RESULT],
   });
 
   let result = context.results[0];
@@ -363,7 +422,7 @@ add_task(async function position() {
         heuristic: true,
       }),
       // best match whose backing suggestion has a `position`
-      EXPECTED_BEST_MATCH_POSITION_RESULT,
+      EXPECTED_BEST_MATCH_POSITION_URLBAR_RESULT,
       // visits
       ...visitResults.slice(0, MAX_RESULT_COUNT - 2),
     ],
@@ -375,7 +434,7 @@ add_task(async function position() {
 
 // Tests a suggestion that is blocked from being a best match.
 add_task(async function blockedAsBestMatch() {
-  let config = QuickSuggestTestUtils.DEFAULT_CONFIG;
+  let config = QuickSuggestTestUtils.BEST_MATCH_CONFIG;
   config.best_match.blocked_suggestion_ids = [1];
   await QuickSuggestTestUtils.withConfig({
     config,
@@ -386,7 +445,7 @@ add_task(async function blockedAsBestMatch() {
       });
       await check_results({
         context,
-        matches: [EXPECTED_NON_BEST_MATCH_RESULT],
+        matches: [EXPECTED_NON_BEST_MATCH_URLBAR_RESULT],
       });
     },
   });
@@ -403,7 +462,7 @@ add_task(async function noConfig() {
       });
       await check_results({
         context,
-        matches: [EXPECTED_NON_BEST_MATCH_RESULT],
+        matches: [EXPECTED_NON_BEST_MATCH_URLBAR_RESULT],
       });
     },
   });

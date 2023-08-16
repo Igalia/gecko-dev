@@ -9,11 +9,8 @@ AddonTestUtils.createAppInfo(
   "43"
 );
 
-let {
-  promiseRestartManager,
-  promiseShutdownManager,
-  promiseStartupManager,
-} = AddonTestUtils;
+let { promiseRestartManager, promiseShutdownManager, promiseStartupManager } =
+  AddonTestUtils;
 
 const server = createHttpServer({ hosts: ["example.com"] });
 server.registerDirectory("/data/", do_get_file("data"));
@@ -34,7 +31,7 @@ add_task(async function test_StreamFilter_at_restart() {
       details => {
         let filter = browser.webRequest.filterResponseData(details.requestId);
         filter.onstop = () => {
-          let encoded = new TextEncoder("utf-8").encode(data);
+          let encoded = new TextEncoder().encode(data);
           filter.write(encoded);
           filter.close();
         };

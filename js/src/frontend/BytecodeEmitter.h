@@ -11,8 +11,9 @@
 
 #include "mozilla/Assertions.h"  // MOZ_ASSERT
 #include "mozilla/Attributes.h"  // MOZ_STACK_CLASS, MOZ_ALWAYS_INLINE, MOZ_NEVER_INLINE, MOZ_RAII
-#include "mozilla/Maybe.h"  // mozilla::Maybe, mozilla::Some
-#include "mozilla/Span.h"   // mozilla::Span
+#include "mozilla/Maybe.h"     // mozilla::Maybe, mozilla::Some
+#include "mozilla/Saturate.h"  // mozilla::SaturateUint8
+#include "mozilla/Span.h"      // mozilla::Span
 
 #include <stddef.h>  // ptrdiff_t
 #include <stdint.h>  // uint16_t, uint32_t
@@ -33,7 +34,6 @@
 #include "frontend/SourceNotes.h"          // SrcNoteType
 #include "frontend/ValueUsage.h"           // ValueUsage
 #include "js/AllocPolicy.h"                // ReportOutOfMemory
-#include "js/Stack.h"                      // JS::NativeStackLimit
 #include "js/TypeDecls.h"                  // jsbytecode
 #include "vm/BuiltinObjectKind.h"          // BuiltinObjectKind
 #include "vm/CheckIsObjectKind.h"          // CheckIsObjectKind
@@ -47,7 +47,7 @@
 
 namespace js {
 
-class ErrorContext;
+class FrontendContext;
 
 namespace frontend {
 
@@ -56,6 +56,7 @@ class CallOrNewEmitter;
 class ClassEmitter;
 class ElemOpEmitter;
 class EmitterScope;
+class ErrorReporter;
 class FullParseHandler;
 class NestableControl;
 class PrivateOpEmitter;
@@ -66,7 +67,6 @@ class SharedContext;
 class TDZCheckCache;
 class TryEmitter;
 
-struct BCEParserHandle;
 struct TokenPos;
 
 enum class ValueIsOnStack { Yes, No };
@@ -208,10 +208,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Context shared between parsing and bytecode generation.
   SharedContext* const sc = nullptr;
 
-  JSContext* const cx = nullptr;
-  ErrorContext* const ec = nullptr;
-
-  JS::NativeStackLimit stackLimit;
+  FrontendContext* const fc = nullptr;
 
   // Enclosing function or global context.
   BytecodeEmitter* const parent = nullptr;
@@ -233,12 +230,13 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // switchToMain sets this to the bytecode offset of the main section.
   mozilla::Maybe<uint32_t> mainOffset_ = {};
 
- public:
   // Private storage for parser wrapper. DO NOT REFERENCE INTERNALLY. May not be
-  // initialized. Use |parser| instead.
+  // initialized.
   mozilla::Maybe<EitherParser> ep_ = {};
-  BCEParserHandle* parser = nullptr;
 
+  const ErrorReporter& errorReporter_;
+
+ public:
   CompilationState& compilationState;
 
   uint32_t maxFixedSlots = 0; /* maximum number of fixed frame slots so far */
@@ -262,6 +260,8 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   friend class AutoCheckUnstableEmitterScope;
 #endif
+
+  const ErrorReporter& errorReporter() const { return errorReporter_; }
 
   ParserAtomsTable& parserAtoms() { return compilationState.parserAtoms; }
   const ParserAtomsTable& parserAtoms() const {
@@ -311,6 +311,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // Jump target just before the final yield in a generator or async function.
   JumpList finalYields = {};
 
+  // In order to heuristically determine the size of the allocation if this is a
+  // constructor function, we track expressions which add properties in the
+  // constructor.
+  mozilla::SaturateUint8 propertyAdditionEstimate = {};
+
   /*
    * Note that BytecodeEmitters are magic: they own the arena "top-of-stack"
    * space above their tempMark points. This means that you cannot alloc from
@@ -319,29 +324,25 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
    */
  private:
   // Internal constructor, for delegation use only.
-  BytecodeEmitter(BytecodeEmitter* parent, ErrorContext* ec,
-                  JS::NativeStackLimit stackLimit, SharedContext* sc,
+  BytecodeEmitter(BytecodeEmitter* parent, FrontendContext* fc,
+                  SharedContext* sc, const ErrorReporter& errorReporter,
                   CompilationState& compilationState, EmitterMode emitterMode);
 
-  BytecodeEmitter(BytecodeEmitter* parent, BCEParserHandle* handle,
-                  SharedContext* sc, CompilationState& compilationState,
-                  EmitterMode emitterMode);
+  BytecodeEmitter(BytecodeEmitter* parent, SharedContext* sc);
 
   void initFromBodyPosition(TokenPos bodyPosition);
 
  public:
-  BytecodeEmitter(ErrorContext* ec, JS::NativeStackLimit stackLimit,
-                  const EitherParser& parser, SharedContext* sc,
-                  CompilationState& compilationState,
+  BytecodeEmitter(FrontendContext* fc, const EitherParser& parser,
+                  SharedContext* sc, CompilationState& compilationState,
                   EmitterMode emitterMode = Normal);
 
   template <typename Unit>
-  BytecodeEmitter(ErrorContext* ec, JS::NativeStackLimit stackLimit,
-                  Parser<FullParseHandler, Unit>* parser, SharedContext* sc,
-                  CompilationState& compilationState,
+  BytecodeEmitter(FrontendContext* fc, Parser<FullParseHandler, Unit>* parser,
+                  SharedContext* sc, CompilationState& compilationState,
                   EmitterMode emitterMode = Normal)
-      : BytecodeEmitter(ec, stackLimit, EitherParser(parser), sc,
-                        compilationState, emitterMode) {}
+      : BytecodeEmitter(fc, EitherParser(parser), sc, compilationState,
+                        emitterMode) {}
 
   [[nodiscard]] bool init();
   [[nodiscard]] bool init(TokenPos bodyPosition);
@@ -410,7 +411,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
     // `atomIndices()` uses uint32_t instead of GCThingIndex, because
     // GCThingIndex isn't trivial type.
     if (!perScriptData().atomIndices()->add(p, atom, index.index)) {
-      ReportOutOfMemory(cx);
+      ReportOutOfMemory(fc);
       return false;
     }
 
@@ -613,13 +614,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitStringOp(JSOp op, GCThingIndex atomIndex);
 
   [[nodiscard]] bool emitArrayLiteral(ListNode* array);
-  [[nodiscard]] bool emitArray(ParseNode* arrayHead, uint32_t count);
+  [[nodiscard]] bool emitArray(ListNode* array);
   [[nodiscard]] bool emitSpreadIntoArray(UnaryNode* elem);
 
   [[nodiscard]] bool emitInternedScopeOp(GCThingIndex index, JSOp op);
   [[nodiscard]] bool emitInternedObjectOp(GCThingIndex index, JSOp op);
-  [[nodiscard]] bool emitObjectPairOp(GCThingIndex index1, GCThingIndex index2,
-                                      JSOp op);
   [[nodiscard]] bool emitRegExp(GCThingIndex index);
 
   [[nodiscard]] MOZ_NEVER_INLINE bool emitFunction(FunctionNode* funNode,
@@ -633,7 +632,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // list?
   void isPropertyListObjLiteralCompatible(ListNode* obj, bool* withValues,
                                           bool* withoutValues);
-  bool isArrayObjLiteralCompatible(ParseNode* arrayHead);
+  bool isArrayObjLiteralCompatible(ListNode* array);
 
   [[nodiscard]] bool emitPropertyList(ListNode* obj, PropertyEmitter& pe,
                                       PropListType type);
@@ -644,7 +643,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitDestructuringRestExclusionSetObjLiteral(
       ListNode* pattern);
 
-  [[nodiscard]] bool emitObjLiteralArray(ParseNode* arrayHead);
+  [[nodiscard]] bool emitObjLiteralArray(ListNode* array);
 
   // Is a field value OBJLITERAL-compatible?
   [[nodiscard]] bool isRHSObjLiteralCompatible(ParseNode* value);
@@ -658,7 +657,12 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                                          FieldPlacement placement);
   [[nodiscard]] bool emitCreateMemberInitializers(ClassEmitter& ce,
                                                   ListNode* obj,
-                                                  FieldPlacement placement);
+                                                  FieldPlacement placement
+#ifdef ENABLE_DECORATORS
+                                                  ,
+                                                  bool hasHeritage
+#endif
+  );
   const MemberInitializers& findMemberInitializersForCall();
   [[nodiscard]] bool emitInitializeInstanceMembers(
       bool isDerivedClassConstructor);
@@ -692,7 +696,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                                           const NameLocation& loc,
                                           ValueIsOnStack isOnStack);
 
-  [[nodiscard]] bool emitNameIncDec(UnaryNode* incDec);
+  [[nodiscard]] bool emitNameIncDec(UnaryNode* incDec, ValueUsage valueUsage);
 
   [[nodiscard]] bool emitDeclarationList(ListNode* declList);
   [[nodiscard]] bool emitSingleDeclaration(ListNode* declList, NameNode* decl,
@@ -733,7 +737,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitPushResumeKind(GeneratorResumeKind kind);
 
   [[nodiscard]] bool emitPropLHS(PropertyAccess* prop);
-  [[nodiscard]] bool emitPropIncDec(UnaryNode* incDec);
+  [[nodiscard]] bool emitPropIncDec(UnaryNode* incDec, ValueUsage valueUsage);
 
   [[nodiscard]] bool emitComputedPropertyName(UnaryNode* computedPropName);
 
@@ -751,10 +755,11 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
                                        ElemOpEmitter& eoe);
   [[nodiscard]] bool emitElemOpBase(JSOp op);
 
-  [[nodiscard]] bool emitElemIncDec(UnaryNode* incDec);
+  [[nodiscard]] bool emitElemIncDec(UnaryNode* incDec, ValueUsage valueUsage);
   [[nodiscard]] bool emitObjAndPrivateName(PrivateMemberAccess* elem,
                                            ElemOpEmitter& eoe);
-  [[nodiscard]] bool emitPrivateIncDec(UnaryNode* incDec);
+  [[nodiscard]] bool emitPrivateIncDec(UnaryNode* incDec,
+                                       ValueUsage valueUsage);
 
   [[nodiscard]] bool emitCatch(BinaryNode* catchClause);
   [[nodiscard]] bool emitIf(TernaryNode* ifNode);
@@ -809,13 +814,16 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   JSOp getIterCallOp(JSOp callOp, SelfHostedIter selfHostedIter);
 
+  // Push the operands for emit(Async)Iterator onto the stack.
+  [[nodiscard]] bool emitIterable(ParseNode* value,
+                                  SelfHostedIter selfHostedIter,
+                                  IteratorKind iterKind = IteratorKind::Sync);
+
   // emitIterator expects the iterable to already be on the stack.
   // It will replace that stack value with the corresponding iterator
-  [[nodiscard]] bool emitIterator(
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny);
+  [[nodiscard]] bool emitIterator(SelfHostedIter selfHostedIter);
 
-  [[nodiscard]] bool emitAsyncIterator(
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny);
+  [[nodiscard]] bool emitAsyncIterator(SelfHostedIter selfHostedIter);
 
   // Pops iterator from the top of the stack. Pushes the result of |.next()|
   // onto the stack.
@@ -858,8 +866,9 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitInitializer(ParseNode* initializer,
                                      ParseNode* pattern);
 
-  [[nodiscard]] bool emitCallSiteObjectArray(JSOp op, ListNode* cookedOrRaw,
-                                             GCThingIndex* outArrayIndex);
+  [[nodiscard]] bool emitCallSiteObjectArray(ObjLiteralWriter& writer,
+                                             ListNode* cookedOrRaw,
+                                             ParseNode* head, uint32_t count);
   [[nodiscard]] bool emitCallSiteObject(CallSiteNode* callSiteObj);
   [[nodiscard]] bool emitTemplateString(ListNode* templateString);
   [[nodiscard]] bool emitAssignmentOrInit(ParseNodeKind kind, ParseNode* lhs,
@@ -910,15 +919,14 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitRightAssociative(ListNode* node);
   [[nodiscard]] bool emitLeftAssociative(ListNode* node);
   [[nodiscard]] bool emitPrivateInExpr(ListNode* node);
-  [[nodiscard]] bool emitShortCircuit(ListNode* node);
-  [[nodiscard]] bool emitSequenceExpr(
-      ListNode* node, ValueUsage valueUsage = ValueUsage::WantValue);
+  [[nodiscard]] bool emitShortCircuit(ListNode* node, ValueUsage valueUsage);
+  [[nodiscard]] bool emitSequenceExpr(ListNode* node, ValueUsage valueUsage);
 
-  [[nodiscard]] MOZ_NEVER_INLINE bool emitIncOrDec(UnaryNode* incDec);
+  [[nodiscard]] MOZ_NEVER_INLINE bool emitIncOrDec(UnaryNode* incDec,
+                                                   ValueUsage valueUsage);
 
   [[nodiscard]] bool emitConditionalExpression(
-      ConditionalExpression& conditional,
-      ValueUsage valueUsage = ValueUsage::WantValue);
+      ConditionalExpression& conditional, ValueUsage valueUsage);
 
   [[nodiscard]] ParseNode* getCoordNode(ParseNode* callNode,
                                         ParseNode* calleeNode, JSOp op,
@@ -926,24 +934,29 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
 
   [[nodiscard]] bool emitArguments(ListNode* argsList, bool isCall,
                                    bool isSpread, CallOrNewEmitter& cone);
-  [[nodiscard]] bool emitCallOrNew(
-      CallNode* callNode, ValueUsage valueUsage = ValueUsage::WantValue);
+  [[nodiscard]] bool emitCallOrNew(CallNode* callNode, ValueUsage valueUsage);
   [[nodiscard]] bool emitDebugCheckSelfHosted();
   [[nodiscard]] bool emitSelfHostedCallFunction(CallNode* callNode, JSOp op);
   [[nodiscard]] bool emitSelfHostedResumeGenerator(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedForceInterpreter();
   [[nodiscard]] bool emitSelfHostedAllowContentIter(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedAllowContentIterWith(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedAllowContentIterWithNext(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedDefineDataProperty(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedGetPropertySuper(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedHasOwn(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedToNumeric(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedToString(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedIsNullOrUndefined(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedIteratorClose(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedGetBuiltinConstructor(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedGetBuiltinPrototype(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedGetBuiltinSymbol(CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedSetIsInlinableLargeFunction(
       CallNode* callNode);
   [[nodiscard]] bool emitSelfHostedSetCanonicalName(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedArgumentsLength(CallNode* callNode);
+  [[nodiscard]] bool emitSelfHostedGetArgument(CallNode* callNode);
 #ifdef DEBUG
   void assertSelfHostedExpectedTopLevel(ParseNode* node);
   void assertSelfHostedUnsafeGetReservedSlot(ListNode* argsList);
@@ -967,7 +980,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitBreak(TaggedParserAtomIndex label);
   [[nodiscard]] bool emitContinue(TaggedParserAtomIndex label);
 
-  [[nodiscard]] bool emitFunctionFormalParameters(ListNode* paramsBody);
+  [[nodiscard]] bool emitFunctionFormalParameters(ParamsBodyNode* paramsBody);
   [[nodiscard]] bool emitInitializeFunctionSpecialNames();
   [[nodiscard]] bool emitLexicalInitialization(NameNode* name);
   [[nodiscard]] bool emitLexicalInitialization(TaggedParserAtomIndex name);
@@ -989,8 +1002,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   // This shortcut can be used when spreading into arrays, as it assumes
   // `spreadeeStackItems = 2` (|ARRAY INDEX|) and `storeElementOp =
   // JSOp::InitElemInc`
-  [[nodiscard]] bool emitSpread(
-      SelfHostedIter selfHostedIter = SelfHostedIter::Deny);
+  [[nodiscard]] bool emitSpread(SelfHostedIter selfHostedIter);
 
   enum class ClassNameKind {
     // The class name is defined through its BindingIdentifier, if present.
@@ -1013,7 +1025,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitSuperGetElem(PropertyByValue* elem,
                                       bool isCall = false);
 
-  [[nodiscard]] bool emitCalleeAndThis(ParseNode* callee, ParseNode* call,
+  [[nodiscard]] bool emitCalleeAndThis(ParseNode* callee, CallNode* call,
                                        CallOrNewEmitter& cone);
 
   [[nodiscard]] bool emitOptionalCalleeAndThis(ParseNode* callee,
@@ -1045,8 +1057,7 @@ struct MOZ_STACK_CLASS BytecodeEmitter {
   [[nodiscard]] bool emitNewPrivateNames(TaggedParserAtomIndex privateBrandName,
                                          ListNode* classMembers);
 
-  [[nodiscard]] js::UniquePtr<ImmutableScriptData> createImmutableScriptData(
-      JSContext* cx);
+  [[nodiscard]] js::UniquePtr<ImmutableScriptData> createImmutableScriptData();
 
  private:
   [[nodiscard]] SelfHostedIter getSelfHostedIterFor(ParseNode* parseNode);

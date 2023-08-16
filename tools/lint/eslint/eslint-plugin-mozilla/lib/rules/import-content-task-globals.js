@@ -17,59 +17,57 @@ var frameScriptEnv = require("../environments/frame-script");
 var sandboxEnv = require("../environments/special-powers-sandbox");
 
 module.exports = {
+  // eslint-disable-next-line eslint-plugin/prefer-message-ids
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-content-task-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-content-task-globals.html",
     },
+    schema: [],
     type: "problem",
   },
 
   create(context) {
     return {
-      "CallExpression[callee.object.name='ContentTask'][callee.property.name='spawn']": function(
-        node
-      ) {
-        // testing/mochitest/BrowserTestUtils/content/content-task.js
-        // This script is loaded as a sub script into a frame script.
-        for (let [name, value] of Object.entries(frameScriptEnv.globals)) {
-          helpers.addVarToScope(name, context.getScope(), value);
-        }
-      },
-      "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawn']": function(
-        node
-      ) {
-        for (let [name, value] of Object.entries(sandboxEnv.globals)) {
-          helpers.addVarToScope(name, context.getScope(), value);
-        }
-        let globals = [
-          // testing/specialpowers/content/SpecialPowersChild.jsm
-          // SpecialPowersChild._spawnTask
-          "SpecialPowers",
-          "ContentTaskUtils",
-          "content",
-          "docShell",
-        ];
-        for (let global of globals) {
-          helpers.addVarToScope(global, context.getScope(), false);
-        }
-      },
-      "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawnChrome']": function(
-        node
-      ) {
-        for (let [name, value] of Object.entries(sandboxEnv.globals)) {
-          helpers.addVarToScope(name, context.getScope(), value);
-        }
-        let globals = [
-          // testing/specialpowers/content/SpecialPowersParent.jsm
-          // SpecialPowersParent._spawnChrome
-          "windowGlobalParent",
-          "browsingContext",
-        ];
-        for (let global of globals) {
-          helpers.addVarToScope(global, context.getScope(), false);
-        }
-      },
+      "CallExpression[callee.object.name='ContentTask'][callee.property.name='spawn']":
+        function (node) {
+          // testing/mochitest/BrowserTestUtils/content/content-task.js
+          // This script is loaded as a sub script into a frame script.
+          for (let [name, value] of Object.entries(frameScriptEnv.globals)) {
+            helpers.addVarToScope(name, context.getScope(), value);
+          }
+        },
+      "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawn']":
+        function (node) {
+          for (let [name, value] of Object.entries(sandboxEnv.globals)) {
+            helpers.addVarToScope(name, context.getScope(), value);
+          }
+          let globals = [
+            // testing/specialpowers/content/SpecialPowersChild.sys.mjs
+            // SpecialPowersChild._spawnTask
+            "SpecialPowers",
+            "ContentTaskUtils",
+            "content",
+            "docShell",
+          ];
+          for (let global of globals) {
+            helpers.addVarToScope(global, context.getScope(), false);
+          }
+        },
+      "CallExpression[callee.object.name='SpecialPowers'][callee.property.name='spawnChrome']":
+        function (node) {
+          for (let [name, value] of Object.entries(sandboxEnv.globals)) {
+            helpers.addVarToScope(name, context.getScope(), value);
+          }
+          let globals = [
+            // testing/specialpowers/content/SpecialPowersParent.sys.mjs
+            // SpecialPowersParent._spawnChrome
+            "windowGlobalParent",
+            "browsingContext",
+          ];
+          for (let global of globals) {
+            helpers.addVarToScope(global, context.getScope(), false);
+          }
+        },
     };
   },
 };

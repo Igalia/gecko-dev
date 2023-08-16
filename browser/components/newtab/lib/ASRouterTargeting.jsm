@@ -1,4 +1,4 @@
-/* This Source Code Form is subject to the terms of the Mozilla Public
+/* This Source Code Form is subject to the terms of the Mozilla PublicddonMa
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
@@ -9,36 +9,41 @@ const DISTRIBUTION_ID_CHINA_REPACK = "MozillaOnline";
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { NewTabUtils } = ChromeUtils.import(
-  "resource://gre/modules/NewTabUtils.jsm"
+const { NewTabUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/NewTabUtils.sys.mjs"
 );
-const { ShellService } = ChromeUtils.import(
-  "resource:///modules/ShellService.jsm"
+const { ShellService } = ChromeUtils.importESModule(
+  "resource:///modules/ShellService.sys.mjs"
 );
 
 const lazy = {};
 
+ChromeUtils.defineESModuleGetters(lazy, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
+  AttributionCode: "resource:///modules/AttributionCode.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  ClientEnvironment: "resource://normandy/lib/ClientEnvironment.sys.mjs",
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  ProfileAge: "resource://gre/modules/ProfileAge.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
+  TargetingContext: "resource://messaging-system/targeting/Targeting.sys.mjs",
+  TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
+  TelemetrySession: "resource://gre/modules/TelemetrySession.sys.mjs",
+});
+
 XPCOMUtils.defineLazyModuleGetters(lazy, {
   ASRouterPreferences: "resource://activity-stream/lib/ASRouterPreferences.jsm",
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  ClientEnvironment: "resource://normandy/lib/ClientEnvironment.jsm",
-  ProfileAge: "resource://gre/modules/ProfileAge.jsm",
-  TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
-  AttributionCode: "resource:///modules/AttributionCode.jsm",
-  TargetingContext: "resource://messaging-system/targeting/Targeting.jsm",
-  Region: "resource://gre/modules/Region.jsm",
-  TelemetrySession: "resource://gre/modules/TelemetrySession.jsm",
-  HomePage: "resource:///modules/HomePage.jsm",
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
 });
 
 XPCOMUtils.defineLazyGetter(lazy, "fxAccounts", () => {
-  return ChromeUtils.import(
-    "resource://gre/modules/FxAccounts.jsm"
+  return ChromeUtils.importESModule(
+    "resource://gre/modules/FxAccounts.sys.mjs"
   ).getFxAccountsSingleton();
 });
 
@@ -108,13 +113,49 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "browser.newtabpage.activity-stream.feeds.snippets",
   false
 );
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "hasMigratedBookmarks",
+  "browser.migrate.interactions.bookmarks",
+  false
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "hasMigratedCSVPasswords",
+  "browser.migrate.interactions.csvpasswords",
+  false
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "hasMigratedHistory",
+  "browser.migrate.interactions.history",
+  false
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "hasMigratedPasswords",
+  "browser.migrate.interactions.passwords",
+  false
+);
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "useEmbeddedMigrationWizard",
+  "browser.migrate.content-modal.about-welcome-behavior",
+  "default",
+  null,
+  behaviorString => {
+    return behaviorString === "embedded";
+  }
+);
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
+  AUS: ["@mozilla.org/updates/update-service;1", "nsIApplicationUpdateService"],
   BrowserHandler: ["@mozilla.org/browser/clh;1", "nsIBrowserHandler"],
   TrackingDBService: [
     "@mozilla.org/tracking-db-service;1",
     "nsITrackingDBService",
   ],
+  UpdateCheckSvc: ["@mozilla.org/updates/update-checker;1", "nsIUpdateChecker"],
 });
 
 const FXA_USERNAME_PREF = "services.sync.username";
@@ -190,7 +231,6 @@ function CacheListAttachedOAuthClients() {
 function CheckBrowserNeedsUpdate(
   updateInterval = FRECENT_SITES_UPDATE_INTERVAL
 ) {
-  const UpdateChecker = Cc["@mozilla.org/updates/update-checker;1"];
   const checker = {
     _lastUpdated: 0,
     _value: null,
@@ -203,37 +243,31 @@ function CheckBrowserNeedsUpdate(
       this._lastUpdated = 0;
       this._value = null;
     },
-    get() {
-      return new Promise((resolve, reject) => {
-        const now = Date.now();
-        const updateServiceListener = {
-          // eslint-disable-next-line require-await
-          async onCheckComplete(request, updates) {
-            checker._value = !!updates.length;
-            resolve(checker._value);
-          },
-          // eslint-disable-next-line require-await
-          async onError(request, update) {
-            reject(request);
-          },
-
-          QueryInterface: ChromeUtils.generateQI(["nsIUpdateCheckListener"]),
-        };
-
-        if (UpdateChecker && now - this._lastUpdated >= updateInterval) {
-          const checkerInstance = UpdateChecker.createInstance(
-            Ci.nsIUpdateChecker
-          );
-          if (checkerInstance.canCheckForUpdates) {
-            checkerInstance.checkForUpdates(updateServiceListener, true);
-            this._lastUpdated = now;
-          } else {
-            resolve(false);
-          }
-        } else {
-          resolve(this._value);
-        }
-      });
+    async get() {
+      const now = Date.now();
+      if (
+        !AppConstants.MOZ_UPDATER ||
+        now - this._lastUpdated < updateInterval
+      ) {
+        return this._value;
+      }
+      if (!lazy.AUS.canCheckForUpdates) {
+        return false;
+      }
+      this._lastUpdated = now;
+      let check = lazy.UpdateCheckSvc.checkForUpdates(
+        lazy.UpdateCheckSvc.FOREGROUND_CHECK
+      );
+      let result = await check.result;
+      if (!result.succeeded) {
+        lazy.ASRouterPreferences.console.error(
+          "CheckBrowserNeedsUpdate failed :>> ",
+          result.request
+        );
+        return false;
+      }
+      checker._value = !!result.updates.length;
+      return checker._value;
     },
   };
 
@@ -273,6 +307,36 @@ const QueryCache = {
     doesAppNeedPrivatePin: new CachedTargetingGetter(
       "doesAppNeedPin",
       true,
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
+    ),
+    isDefaultBrowser: new CachedTargetingGetter(
+      "isDefaultBrowser",
+      null,
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
+    ),
+    currentThemes: new CachedTargetingGetter(
+      "getAddonsByTypes",
+      ["theme"],
+      FRECENT_SITES_UPDATE_INTERVAL,
+      lazy.AddonManager // eslint-disable-line mozilla/valid-lazy
+    ),
+    isDefaultHTMLHandler: new CachedTargetingGetter(
+      "isDefaultHandlerFor",
+      [".html"],
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
+    ),
+    isDefaultPDFHandler: new CachedTargetingGetter(
+      "isDefaultHandlerFor",
+      [".pdf"],
+      FRECENT_SITES_UPDATE_INTERVAL,
+      ShellService
+    ),
+    defaultPDFHandler: new CachedTargetingGetter(
+      "getDefaultPDFHandler",
+      null,
       FRECENT_SITES_UPDATE_INTERVAL,
       ShellService
     ),
@@ -401,6 +465,64 @@ function parseAboutPageURL(url) {
   return ret;
 }
 
+/**
+ * Get the number of records in autofill storage, e.g. credit cards/addresses.
+ *
+ * @param  {Object} [data]
+ * @param  {string} [data.collectionName]
+ *         The name used to specify which collection to retrieve records.
+ * @param  {string} [data.searchString]
+ *         The typed string for filtering out the matched records.
+ * @param  {string} [data.info]
+ *         The input autocomplete property's information.
+ * @returns {Promise<number>} The number of matched records.
+ * @see FormAutofillParent._getRecords
+ */
+async function getAutofillRecords(data) {
+  let actor;
+  try {
+    const win = Services.wm.getMostRecentBrowserWindow();
+    actor =
+      win.gBrowser.selectedBrowser.browsingContext.currentWindowGlobal.getActor(
+        "FormAutofill"
+      );
+  } catch (error) {
+    // If the actor is not available, we can't get the records. We could import
+    // the records directly from FormAutofillStorage to avoid the messiness of
+    // JSActors, but that would import a lot of code for a targeting attribute.
+    return 0;
+  }
+  let records = await actor?.receiveMessage({
+    name: "FormAutofill:GetRecords",
+    data,
+  });
+  return records?.length ?? 0;
+}
+
+// Attribution data can be encoded multiple times so we need this function to
+// get a cleartext value.
+function decodeAttributionValue(value) {
+  if (!value) {
+    return null;
+  }
+
+  let decodedValue = value;
+
+  while (decodedValue.includes("%")) {
+    try {
+      const result = decodeURIComponent(decodedValue);
+      if (result === decodedValue) {
+        break;
+      }
+      decodedValue = result;
+    } catch (e) {
+      break;
+    }
+  }
+
+  return decodedValue;
+}
+
 const TargetingGetters = {
   get locale() {
     return Services.locale.appLocaleAsBCP47;
@@ -435,6 +557,20 @@ const TargetingGetters = {
   },
   get isFxAEnabled() {
     return lazy.isFxAEnabled;
+  },
+  get isFxASignedIn() {
+    return new Promise(resolve => {
+      if (!lazy.isFxAEnabled) {
+        resolve(false);
+      }
+      if (Services.prefs.getStringPref(FXA_USERNAME_PREF, "")) {
+        resolve(true);
+      }
+      lazy.fxAccounts
+        .getSignedInUser()
+        .then(data => resolve(!!data))
+        .catch(e => resolve(false));
+    });
   },
   get sync() {
     return {
@@ -499,10 +635,7 @@ const TargetingGetters = {
     });
   },
   get isDefaultBrowser() {
-    try {
-      return ShellService.isDefaultBrowser();
-    } catch (e) {}
-    return null;
+    return QueryCache.getters.isDefaultBrowser.get().catch(() => null);
   },
   get devToolsOpenedCount() {
     return lazy.devtoolsSelfXSSCount;
@@ -661,12 +794,6 @@ const TargetingGetters = {
       host: urls[0].host,
     };
   },
-  get isFissionExperimentEnabled() {
-    return (
-      Services.appinfo.fissionExperimentStatus ===
-      Ci.nsIXULRuntime.eExperimentStatusTreatment
-    );
-  },
   get activeNotifications() {
     let bts = Cc["@mozilla.org/backgroundtasks;1"]?.getService(
       Ci.nsIBackgroundTasks
@@ -743,8 +870,127 @@ const TargetingGetters = {
   },
 
   get userPrefersReducedMotion() {
-    let window = lazy.BrowserWindowTracker.getTopWindow();
+    let window = Services.appShell.hiddenDOMWindow;
     return window?.matchMedia("(prefers-reduced-motion: reduce)")?.matches;
+  },
+
+  /**
+   * Whether or not the user is in the Major Release 2022 holdback study.
+   */
+  get inMr2022Holdback() {
+    return (
+      lazy.NimbusFeatures.majorRelease2022.getVariable("onboarding") === false
+    );
+  },
+
+  /**
+   * The distribution id, if any.
+   * @return {string}
+   */
+  get distributionId() {
+    return Services.prefs
+      .getDefaultBranch(null)
+      .getCharPref("distribution.id", "");
+  },
+
+  /** Where the Firefox View button is shown, if at all.
+   * @return {string} container of the button if it is shown in the toolbar/overflow menu
+   * @return {string} `null` if the button has been removed
+   */
+  get fxViewButtonAreaType() {
+    let button = lazy.CustomizableUI.getWidget("firefox-view-button");
+    return button.areaType;
+  },
+
+  isDefaultHandler: {
+    get html() {
+      return QueryCache.getters.isDefaultHTMLHandler.get();
+    },
+    get pdf() {
+      return QueryCache.getters.isDefaultPDFHandler.get();
+    },
+  },
+
+  get defaultPDFHandler() {
+    return QueryCache.getters.defaultPDFHandler.get();
+  },
+
+  get creditCardsSaved() {
+    return getAutofillRecords({ collectionName: "creditCards" });
+  },
+
+  get addressesSaved() {
+    return getAutofillRecords({ collectionName: "addresses" });
+  },
+
+  /**
+   * Has the user ever used the Migration Wizard to migrate bookmarks?
+   * @return {boolean} `true` if bookmark migration has occurred.
+   */
+  get hasMigratedBookmarks() {
+    return lazy.hasMigratedBookmarks;
+  },
+
+  /**
+   * Has the user ever used the Migration Wizard to migrate passwords from
+   * a CSV file?
+   * @return {boolean} `true` if CSV passwords have been imported via the
+   *   migration wizard.
+   */
+  get hasMigratedCSVPasswords() {
+    return lazy.hasMigratedCSVPasswords;
+  },
+
+  /**
+   * Has the user ever used the Migration Wizard to migrate history?
+   * @return {boolean} `true` if history migration has occurred.
+   */
+  get hasMigratedHistory() {
+    return lazy.hasMigratedHistory;
+  },
+
+  /**
+   * Has the user ever used the Migration Wizard to migrate passwords?
+   * @return {boolean} `true` if password migration has occurred.
+   */
+  get hasMigratedPasswords() {
+    return lazy.hasMigratedPasswords;
+  },
+
+  /**
+   * Returns true if the user is configured to use the embedded migration
+   * wizard in about:welcome by having
+   * "browser.migrate.content-modal.about-welcome-behavior" be equal to
+   * "embedded".
+   * @return {boolean} `true` if the embedded migration wizard is enabled.
+   */
+  get useEmbeddedMigrationWizard() {
+    return lazy.useEmbeddedMigrationWizard;
+  },
+
+  /**
+   * Whether the user installed Firefox via the RTAMO flow.
+   * @return {boolean} `true` when RTAMO has been used to download Firefox,
+   * `false` otherwise.
+   */
+  get isRTAMO() {
+    const { attributionData } = this;
+
+    return (
+      attributionData?.source === "addons.mozilla.org" &&
+      !!decodeAttributionValue(attributionData?.content)?.startsWith("rta:")
+    );
+  },
+
+  /**
+   * Whether the user installed via the device migration flow.
+   * @return {boolean} `true` when the link to download the browser was part
+   * of guidance for device migration. `false` otherwise.
+   */
+  get isDeviceMigration() {
+    const { attributionData } = this;
+
+    return attributionData?.campaign === "migration";
   },
 };
 
@@ -762,22 +1008,46 @@ const ASRouterTargeting = {
    * integer.
    */
   async getEnvironmentSnapshot(target = ASRouterTargeting.Environment) {
-    // One promise for each named property.  Label promises with property name.
-    let promises = Object.keys(target).map(async name => [
-      name,
-      await target[name],
-    ]);
+    async function resolve(object) {
+      if (typeof object === "object" && object !== null) {
+        if (Array.isArray(object)) {
+          return Promise.all(object.map(async item => resolve(await item)));
+        }
 
-    // Ignore properties that are rejected.
-    let results = await Promise.allSettled(promises);
+        if (object instanceof Date) {
+          return object;
+        }
 
-    let environment = {};
-    for (let result of results) {
-      if (result.status === "fulfilled") {
-        let [name, value] = result.value;
-        environment[name] = value;
+        // One promise for each named property. Label promises with property name.
+        const promises = Object.keys(object).map(async key => {
+          // Each promise needs to check if we're shutting down when it is evaluated.
+          if (Services.startup.shuttingDown) {
+            throw new Error(
+              "shutting down, so not querying targeting environment"
+            );
+          }
+
+          const value = await resolve(await object[key]);
+
+          return [key, value];
+        });
+
+        const resolved = {};
+        for (const result of await Promise.allSettled(promises)) {
+          // Ignore properties that are rejected.
+          if (result.status === "fulfilled") {
+            const [key, value] = result.value;
+            resolved[key] = value;
+          }
+        }
+
+        return resolved;
       }
+
+      return object;
     }
+
+    const environment = await resolve(target);
 
     // Should we need to migrate in the future.
     const snapshot = { environment, version: 1 };
@@ -879,7 +1149,7 @@ const ASRouterTargeting = {
       if (onError) {
         onError(error, message);
       }
-      Cu.reportError(error);
+      console.error(error);
       result = false;
     }
     return result;

@@ -8,14 +8,17 @@ FINAL_LIBRARY = "xul"
 
 components = [
     "Arithmetic",
+    "CustomTypes",
+    "ExternalTypes",
+    "FixtureCallbacks",
     "Geometry",
     "Rondpoint",
     "Sprites",
     "Todolist",
 ]
 
-EXTRA_JS_MODULES["components-utils"] = [
-    "generated/{}.jsm".format(component) for component in components
+EXTRA_JS_MODULES += [
+    "generated/Rust{}.sys.mjs".format(component) for component in components
 ]
 
 XPCSHELL_TESTS_MANIFESTS += ["tests/xpcshell/xpcshell.ini"]

@@ -58,11 +58,11 @@ already_AddRefed<nsIWidget> nsIWidget::CreatePuppetWidget(
 namespace mozilla {
 namespace widget {
 
-static bool IsPopup(const nsWidgetInitData* aInitData) {
-  return aInitData && aInitData->mWindowType == eWindowType_popup;
+static bool IsPopup(const widget::InitData* aInitData) {
+  return aInitData && aInitData->mWindowType == WindowType::Popup;
 }
 
-static bool MightNeedIMEFocus(const nsWidgetInitData* aInitData) {
+static bool MightNeedIMEFocus(const widget::InitData* aInitData) {
   // In the puppet-widget world, popup widgets are just dummies and
   // shouldn't try to mess with IME state.
 #ifdef MOZ_CROSS_PROCESS_IME
@@ -71,9 +71,6 @@ static bool MightNeedIMEFocus(const nsWidgetInitData* aInitData) {
   return false;
 #endif
 }
-
-// Arbitrary, fungible.
-const size_t PuppetWidget::kMaxDimension = 4000;
 
 NS_IMPL_ISUPPORTS_INHERITED(PuppetWidget, nsBaseWidget,
                             TextEventDispatcherListener)
@@ -95,7 +92,7 @@ PuppetWidget::~PuppetWidget() { Destroy(); }
 void PuppetWidget::InfallibleCreate(nsIWidget* aParent,
                                     nsNativeWidget aNativeParent,
                                     const LayoutDeviceIntRect& aRect,
-                                    nsWidgetInitData* aInitData) {
+                                    widget::InitData* aInitData) {
   MOZ_ASSERT(!aNativeParent, "got a non-Puppet native parent");
 
   BaseCreate(nullptr, aInitData);
@@ -121,7 +118,7 @@ void PuppetWidget::InfallibleCreate(nsIWidget* aParent,
 
 nsresult PuppetWidget::Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                               const LayoutDeviceIntRect& aRect,
-                              nsWidgetInitData* aInitData) {
+                              widget::InitData* aInitData) {
   InfallibleCreate(aParent, aNativeParent, aRect, aInitData);
   return NS_OK;
 }
@@ -137,7 +134,7 @@ void PuppetWidget::InitIMEState() {
 }
 
 already_AddRefed<nsIWidget> PuppetWidget::CreateChild(
-    const LayoutDeviceIntRect& aRect, nsWidgetInitData* aInitData,
+    const LayoutDeviceIntRect& aRect, widget::InitData* aInitData,
     bool aForceUseIWidgetParent) {
   bool isPopup = IsPopup(aInitData);
   nsCOMPtr<nsIWidget> widget = nsIWidget::CreatePuppetWidget(mBrowserChild);
@@ -265,7 +262,6 @@ void PuppetWidget::InitEvent(WidgetGUIEvent& aEvent,
     // use the point override if provided
     aEvent.mRefPoint = *aPoint;
   }
-  aEvent.mTime = PR_Now() / 1000;
 }
 
 nsresult PuppetWidget::DispatchEvent(WidgetGUIEvent* aEvent,
@@ -274,7 +270,7 @@ nsresult PuppetWidget::DispatchEvent(WidgetGUIEvent* aEvent,
   debug_DumpEvent(stdout, aEvent->mWidget, aEvent, "PuppetWidget", 0);
 #endif
 
-  MOZ_ASSERT(!mChild || mChild->mWindowType == eWindowType_popup,
+  MOZ_ASSERT(!mChild || mChild->mWindowType == WindowType::Popup,
              "Unexpected event dispatch!");
 
   MOZ_ASSERT(!aEvent->AsKeyboardEvent() ||
@@ -649,7 +645,7 @@ nsresult PuppetWidget::RequestIMEToCommitComposition(bool aCancel) {
   bool isCommitted = false;
   nsAutoString committedString;
   if (NS_WARN_IF(!mBrowserChild->SendRequestIMEToCommitComposition(
-          aCancel, &isCommitted, &committedString))) {
+          aCancel, composition->Id(), &isCommitted, &committedString))) {
     return NS_ERROR_FAILURE;
   }
 
@@ -677,7 +673,7 @@ nsresult PuppetWidget::RequestIMEToCommitComposition(bool aCancel) {
   mIgnoreCompositionEvents = true;
 
   Unused << mBrowserChild->SendOnEventNeedingAckHandled(
-      eCompositionCommitRequestHandled);
+      eCompositionCommitRequestHandled, composition->Id());
 
   // NOTE: PuppetWidget might be destroyed already.
   return NS_OK;
@@ -790,7 +786,8 @@ nsresult PuppetWidget::NotifyIMEOfCompositionUpdate(
     return NS_ERROR_FAILURE;
   }
 
-  if (NS_WARN_IF(!mContentCache.CacheSelection(this, &aIMENotification))) {
+  if (NS_WARN_IF(
+          !mContentCache.CacheCaretAndTextRects(this, &aIMENotification))) {
     return NS_ERROR_FAILURE;
   }
   mBrowserChild->SendNotifyIMECompositionUpdate(mContentCache,
@@ -837,7 +834,13 @@ nsresult PuppetWidget::NotifyIMEOfSelectionChange(
 
   // Note that selection change must be notified after text change if it occurs.
   // Therefore, we don't need to query text content again here.
-  mContentCache.SetSelection(this, aIMENotification.mSelectionChangeData);
+  if (MOZ_UNLIKELY(!mContentCache.SetSelection(
+          this, aIMENotification.mSelectionChangeData))) {
+    // If there is no text cache yet, caching text will cache selection too.
+    // Therefore, in the case, we don't need to notify IME of selection change
+    // right now.
+    return NS_OK;
+  }
 
   mBrowserChild->SendNotifyIMESelection(mContentCache, aIMENotification);
 
@@ -870,7 +873,8 @@ nsresult PuppetWidget::NotifyIMEOfPositionChange(
   if (NS_WARN_IF(!mContentCache.CacheEditorRect(this, &aIMENotification))) {
     return NS_ERROR_FAILURE;
   }
-  if (NS_WARN_IF(!mContentCache.CacheSelection(this, &aIMENotification))) {
+  if (NS_WARN_IF(
+          !mContentCache.CacheCaretAndTextRects(this, &aIMENotification))) {
     return NS_ERROR_FAILURE;
   }
   if (mIMENotificationRequestsOfParent.WantPositionChanged()) {
@@ -897,7 +901,7 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
   }
 
   bool hasCustomCursor = false;
-  UniquePtr<char[]> customCursorData;
+  Maybe<mozilla::ipc::BigBuffer> customCursorData;
   size_t length = 0;
   IntSize customCursorSize;
   int32_t stride = 0;
@@ -935,10 +939,8 @@ void PuppetWidget::SetCursor(const Cursor& aCursor) {
     }
   }
 
-  nsDependentCString cursorData(customCursorData ? customCursorData.get() : "",
-                                length);
   if (!mBrowserChild->SendSetCursor(
-          aCursor.mDefaultCursor, hasCustomCursor, cursorData,
+          aCursor.mDefaultCursor, hasCustomCursor, std::move(customCursorData),
           customCursorSize.width, customCursorSize.height, resolution.mX,
           resolution.mY, stride, format, aCursor.mHotspotX, aCursor.mHotspotY,
           force)) {
@@ -997,7 +999,7 @@ bool PuppetWidget::NeedsPaint() {
   // here
   if (XRE_IsContentProcess() &&
       StaticPrefs::browser_tabs_remote_desktopbehavior() &&
-      mWindowType == eWindowType_popup) {
+      mWindowType == WindowType::Popup) {
     NS_WARNING("Trying to paint an e10s popup in the child process!");
     return false;
   }
@@ -1023,9 +1025,9 @@ LayoutDeviceIntPoint PuppetWidget::GetWindowPosition() {
   }
 
   int32_t winX, winY, winW, winH;
-  NS_ENSURE_SUCCESS(
-      GetOwningBrowserChild()->GetDimensions(0, &winX, &winY, &winW, &winH),
-      LayoutDeviceIntPoint());
+  NS_ENSURE_SUCCESS(GetOwningBrowserChild()->GetDimensions(
+                        DimensionKind::Outer, &winX, &winY, &winW, &winH),
+                    LayoutDeviceIntPoint());
   return LayoutDeviceIntPoint(winX, winY) +
          GetOwningBrowserChild()->GetClientOffset();
 }
@@ -1140,8 +1142,6 @@ PuppetWidget::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
     default:
       return NS_ERROR_NOT_IMPLEMENTED;
   }
-
-  return NS_ERROR_NOT_IMPLEMENTED;
 }
 
 NS_IMETHODIMP_(IMENotificationRequests)

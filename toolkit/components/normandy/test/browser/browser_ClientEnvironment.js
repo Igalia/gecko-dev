@@ -1,28 +1,26 @@
 "use strict";
 
-const { TelemetryController } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryController.jsm"
+const { TelemetryController } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryController.sys.mjs"
 );
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+
+const { AddonRollouts } = ChromeUtils.importESModule(
+  "resource://normandy/lib/AddonRollouts.sys.mjs"
 );
-const { AddonRollouts } = ChromeUtils.import(
-  "resource://normandy/lib/AddonRollouts.jsm"
+const { ClientEnvironment } = ChromeUtils.importESModule(
+  "resource://normandy/lib/ClientEnvironment.sys.mjs"
 );
-const { ClientEnvironment } = ChromeUtils.import(
-  "resource://normandy/lib/ClientEnvironment.jsm"
+const { PreferenceExperiments } = ChromeUtils.importESModule(
+  "resource://normandy/lib/PreferenceExperiments.sys.mjs"
 );
-const { PreferenceExperiments } = ChromeUtils.import(
-  "resource://normandy/lib/PreferenceExperiments.jsm"
+const { PreferenceRollouts } = ChromeUtils.importESModule(
+  "resource://normandy/lib/PreferenceRollouts.sys.mjs"
 );
-const { PreferenceRollouts } = ChromeUtils.import(
-  "resource://normandy/lib/PreferenceRollouts.jsm"
+const { RecipeRunner } = ChromeUtils.importESModule(
+  "resource://normandy/lib/RecipeRunner.sys.mjs"
 );
-const { RecipeRunner } = ChromeUtils.import(
-  "resource://normandy/lib/RecipeRunner.jsm"
-);
-const { NormandyTestUtils } = ChromeUtils.import(
-  "resource://testing-common/NormandyTestUtils.jsm"
+const { NormandyTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
 );
 
 add_task(async function testTelemetry() {
@@ -64,10 +62,14 @@ add_task(async function testUserId() {
 });
 
 add_task(async function testDistribution() {
-  // distribution id defaults to "default"
+  // distribution id defaults to "default" for most builds, and
+  // "mozilla-MSIX" for MSIX builds.
   is(
     ClientEnvironment.distribution,
-    "default",
+    AppConstants.platform === "win" &&
+      Services.sysinfo.getProperty("hasWinPackageId")
+      ? "mozilla-MSIX"
+      : "default",
     "distribution has a default value"
   );
 

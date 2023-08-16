@@ -36,7 +36,8 @@ this.AntiTracking = {
       .STATE_COOKIES_BLOCKED_TRACKER,
     iframeSandbox = null,
     accessRemoval = null,
-    callbackAfterRemoval = null
+    callbackAfterRemoval = null,
+    iframeAllow = null
   ) {
     // Normal mode
     this.runTest(
@@ -51,7 +52,8 @@ this.AntiTracking = {
       false,
       iframeSandbox,
       accessRemoval,
-      callbackAfterRemoval
+      callbackAfterRemoval,
+      iframeAllow
     );
 
     // Private mode
@@ -67,7 +69,8 @@ this.AntiTracking = {
       true,
       iframeSandbox,
       accessRemoval,
-      callbackAfterRemoval
+      callbackAfterRemoval,
+      iframeAllow
     );
   },
 
@@ -84,7 +87,8 @@ this.AntiTracking = {
     runInPrivateWindow = false,
     iframeSandbox = null,
     accessRemoval = null,
-    callbackAfterRemoval = null
+    callbackAfterRemoval = null,
+    iframeAllow = null
   ) {
     let runExtraTests = true;
     let options = {};
@@ -128,6 +132,7 @@ this.AntiTracking = {
       iframeSandbox,
       accessRemoval,
       callbackAfterRemoval,
+      iframeAllow,
     });
     this._createCleanupTask(cleanupFunction);
 
@@ -152,6 +157,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -166,6 +172,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -182,6 +189,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -196,6 +204,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -213,6 +222,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -230,6 +240,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval,
           callbackAfterRemoval,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -249,6 +260,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval,
           callbackAfterRemoval,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -267,6 +279,7 @@ this.AntiTracking = {
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
           thirdPartyPage: TEST_ANOTHER_3RD_PARTY_PAGE,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -281,6 +294,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval,
           callbackAfterRemoval,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
 
@@ -296,6 +310,7 @@ this.AntiTracking = {
           accessRemoval: null, // only passed with non-blocking callback
           callbackAfterRemoval: null,
           thirdPartyPage: TEST_ANOTHER_3RD_PARTY_PAGE,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
       } else {
@@ -311,6 +326,7 @@ this.AntiTracking = {
           iframeSandbox,
           accessRemoval: options.accessRemoval,
           callbackAfterRemoval: options.callbackAfterRemoval,
+          iframeAllow,
         });
         this._createCleanupTask(cleanupFunction);
       }
@@ -326,7 +342,8 @@ this.AntiTracking = {
           runInPrivateWindow,
           iframeSandbox,
           false,
-          extraPrefs
+          extraPrefs,
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -341,7 +358,8 @@ this.AntiTracking = {
           [
             ["network.cookie.rejectForeignWithExceptions.enabled", true],
             ...(extraPrefs || []),
-          ]
+          ],
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -354,7 +372,8 @@ this.AntiTracking = {
           runInPrivateWindow,
           iframeSandbox,
           true,
-          extraPrefs
+          extraPrefs,
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -369,7 +388,8 @@ this.AntiTracking = {
           [
             ["network.cookie.rejectForeignWithExceptions.enabled", true],
             ...(extraPrefs || []),
-          ]
+          ],
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
       }
@@ -385,7 +405,8 @@ this.AntiTracking = {
           runInPrivateWindow,
           iframeSandbox,
           false,
-          extraPrefs
+          extraPrefs,
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -400,7 +421,8 @@ this.AntiTracking = {
           [
             ["network.cookie.rejectForeignWithExceptions.enabled", true],
             ...(extraPrefs || []),
-          ]
+          ],
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -413,7 +435,8 @@ this.AntiTracking = {
           runInPrivateWindow,
           iframeSandbox,
           true,
-          extraPrefs
+          extraPrefs,
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
 
@@ -428,7 +451,8 @@ this.AntiTracking = {
           [
             ["network.cookie.rejectForeignWithExceptions.enabled", true],
             ...(extraPrefs || []),
-          ]
+          ],
+          iframeAllow
         );
         this._createCleanupTask(cleanupFunction);
       }
@@ -473,10 +497,10 @@ this.AntiTracking = {
     let win = await BrowserTestUtils.openNewBrowserWindow();
     await BrowserTestUtils.withNewTab(
       { gBrowser: win.gBrowser, url: TEST_3RD_PARTY_PAGE },
-      async function(browser) {
+      async function (browser) {
         info("Let's interact with the tracker");
 
-        await SpecialPowers.spawn(browser, [], async function() {
+        await SpecialPowers.spawn(browser, [], async function () {
           SpecialPowers.wrap(content.document).userInteractionForTesting();
         });
       }
@@ -555,7 +579,7 @@ this.AntiTracking = {
   },
 
   _createTask(options) {
-    add_task(async function() {
+    add_task(async function () {
       info(
         "Starting " +
           (options.cookieBehavior != BEHAVIOR_ACCEPT
@@ -572,6 +596,8 @@ this.AntiTracking = {
           " window " +
           " with iframe sandbox set to " +
           options.iframeSandbox +
+          " and iframe allow set to " +
+          options.iframeAllow +
           " and access removal set to " +
           options.accessRemoval +
           (typeof options.thirdPartyPage == "string"
@@ -727,22 +753,26 @@ this.AntiTracking = {
               : null,
             accessRemoval: options.accessRemoval,
             iframeSandbox: options.iframeSandbox,
+            iframeAllow: options.iframeAllow,
             allowList: options.allowList,
             doAccessRemovalChecks,
           },
         ],
-        async function(obj) {
+        async function (obj) {
           let id = "id" + Math.random();
           await new content.Promise(resolve => {
             let ifr = content.document.createElement("iframe");
             ifr.id = id;
-            ifr.onload = function() {
+            ifr.onload = function () {
               info("Sending code to the 3rd party content");
               let callback = obj.allowList + "!!!" + obj.callback;
               ifr.contentWindow.postMessage(callback, "*");
             };
             if (typeof obj.iframeSandbox == "string") {
               ifr.setAttribute("sandbox", obj.iframeSandbox);
+            }
+            if (typeof obj.iframeAllow == "string") {
+              ifr.setAttribute("allow", obj.iframeAllow);
             }
 
             content.addEventListener("message", function msg(event) {
@@ -776,12 +806,15 @@ this.AntiTracking = {
                 await new content.Promise(resolve => {
                   let ifr = content.document.getElementById(id);
                   let oldWindow = ifr.contentWindow;
-                  ifr.onload = function() {
+                  ifr.onload = function () {
                     info("Sending code to the old 3rd party content");
                     oldWindow.postMessage(obj.callbackAfterRemoval, "*");
                   };
                   if (typeof obj.iframeSandbox == "string") {
                     ifr.setAttribute("sandbox", obj.iframeSandbox);
+                  }
+                  if (typeof obj.iframeAllow == "string") {
+                    ifr.setAttribute("allow", obj.iframeAllow);
                   }
 
                   content.addEventListener("message", function msg(event) {
@@ -825,7 +858,7 @@ this.AntiTracking = {
         doAccessRemovalChecks &&
         options.accessRemoval == "navigate-topframe"
       ) {
-        BrowserTestUtils.loadURI(browser, TEST_4TH_PARTY_PAGE);
+        BrowserTestUtils.loadURIString(browser, TEST_4TH_PARTY_PAGE);
         await BrowserTestUtils.browserLoaded(browser);
 
         let pageshow = BrowserTestUtils.waitForContentEvent(
@@ -844,11 +877,12 @@ this.AntiTracking = {
                 ? options.callbackAfterRemoval.toString()
                 : null,
               iframeSandbox: options.iframeSandbox,
+              iframeAllow: options.iframeAllow,
             },
           ],
-          async function(obj) {
+          async function (obj) {
             let ifr = content.document.createElement("iframe");
-            ifr.onload = function() {
+            ifr.onload = function () {
               info(
                 "Sending code to the 3rd party content to verify accessRemoval"
               );
@@ -856,6 +890,9 @@ this.AntiTracking = {
             };
             if (typeof obj.iframeSandbox == "string") {
               ifr.setAttribute("sandbox", obj.iframeSandbox);
+            }
+            if (typeof obj.iframeAllow == "string") {
+              ifr.setAttribute("allow", obj.iframeAllow);
             }
 
             content.addEventListener("message", function msg(event) {
@@ -982,7 +1019,7 @@ this.AntiTracking = {
   },
 
   _createCleanupTask(cleanupFunction) {
-    add_task(async function() {
+    add_task(async function () {
       info("Cleaning up.");
       if (cleanupFunction) {
         await cleanupFunction();
@@ -1002,9 +1039,10 @@ this.AntiTracking = {
     runInPrivateWindow,
     iframeSandbox,
     testInSubIFrame,
-    extraPrefs
+    extraPrefs,
+    iframeAllow
   ) {
-    add_task(async function() {
+    add_task(async function () {
       info(
         `Starting window-open${
           testInSubIFrame ? " sub iframe" : ""
@@ -1036,7 +1074,7 @@ this.AntiTracking = {
         let iframeBrowsingContext = await SpecialPowers.spawn(
           browser,
           [{ page: TEST_IFRAME_PAGE }],
-          async function(obj) {
+          async function (obj) {
             // Add an iframe.
             let ifr = content.document.createElement("iframe");
             let loading = new content.Promise(resolve => {
@@ -1067,17 +1105,21 @@ this.AntiTracking = {
             blockingCallback: blockingCallback.toString(),
             nonBlockingCallback: nonBlockingCallback.toString(),
             iframeSandbox,
+            iframeAllow,
           },
         ],
-        async function(obj) {
+        async function (obj) {
           await new content.Promise(resolve => {
             let ifr = content.document.createElement("iframe");
-            ifr.onload = function() {
+            ifr.onload = function () {
               info("Sending code to the 3rd party content");
               ifr.contentWindow.postMessage(obj, "*");
             };
             if (typeof obj.iframeSandbox == "string") {
               ifr.setAttribute("sandbox", obj.iframeSandbox);
+            }
+            if (typeof obj.iframeAllow == "string") {
+              ifr.setAttribute("allow", obj.iframeAllow);
             }
 
             content.addEventListener("message", function msg(event) {
@@ -1123,9 +1165,10 @@ this.AntiTracking = {
     runInPrivateWindow,
     iframeSandbox,
     testInSubIFrame,
-    extraPrefs
+    extraPrefs,
+    iframeAllow
   ) {
-    add_task(async function() {
+    add_task(async function () {
       info(
         `Starting user-interaction${
           testInSubIFrame ? " sub iframe" : ""
@@ -1157,7 +1200,7 @@ this.AntiTracking = {
         let iframeBrowsingContext = await SpecialPowers.spawn(
           browser,
           [{ page: TEST_IFRAME_PAGE }],
-          async function(obj) {
+          async function (obj) {
             // Add an iframe.
             let ifr = content.document.createElement("iframe");
             let loading = new content.Promise(resolve => {
@@ -1188,15 +1231,19 @@ this.AntiTracking = {
             popup: TEST_POPUP_PAGE,
             blockingCallback: blockingCallback.toString(),
             iframeSandbox,
+            iframeAllow,
           },
         ],
-        async function(obj) {
+        async function (obj) {
           let ifr = content.document.createElement("iframe");
           let loading = new content.Promise(resolve => {
             ifr.onload = resolve;
           });
           if (typeof obj.iframeSandbox == "string") {
             ifr.setAttribute("sandbox", obj.iframeSandbox);
+          }
+          if (typeof obj.iframeAllow == "string") {
+            ifr.setAttribute("allow", obj.iframeAllow);
           }
           content.document.body.appendChild(ifr);
           ifr.src = obj.page;
@@ -1245,9 +1292,13 @@ this.AntiTracking = {
           });
 
           info("Opening a window from the iframe.");
-          SpecialPowers.spawn(ifr, [{ popup: obj.popup }], async function(obj) {
-            content.open(obj.popup);
-          });
+          SpecialPowers.spawn(
+            ifr,
+            [{ popup: obj.popup }],
+            async function (obj) {
+              content.open(obj.popup);
+            }
+          );
 
           info("Let's wait for the window to be closed");
           await windowClosed;
@@ -1314,15 +1365,19 @@ this.AntiTracking = {
             popup: TEST_POPUP_PAGE,
             nonBlockingCallback: nonBlockingCallback.toString(),
             iframeSandbox,
+            iframeAllow,
           },
         ],
-        async function(obj) {
+        async function (obj) {
           let ifr = content.document.createElement("iframe");
           let loading = new content.Promise(resolve => {
             ifr.onload = resolve;
           });
           if (typeof obj.iframeSandbox == "string") {
             ifr.setAttribute("sandbox", obj.iframeSandbox);
+          }
+          if (typeof obj.iframeAllow == "string") {
+            ifr.setAttribute("allow", obj.iframeAllow);
           }
           content.document.body.appendChild(ifr);
           ifr.src = obj.page;
@@ -1342,9 +1397,13 @@ this.AntiTracking = {
           });
 
           info("Opening a window from the iframe.");
-          SpecialPowers.spawn(ifr, [{ popup: obj.popup }], async function(obj) {
-            content.open(obj.popup);
-          });
+          SpecialPowers.spawn(
+            ifr,
+            [{ popup: obj.popup }],
+            async function (obj) {
+              content.open(obj.popup);
+            }
+          );
 
           info("Let's wait for the window to be closed");
           await windowClosed;

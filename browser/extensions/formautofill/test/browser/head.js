@@ -1,14 +1,14 @@
 "use strict";
 
-const { OSKeyStore } = ChromeUtils.import(
-  "resource://gre/modules/OSKeyStore.jsm"
+const { OSKeyStore } = ChromeUtils.importESModule(
+  "resource://gre/modules/OSKeyStore.sys.mjs"
 );
-const { OSKeyStoreTestUtils } = ChromeUtils.import(
-  "resource://testing-common/OSKeyStoreTestUtils.jsm"
+const { OSKeyStoreTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/OSKeyStoreTestUtils.sys.mjs"
 );
 
-const { FormAutofillParent } = ChromeUtils.import(
-  "resource://autofill/FormAutofillParent.jsm"
+const { FormAutofillParent } = ChromeUtils.importESModule(
+  "resource://autofill/FormAutofillParent.sys.mjs"
 );
 
 const MANAGE_ADDRESSES_DIALOG_URL =
@@ -24,6 +24,14 @@ const PRIVACY_PREF_URL = "about:preferences#privacy";
 const HTTP_TEST_PATH = "/browser/browser/extensions/formautofill/test/browser/";
 const BASE_URL = "http://mochi.test:8888" + HTTP_TEST_PATH;
 const FORM_URL = BASE_URL + "autocomplete_basic.html";
+const ADDRESS_FORM_URL =
+  "https://example.org" +
+  HTTP_TEST_PATH +
+  "address/autocomplete_address_basic.html";
+const ADDRESS_FORM_WITHOUT_AUTOCOMPLETE_URL =
+  "https://example.org" +
+  HTTP_TEST_PATH +
+  "address/without_autocomplete_address_basic.html";
 const CREDITCARD_FORM_URL =
   "https://example.org" +
   HTTP_TEST_PATH +
@@ -36,9 +44,13 @@ const CREDITCARD_FORM_COMBINED_EXPIRY_URL =
   "https://example.org" +
   HTTP_TEST_PATH +
   "creditCard/autocomplete_creditcard_cc_exp_field.html";
+const CREDITCARD_FORM_WITHOUT_AUTOCOMPLETE_URL =
+  "https://example.org" +
+  HTTP_TEST_PATH +
+  "creditCard/without_autocomplete_creditcard_basic.html";
+const EMPTY_URL = "https://example.org" + HTTP_TEST_PATH + "empty.html";
 
 const FTU_PREF = "extensions.formautofill.firstTimeUse";
-const CREDITCARDS_USED_STATUS_PREF = "extensions.formautofill.creditCards.used";
 const ENABLED_AUTOFILL_ADDRESSES_PREF =
   "extensions.formautofill.addresses.enabled";
 const ENABLED_AUTOFILL_ADDRESSES_CAPTURE_PREF =
@@ -73,11 +85,13 @@ const TEST_ADDRESS_1 = {
 };
 
 const TEST_ADDRESS_2 = {
+  "given-name": "Anonymouse",
   "street-address": "Some Address",
   country: "US",
 };
 
 const TEST_ADDRESS_3 = {
+  "given-name": "John",
   "street-address": "Other Address",
   "postal-code": "12345",
 };
@@ -91,6 +105,8 @@ const TEST_ADDRESS_4 = {
   email: "timbl@w3.org",
 };
 
+// TODO: Number of field less than AUTOFILL_FIELDS_THRESHOLD
+//       need to confirm whether this is intentional
 const TEST_ADDRESS_5 = {
   tel: "+16172535702",
 };
@@ -143,7 +159,6 @@ const TEST_CREDIT_CARD_1 = {
   "cc-number": "4111111111111111",
   "cc-exp-month": 4,
   "cc-exp-year": new Date().getFullYear(),
-  "cc-type": "visa",
 };
 
 const TEST_CREDIT_CARD_2 = {
@@ -151,25 +166,21 @@ const TEST_CREDIT_CARD_2 = {
   "cc-number": "4929001587121045",
   "cc-exp-month": 12,
   "cc-exp-year": new Date().getFullYear() + 10,
-  "cc-type": "visa",
 };
 
 const TEST_CREDIT_CARD_3 = {
   "cc-number": "5103059495477870",
   "cc-exp-month": 1,
   "cc-exp-year": 2000,
-  "cc-type": "mastercard",
 };
 
 const TEST_CREDIT_CARD_4 = {
   "cc-number": "5105105105105100",
-  "cc-type": "mastercard",
 };
 
 const TEST_CREDIT_CARD_5 = {
   "cc-name": "Chris P. Bacon",
   "cc-number": "4012888888881881",
-  "cc-type": "visa",
 };
 
 const MAIN_BUTTON = "button";
@@ -182,6 +193,7 @@ const MENU_BUTTON = "menubutton";
 const TIMEOUT_ENSURE_PROFILE_NOT_SAVED = 1000;
 const TIMEOUT_ENSURE_CC_DIALOG_NOT_CLOSED = 500;
 const TIMEOUT_ENSURE_AUTOCOMPLETE_NOT_SHOWN = 1000;
+const TIMEOUT_ENSURE_DOORHANGER_NOT_SHOWN = 1000;
 
 async function ensureCreditCardDialogNotClosed(win) {
   const unloadHandler = () => {
@@ -218,7 +230,16 @@ async function ensureNoAutocompletePopup(browser) {
     setTimeout(resolve, TIMEOUT_ENSURE_AUTOCOMPLETE_NOT_SHOWN)
   );
   const items = getDisplayedPopupItems(browser);
-  ok(!items.length, "Should not found autocomplete items");
+  ok(!items.length, "Should not find autocomplete items");
+}
+
+async function ensureNoDoorhanger(browser) {
+  await new Promise(resolve =>
+    setTimeout(resolve, TIMEOUT_ENSURE_DOORHANGER_NOT_SHOWN)
+  );
+
+  let notifications = PopupNotifications.panel.childNodes;
+  ok(!notifications.length, "Should not find a doorhanger");
 }
 
 /**
@@ -246,7 +267,7 @@ async function waitForStorageChangedEvents(...eventTypes) {
 /**
  * Wait until the element found matches the expected autofill value
  *
- * @param {Object} target
+ * @param {object} target
  *        The target in which to run the task.
  * @param {string} selector
  *        A selector used to query the element.
@@ -254,15 +275,16 @@ async function waitForStorageChangedEvents(...eventTypes) {
  *        The expected autofilling value for the element
  */
 async function waitForAutofill(target, selector, value) {
-  await SpecialPowers.spawn(target, [selector, value], async function(
-    selector,
-    val
-  ) {
-    await ContentTaskUtils.waitForCondition(() => {
-      let element = content.document.querySelector(selector);
-      return element.value == val;
-    }, "Autofill never fills");
-  });
+  await SpecialPowers.spawn(
+    target,
+    [selector, value],
+    async function (selector, val) {
+      await ContentTaskUtils.waitForCondition(() => {
+        let element = content.document.querySelector(selector);
+        return element.value == val;
+      }, "Autofill never fills");
+    }
+  );
 }
 
 /**
@@ -301,9 +323,9 @@ function waitForSubDialogLoad(win, dialogUrl) {
  * This is guaranteed by first focusing on an element in the form to trigger
  * the 'FormAutofill:FieldsIdentified' message.
  *
- * @param {Object} target
+ * @param {object} target
  *        The target in which to run the task.
- * @param {Object} args
+ * @param {object} args
  * @param {string} args.focusSelector
  *        A selector used to query the element to be focused
  * @param {string} args.formId
@@ -311,7 +333,7 @@ function waitForSubDialogLoad(win, dialogUrl) {
  *        this argument is not present
  * @param {string} args.formSelector
  *        A selector used to query the form element
- * @param {Object} args.newValues
+ * @param {object} args.newValues
  *        Elements to be updated. Key is the element selector, value is the
  *        new value of the element.
  *
@@ -404,9 +426,9 @@ async function focusAndWaitForFieldsIdentified(browserOrContext, selector) {
   const { previouslyFocused, previouslyIdentified } = await SpecialPowers.spawn(
     browserOrContext,
     [selector],
-    async function(selector) {
-      const { FormLikeFactory } = ChromeUtils.import(
-        "resource://gre/modules/FormLikeFactory.jsm"
+    async function (selector) {
+      const { FormLikeFactory } = ChromeUtils.importESModule(
+        "resource://gre/modules/FormLikeFactory.sys.mjs"
       );
       const input = content.document.querySelector(selector);
       const rootElement = FormLikeFactory.findRootForField(input);
@@ -437,7 +459,7 @@ async function focusAndWaitForFieldsIdentified(browserOrContext, selector) {
     await SpecialPowers.spawn(
       browserOrContext.parent,
       [browserOrContext],
-      async function(browsingContext) {
+      async function (browsingContext) {
         browsingContext.embedderElement.focus();
       }
     );
@@ -455,9 +477,9 @@ async function focusAndWaitForFieldsIdentified(browserOrContext, selector) {
   FormAutofillParent.removeMessageObserver(fieldsIdentifiedObserver);
 
   await sleep();
-  await SpecialPowers.spawn(browserOrContext, [], async function() {
-    const { FormLikeFactory } = ChromeUtils.import(
-      "resource://gre/modules/FormLikeFactory.jsm"
+  await SpecialPowers.spawn(browserOrContext, [], async function () {
+    const { FormLikeFactory } = ChromeUtils.importESModule(
+      "resource://gre/modules/FormLikeFactory.sys.mjs"
     );
     FormLikeFactory.findRootForField(
       content.document.activeElement
@@ -468,7 +490,7 @@ async function focusAndWaitForFieldsIdentified(browserOrContext, selector) {
 /**
  * Run the task and wait until the autocomplete popup is opened.
  *
- * @param {Object} browser A xul:browser.
+ * @param {object} browser A xul:browser.
  * @param {Function} taskFn Task that will trigger the autocomplete popup
  */
 async function runAndWaitForAutocompletePopupOpen(browser, taskFn) {
@@ -519,8 +541,8 @@ async function waitForPopupEnabled(browser) {
 function waitPopupStateInChild(bc, messageName) {
   return SpecialPowers.spawn(bc, [messageName], expectedMessage => {
     return new Promise(resolve => {
-      const { AutoCompleteChild } = ChromeUtils.import(
-        "resource://gre/actors/AutoCompleteChild.jsm"
+      const { AutoCompleteChild } = ChromeUtils.importESModule(
+        "resource://gre/actors/AutoCompleteChild.sys.mjs"
       );
 
       let listener = {
@@ -591,7 +613,7 @@ async function closePopup(browser) {
     "hidden"
   );
 
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.document.activeElement.blur();
   });
 
@@ -610,7 +632,7 @@ async function closePopupForSubframe(browser, frameBrowsingContext) {
     "hidden"
   );
 
-  await SpecialPowers.spawn(frameBrowsingContext, [], async function() {
+  await SpecialPowers.spawn(frameBrowsingContext, [], async function () {
     content.document.activeElement.blur();
   });
 
@@ -619,9 +641,10 @@ async function closePopupForSubframe(browser, frameBrowsingContext) {
 }
 
 function emulateMessageToBrowser(name, data) {
-  let actor = gBrowser.selectedBrowser.browsingContext.currentWindowGlobal.getActor(
-    "FormAutofill"
-  );
+  let actor =
+    gBrowser.selectedBrowser.browsingContext.currentWindowGlobal.getActor(
+      "FormAutofill"
+    );
   return actor.receiveMessage({ name, data });
 }
 
@@ -806,7 +829,7 @@ async function testDialog(url, testFn, arg = undefined) {
 /**
  * Initializes the test storage for a task.
  *
- * @param {...Object} items Can either be credit card or address objects
+ * @param {...object} items Can either be credit card or address objects
  */
 async function setStorage(...items) {
   for (let item of items) {
@@ -818,7 +841,268 @@ async function setStorage(...items) {
   }
 }
 
-add_setup(function() {
+function verifySectionAutofillResult(sections, expectedSectionsInfo) {
+  sections.forEach((section, index) => {
+    const expectedSection = expectedSectionsInfo[index];
+
+    const fieldDetails = section.fieldDetails;
+    const expectedFieldDetails = expectedSection.fields;
+
+    info(`verify autofill section[${index}]`);
+
+    fieldDetails.forEach((field, fieldIndex) => {
+      const expeceted = expectedFieldDetails[fieldIndex];
+
+      Assert.equal(
+        field.element.value,
+        expeceted.autofill ?? "",
+        `Autofilled value for element(id=${field.element.id}, field name=${field.fieldName}) should be equal`
+      );
+    });
+  });
+}
+
+function verifySectionFieldDetails(sections, expectedSectionsInfo) {
+  sections.forEach((section, index) => {
+    const expectedSection = expectedSectionsInfo[index];
+
+    const fieldDetails = section.fieldDetails;
+    const expectedFieldDetails = expectedSection.fields;
+
+    info(`section[${index}] ${expectedSection.description ?? ""}:`);
+    info(`FieldName Prediction Results: ${fieldDetails.map(i => i.fieldName)}`);
+    info(
+      `FieldName Expected Results:   ${expectedFieldDetails.map(
+        detail => detail.fieldName
+      )}`
+    );
+    Assert.equal(
+      fieldDetails.length,
+      expectedFieldDetails.length,
+      `Expected field count.`
+    );
+
+    fieldDetails.forEach((field, fieldIndex) => {
+      const expectedFieldDetail = expectedFieldDetails[fieldIndex];
+
+      const expected = {
+        ...{
+          reason: "autocomplete",
+          section: "",
+          contactType: "",
+          addressType: "",
+        },
+        ...expectedSection.default,
+        ...expectedFieldDetail,
+      };
+
+      const keys = new Set([...Object.keys(field), ...Object.keys(expected)]);
+      [
+        "identifier",
+        "autofill",
+        "elementWeakRef",
+        "confidence",
+        "part",
+      ].forEach(k => keys.delete(k));
+
+      for (const key of keys) {
+        const expectedValue = expected[key];
+        const actualValue = field[key];
+        Assert.equal(
+          actualValue,
+          expectedValue,
+          `${key} should be equal, expect ${expectedValue}, got ${actualValue}`
+        );
+      }
+    });
+
+    Assert.equal(
+      section.isValidSection(),
+      !expectedSection.invalid,
+      `Should be an ${expectedSection.invalid ? "invalid" : "valid"} section`
+    );
+  });
+}
+/**
+ * Runs heuristics test for form autofill on given patterns.
+ *
+ * @param {Array<object>} patterns - An array of test patterns to run the heuristics test on.
+ * @param {string} pattern.description - Description of this heuristic test
+ * @param {string} pattern.fixurePath - The path of the test document
+ * @param {string} pattern.fixureData - Test document by string. Use either fixurePath or fixtureData.
+ * @param {object} pattern.profile - The profile to autofill. This is required only when running autofill test
+ * @param {Array}  pattern.expectedResult - The expected result of this heuristic test. See below for detailed explanation
+ *
+ * @param {string} [fixturePathPrefix=""] - The prefix to the path of fixture files.
+ * @param {object} [options={ testAutofill: false }] - An options object containing additional configuration for running the test.
+ * @param {boolean} [options.testAutofill=false] - A boolean indicating whether to run the test for autofill or not.
+ * @returns {Promise} A promise that resolves when all the tests are completed.
+ *
+ * The `patterns.expectedResult` array contains test data for different address or credit card sections.
+ * Each section in the array is represented by an object and can include the following properties:
+ * - description (optional): A string describing the section, primarily used for debugging purposes.
+ * - default (optional): An object that sets the default values for all the fields within this section.
+ *            The default object contains the same keys as the individual field objects.
+ * - fields: An array of field details (class FieldDetails) within the section.
+ *
+ * Each field object can have the following keys:
+ * - fieldName: The name of the field (e.g., "street-name", "cc-name" or "cc-number").
+ * - reason: The reason for the field value (e.g., "autocomplete", "regex-heuristic" or "fathom").
+ * - section: The section to which the field belongs (e.g., "billing", "shipping").
+ * - part: The part of the field.
+ * - contactType: The contact type of the field.
+ * - addressType: The address type of the field.
+ * - autofill: Set the expected autofill value when running autofill test
+ *
+ * For more information on the field object properties, refer to the FieldDetails class.
+ *
+ * Example test data:
+ * add_heuristic_tests(
+ * [{
+ *   description: "first test pattern",
+ *   fixuturePath: "autocomplete_off.html",
+ *   profile: {organization: "Mozilla", country: "US", tel: "123"},
+ *   expectedResult: [
+ *   {
+ *     description: "First section"
+ *     fields: [
+ *       { fieldName: "organization", reason: "autocomplete", autofill: "Mozilla" },
+ *       { fieldName: "country", reason: "regex-heuristic", autofill: "US" },
+ *       { fieldName: "tel", reason: "regex-heuristic", autofill: "123" },
+ *     ]
+ *   },
+ *   {
+ *     default: {
+ *       reason: "regex-heuristic",
+ *       section: "billing",
+ *     },
+ *     fields: [
+ *       { fieldName: "cc-number", reason: "fathom" },
+ *       { fieldName: "cc-nane" },
+ *       { fieldName: "cc-exp" },
+ *     ],
+ *    }],
+ *  },
+ *  {
+ *    // second test pattern //
+ *  }
+ * ],
+ * "/fixturepath",
+ * {testAutofill: true}  // test options
+ * )
+ */
+
+async function add_heuristic_tests(
+  patterns,
+  fixturePathPrefix = "",
+  options = { testAutofill: false }
+) {
+  async function runTest(testPattern) {
+    const TEST_URL = testPattern.fixtureData
+      ? `data:text/html,${testPattern.fixtureData}`
+      : `${BASE_URL}../${fixturePathPrefix}${testPattern.fixturePath}`;
+
+    if (testPattern.fixtureData) {
+      info(`Starting test with fixture data`);
+    } else {
+      info(`Starting test fixture: ${testPattern.fixturePath ?? ""}`);
+    }
+
+    if (testPattern.description) {
+      info(`Test "${testPattern.description}"`);
+    }
+
+    if (testPattern.prefs) {
+      await SpecialPowers.pushPrefEnv({
+        set: testPattern.prefs,
+      });
+    }
+
+    await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
+      await SpecialPowers.spawn(
+        browser,
+        [
+          {
+            testPattern,
+            verifySection: verifySectionFieldDetails.toString(),
+            verifyAutofill: options.testAutofill
+              ? verifySectionAutofillResult.toString()
+              : null,
+          },
+        ],
+        async obj => {
+          const { FormLikeFactory } = ChromeUtils.importESModule(
+            "resource://gre/modules/FormLikeFactory.sys.mjs"
+          );
+          const { FormAutofillHandler } = ChromeUtils.importESModule(
+            "resource://gre/modules/shared/FormAutofillHandler.sys.mjs"
+          );
+
+          const elements = Array.from(
+            content.document.querySelectorAll("input, select")
+          );
+
+          // Bug 1834768. We should simulate user behavior instead of
+          // using internal APIs.
+          const forms = elements.reduce((acc, element) => {
+            const formLike = FormLikeFactory.createFromField(element);
+            if (!acc.some(form => form.rootElement === formLike.rootElement)) {
+              acc.push(formLike);
+            }
+            return acc;
+          }, []);
+
+          const sections = forms.flatMap(form => {
+            const handler = new FormAutofillHandler(form);
+            handler.collectFormFields(false /* ignoreInvalid */);
+            return handler.sections;
+          });
+
+          Assert.equal(
+            sections.length,
+            obj.testPattern.expectedResult.length,
+            "Expected section count."
+          );
+
+          // eslint-disable-next-line no-eval
+          let verify = eval(`(() => {return (${obj.verifySection});})();`);
+          verify(sections, obj.testPattern.expectedResult);
+
+          if (obj.verifyAutofill) {
+            for (const section of sections) {
+              if (!section.isValidSection()) {
+                continue;
+              }
+
+              section.focusedInput = section.fieldDetails[0].element;
+              await section.autofillFields(
+                section.getAdaptedProfiles([obj.testPattern.profile])[0]
+              );
+            }
+
+            // eslint-disable-next-line no-eval
+            verify = eval(`(() => {return (${obj.verifyAutofill});})();`);
+            verify(sections, obj.testPattern.expectedResult);
+          }
+        }
+      );
+    });
+
+    if (testPattern.prefs) {
+      await SpecialPowers.popPrefEnv();
+    }
+  }
+
+  patterns.forEach(testPattern => {
+    add_task(() => runTest(testPattern));
+  });
+}
+
+async function add_autofill_heuristic_tests(patterns, fixturePathPrefix = "") {
+  add_heuristic_tests(patterns, fixturePathPrefix, { testAutofill: true });
+}
+
+add_setup(function () {
   OSKeyStoreTestUtils.setup();
 });
 

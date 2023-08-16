@@ -5,35 +5,21 @@
 
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const { clearTimeout, setTimeout } = ChromeUtils.import(
-  "resource://gre/modules/Timer.jsm"
-);
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+import { clearTimeout, setTimeout } from "resource://gre/modules/Timer.sys.mjs";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
+  MigrationUtils: "resource:///modules/MigrationUtils.sys.mjs",
+  OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.sys.mjs",
   PlacesTransactions: "resource://gre/modules/PlacesTransactions.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  CustomizableUI: "resource:///modules/CustomizableUI.jsm",
-  MigrationUtils: "resource:///modules/MigrationUtils.jsm",
-  OpenInTabsUtils: "resource:///modules/OpenInTabsUtils.jsm",
-  PluralForm: "resource://gre/modules/PluralForm.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  Weave: "resource://services-sync/main.js",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "bundle", function() {
-  return Services.strings.createBundle(
-    "chrome://browser/locale/places/places.properties"
-  );
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  Weave: "resource://services-sync/main.sys.mjs",
 });
 
 const gInContentProcess =
@@ -52,6 +38,15 @@ let InternalFaviconLoader = {
    * Actually cancel the request, and clear the timeout for cancelling it.
    *
    * @param {object} options
+   *   The options object containing:
+   * @param {object} options.uri
+   *   The URI of the favicon to cancel.
+   * @param {number} options.innerWindowID
+   *   The inner window ID of the window. Unused.
+   * @param {number} options.timerID
+   *   The timer ID of the timeout to be cancelled
+   * @param {*} options.callback
+   *   The request callback
    * @param {string} reason
    *   The reason for cancelling the request.
    */
@@ -64,12 +59,8 @@ let InternalFaviconLoader = {
     try {
       request.cancel();
     } catch (ex) {
-      Cu.reportError(
-        "When cancelling a request for " +
-          uri.spec +
-          " because " +
-          reason +
-          ", it was already canceled!"
+      console.error(
+        `When cancelling a request for ${uri.spec} because ${reason}, it was already canceled!`
       );
     }
   },
@@ -122,9 +113,15 @@ let InternalFaviconLoader = {
    * load data per chrome window.
    *
    * @param {DOMWindow} win
-   *        the chrome window in which we should look for this load
-   * @param {object} filterData ({innerWindowID, uri, callback})
-   *        the data we should use to find this particular load to remove.
+   *   the chrome window in which we should look for this load
+   * @param {object} filterData
+   *   the data we should use to find this particular load to remove.
+   * @param {number} filterData.innerWindowID
+   *   The inner window ID of the window.
+   * @param {string} filterData.uri
+   *   The URI of the favicon to cancel.
+   * @param {*} filterData.callback
+   *   The request callback
    *
    * @returns {object|null}
    *   the loadData object we removed, or null if we didn't find any.
@@ -156,7 +153,9 @@ let InternalFaviconLoader = {
    * away) but that will be a no-op in such cases.
    *
    * @param {DOMWindow} win
+   *   The chrome window in which the request was made.
    * @param {number} id
+   *   The inner window ID of the window.
    * @returns {object}
    */
   _makeCompletionCallback(win, id) {
@@ -247,22 +246,47 @@ let InternalFaviconLoader = {
 
 /**
  * Collects all information for a bookmark and performs editmethods
- *
- * @param {object} info
- *    Either a result node or a node-like object representing the item to be edited.
- * @param {string} [tags]
- *     Tags (if any) for the bookmark in a comma separated string. Empty tags are
- * skipped
- * @param {string} [keyword]
- *    Existing (if there are any) keyword for bookmark
- * @returns {string} Guid
- *    BookamrkGuid
  */
 class BookmarkState {
-  constructor(info, tags = "", keyword = "") {
+  /**
+   * Construct a new BookmarkState.
+   *
+   * @param {object} options
+   *   The constructor options.
+   * @param {object} options.info
+   *   Either a result node or a node-like object representing the item to be edited.
+   * @param {string} [options.tags]
+   *   Tags (if any) for the bookmark in a comma separated string. Empty tags are
+   *   skipped
+   * @param {string} [options.keyword]
+   *   Existing (if there are any) keyword for bookmark
+   * @param {boolean} [options.isFolder]
+   *   If the item is a folder.
+   * @param {Array<{ title: string; url: nsIURI; }>} [options.children]
+   *   The list of child URIs to bookmark within the folder.
+   * @param {boolean} [options.autosave]
+   *   If changes to bookmark fields should be saved immediately after calling
+   *   its respective "changed" method, rather than waiting for save() to be
+   *   called.
+   * @param {number} [options.index]
+   *   The insertion point index of the bookmark.
+   */
+  constructor({
+    info,
+    tags = "",
+    keyword = "",
+    isFolder = false,
+    children = [],
+    autosave = false,
+    index,
+  }) {
     this._guid = info.itemGuid;
     this._postData = info.postData;
     this._isTagContainer = info.isTag;
+    this._bulkTaggingUrls = info.uris?.map(uri => uri.spec);
+    this._isFolder = isFolder;
+    this._children = children;
+    this._autosave = autosave;
 
     // Original Bookmark
     this._originalState = {
@@ -274,6 +298,7 @@ class BookmarkState {
         .filter(tag => !!tag.length),
       keyword,
       parentGuid: info.parentGuid,
+      index,
     };
 
     // Edited bookmark
@@ -282,43 +307,106 @@ class BookmarkState {
 
   /**
    * Save edited title for the bookmark
+   *
    * @param {string} title
+   *   The title of the bookmark
    */
-  _titleChanged(title) {
+  async _titleChanged(title) {
     this._newState.title = title;
+    await this._maybeSave();
   }
 
   /**
    * Save edited location for the bookmark
+   *
    * @param {string} location
+   *   The location of the bookmark
    */
-  _locationChanged(location) {
+  async _locationChanged(location) {
     this._newState.uri = location;
+    await this._maybeSave();
   }
 
   /**
    * Save edited tags for the bookmark
+   *
    * @param {string} tags
    *    Comma separated list of tags
    */
-  _tagsChanged(tags) {
+  async _tagsChanged(tags) {
     this._newState.tags = tags;
+    await this._maybeSave();
   }
 
   /**
    * Save edited keyword for the bookmark
+   *
    * @param {string} keyword
+   *   The keyword of the bookmark
    */
-  _keywordChanged(keyword) {
+  async _keywordChanged(keyword) {
     this._newState.keyword = keyword;
+    await this._maybeSave();
   }
 
   /**
    * Save edited parentGuid for the bookmark
+   *
    * @param {string} parentGuid
+   *   The parentGuid of the bookmark
    */
-  _parentGuidChanged(parentGuid) {
+  async _parentGuidChanged(parentGuid) {
     this._newState.parentGuid = parentGuid;
+    await this._maybeSave();
+  }
+
+  /**
+   * Save changes if autosave is enabled.
+   */
+  async _maybeSave() {
+    if (this._autosave) {
+      await this.save();
+    }
+  }
+
+  /**
+   * Create a new bookmark.
+   *
+   * @returns {string} The bookmark's GUID.
+   */
+  async _createBookmark() {
+    await lazy.PlacesTransactions.batch(async () => {
+      this._guid = await lazy.PlacesTransactions.NewBookmark({
+        parentGuid: this._newState.parentGuid ?? this._originalState.parentGuid,
+        tags: this._newState.tags,
+        title: this._newState.title ?? this._originalState.title,
+        url: this._newState.uri ?? this._originalState.uri,
+        index: this._originalState.index,
+      }).transact();
+      if (this._newState.keyword) {
+        await lazy.PlacesTransactions.EditKeyword({
+          guid: this._guid,
+          keyword: this._newState.keyword,
+          postData: this._postData,
+        }).transact();
+      }
+    });
+    return this._guid;
+  }
+
+  /**
+   * Create a new folder.
+   *
+   * @returns {string} The folder's GUID.
+   */
+  async _createFolder() {
+    this._guid = await lazy.PlacesTransactions.NewFolder({
+      parentGuid: this._newState.parentGuid ?? this._originalState.parentGuid,
+      title: this._newState.title ?? this._originalState.title,
+      children: this._children,
+      index: this._originalState.index,
+    }).transact();
+    return this._guid;
   }
 
   /**
@@ -327,6 +415,10 @@ class BookmarkState {
    * @returns {string} bookmark.guid
    */
   async save() {
+    if (this._guid === lazy.PlacesUtils.bookmarks.unsavedGuid) {
+      return this._isFolder ? this._createFolder() : this._createBookmark();
+    }
+
     if (!Object.keys(this._newState).length) {
       return this._guid;
     }
@@ -337,7 +429,7 @@ class BookmarkState {
         tag: this._newState.title,
       })
         .transact()
-        .catch(Cu.reportError);
+        .catch(console.error);
       return this._guid;
     }
 
@@ -364,22 +456,16 @@ class BookmarkState {
           );
           break;
         case "tags":
-          let newTags = [];
-          let removedTags = [];
-          value.filter(element => {
-            if (!this._originalState.tags.includes(element)) {
-              newTags.push(element);
-            }
-          });
-          this._originalState.tags.filter(el => {
-            if (!value.includes(el)) {
-              removedTags.push(el);
-            }
-          });
+          const newTags = value.filter(
+            tag => !this._originalState.tags.includes(tag)
+          );
+          const removedTags = this._originalState.tags.filter(
+            tag => !value.includes(tag)
+          );
           if (newTags.length) {
             transactions.push(
               lazy.PlacesTransactions.Tag({
-                urls: [url],
+                urls: this._bulkTaggingUrls || [url],
                 tags: newTags,
               })
             );
@@ -387,7 +473,7 @@ class BookmarkState {
           if (removedTags.length) {
             transactions.push(
               lazy.PlacesTransactions.Untag({
-                urls: [url],
+                urls: this._bulkTaggingUrls || [url],
                 tags: removedTags,
               })
             );
@@ -417,6 +503,8 @@ class BookmarkState {
       await lazy.PlacesTransactions.batch(transactions);
     }
 
+    this._originalState = { ...this._originalState, ...this._newState };
+    this._newState = {};
     return this._guid;
   }
 }
@@ -432,39 +520,6 @@ export var PlacesUIUtils = {
   // when a bookmark dialog is closed. It is resolved to the bookmark guid,
   // if a bookmark was created or modified.
   lastBookmarkDialogDeferred: null,
-
-  getFormattedString: function PUIU_getFormattedString(key, params) {
-    return lazy.bundle.formatStringFromName(key, params);
-  },
-
-  /**
-   * Get a localized plural string for the specified key name and numeric value
-   * substituting parameters.
-   *
-   * @param {string} aKey
-   *        key for looking up the localized string in the bundle
-   * @param {number} aNumber
-   *        Number based on which the final localized form is looked up
-   * @param {array} aParams
-   *        Array whose items will substitute #1, #2,... #n parameters
-   *        in the string.
-   *
-   * @see https://developer.mozilla.org/en/Localization_and_Plurals
-   * @returns {string} The localized plural string.
-   */
-  getPluralString: function PUIU_getPluralString(aKey, aNumber, aParams) {
-    let str = lazy.PluralForm.get(aNumber, lazy.bundle.GetStringFromName(aKey));
-
-    // Replace #1 with aParams[0], #2 with aParams[1], and so on.
-    return str.replace(/\#(\d+)/g, function(matchedId, matchedNumber) {
-      let param = aParams[parseInt(matchedNumber, 10) - 1];
-      return param !== undefined ? param : matchedId;
-    });
-  },
-
-  getString: function PUIU_getString(key) {
-    return lazy.bundle.GetStringFromName(key);
-  },
 
   /**
    * Obfuscates a place: URL to use it in xulstore without the risk of
@@ -501,61 +556,9 @@ export var PlacesUIUtils = {
   async showBookmarkDialog(aInfo, aParentWindow = null) {
     this.lastBookmarkDialogDeferred = lazy.PromiseUtils.defer();
 
-    // Preserve size attributes differently based on the fact the dialog has
-    // a folder picker or not, since it needs more horizontal space than the
-    // other controls.
-    let hasFolderPicker =
-      !("hiddenRows" in aInfo) || !aInfo.hiddenRows.includes("folderPicker");
-    // Use a different chrome url to persist different sizes.
-    let dialogURL = hasFolderPicker
-      ? "chrome://browser/content/places/bookmarkProperties2.xhtml"
-      : "chrome://browser/content/places/bookmarkProperties.xhtml";
-
-    let features = "centerscreen,chrome,modal,resizable=yes";
+    let dialogURL = "chrome://browser/content/places/bookmarkProperties.xhtml";
+    let features = "centerscreen,chrome,modal,resizable=no";
     let bookmarkGuid;
-
-    if (
-      !Services.prefs.getBoolPref(
-        "browser.bookmarks.editDialog.delayedApply.enabled",
-        false
-      )
-    ) {
-      // Set the transaction manager into batching mode.
-      let topUndoEntry = lazy.PlacesTransactions.topUndoEntry;
-      let batchBlockingDeferred = lazy.PromiseUtils.defer();
-      let batchCompletePromise = lazy.PlacesTransactions.batch(async () => {
-        await batchBlockingDeferred.promise;
-      });
-
-      if (!aParentWindow) {
-        aParentWindow = Services.wm.getMostRecentWindow(null);
-      }
-
-      if (aParentWindow.gDialogBox) {
-        await aParentWindow.gDialogBox.open(dialogURL, aInfo);
-      } else {
-        aParentWindow.openDialog(dialogURL, "", features, aInfo);
-      }
-
-      bookmarkGuid =
-        ("bookmarkGuid" in aInfo && aInfo.bookmarkGuid) || undefined;
-
-      batchBlockingDeferred.resolve();
-
-      // Ensure the batch has completed before we start the undo/resolve
-      // the deferred promise.
-      await batchCompletePromise.catch(console.error);
-
-      if (
-        !bookmarkGuid &&
-        topUndoEntry != lazy.PlacesTransactions.topUndoEntry
-      ) {
-        await lazy.PlacesTransactions.undo().catch(Cu.reportError);
-      }
-
-      this.lastBookmarkDialogDeferred.resolve(bookmarkGuid);
-      return bookmarkGuid;
-    }
 
     if (!aParentWindow) {
       aParentWindow = Services.wm.getMostRecentWindow(null);
@@ -581,9 +584,9 @@ export var PlacesUIUtils = {
    * Bookmarks one or more pages. If there is more than one, this will create
    * the bookmarks in a new folder.
    *
-   * @param {array.<nsIURI>} URIList
+   * @param {Array.<nsIURI>} URIList
    *   The list of URIs to bookmark.
-   * @param {array.<string>} [hiddenRows]
+   * @param {Array.<string>} [hiddenRows]
    *   An array of rows to be hidden.
    * @param {DOMWindow} [win]
    *   The window to use as the parent to display the bookmark dialog.
@@ -608,6 +611,7 @@ export var PlacesUIUtils = {
 
   /**
    * set and fetch a favicon. Can only be used from the parent process.
+   *
    * @param {object} browser
    *        The XUL browser element for which we're fetching a favicon.
    * @param {Principal} principal
@@ -644,6 +648,7 @@ export var PlacesUIUtils = {
 
   /**
    * Returns the closet ancestor places view for the given DOM node
+   *
    * @param {DOMNode} aNode
    *        a DOM node
    * @returns {DOMNode} the closest ancestor places view if exists, null otherwsie.
@@ -710,9 +715,8 @@ export var PlacesUIUtils = {
 
     // When we're not building a context menu, only focusable views
     // are possible.  Thus, we can safely use the command dispatcher.
-    let controller = win.top.document.commandDispatcher.getControllerForCommand(
-      command
-    );
+    let controller =
+      win.top.document.commandDispatcher.getControllerForCommand(command);
     return controller || null;
   },
 
@@ -838,6 +842,7 @@ export var PlacesUIUtils = {
   /**
    * Allows opening of javascript/data URI only if the given node is
    * bookmarked (see bug 224521).
+   *
    * @param {object} aURINode
    *        a URI node
    * @param {DOMWindow} aWindow
@@ -852,13 +857,12 @@ export var PlacesUIUtils = {
 
     var uri = Services.io.newURI(aURINode.uri);
     if (uri.schemeIs("javascript") || uri.schemeIs("data")) {
-      const BRANDING_BUNDLE_URI = "chrome://branding/locale/brand.properties";
-      var brandShortName = Services.strings
-        .createBundle(BRANDING_BUNDLE_URI)
-        .GetStringFromName("brandShortName");
-
-      var errorStr = this.getString("load-js-data-url-error");
-      Services.prompt.alert(aWindow, brandShortName, errorStr);
+      const [title, errorStr] =
+        PlacesUIUtils.promptLocalization.formatValuesSync([
+          "places-error-title",
+          "places-load-js-data-url-error",
+        ]);
+      Services.prompt.alert(aWindow, title, errorStr);
       return false;
     }
     return true;
@@ -930,13 +934,13 @@ export var PlacesUIUtils = {
     }
 
     return (
-      lazy.PlacesUtils.getConcreteItemId(placesNode) ==
-      lazy.PlacesUtils.placesRootId
+      lazy.PlacesUtils.getConcreteItemGuid(placesNode) ==
+      lazy.PlacesUtils.bookmarks.rootGuid
     );
   },
 
   /**
-   * @param {array<object>} aItemsToOpen
+   * @param {Array<object>} aItemsToOpen
    *   needs to be an array of objects of the form:
    *   {uri: string, isBookmark: boolean}
    * @param {object} aEvent
@@ -951,11 +955,11 @@ export var PlacesUIUtils = {
 
     let browserWindow = getBrowserWindow(aWindow);
     var urls = [];
-    let skipMarking =
+    let isPrivate =
       browserWindow && lazy.PrivateBrowsingUtils.isWindowPrivate(browserWindow);
     for (let item of aItemsToOpen) {
       urls.push(item.uri);
-      if (skipMarking) {
+      if (isPrivate) {
         continue;
       }
 
@@ -982,11 +986,16 @@ export var PlacesUIUtils = {
       );
       args.appendElement(stringsToLoad);
 
+      let features = "chrome,dialog=no,all";
+      if (isPrivate) {
+        features += ",private";
+      }
+
       browserWindow = Services.ww.openWindow(
         aWindow,
         AppConstants.BROWSER_CHROME_URL,
         null,
-        "chrome,dialog=no,all",
+        features,
         args
       );
       return;
@@ -1007,7 +1016,7 @@ export var PlacesUIUtils = {
    * Loads a selected node's or nodes' URLs in tabs,
    * warning the user when lots of URLs are being opened
    *
-   * @param {object|array} nodeOrNodes
+   * @param {object | Array} nodeOrNodes
    *          Contains the node or nodes that we're opening in tabs
    * @param {event} event
    *          The DOM mouse/key event with modifier keys set that track the
@@ -1034,6 +1043,9 @@ export var PlacesUIUtils = {
       }
     }
     if (lazy.OpenInTabsUtils.confirmOpenInTabs(urlsToOpen.length, window)) {
+      if (window.updateTelemetry) {
+        window.updateTelemetry(urlsToOpen);
+      }
       this.openTabset(urlsToOpen, event, window);
     }
   },
@@ -1042,6 +1054,7 @@ export var PlacesUIUtils = {
    * Loads the node's URL in the appropriate tab or window given the
    * user's preference specified by modifier keys tracked by a
    * DOM mouse/key event.
+   *
    * @param {object} aNode
    *          An uri result node.
    * @param {object} aEvent
@@ -1051,14 +1064,13 @@ export var PlacesUIUtils = {
   openNodeWithEvent: function PUIU_openNodeWithEvent(aNode, aEvent) {
     let window = aEvent.target.ownerGlobal;
 
-    let browserWindow = getBrowserWindow(window);
-
     let where = window.whereToOpenLink(aEvent, false, true);
     if (this.loadBookmarksInTabs && lazy.PlacesUtils.nodeIsBookmark(aNode)) {
       if (where == "current" && !aNode.uri.startsWith("javascript:")) {
         where = "tab";
       }
-      if (where == "tab" && browserWindow.gBrowser.selectedTab.isEmpty) {
+      let browserWindow = getBrowserWindow(window);
+      if (where == "tab" && browserWindow?.gBrowser.selectedTab.isEmpty) {
         where = "current";
       }
     }
@@ -1068,7 +1080,7 @@ export var PlacesUIUtils = {
 
   /**
    * Loads the node's URL in the appropriate tab or window.
-   * see also openUILinkIn
+   * see also URILoadingHelper's openWebLinkIn
    *
    * @param {object} aNode
    *        An uri result node.
@@ -1103,6 +1115,12 @@ export var PlacesUIUtils = {
         } else {
           this.markPageAsTyped(aNode.uri);
         }
+      } else {
+        // This is a targeted fix for bug 1792163, where it was discovered
+        // that if you open the Library from a Private Browsing window, and then
+        // use the "Open in New Window" context menu item to open a new window,
+        // that the window will open under the wrong icon on the Windows taskbar.
+        aPrivate = true;
       }
 
       const isJavaScriptURL = aNode.uri.startsWith("javascript:");
@@ -1113,16 +1131,19 @@ export var PlacesUIUtils = {
         private: aPrivate,
         userContextId,
       });
+      if (aWindow.updateTelemetry) {
+        aWindow.updateTelemetry([aNode]);
+      }
     }
   },
 
   /**
    * Helper for guessing scheme from an url string.
-   * Used to avoid nsIURI overhead in frequently called UI functions.
+   * Used to avoid nsIURI overhead in frequently called UI functions. This is not
+   * supposed be perfect, so use it only for UI purposes.
    *
    * @param {string} href The url to guess the scheme from.
    * @returns {string} guessed scheme for this url string.
-   * @note this is not supposed be perfect, so use it only for UI purposes.
    */
   guessUrlSchemeForUI(href) {
     return href.substr(0, href.indexOf(":"));
@@ -1155,13 +1176,13 @@ export var PlacesUIUtils = {
       title = aNode.title;
     }
 
-    return title || this.getString("noTitle");
+    return title || this.promptLocalization.formatValueSync("places-no-title");
   },
 
   shouldShowTabsFromOtherComputersMenuitem() {
     let weaveOK =
       lazy.Weave.Status.checkSetup() != lazy.Weave.CLIENT_NOT_CONFIGURED &&
-      lazy.Weave.Svc.Prefs.get("firstSync", "") != "notReady";
+      lazy.Weave.Svc.PrefBranch.getCharPref("firstSync", "") != "notReady";
     return weaveOK;
   },
 
@@ -1214,13 +1235,11 @@ export var PlacesUIUtils = {
     }
 
     let parent = {
-      itemId: await lazy.PlacesUtils.promiseItemId(aFetchInfo.parentGuid),
       bookmarkGuid: aFetchInfo.parentGuid,
       type: Ci.nsINavHistoryResultNode.RESULT_TYPE_FOLDER,
     };
 
     return Object.freeze({
-      itemId: await lazy.PlacesUtils.promiseItemId(aFetchInfo.guid),
       bookmarkGuid: aFetchInfo.guid,
       title: aFetchInfo.title,
       uri: aFetchInfo.url !== undefined ? aFetchInfo.url.href : "",
@@ -1254,11 +1273,10 @@ export var PlacesUIUtils = {
   /**
    * This function wraps potentially large places transaction operations
    * with batch notifications to the result node, hence switching the views
-   * to batch mode.
+   * to batch mode. If resultNode is not supplied, the function will
+   * pass-through to functionToWrap.
    *
    * @param {nsINavHistoryResult} resultNode The result node to turn on batching.
-   * @note If resultNode is not supplied, the function will pass-through to
-   *       functionToWrap.
    * @param {number} itemsBeingChanged The count of items being changed. If the
    *                                    count is lower than a threshold, then
    *                                    batching won't be set.
@@ -1287,12 +1305,12 @@ export var PlacesUIUtils = {
    * Processes a set of transfer items that have been dropped or pasted.
    * Batching will be applied where necessary.
    *
-   * @param {array} items A list of unwrapped nodes to process.
+   * @param {Array} items A list of unwrapped nodes to process.
    * @param {object} insertionPoint The requested point for insertion.
    * @param {boolean} doCopy Set to true to copy the items, false will move them
    *                         if possible.
    * @param {object} view The view that should be used for batching.
-   * @returns {array} Returns an empty array when the insertion point is a tag, else
+   * @returns {Array} Returns an empty array when the insertion point is a tag, else
    *                 returns an array of copied or moved guids.
    */
   async handleTransferItems(items, insertionPoint, doCopy, view) {
@@ -1401,7 +1419,7 @@ export var PlacesUIUtils = {
     let node = event.target.selectedNode;
     if (node) {
       if (event.keyCode == event.DOM_VK_RETURN) {
-        this.openNodeWithEvent(node, event);
+        PlacesUIUtils.openNodeWithEvent(node, event);
       }
     }
   },
@@ -1451,11 +1469,11 @@ export var PlacesUIUtils = {
    * If the user does not have a persisted value for the toolbar's
    * "collapsed" attribute, try to determine whether it's customized.
    *
-   * @param {Boolean} aForceVisible Set to true to ignore if the user had
+   * @param {boolean} aForceVisible Set to true to ignore if the user had
    * previously collapsed the toolbar manually.
    */
   NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE: 3,
-  maybeToggleBookmarkToolbarVisibility(aForceVisible = false) {
+  async maybeToggleBookmarkToolbarVisibility(aForceVisible = false) {
     const BROWSER_DOCURL = AppConstants.BROWSER_CHROME_URL;
     let xulStore = Services.xulStore;
 
@@ -1463,37 +1481,34 @@ export var PlacesUIUtils = {
       aForceVisible ||
       !xulStore.hasValue(BROWSER_DOCURL, "PersonalToolbar", "collapsed")
     ) {
-      // We consider the toolbar customized if it has more than NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE
-      // children, or if it has a persisted currentset value.
-      let toolbarIsCustomized = xulStore.hasValue(
-        BROWSER_DOCURL,
-        "PersonalToolbar",
-        "currentset"
-      );
-
-      if (
-        aForceVisible ||
-        toolbarIsCustomized ||
-        lazy.PlacesUtils.getChildCountForFolder(
-          lazy.PlacesUtils.bookmarks.toolbarGuid
-        ) > this.NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE
-      ) {
+      function uncollapseToolbar() {
         Services.obs.notifyObservers(
           null,
           "browser-set-toolbar-visibility",
           JSON.stringify([lazy.CustomizableUI.AREA_BOOKMARKS, "true"])
         );
       }
-    }
-  },
+      // We consider the toolbar customized if it has more than
+      // NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE children, or if it has a persisted
+      // currentset value.
+      let toolbarIsCustomized = xulStore.hasValue(
+        BROWSER_DOCURL,
+        "PersonalToolbar",
+        "currentset"
+      );
+      if (aForceVisible || toolbarIsCustomized) {
+        uncollapseToolbar();
+        return;
+      }
 
-  maybeToggleBookmarkToolbarVisibilityAfterMigration() {
-    if (
-      Services.prefs.getBoolPref(
-        "browser.migrate.showBookmarksToolbarAfterMigration"
-      )
-    ) {
-      this.maybeToggleBookmarkToolbarVisibility(true);
+      let numBookmarksOnToolbar = (
+        await lazy.PlacesUtils.bookmarks.fetch(
+          lazy.PlacesUtils.bookmarks.toolbarGuid
+        )
+      ).childCount;
+      if (numBookmarksOnToolbar > this.NUM_TOOLBAR_BOOKMARKS_TO_UNHIDE) {
+        uncollapseToolbar();
+      }
     }
   },
 
@@ -1518,7 +1533,7 @@ export var PlacesUIUtils = {
       "placesContext_copy",
     ];
     // Hide everything. We'll unhide the things we need.
-    Array.from(menupopup.children).forEach(function(child) {
+    Array.from(menupopup.children).forEach(function (child) {
       child.hidden = true;
     });
     // Store triggerNode in controller for checking if commands are enabled
@@ -1542,12 +1557,8 @@ export var PlacesUIUtils = {
       document.getElementById("placesContext_open:newprivatewindow").hidden =
         lazy.PrivateBrowsingUtils.isWindowPrivate(window) ||
         !lazy.PrivateBrowsingUtils.enabled;
-      document.getElementById(
-        "placesContext_open:newcontainertab"
-      ).hidden = !Services.prefs.getBoolPref(
-        "privacy.userContext.enabled",
-        false
-      );
+      document.getElementById("placesContext_open:newcontainertab").hidden =
+        !Services.prefs.getBoolPref("privacy.userContext.enabled", false);
     }
 
     event.target.ownerGlobal.updateCommands("places");
@@ -1620,7 +1631,7 @@ export var PlacesUIUtils = {
       event.target.getAttribute("data-usercontextid")
     );
     let triggerNode = this.lastContextMenuTriggerNode;
-    let isManaged = !!triggerNode.closest("#managed-bookmarks");
+    let isManaged = !!triggerNode?.closest("#managed-bookmarks");
     if (isManaged) {
       let window = triggerNode.ownerGlobal;
       window.openTrustedLinkIn(triggerNode.link, "tab", { userContextId });
@@ -1633,9 +1644,8 @@ export var PlacesUIUtils = {
   },
 
   openSelectionInTabs(event) {
-    let isManaged = !!event.target.parentNode.triggerNode.closest(
-      "#managed-bookmarks"
-    );
+    let isManaged =
+      !!event.target.parentNode.triggerNode.closest("#managed-bookmarks");
     let controller;
     if (isManaged) {
       controller = this.managedBookmarksController;
@@ -1695,10 +1705,10 @@ export var PlacesUIUtils = {
           let contents = [
             { type: lazy.PlacesUtils.TYPE_X_MOZ_URL, entries: [] },
             { type: lazy.PlacesUtils.TYPE_HTML, entries: [] },
-            { type: lazy.PlacesUtils.TYPE_UNICODE, entries: [] },
+            { type: lazy.PlacesUtils.TYPE_PLAINTEXT, entries: [] },
           ];
 
-          contents.forEach(function(content) {
+          contents.forEach(function (content) {
             content.entries.push(lazy.PlacesUtils.wrapNode(node, content.type));
           });
 
@@ -1715,7 +1725,7 @@ export var PlacesUIUtils = {
             );
           }
 
-          contents.forEach(function(content) {
+          contents.forEach(function (content) {
             addData(content.type, content.entries.join(lazy.PlacesUtils.endl));
           });
 
@@ -1726,21 +1736,17 @@ export var PlacesUIUtils = {
           );
           break;
         case "placesCmd_open:privatewindow":
-          window.openUILinkIn(this.triggerNode.link, "window", {
-            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+          window.openTrustedLinkIn(this.triggerNode.link, "window", {
             private: true,
           });
           break;
         case "placesCmd_open:window":
-          window.openUILinkIn(this.triggerNode.link, "window", {
-            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+          window.openTrustedLinkIn(this.triggerNode.link, "window", {
             private: false,
           });
           break;
         case "placesCmd_open:tab": {
-          window.openUILinkIn(this.triggerNode.link, "tab", {
-            triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
-          });
+          window.openTrustedLinkIn(this.triggerNode.link, "tab");
         }
       }
     },
@@ -1756,14 +1762,15 @@ export var PlacesUIUtils = {
       async db => {
         let rows = await db.execute(
           `SELECT COUNT(*) as n FROM moz_bookmarks b
-           WHERE b.parent = :parentId`,
-          { parentId: lazy.PlacesUtils.toolbarFolderId }
+           JOIN moz_bookmarks p ON p.id = b.parent
+           WHERE p.guid = :guid`,
+          { guid: lazy.PlacesUtils.bookmarks.toolbarGuid }
         );
         return rows[0].getResultByName("n");
       }
     ).catch(e => {
       // We want to report errors, but we still want to add the button then:
-      Cu.reportError(e);
+      console.error(e);
       return 0;
     });
 
@@ -1789,7 +1796,7 @@ export var PlacesUIUtils = {
     // Otherwise, wait for a successful migration:
     let obs = (subject, topic, data) => {
       if (
-        data == Ci.nsIBrowserProfileMigrator.BOOKMARKS &&
+        data == lazy.MigrationUtils.resourceTypes.BOOKMARKS &&
         lazy.MigrationUtils.getImportedCount("bookmarks") > 0
       ) {
         lazy.CustomizableUI.removeWidgetFromArea("import-button");
@@ -1803,12 +1810,13 @@ export var PlacesUIUtils = {
   },
 
   /**
-   * Tries to initiate a speculative connection to a given url.
+   * Tries to initiate a speculative connection to a given url. This is not
+   * infallible, if a speculative connection cannot be initialized, it will be a
+   * no-op.
+   *
    * @param {nsIURI|URL|string} url entity to initiate
    *        a speculative connection for.
    * @param {window} window the window from where the connection is initialized.
-   * @note This is not infallible, if a speculative connection cannot be
-   *       initialized, it will be a no-op.
    */
   setupSpeculativeConnection(url, window) {
     if (
@@ -1827,20 +1835,32 @@ export var PlacesUIUtils = {
       Services.io.speculativeConnect(
         uri,
         window.gBrowser.contentPrincipal,
-        null
+        null,
+        false
       );
     } catch (ex) {
       // Can't setup speculative connection for this url, just ignore it.
     }
   },
 
+  /**
+   * Generates a moz-anno:favicon: link for an icon URL, that will allow to
+   * fetch the icon from the local favicons cache, rather than from the network.
+   * If the icon URL is invalid, fallbacks to the default favicon URL.
+   *
+   * @param {string} icon The url of the icon to load from local cache.
+   * @returns {string} a "moz-anno:favicon:" prefixed URL, unless the original
+   *   URL protocol refers to a local resource, then it will just pass-through
+   *   unchanged.
+   */
   getImageURL(icon) {
-    let iconURL = icon;
     // don't initiate a connection just to fetch a favicon (see bug 467828)
-    if (/^https?:/.test(iconURL)) {
-      iconURL = "moz-anno:favicon:" + iconURL;
-    }
-    return iconURL;
+    try {
+      return lazy.PlacesUtils.favicons.getFaviconLinkForIcon(
+        Services.io.newURI(icon)
+      ).spec;
+    } catch (ex) {}
+    return lazy.PlacesUtils.favicons.defaultFavicon.spec;
   },
 
   /**
@@ -1923,29 +1943,36 @@ PlacesUIUtils.canLoadToolbarContentPromise = new Promise(resolve => {
 });
 
 // These are lazy getters to avoid importing PlacesUtils immediately.
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "PLACES_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "PLACES_FLAVORS", () => {
   return [
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE_CONTAINER,
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE_SEPARATOR,
     lazy.PlacesUtils.TYPE_X_MOZ_PLACE,
   ];
 });
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "URI_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "URI_FLAVORS", () => {
   return [
     lazy.PlacesUtils.TYPE_X_MOZ_URL,
     TAB_DROP_TYPE,
-    lazy.PlacesUtils.TYPE_UNICODE,
+    lazy.PlacesUtils.TYPE_PLAINTEXT,
   ];
 });
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "SUPPORTED_FLAVORS", () => {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "SUPPORTED_FLAVORS", () => {
   return [...PlacesUIUtils.PLACES_FLAVORS, ...PlacesUIUtils.URI_FLAVORS];
 });
 
-XPCOMUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function() {
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "ellipsis", function () {
   return Services.prefs.getComplexValue(
     "intl.ellipsis",
     Ci.nsIPrefLocalizedString
   ).data;
+});
+
+ChromeUtils.defineLazyGetter(PlacesUIUtils, "promptLocalization", () => {
+  return new Localization(
+    ["browser/placesPrompts.ftl", "branding/brand.ftl"],
+    true
+  );
 });
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -2094,7 +2121,7 @@ function getTransactionsForTransferItems(
       // Only log if this is one of "our" types as external items, e.g. drag from
       // url bar to toolbar, shouldn't complain.
       if (PlacesUIUtils.PLACES_FLAVORS.includes(item.type)) {
-        Cu.reportError(
+        console.error(
           "Tried to move an unmovable Places " +
             "node, reverting to a copy operation."
         );
@@ -2171,7 +2198,7 @@ function getTransactionsForCopy(items, insertionIndex, insertionParentGuid) {
       });
     } else {
       let title =
-        item.type != lazy.PlacesUtils.TYPE_UNICODE ? item.title : item.uri;
+        item.type != lazy.PlacesUtils.TYPE_PLAINTEXT ? item.title : item.uri;
       transaction = lazy.PlacesTransactions.NewBookmark({
         index,
         parentGuid: insertionParentGuid,

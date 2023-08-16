@@ -16,14 +16,14 @@ XPCOMUtils.defineLazyGetter(this, "oneOffSearchButtons", () => {
   return UrlbarTestUtils.getOneOffSearchButtons(window);
 });
 
-add_task(async function init() {
+add_setup(async function () {
   gMaxResults = Services.prefs.getIntPref("browser.urlbar.maxRichResults");
 
   // Add a search suggestion engine and move it to the front so that it appears
   // as the first one-off.
-  engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME
-  );
+  engine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + TEST_ENGINE_BASENAME,
+  });
   await Services.search.moveEngine(engine, 0);
 
   await SpecialPowers.pushPrefEnv({
@@ -34,7 +34,7 @@ add_task(async function init() {
     ],
   });
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
     await UrlbarTestUtils.formHistory.clear();
   });
@@ -292,7 +292,10 @@ add_task(async function editedView() {
 add_task(async function searchWith() {
   // Enable suggestions for this subtest so we can check non-heuristic results.
   let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  await Services.search.setDefault(
+    engine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
   await SpecialPowers.pushPrefEnv({
     set: [["browser.urlbar.suggest.searches", true]],
   });
@@ -363,7 +366,10 @@ add_task(async function searchWith() {
   );
 
   await SpecialPowers.popPrefEnv();
-  await Services.search.setDefault(oldDefaultEngine);
+  await Services.search.setDefault(
+    oldDefaultEngine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
   await hidePopup();
 });
 
@@ -444,12 +450,14 @@ add_task(async function allOneOffsHiddenExceptCurrentEngine() {
   );
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["browser.search.hiddenOneOffs", engines.map(e => e.name).join(",")],
       ...UrlbarUtils.LOCAL_SEARCH_MODES.map(m => [
         `browser.urlbar.${m.pref}`,
         false,
       ]),
     ],
+  });
+  engines.forEach(e => {
+    e.hideOneOffButton = e.name !== defaultEngine.name;
   });
 
   let typedValue = "foo";
@@ -469,6 +477,9 @@ add_task(async function allOneOffsHiddenExceptCurrentEngine() {
   assertState(0, -1);
   await hidePopup();
   await SpecialPowers.popPrefEnv();
+  engines.forEach(e => {
+    e.hideOneOffButton = false;
+  });
 });
 
 // The one-offs should be hidden when searching with an "@engine" search engine
@@ -703,18 +714,23 @@ add_task(async function avoidWillHideRace() {
 
   info("Hide all engines but the test engine.");
   let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  await Services.search.setDefault(
+    engine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
   let engines = (await Services.search.getVisibleEngines()).filter(
     e => e.name != engine.name
   );
   await SpecialPowers.pushPrefEnv({
     set: [
-      ["browser.search.hiddenOneOffs", engines.map(e => e.name).join(",")],
       ...UrlbarUtils.LOCAL_SEARCH_MODES.map(m => [
         `browser.urlbar.${m.pref}`,
         false,
       ]),
     ],
+  });
+  engines.forEach(e => {
+    e.hideOneOffButton = true;
   });
   Assert.ok(
     !oneOffSearchButtons._engineInfo,
@@ -762,8 +778,14 @@ add_task(async function avoidWillHideRace() {
   await UrlbarTestUtils.promisePopupClose(window);
 
   await SpecialPowers.popPrefEnv();
-  await Services.search.setDefault(oldDefaultEngine);
+  await Services.search.setDefault(
+    oldDefaultEngine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
   await SpecialPowers.popPrefEnv();
+  engines.forEach(e => {
+    e.hideOneOffButton = false;
+  });
 });
 
 // Hides each of the local shortcuts one at a time.  The search buttons should
@@ -860,8 +882,9 @@ add_task(async function allLocalShortcutsHidden() {
 // Hides all the engines but none of the local shortcuts.
 add_task(async function localShortcutsShownWhenEnginesHidden() {
   let engines = await Services.search.getVisibleEngines();
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.search.hiddenOneOffs", engines.map(e => e.name).join(",")]],
+
+  engines.forEach(e => {
+    e.hideOneOffButton = true;
   });
 
   let rebuildPromise = BrowserTestUtils.waitForEvent(
@@ -894,7 +917,9 @@ add_task(async function localShortcutsShownWhenEnginesHidden() {
   );
 
   await hidePopup();
-  await SpecialPowers.popPrefEnv();
+  engines.forEach(e => {
+    e.hideOneOffButton = false;
+  });
 });
 
 /**

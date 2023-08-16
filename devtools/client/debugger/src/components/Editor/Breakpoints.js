@@ -9,28 +9,25 @@ import Breakpoint from "./Breakpoint";
 import { getSelectedSource, getFirstVisibleBreakpoints } from "../../selectors";
 import { makeBreakpointId } from "../../utils/breakpoint";
 import { connect } from "../../utils/connect";
-import { breakpointItemActions } from "./menus/breakpoints";
-import { editorItemActions } from "./menus/editor";
+import actions from "../../actions";
 
 class Breakpoints extends Component {
   static get propTypes() {
     return {
-      cx: PropTypes.object,
       breakpoints: PropTypes.array,
       editor: PropTypes.object,
-      breakpointActions: PropTypes.object,
-      editorActions: PropTypes.object,
       selectedSource: PropTypes.object,
     };
   }
   render() {
     const {
-      cx,
       breakpoints,
       selectedSource,
       editor,
-      breakpointActions,
-      editorActions,
+      showEditorEditBreakpointContextMenu,
+      continueToHere,
+      toggleBreakpointsAtLine,
+      removeBreakpointsAtLine,
     } = this.props;
 
     if (!selectedSource || !breakpoints) {
@@ -42,13 +39,16 @@ class Breakpoints extends Component {
         {breakpoints.map(bp => {
           return (
             <Breakpoint
-              cx={cx}
               key={makeBreakpointId(bp.location)}
               breakpoint={bp}
               selectedSource={selectedSource}
+              showEditorEditBreakpointContextMenu={
+                showEditorEditBreakpointContextMenu
+              }
+              continueToHere={continueToHere}
+              toggleBreakpointsAtLine={toggleBreakpointsAtLine}
+              removeBreakpointsAtLine={removeBreakpointsAtLine}
               editor={editor}
-              breakpointActions={breakpointActions}
-              editorActions={editorActions}
             />
           );
         })}
@@ -57,15 +57,20 @@ class Breakpoints extends Component {
   }
 }
 
-export default connect(
-  state => ({
+const mapStateToProps = state => {
+  const selectedSource = getSelectedSource(state);
+  return {
     // Retrieves only the first breakpoint per line so that the
     // breakpoint marker represents only the first breakpoint
     breakpoints: getFirstVisibleBreakpoints(state),
-    selectedSource: getSelectedSource(state),
-  }),
-  dispatch => ({
-    breakpointActions: breakpointItemActions(dispatch),
-    editorActions: editorItemActions(dispatch),
-  })
-)(Breakpoints);
+    selectedSource,
+  };
+};
+
+export default connect(mapStateToProps, {
+  showEditorEditBreakpointContextMenu:
+    actions.showEditorEditBreakpointContextMenu,
+  continueToHere: actions.continueToHere,
+  toggleBreakpointsAtLine: actions.toggleBreakpointsAtLine,
+  removeBreakpointsAtLine: actions.removeBreakpointsAtLine,
+})(Breakpoints);

@@ -139,7 +139,15 @@ export default class LoginList extends HTMLElement {
     this._list.addEventListener("click", this);
     this.addEventListener("keydown", this);
     this.addEventListener("keyup", this);
-    this._createLoginButton.addEventListener("click", this);
+
+    // TODO: Using the addEventListener to listen for clicks and pass the event handler due to a CSP error.
+    // This will be fixed as login-list itself is converted into a lit component. We will then be able to use the onclick
+    // prop of login-command-button as seen in the example below (functionality works and passes tests).
+    // this._createLoginButton.onClick = e => this.handleCreateNewLogin(e);
+
+    this._createLoginButton.addEventListener("click", e =>
+      this.handleCreateNewLogin(e)
+    );
   }
 
   get #activeDescendant() {
@@ -150,9 +158,16 @@ export default class LoginList extends HTMLElement {
     return activeDescendant;
   }
 
+  selectLoginByDomainOrGuid(searchParam) {
+    this._preselectLogin = searchParam;
+  }
+
   render() {
     let visibleLoginGuids = this._applyFilter();
-    this._updateVisibleLoginCount(visibleLoginGuids.size);
+    this.#updateVisibleLoginCount(
+      visibleLoginGuids.size,
+      this._loginGuidsSortedOrder.length
+    );
     this.classList.toggle("empty-search", !visibleLoginGuids.size);
     document.documentElement.classList.toggle(
       "empty-search",
@@ -281,19 +296,18 @@ export default class LoginList extends HTMLElement {
     return section;
   }
 
+  handleCreateNewLogin() {
+    window.dispatchEvent(
+      new CustomEvent("AboutLoginsShowBlankLogin", {
+        cancelable: true,
+      })
+    );
+    recordTelemetryEvent({ object: "new_login", method: "new" });
+  }
+
   handleEvent(event) {
     switch (event.type) {
       case "click": {
-        if (event.originalTarget == this._createLoginButton) {
-          window.dispatchEvent(
-            new CustomEvent("AboutLoginsShowBlankLogin", {
-              cancelable: true,
-            })
-          );
-          recordTelemetryEvent({ object: "new_login", method: "new" });
-          return;
-        }
-
         let listItem = event.originalTarget.closest(".login-list-item");
         if (!listItem || !listItem.dataset.guid) {
           return;
@@ -337,6 +351,8 @@ export default class LoginList extends HTMLElement {
       }
       case "AboutLoginsClearSelection": {
         if (!this._loginGuidsSortedOrder.length) {
+          this._createLoginButton.disabled = false;
+          this.classList.remove("create-login-selected");
           return;
         }
 
@@ -345,8 +361,8 @@ export default class LoginList extends HTMLElement {
         );
         let newlySelectedLogin;
         if (firstVisibleListItem) {
-          newlySelectedLogin = this._logins[firstVisibleListItem.dataset.guid]
-            .login;
+          newlySelectedLogin =
+            this._logins[firstVisibleListItem.dataset.guid].login;
         } else {
           // Clear the filter if all items have been filtered out.
           this.classList.remove("create-login-selected");
@@ -356,8 +372,8 @@ export default class LoginList extends HTMLElement {
               detail: "",
             })
           );
-          newlySelectedLogin = this._logins[this._loginGuidsSortedOrder[0]]
-            .login;
+          newlySelectedLogin =
+            this._logins[this._loginGuidsSortedOrder[0]].login;
         }
 
         // Select the first visible login after any possible filter is applied.
@@ -416,8 +432,6 @@ export default class LoginList extends HTMLElement {
       case "keyup":
       case "keydown": {
         if (event.type == "keydown") {
-          this._handleTabbingToExternalElements(event);
-
           if (
             this.shadowRoot.activeElement &&
             this.shadowRoot.activeElement.closest("ol") &&
@@ -610,9 +624,8 @@ export default class LoginList extends HTMLElement {
           return listItem.dataset.guid == login.guid;
         });
         let newlySelectedIndex = index > 0 ? index - 1 : index + 1;
-        let newlySelectedLogin = this._logins[
-          visibleListItems[newlySelectedIndex].dataset.guid
-        ].login;
+        let newlySelectedLogin =
+          this._logins[visibleListItems[newlySelectedIndex].dataset.guid].login;
         window.dispatchEvent(
           new CustomEvent("AboutLoginsLoginSelected", {
             detail: newlySelectedLogin,
@@ -692,42 +705,14 @@ export default class LoginList extends HTMLElement {
     this._list.scrollTop = 0;
   }
 
-  _updateVisibleLoginCount(count) {
-    if (count != document.l10n.getAttributes(this._count).args.count) {
-      document.l10n.setAttributes(this._count, "login-list-count", {
-        count,
-      });
-    }
-  }
-
-  _handleTabbingToExternalElements(event) {
-    if (
-      (this._createLoginButton == this.shadowRoot.activeElement ||
-        (this._list == this.shadowRoot.activeElement &&
-          this._createLoginButton.disabled)) &&
-      event.key == "Tab"
-    ) {
-      // Bug 1562716: Pressing Tab from the create-login-button cycles back to the
-      // login-sort dropdown due to the login-list having `overflow`
-      // CSS property set. Explicitly forward focus here until
-      // this keyboard trap is fixed.
-      if (event.shiftKey) {
-        return;
-      }
-      if (
-        this.classList.contains("no-logins") &&
-        !this.classList.contains("create-login-selected")
-      ) {
-        let loginIntro = document.querySelector("login-intro");
-        event.preventDefault();
-        loginIntro.focus();
-        return;
-      }
-      let loginItem = document.querySelector("login-item");
-      if (loginItem) {
-        event.preventDefault();
-        loginItem.focus();
-      }
+  #updateVisibleLoginCount(count, total) {
+    const args = document.l10n.getAttributes(this._count).args;
+    if (count != args.count || total != args.total) {
+      document.l10n.setAttributes(
+        this._count,
+        count == total ? "login-list-count" : "login-list-filtered-count",
+        { count, total }
+      );
     }
   }
 
@@ -867,6 +852,7 @@ export default class LoginList extends HTMLElement {
       from?.classList.remove("keyboard-selected");
       to.classList.add("keyboard-selected");
       to.scrollIntoView({ block: "nearest" });
+      this.clickSelected();
     }
   }
 
@@ -876,16 +862,25 @@ export default class LoginList extends HTMLElement {
    * selection.
    */
   _selectFirstVisibleLogin() {
-    let firstVisibleListItem = this._list.querySelector(
-      ".login-list-item[data-guid]:not([hidden])"
-    );
-    if (firstVisibleListItem) {
-      let { login } = this._logins[firstVisibleListItem.dataset.guid];
+    const visibleLoginsGuids = this._applyFilter();
+    let selectedLoginGuid =
+      this._loginGuidsSortedOrder.find(guid => guid === this._preselectLogin) ??
+      this.findLoginGuidFromDomain(this._preselectLogin) ??
+      this._loginGuidsSortedOrder[0];
+
+    selectedLoginGuid = [
+      selectedLoginGuid,
+      ...this._loginGuidsSortedOrder,
+    ].find(guid => visibleLoginsGuids.has(guid));
+
+    if (selectedLoginGuid && this._logins[selectedLoginGuid]) {
+      let { login } = this._logins[selectedLoginGuid];
       window.dispatchEvent(
         new CustomEvent("AboutLoginsInitialLoginSelected", {
           detail: login,
         })
       );
+      this.updateSelectedLocationHash(selectedLoginGuid);
     }
   }
 
@@ -902,9 +897,23 @@ export default class LoginList extends HTMLElement {
     listItem.setAttribute("aria-selected", "true");
     this._list.setAttribute("aria-activedescendant", listItem.id);
     this._selectedGuid = listItem.dataset.guid;
-
+    this.updateSelectedLocationHash(this._selectedGuid);
     // Scroll item into view if it isn't visible
     listItem.scrollIntoView({ block: "nearest" });
+  }
+
+  updateSelectedLocationHash(guid) {
+    window.location.hash = guid ? `#${encodeURIComponent(guid)}` : "";
+  }
+
+  findLoginGuidFromDomain(domain) {
+    for (let guid of this._loginGuidsSortedOrder) {
+      let login = this._logins[guid].login;
+      if (login.hostname === domain) {
+        return guid;
+      }
+    }
+    return null;
   }
 }
 customElements.define("login-list", LoginList);

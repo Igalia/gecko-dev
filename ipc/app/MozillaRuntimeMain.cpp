@@ -83,13 +83,7 @@ int main(int argc, char* argv[]) {
 
 #ifdef HAS_DLL_BLOCKLIST
     uint32_t initFlags = eDllBlocklistInitFlagIsChildProcess;
-#  if defined(MOZ_SANDBOX)
-    Maybe<uint64_t> sandboxingKind =
-        geckoargs::sSandboxingKind.Get(argc, argv, CheckArgFlag::None);
-    if (sandboxingKind.isSome()) {
-      initFlags |= eDllBlocklistInitFlagIsUtilityProcess;
-    }
-#  endif  // defined(MOZ_SANDBOX)
+    SetDllBlocklistProcessTypeFlags(initFlags, GetGeckoProcessType());
     DllBlocklist_Initialize(initFlags);
 #endif
 

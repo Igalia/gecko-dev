@@ -8,10 +8,12 @@ TEST_DIRS += [
     "api",
     "child",
     "parent",
+    "shared",
 ]
 
 UNIFIED_SOURCES = [
     "FileSystemMocks.cpp",
+    "TestHelpers.cpp",
 ]
 
 include("/ipc/chromium/chromium-config.mozbuild")

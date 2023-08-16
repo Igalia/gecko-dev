@@ -2,20 +2,19 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
-XPCOMUtils.defineLazyGetter(this, "FxAccountsCommon", function() {
+XPCOMUtils.defineLazyGetter(this, "FxAccountsCommon", function () {
   return ChromeUtils.import("resource://gre/modules/FxAccountsCommon.js");
 });
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "WebChannel",
-  "resource://gre/modules/WebChannel.jsm"
+ChromeUtils.defineESModuleGetters(this, {
+  WebChannel: "resource://gre/modules/WebChannel.sys.mjs",
+});
+
+var { FxAccountsWebChannel } = ChromeUtils.importESModule(
+  "resource://gre/modules/FxAccountsWebChannel.sys.mjs"
 );
 
-var { FxAccountsWebChannel } = ChromeUtils.import(
-  "resource://gre/modules/FxAccountsWebChannel.jsm"
-);
-
+// eslint-disable-next-line @microsoft/sdl/no-insecure-url
 const TEST_HTTP_PATH = "http://example.com";
 const TEST_BASE_URL =
   TEST_HTTP_PATH +
@@ -31,15 +30,14 @@ var gTests = [
         channel_id: TEST_CHANNEL_ID,
       });
       let promiseObserver = new Promise((resolve, reject) => {
-        makeObserver(FxAccountsCommon.ON_PROFILE_CHANGE_NOTIFICATION, function(
-          subject,
-          topic,
-          data
-        ) {
-          Assert.equal(data, "abc123");
-          client.tearDown();
-          resolve();
-        });
+        makeObserver(
+          FxAccountsCommon.ON_PROFILE_CHANGE_NOTIFICATION,
+          function (subject, topic, data) {
+            Assert.equal(data, "abc123");
+            client.tearDown();
+            resolve();
+          }
+        );
       });
 
       await BrowserTestUtils.withNewTab(
@@ -47,15 +45,14 @@ var gTests = [
           gBrowser,
           url: TEST_BASE_URL + "?profile_change",
         },
-        async function() {
+        async function () {
           await promiseObserver;
         }
       );
     },
   },
   {
-    desc:
-      "fxa web channel - login messages should notify the fxAccounts object",
+    desc: "fxa web channel - login messages should notify the fxAccounts object",
     async run() {
       let promiseLogin = new Promise((resolve, reject) => {
         let login = accountData => {
@@ -85,7 +82,7 @@ var gTests = [
           gBrowser,
           url: TEST_BASE_URL + "?login",
         },
-        async function() {
+        async function () {
           await promiseLogin;
         }
       );
@@ -132,15 +129,14 @@ var gTests = [
           gBrowser,
           url: properUrl,
         },
-        async function() {
+        async function () {
           await promiseEcho;
         }
       );
     },
   },
   {
-    desc:
-      "fxa web channel - logout messages should notify the fxAccounts object",
+    desc: "fxa web channel - logout messages should notify the fxAccounts object",
     async run() {
       let promiseLogout = new Promise((resolve, reject) => {
         let logout = uid => {
@@ -164,15 +160,14 @@ var gTests = [
           gBrowser,
           url: TEST_BASE_URL + "?logout",
         },
-        async function() {
+        async function () {
           await promiseLogout;
         }
       );
     },
   },
   {
-    desc:
-      "fxa web channel - delete messages should notify the fxAccounts object",
+    desc: "fxa web channel - delete messages should notify the fxAccounts object",
     async run() {
       let promiseDelete = new Promise((resolve, reject) => {
         let logout = uid => {
@@ -196,15 +191,14 @@ var gTests = [
           gBrowser,
           url: TEST_BASE_URL + "?delete",
         },
-        async function() {
+        async function () {
           await promiseDelete;
         }
       );
     },
   },
   {
-    desc:
-      "fxa web channel - firefox_view messages should call the openFirefoxView helper",
+    desc: "fxa web channel - firefox_view messages should call the openFirefoxView helper",
     async run() {
       let wasCalled = false;
       let promiseMessageHandled = new Promise((resolve, reject) => {
@@ -238,7 +232,7 @@ var gTests = [
           gBrowser,
           url: TEST_BASE_URL + "?firefox_view",
         },
-        async function() {
+        async function () {
           await promiseMessageHandled;
         }
       );
@@ -248,7 +242,7 @@ var gTests = [
 ]; // gTests
 
 function makeObserver(aObserveTopic, aObserveFunc) {
-  let callback = function(aSubject, aTopic, aData) {
+  let callback = function (aSubject, aTopic, aData) {
     if (aTopic == aObserveTopic) {
       removeMe();
       aObserveFunc(aSubject, aTopic, aData);
@@ -263,7 +257,7 @@ function makeObserver(aObserveTopic, aObserveFunc) {
   return removeMe;
 }
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   Services.prefs.clearUserPref(
     "browser.tabs.remote.separatePrivilegedMozillaWebContentProcess"
   );
@@ -276,7 +270,7 @@ function test() {
     false
   );
 
-  (async function() {
+  (async function () {
     for (let testCase of gTests) {
       info("Running: " + testCase.desc);
       await testCase.run();

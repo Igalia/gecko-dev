@@ -13,6 +13,33 @@
 namespace mozilla {
 namespace gfx {
 
+already_AddRefed<PathBuilder> PathBuilderD2D::Create(FillRule aFillRule) {
+  RefPtr<ID2D1PathGeometry> path;
+  HRESULT hr =
+      DrawTargetD2D1::factory()->CreatePathGeometry(getter_AddRefs(path));
+
+  if (FAILED(hr)) {
+    gfxWarning() << "Failed to create Direct2D Path Geometry. Code: "
+                 << hexa(hr);
+    return nullptr;
+  }
+
+  RefPtr<ID2D1GeometrySink> sink;
+  hr = path->Open(getter_AddRefs(sink));
+  if (FAILED(hr)) {
+    gfxWarning() << "Failed to access Direct2D Path Geometry. Code: "
+                 << hexa(hr);
+    return nullptr;
+  }
+
+  if (aFillRule == FillRule::FILL_WINDING) {
+    sink->SetFillMode(D2D1_FILL_MODE_WINDING);
+  }
+
+  return MakeAndAddRef<PathBuilderD2D>(sink, path, aFillRule,
+                                       BackendType::DIRECT2D1_1);
+}
+
 // This class exists as a wrapper for ID2D1SimplifiedGeometry sink, it allows
 // a geometry to be duplicated into a geometry sink, while removing the final
 // figure end and thus allowing a figure that was implicitly closed to be
@@ -107,6 +134,7 @@ void PathBuilderD2D::LineTo(const Point& aPoint) {
   mSink->AddLine(D2DPoint(aPoint));
 
   mCurrentPoint = aPoint;
+  mFigureEmpty = false;
 }
 
 void PathBuilderD2D::BezierTo(const Point& aCP1, const Point& aCP2,
@@ -116,6 +144,7 @@ void PathBuilderD2D::BezierTo(const Point& aCP1, const Point& aCP2,
       D2D1::BezierSegment(D2DPoint(aCP1), D2DPoint(aCP2), D2DPoint(aCP3)));
 
   mCurrentPoint = aCP3;
+  mFigureEmpty = false;
 }
 
 void PathBuilderD2D::QuadraticBezierTo(const Point& aCP1, const Point& aCP2) {
@@ -124,6 +153,7 @@ void PathBuilderD2D::QuadraticBezierTo(const Point& aCP1, const Point& aCP2) {
       D2D1::QuadraticBezierSegment(D2DPoint(aCP1), D2DPoint(aCP2)));
 
   mCurrentPoint = aCP2;
+  mFigureEmpty = false;
 }
 
 void PathBuilderD2D::Close() {
@@ -221,6 +251,7 @@ void PathBuilderD2D::Arc(const Point& aOrigin, Float aRadius, Float aStartAngle,
   }
 
   mCurrentPoint = endPoint;
+  mFigureEmpty = false;
 }
 
 void PathBuilderD2D::EnsureActive(const Point& aPoint) {
@@ -242,8 +273,8 @@ already_AddRefed<Path> PathBuilderD2D::Finish() {
     return nullptr;
   }
 
-  return MakeAndAddRef<PathD2D>(mGeometry, mFigureActive, mCurrentPoint,
-                                mFillRule, mBackendType);
+  return MakeAndAddRef<PathD2D>(mGeometry, mFigureActive, mFigureEmpty,
+                                mCurrentPoint, mFillRule, mBackendType);
 }
 
 already_AddRefed<PathBuilder> PathD2D::CopyToBuilder(FillRule aFillRule) const {

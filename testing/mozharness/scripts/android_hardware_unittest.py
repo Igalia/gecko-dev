@@ -5,13 +5,12 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 # ***** END LICENSE BLOCK *****
 
-from __future__ import absolute_import
 import copy
 import datetime
 import json
 import os
-import sys
 import subprocess
+import sys
 
 # load modules from parent dir
 sys.path.insert(1, os.path.dirname(sys.path[0]))
@@ -21,13 +20,12 @@ from mozharness.base.script import BaseScript, PreScriptAction
 from mozharness.mozilla.automation import TBPL_RETRY
 from mozharness.mozilla.mozbase import MozbaseMixin
 from mozharness.mozilla.testing.android import AndroidMixin
-from mozharness.mozilla.testing.testbase import TestingMixin, testing_config_options
 from mozharness.mozilla.testing.codecoverage import CodeCoverageMixin
+from mozharness.mozilla.testing.testbase import TestingMixin, testing_config_options
 
-PY2 = sys.version_info.major == 2
 SUITE_DEFAULT_E10S = ["geckoview-junit", "mochitest", "reftest"]
 SUITE_NO_E10S = ["cppunittest", "gtest", "jittest"]
-SUITE_REPEATABLE = ["mochitest", "reftest"]
+SUITE_REPEATABLE = ["mochitest", "reftest", "xpcshell"]
 
 
 class AndroidHardwareTest(
@@ -356,17 +354,12 @@ class AndroidHardwareTest(
         dirs = self.query_abs_dirs()
         requirements = None
         suites = self._query_suites()
-        # mochitest is the only thing that needs this
-        if PY2:
-            wspb_requirements = "websocketprocessbridge_requirements.txt"
-        else:
-            wspb_requirements = "websocketprocessbridge_requirements_3.txt"
         if ("mochitest-media", "mochitest-media") in suites:
             # mochitest-media is the only thing that needs this
             requirements = os.path.join(
                 dirs["abs_mochitest_dir"],
                 "websocketprocessbridge",
-                wspb_requirements,
+                "websocketprocessbridge_requirements_3.txt",
             )
         if requirements:
             self.register_virtualenv_module(requirements=[requirements], two_pass=True)
@@ -472,10 +465,10 @@ class AndroidHardwareTest(
                         return
                 else:
                     self.record_status(tbpl_status, level=log_level)
-                    self.log(
+                    # report as INFO instead of log_level to avoid extra Treeherder lines
+                    self.info(
                         "The %s suite: %s ran with return status: %s"
                         % (suite_category, suite, tbpl_status),
-                        level=log_level,
                     )
 
 

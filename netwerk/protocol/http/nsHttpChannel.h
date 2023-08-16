@@ -7,30 +7,31 @@
 #ifndef nsHttpChannel_h__
 #define nsHttpChannel_h__
 
-#include "HttpBaseChannel.h"
-#include "nsTArray.h"
-#include "nsICachingChannel.h"
-#include "nsICacheEntry.h"
-#include "nsICacheEntryOpenCallback.h"
-#include "nsIDNSListener.h"
-#include "nsIProtocolProxyCallback.h"
-#include "nsIHttpAuthenticableChannel.h"
-#include "nsIAsyncVerifyRedirectCallback.h"
-#include "nsIEarlyHintObserver.h"
-#include "nsIThreadRetargetableRequest.h"
-#include "nsIThreadRetargetableStreamListener.h"
-#include "nsWeakReference.h"
-#include "TimingStruct.h"
-#include "AutoClose.h"
-#include "nsIStreamListener.h"
-#include "nsICorsPreflightCallback.h"
 #include "AlternateServices.h"
-#include "nsIRaceCacheWithNetwork.h"
+#include "AutoClose.h"
+#include "HttpBaseChannel.h"
+#include "TimingStruct.h"
 #include "mozilla/AtomicBitfields.h"
 #include "mozilla/Atomics.h"
+#include "mozilla/Mutex.h"
 #include "mozilla/extensions/PStreamFilterParent.h"
 #include "mozilla/net/DocumentLoadListener.h"
-#include "mozilla/Mutex.h"
+#include "nsIAsyncVerifyRedirectCallback.h"
+#include "nsICacheEntry.h"
+#include "nsICacheEntryOpenCallback.h"
+#include "nsICachingChannel.h"
+#include "nsICorsPreflightCallback.h"
+#include "nsIDNSListener.h"
+#include "nsIEarlyHintObserver.h"
+#include "nsIHttpAuthenticableChannel.h"
+#include "nsIProtocolProxyCallback.h"
+#include "nsIRaceCacheWithNetwork.h"
+#include "nsIStreamListener.h"
+#include "nsIThreadRetargetableRequest.h"
+#include "nsIThreadRetargetableStreamListener.h"
+#include "nsITransportSecurityInfo.h"
+#include "nsTArray.h"
+#include "nsWeakReference.h"
 
 class nsDNSPrefetch;
 class nsICancelable;
@@ -141,11 +142,15 @@ class nsHttpChannel final : public HttpBaseChannel,
   // Methods HttpBaseChannel didn't implement for us or that we override.
   //
   // nsIRequest
+  NS_IMETHOD SetCanceledReason(const nsACString& aReason) override;
+  NS_IMETHOD GetCanceledReason(nsACString& aReason) override;
+  NS_IMETHOD CancelWithReason(nsresult status,
+                              const nsACString& reason) override;
   NS_IMETHOD Cancel(nsresult status) override;
   NS_IMETHOD Suspend() override;
   NS_IMETHOD Resume() override;
   // nsIChannel
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override;
+  NS_IMETHOD GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) override;
   NS_IMETHOD AsyncOpen(nsIStreamListener* aListener) override;
   // nsIHttpChannel
   NS_IMETHOD GetEncodedBodySize(uint64_t* aEncodedBodySize) override;
@@ -182,6 +187,10 @@ class nsHttpChannel final : public HttpBaseChannel,
   NS_IMETHOD GetRequestStart(mozilla::TimeStamp* aRequestStart) override;
   NS_IMETHOD GetResponseStart(mozilla::TimeStamp* aResponseStart) override;
   NS_IMETHOD GetResponseEnd(mozilla::TimeStamp* aResponseEnd) override;
+
+  NS_IMETHOD GetTransactionPending(
+      mozilla::TimeStamp* aTransactionPending) override;
+
   // nsICorsPreflightCallback
   NS_IMETHOD OnPreflightSucceeded() override;
   NS_IMETHOD OnPreflightFailed(nsresult aError) override;
@@ -189,12 +198,15 @@ class nsHttpChannel final : public HttpBaseChannel,
   [[nodiscard]] nsresult AddSecurityMessage(
       const nsAString& aMessageTag, const nsAString& aMessageCategory) override;
   NS_IMETHOD LogBlockedCORSRequest(const nsAString& aMessage,
-                                   const nsACString& aCategory) override;
+                                   const nsACString& aCategory,
+                                   bool aIsWarning) override;
   NS_IMETHOD LogMimeTypeMismatch(const nsACString& aMessageName, bool aWarning,
                                  const nsAString& aURL,
                                  const nsAString& aContentType) override;
 
   NS_IMETHOD SetEarlyHintObserver(nsIEarlyHintObserver* aObserver) override;
+  NS_IMETHOD SetWebTransportSessionEventListener(
+      WebTransportSessionEventListener* aListener) override;
 
   void SetWarningReporter(HttpChannelSecurityWarningReporter* aReporter);
   HttpChannelSecurityWarningReporter* GetWarningReporter();
@@ -257,6 +269,9 @@ class nsHttpChannel final : public HttpBaseChannel,
       MozPromise<mozilla::ipc::Endpoint<extensions::PStreamFilterChild>, bool,
                  true>;
   [[nodiscard]] RefPtr<ChildEndpointPromise> AttachStreamFilter();
+
+  already_AddRefed<WebTransportSessionEventListener>
+  GetWebTransportSessionEventListener();
 
  private:  // used for alternate service validation
   RefPtr<TransactionObserver> mTransactionObserver;
@@ -394,9 +409,6 @@ class nsHttpChannel final : public HttpBaseChannel,
   [[nodiscard]] nsresult InstallCacheListener(int64_t offset = 0);
   void MaybeInvalidateCacheEntryForSubsequentGet();
   void AsyncOnExamineCachedResponse();
-
-  // Handle the bogus Content-Encoding Apache sometimes sends
-  void ClearBogusContentEncodingIfNeeded();
 
   // byte range request specific methods
   [[nodiscard]] nsresult ProcessPartialContent(
@@ -577,7 +589,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   AutoClose<nsIInputStream> mCacheInputStream;
   RefPtr<nsInputStreamPump> mCachePump;
   UniquePtr<nsHttpResponseHead> mCachedResponseHead;
-  nsCOMPtr<nsISupports> mCachedSecurityInfo;
+  nsCOMPtr<nsITransportSecurityInfo> mCachedSecurityInfo;
   uint32_t mPostID{0};
   uint32_t mRequestTime{0};
 
@@ -759,6 +771,7 @@ class nsHttpChannel final : public HttpBaseChannel,
   nsCOMPtr<nsITimer> mCacheOpenTimer;
   std::function<void(nsHttpChannel*)> mCacheOpenFunc;
   uint32_t mCacheOpenDelay = 0;
+  uint32_t mNetworkTriggerDelay = 0;
 
   // We need to remember which is the source of the response we are using.
   enum ResponseSource {
@@ -835,6 +848,7 @@ class nsHttpChannel final : public HttpBaseChannel,
 
   RefPtr<nsIEarlyHintObserver> mEarlyHintObserver;
   Maybe<nsCString> mOpenerCallingScriptLocation;
+  RefPtr<WebTransportSessionEventListener> mWebTransportSessionEventListener;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(nsHttpChannel, NS_HTTPCHANNEL_IID)

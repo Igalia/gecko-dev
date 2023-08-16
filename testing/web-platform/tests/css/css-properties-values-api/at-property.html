@@ -43,14 +43,28 @@ function test_descriptor(descriptor, specified_value, expected_value) {
 test_descriptor('syntax', '"<color>"', '<color>');
 test_descriptor('syntax', '"<color> | none"', '<color> | none');
 test_descriptor('syntax', '"<color># | <image> | none"', '<color># | <image> | none');
+test_descriptor('syntax', '"foo | <length>#"', 'foo | <length>#');
 test_descriptor('syntax', '"foo | bar | baz"', 'foo | bar | baz');
-test_descriptor('syntax', '"*"', '*');
 test_descriptor('syntax', '"notasyntax"', 'notasyntax');
+
+// syntax: universal
+for (const syntax of ["*", " * ", "* ", "\t*\t"]) {
+  test_descriptor('syntax', `"${syntax}"`, syntax);
+}
 
 test_descriptor('syntax', 'red', '');
 test_descriptor('syntax', 'rgb(255, 0, 0)', '');
 test_descriptor('syntax', '<color>', '');
 test_descriptor('syntax', 'foo | bar', '');
+
+// syntax: pipe between components
+test_descriptor('syntax', 'foo bar', '');
+test_descriptor('syntax', 'Foo <length>', '');
+test_descriptor('syntax', 'foo, bar', '');
+test_descriptor('syntax', '<length> <percentage>', '');
+
+// syntax: leaading bar
+test_descriptor('syntax', '|<length>', '');
 
 // initial-value
 test_descriptor('initial-value', '10px');
@@ -147,6 +161,11 @@ test_not_applied('<gandalf>', 'grey', false);
 test_not_applied('gandalf', 'grey', false);
 test_not_applied('<color>', 'notacolor', false);
 test_not_applied('<length>', '10em', false);
+
+test_not_applied('<transform-function>', 'translateX(1em)', false);
+test_not_applied('<transform-function>', 'translateY(1lh)', false);
+test_not_applied('<transform-list>', 'rotate(10deg) translateX(1em)', false);
+test_not_applied('<transform-list>', 'rotate(10deg) translateY(1lh)', false);
 
 // Inheritance
 

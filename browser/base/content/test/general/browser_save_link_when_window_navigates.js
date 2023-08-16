@@ -9,7 +9,6 @@ const ALWAYS_DOWNLOAD_DIR_PREF = "browser.download.useDownloadDir";
 const ALWAYS_ASK_PREF = "browser.download.always_ask_before_handling_new_types";
 const UCT_URI = "chrome://mozapps/content/downloads/unknownContentType.xhtml";
 
-/* import-globals-from ../../../../../toolkit/content/tests/browser/common/mockTransfer.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/toolkit/content/tests/browser/common/mockTransfer.js",
   this
@@ -44,14 +43,14 @@ function triggerSave(aWindow, aCallback) {
     windowObserver.setCallback(onUCTDialog);
   }
 
-  BrowserTestUtils.loadURI(testBrowser, testURI);
+  BrowserTestUtils.loadURIString(testBrowser, testURI);
 
   // Create the folder the link will be saved into.
   var destDir = createTemporarySaveDirectory();
   var destFile = destDir.clone();
 
   MockFilePicker.displayDirectory = destDir;
-  MockFilePicker.showCallback = function(fp) {
+  MockFilePicker.showCallback = function (fp) {
     info("showCallback");
     fileName = fp.defaultString;
     info("fileName: " + fileName);
@@ -61,7 +60,7 @@ function triggerSave(aWindow, aCallback) {
     info("done showCallback");
   };
 
-  mockTransferCallback = function(downloadSuccess) {
+  mockTransferCallback = function (downloadSuccess) {
     info("mockTransferCallback");
     onTransferComplete(aWindow, downloadSuccess, destDir);
     destDir.remove(true);
@@ -114,9 +113,9 @@ var windowObserver = {
 
     win.addEventListener(
       "load",
-      function(event) {
+      function (event) {
         if (win.location == UCT_URI) {
-          SimpleTest.executeSoon(function() {
+          SimpleTest.executeSoon(function () {
             if (windowObserver._callback) {
               windowObserver._callback(win);
               delete windowObserver._callback;
@@ -165,7 +164,7 @@ function test() {
 
   mockTransferRegisterer.register();
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     info("Running the cleanup code");
     mockTransferRegisterer.unregister();
     MockFilePicker.cleanup();
@@ -184,13 +183,13 @@ function test() {
       false
     )}`
   );
-  testOnWindow(undefined, function(win) {
+  testOnWindow(undefined, function (win) {
     let windowGonePromise = BrowserTestUtils.domWindowClosed(win);
     Services.prefs.setBoolPref(SAVE_PER_SITE_PREF, true);
-    triggerSave(win, async function() {
+    triggerSave(win, async function () {
       await windowGonePromise;
       Services.prefs.setBoolPref(SAVE_PER_SITE_PREF, false);
-      testOnWindow(undefined, function(win2) {
+      testOnWindow(undefined, function (win2) {
         triggerSave(win2, finish);
       });
     });

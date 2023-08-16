@@ -214,7 +214,7 @@ bool SocketProcessParent::DeallocPWebrtcTCPSocketParent(
 already_AddRefed<PDNSRequestParent> SocketProcessParent::AllocPDNSRequestParent(
     const nsACString& aHost, const nsACString& aTrrServer, const int32_t& port,
     const uint16_t& aType, const OriginAttributes& aOriginAttributes,
-    const uint32_t& aFlags) {
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestHandler> handler = new DNSRequestHandler();
   RefPtr<DNSRequestParent> actor = new DNSRequestParent(handler);
   return actor.forget();
@@ -223,7 +223,8 @@ already_AddRefed<PDNSRequestParent> SocketProcessParent::AllocPDNSRequestParent(
 mozilla::ipc::IPCResult SocketProcessParent::RecvPDNSRequestConstructor(
     PDNSRequestParent* aActor, const nsACString& aHost,
     const nsACString& aTrrServer, const int32_t& port, const uint16_t& aType,
-    const OriginAttributes& aOriginAttributes, const uint32_t& aFlags) {
+    const OriginAttributes& aOriginAttributes,
+    const nsIDNSService::DNSFlags& aFlags) {
   RefPtr<DNSRequestParent> actor = static_cast<DNSRequestParent*>(aActor);
   RefPtr<DNSRequestHandler> handler =
       actor->GetDNSRequest()->AsDNSRequestHandler();
@@ -292,32 +293,20 @@ mozilla::ipc::IPCResult SocketProcessParent::RecvCachePushCheck(
 class DeferredDeleteSocketProcessParent : public Runnable {
  public:
   explicit DeferredDeleteSocketProcessParent(
-      UniquePtr<SocketProcessParent>&& aParent)
+      RefPtr<SocketProcessParent>&& aParent)
       : Runnable("net::DeferredDeleteSocketProcessParent"),
         mParent(std::move(aParent)) {}
 
   NS_IMETHODIMP Run() override { return NS_OK; }
 
  private:
-  UniquePtr<SocketProcessParent> mParent;
+  RefPtr<SocketProcessParent> mParent;
 };
 
 /* static */
-void SocketProcessParent::Destroy(UniquePtr<SocketProcessParent>&& aParent) {
+void SocketProcessParent::Destroy(RefPtr<SocketProcessParent>&& aParent) {
   NS_DispatchToMainThread(
       new DeferredDeleteSocketProcessParent(std::move(aParent)));
-}
-
-mozilla::ipc::IPCResult SocketProcessParent::RecvODoHServiceActivated(
-    const bool& aActivated) {
-  nsCOMPtr<nsIObserverService> observerService =
-      mozilla::services::GetObserverService();
-
-  if (observerService) {
-    observerService->NotifyObservers(nullptr, "odoh-service-activated",
-                                     aActivated ? u"true" : u"false");
-  }
-  return IPC_OK();
 }
 
 mozilla::ipc::IPCResult SocketProcessParent::RecvExcludeHttp2OrHttp3(

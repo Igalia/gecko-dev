@@ -4,10 +4,12 @@
 
 "use strict";
 
-const { BrowserToolboxLauncher } = ChromeUtils.import(
-  "resource://devtools/client/framework/browser-toolbox/Launcher.jsm"
+const { BrowserToolboxLauncher } = ChromeUtils.importESModule(
+  "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs"
 );
-const { DevToolsClient } = require("devtools/client/devtools-client");
+const {
+  DevToolsClient,
+} = require("resource://devtools/client/devtools-client.js");
 
 /**
  * Open up a browser toolbox and return a ToolboxTask object for interacting
@@ -24,9 +26,6 @@ const { DevToolsClient } = require("devtools/client/devtools-client");
  *   Destroy the browser toolbox and make sure it exits cleanly.
  *
  * @param {Object}:
- *        - {Boolean} enableBrowserToolboxFission: pass true to enable the OBT.
- *        - {Boolean} enableContentMessages: pass true to log content messages
- *          in the Console.
  *        - {Function} existingProcessClose: if truth-y, connect to an existing
  *          browser toolbox process rather than launching a new one and
  *          connecting to it.  The given function is expected to return an
@@ -34,11 +33,7 @@ const { DevToolsClient } = require("devtools/client/devtools-client");
  *          awaited in the returned `destroy()` function.  `exitCode` is
  *          asserted to be 0 (success).
  */
-async function initBrowserToolboxTask({
-  enableBrowserToolboxFission,
-  enableContentMessages,
-  existingProcessClose,
-} = {}) {
+async function initBrowserToolboxTask({ existingProcessClose } = {}) {
   if (AppConstants.ASAN) {
     ok(
       false,
@@ -51,13 +46,9 @@ async function initBrowserToolboxTask({
   await pushPref("devtools.browsertoolbox.enable-test-server", true);
   await pushPref("devtools.debugger.prompt-connection", false);
 
-  if (enableBrowserToolboxFission) {
-    await pushPref("devtools.browsertoolbox.fission", true);
-  }
-
   // This rejection seems to affect all tests using the browser toolbox.
-  ChromeUtils.import(
-    "resource://testing-common/PromiseTestUtils.jsm"
+  ChromeUtils.importESModule(
+    "resource://testing-common/PromiseTestUtils.sys.mjs"
   ).PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
   let process;
@@ -77,10 +68,6 @@ async function initBrowserToolboxTask({
     );
   } else {
     ok(true, "Connecting to existing browser toolbox");
-    ok(
-      !enableBrowserToolboxFission,
-      "Not trying to control preferences in existing browser toolbox"
-    );
   }
 
   // The port of the DevToolsServer installed in the toolbox process is fixed.
@@ -103,19 +90,11 @@ async function initBrowserToolboxTask({
   const client = new DevToolsClient(transport);
   await client.connect();
 
-  const descriptorFront = await client.mainRoot.getMainProcess();
-  const target = await descriptorFront.getTarget();
+  const commands = await CommandsFactory.forMainProcess({ client });
+  const target = await commands.descriptorFront.getTarget();
   const consoleFront = await target.getFront("console");
 
   ok(true, "Connected");
-
-  if (enableContentMessages) {
-    const preferenceFront = await client.mainRoot.getFront("preference");
-    await preferenceFront.setBoolPref(
-      "devtools.browserconsole.contentMessages",
-      true
-    );
-  }
 
   await importFunctions({
     info: msg => dump(msg + "\n"),
@@ -209,7 +188,7 @@ async function initBrowserToolboxTask({
   async function destroy() {
     // No need to do anything if `destroy` was already called.
     if (destroyed) {
-      return null;
+      return;
     }
 
     const closePromise = existingProcessClose
@@ -236,7 +215,7 @@ async function initBrowserToolboxTask({
       );
     }
 
-    await client.close();
+    await commands.destroy();
     destroyed = true;
   }
 

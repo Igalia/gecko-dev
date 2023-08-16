@@ -79,7 +79,7 @@ add_task(async function testSimpleSourcesWithManualClickExpand() {
   await assertNodeIsFocused(dbg, 5);
 
   // Make sure new sources appear in the list.
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     const script = content.document.createElement("script");
     script.src = "math.min.js";
     content.document.body.appendChild(script);
@@ -109,8 +109,12 @@ add_task(async function testSimpleSourcesWithManualClickExpand() {
 
   info("Test the copy to clipboard context menu");
   const mathMinTreeNode = findSourceNodeWithText(dbg, "math.min.js");
-  await triggerCopySourceContextMenu(dbg, mathMinTreeNode);
-  const clipboardData = SpecialPowers.getClipboardData("text/unicode");
+  await triggerSourceTreeContextMenu(
+    dbg,
+    mathMinTreeNode,
+    "#node-menu-copy-source"
+  );
+  const clipboardData = SpecialPowers.getClipboardData("text/plain");
   is(
     clipboardData,
     EXAMPLE_URL + "math.min.js",
@@ -121,13 +125,17 @@ add_task(async function testSimpleSourcesWithManualClickExpand() {
   // Before trigerring the menu, mock the file picker
   const MockFilePicker = SpecialPowers.MockFilePicker;
   MockFilePicker.init(window);
-  const nsiFile = FileUtils.getFile("TmpD", [
-    `export_source_content_${Date.now()}.log`,
-  ]);
+  const nsiFile = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, `export_source_content_${Date.now()}.log`)
+  );
   MockFilePicker.setFiles([nsiFile]);
   const path = nsiFile.path;
 
-  await triggerDownloadFileContextMenu(dbg, mathMinTreeNode);
+  await triggerSourceTreeContextMenu(
+    dbg,
+    mathMinTreeNode,
+    "#node-menu-download-file"
+  );
 
   info("Wait for the downloaded file to be fully saved to disk");
   await BrowserTestUtils.waitForCondition(() => IOUtils.exists(path));
@@ -303,49 +311,44 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
   info(
     "Assert the number of sources and source actors for the same-url.sjs sources"
   );
-  const mainThreadSameUrlSource = findSourceInThread(
-    dbg,
-    "same-url.sjs",
-    "Main Thread"
-  );
-  ok(mainThreadSameUrlSource, "Found same-url.js in the main thread");
+  const sameUrlSource = findSource(dbg, "same-url.sjs");
+  ok(sameUrlSource, "Found same-url.js in the main thread");
+
+  const sourceActors = dbg.selectors.getSourceActorsForSource(sameUrlSource.id);
+
+  const mainThread = dbg.selectors
+    .getAllThreads()
+    .find(thread => thread.name == "Main Thread");
+
   is(
-    dbg.selectors.getSourceActorsForSource(mainThreadSameUrlSource.id).length,
+    sourceActors.filter(actor => actor.thread == mainThread.actor).length,
     // When EFT is disabled the iframe's source is meld into the main target
     isEveryFrameTargetEnabled() ? 3 : 4,
     "same-url.js is loaded 3 times in the main thread"
   );
 
-  const iframeSameUrlSource = findSourceInThread(
-    dbg,
-    "same-url.sjs",
-    testServer.urlFor("iframe.html")
-  );
   if (isEveryFrameTargetEnabled()) {
-    ok(iframeSameUrlSource, "Found same-url.js in the iframe thread");
+    const iframeThread = dbg.selectors
+      .getAllThreads()
+      .find(thread => thread.name == testServer.urlFor("iframe.html"));
+
     is(
-      dbg.selectors.getSourceActorsForSource(iframeSameUrlSource.id).length,
+      sourceActors.filter(actor => actor.thread == iframeThread.actor).length,
       1,
       "same-url.js is loaded one time in the iframe thread"
     );
-  } else {
-    ok(
-      !iframeSameUrlSource,
-      "When EFT is off, the iframe source is into the main thread bucket"
-    );
   }
 
-  const workerSameUrlSource = findSourceInThread(
-    dbg,
-    "same-url.sjs",
-    testServer.urlFor("same-url.sjs")
-  );
-  ok(workerSameUrlSource, "Found same-url.js in the worker thread");
+  const workerThread = dbg.selectors
+    .getAllThreads()
+    .find(thread => thread.name == testServer.urlFor("same-url.sjs"));
+
   is(
-    dbg.selectors.getSourceActorsForSource(workerSameUrlSource.id).length,
+    sourceActors.filter(actor => actor.thread == workerThread.actor).length,
     1,
     "same-url.js is loaded one time in the worker thread"
   );
+
   const workerThreadItem = findSourceTreeThreadByName(dbg, "same-url.sjs");
   ok(workerThreadItem, "Found the thread item for the worker");
   ok(
@@ -358,13 +361,19 @@ add_task(async function testSourceTreeOnTheIntegrationTestPage() {
   assertSourceIcon(dbg, "script.js", "javascript");
   assertSourceIcon(dbg, "query.js?x=1", "javascript");
   assertSourceIcon(dbg, "original.js", "javascript");
+  // Framework icons are only displayed when we parse the source,
+  // which happens when we select the source
+  assertSourceIcon(dbg, "react-component-module.js", "javascript");
+  await selectSource(dbg, "react-component-module.js");
+  assertSourceIcon(dbg, "react-component-module.js", "react");
+
   info("Verify blackbox source icon");
   await selectSource(dbg, "script.js");
   await clickElement(dbg, "blackbox");
-  await waitForDispatch(dbg.store, "BLACKBOX");
+  await waitForDispatch(dbg.store, "BLACKBOX_WHOLE_SOURCES");
   assertSourceIcon(dbg, "script.js", "blackBox");
   await clickElement(dbg, "blackbox");
-  await waitForDispatch(dbg.store, "BLACKBOX");
+  await waitForDispatch(dbg.store, "UNBLACKBOX_WHOLE_SOURCES");
   assertSourceIcon(dbg, "script.js", "javascript");
 
   info("Assert the content of the named eval");
@@ -473,6 +482,62 @@ add_task(async function testSourceTreeWithWebExtensionContentScript() {
   await extension.unload();
 });
 
+add_task(async function testSourceTreeWithEncodedPaths() {
+  const httpServer = createTestHTTPServer();
+  httpServer.registerContentType("html", "text/html");
+  httpServer.registerContentType("js", "application/javascript");
+
+  httpServer.registerPathHandler("/index.html", function (request, response) {
+    response.setStatusLine(request.httpVersion, 200, "OK");
+    response.write(`<!DOCTYPE html>
+    <html>
+      <head>
+      <script src="/my folder/my file.js"></script>
+      <script src="/malformedUri.js?%"></script>
+      </head>
+      <body>
+      <h1>Encoded scripts paths</h1>
+      </body>
+    `);
+  });
+  httpServer.registerPathHandler(
+    encodeURI("/my folder/my file.js"),
+    function (request, response) {
+      response.setStatusLine(request.httpVersion, 200, "OK");
+      response.setHeader("Content-Type", "application/javascript", false);
+      response.write(`const x = 42`);
+    }
+  );
+  httpServer.registerPathHandler(
+    "/malformedUri.js",
+    function (request, response) {
+      response.setStatusLine(request.httpVersion, 200, "OK");
+      response.setHeader("Content-Type", "application/javascript", false);
+      response.write(`const y = "malformed"`);
+    }
+  );
+  const port = httpServer.identity.primaryPort;
+
+  const dbg = await initDebuggerWithAbsoluteURL(
+    `http://localhost:${port}/index.html`,
+    "my file.js"
+  );
+
+  await waitForSourcesInSourceTree(dbg, ["my file.js", "malformedUri.js?%"]);
+  ok(
+    true,
+    "source name are decoded in the tree, and malformed uri source are displayed"
+  );
+  is(
+    // We don't have any specific class on the folder item, so let's target the folder
+    // icon next sibling, which is the directory label.
+    findElementWithSelector(dbg, ".sources-panel .node .folder + .label")
+      .innerText,
+    "my folder",
+    "folder name is decoded in the tree"
+  );
+});
+
 /**
  * Assert the location displayed in the breakpoint list, in the right sidebar.
  *
@@ -486,26 +551,4 @@ function assertBreakpointHeading(dbg, label, index) {
   const breakpointHeading = findAllElements(dbg, "breakpointHeadings")[index]
     .innerText;
   is(breakpointHeading, label, `Breakpoint heading is ${label}`);
-}
-
-async function triggerCopySourceContextMenu(dbg, treeNode) {
-  const onContextMenu = waitForContextMenu(dbg);
-  rightClickEl(dbg, treeNode);
-  const menupopup = await onContextMenu;
-  const onHidden = new Promise(resolve => {
-    menupopup.addEventListener("popuphidden", resolve, { once: true });
-  });
-  selectContextMenuItem(dbg, "#node-menu-copy-source");
-  await onHidden;
-}
-
-async function triggerDownloadFileContextMenu(dbg, treeNode) {
-  const onContextMenu = waitForContextMenu(dbg);
-  rightClickEl(dbg, treeNode);
-  const menupopup = await onContextMenu;
-  const onHidden = new Promise(resolve => {
-    menupopup.addEventListener("popuphidden", resolve, { once: true });
-  });
-  selectContextMenuItem(dbg, "#node-menu-download-file");
-  await onHidden;
 }

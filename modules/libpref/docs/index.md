@@ -118,7 +118,7 @@ See also the section on static prefs below.
 
 ### Static prefs
 There is a special kind of pref called a static pref. Static prefs are defined
-in `StaticPrefList.yaml`.
+in `StaticPrefList.yaml`. See that file for more documentation.
 
 If a static pref is defined in both `StaticPrefList.yaml` and a pref data
 file, the latter definition will take precedence. A pref shouldn't appear in
@@ -139,7 +139,10 @@ Each static pref has a *mirror* kind.
 An `always` or `once` static pref can only be used for prefs with
 bool/int/float values, not strings or complex values.
 
-Each mirror variable is read-only, accessible via a getter function.
+Each mirror variable is read-only, accessible via a getter function. The base
+name of the getter function is the same as the pref's name, but with '.' or '-'
+converted to '_'. Sometimes a suffix is added, e.g. _AtStartup for the mirror
+once kind.
 
 Mirror variables have two benefits. First, they allow C++ and Rust code to get
 the pref value directly from the variable instead of requiring a slow hash
@@ -160,21 +163,20 @@ the deletion. The cleanest solution is probably to disallow static prefs from
 being deleted.
 
 ### Sanitized Prefs
-We restrict certain prefs from entering certain subprocesses. In subprocesses,
-a preference may be marked as 'Sanitized' to indicate that it may or may not
-have a user value, but that value is not present in this process.  In the
-parent process no pref is marked as Sanitized.
+We restrict certain prefs from entering web content subprocesses. In these
+processes, a preference may be marked as 'Sanitized' to indicate that it may
+or may not have a user value, but that value is not present in this process.
+In the parent process no pref is marked as Sanitized.
 
-Pref Sanitization is overloaded for two purposes:
+Pref Sanitization is used for two purposes:
  1. To protect private user data that may be stored in preferences from a
     Spectre adversary.
- 2. To reduce IPC use for commonly modified preferences.
+ 2. To reduce IPC use and thread wake-ups for commonly modified preferences.
 
 A pref is sanitized from entering the web content process if it matches a
-denylist _or_ it is a dynamically-named string preference.
-
-A pref is sanitized from entering other subprocesses if it matches the
-denylist.
+denylist _or_ it is a dynamically-named string preference (that is not
+exempted via an allowlist), See `ShouldSanitizePreference` in
+`Preferences.cpp`.
 
 ### Loading and Saving
 Default pref values are initialized from various pref data files. Notable ones
@@ -231,7 +233,7 @@ activity.
 ### about:support
 about:support contains an "Important Modified Preferences" table. It contains
 all prefs that (a) have had their value changed from the default, and (b) whose
-prefix match a allowlist in `Troubleshoot.jsm`. The allowlist matching is to
+prefix match a allowlist in `Troubleshoot.sys.mjs`. The allowlist matching is to
 avoid exposing pref values that might be privacy-sensitive.
 
 **Problem:** The allowlist of prefixes is specified separately from the prefs
@@ -368,7 +370,7 @@ values as the parent process.
 ### Child process startup (parent side)
 When the first child process is created, the parent process serializes most of
 its hash table into a shared, immutable snapshot. This snapshot is stored in a
-shared memory region managed by a `SharedPrefMap` instance. 
+shared memory region managed by a `SharedPrefMap` instance.
 
 Sanitized preferences (matching _either_ the denylist of the dynamically named
 heuristic) are not included in the shared memory region. After building the

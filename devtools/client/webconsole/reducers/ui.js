@@ -9,7 +9,6 @@ const {
   PERSIST_TOGGLE,
   REVERSE_SEARCH_INPUT_TOGGLE,
   SELECT_NETWORK_MESSAGE_TAB,
-  SHOW_CONTENT_MESSAGES_TOGGLE,
   SHOW_OBJECT_IN_SIDEBAR,
   SIDEBAR_CLOSE,
   SPLIT_CONSOLE_CLOSE_BUTTON_TOGGLE,
@@ -21,9 +20,11 @@ const {
   EDITOR_PRETTY_PRINT,
   EDITOR_SET_WIDTH,
   ENABLE_NETWORK_MONITORING,
-} = require("devtools/client/webconsole/constants");
+} = require("resource://devtools/client/webconsole/constants.js");
 
-const { PANELS } = require("devtools/client/netmonitor/src/constants");
+const {
+  PANELS,
+} = require("resource://devtools/client/netmonitor/src/constants.js");
 
 const UiState = overrides =>
   Object.freeze(
@@ -32,7 +33,6 @@ const UiState = overrides =>
         initialized: false,
         networkMessageActiveTabId: PANELS.HEADERS,
         persistLogs: false,
-        showContentMessages: false,
         sidebarVisible: false,
         timestampsVisible: true,
         frontInSidebar: null,
@@ -57,8 +57,6 @@ function ui(state = UiState(), action) {
   switch (action.type) {
     case PERSIST_TOGGLE:
       return { ...state, persistLogs: !state.persistLogs };
-    case SHOW_CONTENT_MESSAGES_TOGGLE:
-      return { ...state, showContentMessages: !state.showContentMessages };
     case TIMESTAMPS_TOGGLE:
       return { ...state, timestampsVisible: !state.timestampsVisible };
     case SELECT_NETWORK_MESSAGE_TAB:

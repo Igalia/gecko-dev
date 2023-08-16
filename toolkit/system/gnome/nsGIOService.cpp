@@ -17,8 +17,10 @@
 #include "mozilla/GUniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "mozilla/WidgetUtilsGtk.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/StaticPrefs_widget.h"
 #include "mozilla/net/DNS.h"
+#include "prenv.h"
 
 #include <gio/gio.h>
 #include <gtk/gtk.h>
@@ -216,7 +218,8 @@ nsGIOMimeApp::Equals(nsIHandlerApp* aHandlerApp, bool* _retval) {
   return NS_OK;
 }
 
-static RefPtr<GAppLaunchContext> GetLaunchContext() {
+static RefPtr<GAppLaunchContext> GetLaunchContext(
+    const char* aXDGToken = nullptr) {
   RefPtr<GAppLaunchContext> context = dont_AddRef(g_app_launch_context_new());
   // Unset this before launching third-party MIME handlers. Otherwise, if
   // Thunderbird sets this in its startup script (as it does in Debian and
@@ -224,12 +227,81 @@ static RefPtr<GAppLaunchContext> GetLaunchContext() {
   // Debian), then Firefox will think it is part of Thunderbird and try to make
   // Thunderbird the default browser. See bug 1494436.
   g_app_launch_context_unsetenv(context, "MOZ_APP_LAUNCHER");
+  if (aXDGToken) {
+    g_app_launch_context_setenv(context, "XDG_ACTIVATION_TOKEN", aXDGToken);
+  }
   return context;
 }
 
-NS_IMETHODIMP
-nsGIOMimeApp::LaunchWithURI(nsIURI* aUri,
-                            mozilla::dom::BrowsingContext* aBrowsingContext) {
+#ifdef __OpenBSD__
+// wrappers required for OpenBSD sandboxing with unveil()
+gboolean g_app_info_launch_uris_openbsd(GAppInfo* mApp, const char* uri,
+                                        GAppLaunchContext* context,
+                                        GError** error) {
+  gchar* path = g_filename_from_uri(uri, NULL, NULL);
+  auto releasePath = MakeScopeExit([&] { g_free(path); });
+  const gchar* bin = g_app_info_get_executable(mApp);
+  if (!bin) {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "no executable found for %s, maybe not unveiled ?",
+                g_app_info_get_name(mApp));
+    return FALSE;
+  }
+  g_debug("spawning %s %s for %s", bin, path, uri);
+  const gchar* const argv[] = {bin, path, NULL};
+
+  GSpawnFlags flags =
+      static_cast<GSpawnFlags>(G_SPAWN_SEARCH_PATH | G_SPAWN_DO_NOT_REAP_CHILD);
+  gboolean result =
+      g_spawn_async(NULL, (char**)argv, NULL, flags, NULL, NULL, NULL, error);
+
+  if (!result) {
+    g_warning("Cannot launch application %s with arg %s: %s", bin, path,
+              (*error)->message);
+    return FALSE;
+  }
+  return TRUE;
+}
+
+gboolean g_app_info_launch_default_for_uri_openbsd(const char* uri,
+                                                   GAppLaunchContext* context,
+                                                   GError** error) {
+  gboolean result_uncertain;
+  gchar* path = g_filename_from_uri(uri, NULL, NULL);
+  gchar* content_type = g_content_type_guess(path, NULL, 0, &result_uncertain);
+  gchar* scheme = g_uri_parse_scheme(uri);
+  auto release = MakeScopeExit([&] {
+    g_free(path);
+    g_free(content_type);
+    g_free(scheme);
+  });
+  if (g_strcmp0(scheme, "http") == 0 || g_strcmp0(scheme, "https") == 0)
+    return g_app_info_launch_default_for_uri(uri, context, error);
+
+  if (content_type != NULL && !result_uncertain) {
+    g_debug("content type for %s: %s", uri, content_type);
+    GAppInfo* app_info = g_app_info_get_default_for_type(content_type, false);
+    auto releaseAppInfo = MakeScopeExit([&] {
+      if (app_info) g_object_unref(app_info);
+    });
+    if (!app_info) {
+      g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                  "Could not find default handler for content type %s",
+                  content_type);
+      return FALSE;
+    } else {
+      return g_app_info_launch_uris_openbsd(app_info, uri, context, error);
+    }
+  } else {
+    g_set_error(error, G_IO_ERROR, G_IO_ERROR_FAILED,
+                "Could not find content type for URI: %s", uri);
+    return FALSE;
+  }
+}
+#endif
+
+static NS_IMETHODIMP LaunchWithURIImpl(RefPtr<GAppInfo> aInfo, nsIURI* aUri,
+                                       const char* aXDGToken = nullptr) {
   GList uris = {0};
   nsCString spec;
   aUri->GetSpec(spec);
@@ -237,13 +309,39 @@ nsGIOMimeApp::LaunchWithURI(nsIURI* aUri,
   uris.data = const_cast<char*>(spec.get());
 
   GUniquePtr<GError> error;
+#ifdef __OpenBSD__
+  gboolean result = g_app_info_launch_uris_openbsd(
+      aInfo, spec.get(), GetLaunchContext(aXDGToken).get(),
+      getter_Transfers(error));
+#else
   gboolean result = g_app_info_launch_uris(
-      mApp, &uris, GetLaunchContext().get(), getter_Transfers(error));
+      aInfo, &uris, GetLaunchContext(aXDGToken).get(), getter_Transfers(error));
+#endif
   if (!result) {
     g_warning("Cannot launch application: %s", error->message);
     return NS_ERROR_FAILURE;
   }
 
+  return NS_OK;
+}
+
+NS_IMETHODIMP
+nsGIOMimeApp::LaunchWithURI(nsIURI* aUri,
+                            mozilla::dom::BrowsingContext* aBrowsingContext) {
+  auto promise = mozilla::widget::RequestWaylandFocusPromise();
+  if (!promise) {
+    return LaunchWithURIImpl(mApp, aUri);
+  }
+  promise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      /* resolve */
+      [app = RefPtr{mApp}, uri = RefPtr{aUri}](nsCString token) {
+        LaunchWithURIImpl(app, uri, token.get());
+      },
+      /* reject */
+      [app = RefPtr{mApp}, uri = RefPtr{aUri}](bool state) {
+        LaunchWithURIImpl(app, uri);
+      });
   return NS_OK;
 }
 
@@ -494,23 +592,24 @@ nsGIOService::GetAppForMimeType(const nsACString& aMimeType,
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-#if defined(__OpenBSD__) && defined(MOZ_SANDBOX)
-  // g_app_info_get_default_for_type will fail on OpenBSD's veiled filesystem
-  // since we most likely don't have direct access to the binaries that are
-  // registered as defaults for this type.  Fake it up by just executing
-  // xdg-open via gio-launch-desktop (which we do have access to) and letting
-  // it figure out which program to execute for this MIME type
-  RefPtr<GAppInfo> app_info = dont_AddRef(g_app_info_create_from_commandline(
-      "/usr/local/bin/xdg-open",
-      nsPrintfCString("System default for %s", content_type.get()).get(),
-      G_APP_INFO_CREATE_NONE, NULL));
-#else
   RefPtr<GAppInfo> app_info =
       dont_AddRef(g_app_info_get_default_for_type(content_type.get(), false));
-#endif
   if (!app_info) {
     return NS_ERROR_FAILURE;
   }
+#ifdef __OpenBSD__
+  char* t;
+  t = g_find_program_in_path(g_app_info_get_executable(app_info));
+  if (t != nullptr) {
+    g_debug("%s is registered as handler for %s, binary available as %s",
+            g_app_info_get_executable(app_info), content_type.get(), t);
+  } else {
+    g_warning(
+        "%s is registered as handler for %s but not available in PATH "
+        "(missing unveil ?)",
+        g_app_info_get_executable(app_info), content_type.get());
+  }
+#endif
   RefPtr<nsGIOMimeApp> mozApp = new nsGIOMimeApp(app_info.forget());
   mozApp.forget(aApp);
   return NS_OK;
@@ -534,12 +633,18 @@ nsGIOService::GetDescriptionForMimeType(const nsACString& aMimeType,
   return NS_OK;
 }
 
-nsresult nsGIOService::ShowURI(nsIURI* aURI) {
+static nsresult ShowURIImpl(nsIURI* aURI, const char* aXDGToken = nullptr) {
   nsAutoCString spec;
   MOZ_TRY(aURI->GetSpec(spec));
   GUniquePtr<GError> error;
-  if (!g_app_info_launch_default_for_uri(spec.get(), GetLaunchContext().get(),
-                                         getter_Transfers(error))) {
+#ifdef __OpenBSD__
+  if (!g_app_info_launch_default_for_uri_openbsd(
+          spec.get(), GetLaunchContext(aXDGToken).get(),
+#else
+  if (!g_app_info_launch_default_for_uri(spec.get(),
+                                         GetLaunchContext(aXDGToken).get(),
+#endif
+          getter_Transfers(error))) {
     g_warning("Could not launch default application for URI: %s",
               error->message);
     return NS_ERROR_FAILURE;
@@ -547,13 +652,34 @@ nsresult nsGIOService::ShowURI(nsIURI* aURI) {
   return NS_OK;
 }
 
-static nsresult LaunchPath(const nsACString& aPath) {
+nsresult nsGIOService::ShowURI(nsIURI* aURI) {
+  auto promise = mozilla::widget::RequestWaylandFocusPromise();
+  if (!promise) {
+    return ShowURIImpl(aURI);
+  }
+  promise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      /* resolve */
+      [uri = RefPtr{aURI}](nsCString token) { ShowURIImpl(uri, token.get()); },
+      /* reject */
+      [uri = RefPtr{aURI}](bool state) { ShowURIImpl(uri); });
+  return NS_OK;
+}
+
+static nsresult LaunchPathImpl(const nsACString& aPath,
+                               const char* aXDGToken = nullptr) {
   RefPtr<GFile> file = dont_AddRef(
       g_file_new_for_commandline_arg(PromiseFlatCString(aPath).get()));
   GUniquePtr<char> spec(g_file_get_uri(file));
   GUniquePtr<GError> error;
-  g_app_info_launch_default_for_uri(spec.get(), GetLaunchContext().get(),
-                                    getter_Transfers(error));
+#ifdef __OpenBSD__
+  g_app_info_launch_default_for_uri_openbsd(spec.get(),
+                                            GetLaunchContext(aXDGToken).get(),
+#else
+  g_app_info_launch_default_for_uri(spec.get(),
+                                    GetLaunchContext(aXDGToken).get(),
+#endif
+                                            getter_Transfers(error));
   if (error) {
     g_warning("Cannot launch default application: %s", error->message);
     return NS_ERROR_FAILURE;
@@ -561,8 +687,29 @@ static nsresult LaunchPath(const nsACString& aPath) {
   return NS_OK;
 }
 
+static nsresult LaunchPath(const nsACString& aPath) {
+  auto promise = mozilla::widget::RequestWaylandFocusPromise();
+  if (!promise) {
+    return LaunchPathImpl(aPath);
+  }
+  promise->Then(
+      GetMainThreadSerialEventTarget(), __func__,
+      /* resolve */
+      [path = nsCString{aPath}](nsCString token) {
+        LaunchPathImpl(path, token.get());
+      },
+      /* reject */
+      [path = nsCString{aPath}](bool state) { LaunchPathImpl(path); });
+  return NS_OK;
+}
+
 nsresult nsGIOService::LaunchFile(const nsACString& aPath) {
   return LaunchPath(aPath);
+}
+
+nsresult nsGIOService::GetIsRunningUnderFlatpak(bool* aResult) {
+  *aResult = mozilla::widget::IsRunningUnderFlatpak();
+  return NS_OK;
 }
 
 static nsresult RevealDirectory(nsIFile* aFile, bool aForce) {

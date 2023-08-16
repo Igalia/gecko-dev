@@ -11,13 +11,13 @@ async function installTrigger(filename) {
       ["xpinstall.userActivation.required", false],
     ],
   });
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, INSTALL_PAGE);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, INSTALL_PAGE);
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [`${BASE}/${filename}`],
-    async function(url) {
+    async function (url) {
       content.wrappedJSObject.installTrigger(url);
     }
   );

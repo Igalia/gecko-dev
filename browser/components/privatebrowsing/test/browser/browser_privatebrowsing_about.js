@@ -23,7 +23,7 @@ async function testLinkOpensUrl({ win, tab, elementId, expectedUrl }) {
   let loadedPromise = BrowserTestUtils.waitForNewTab(win.gBrowser, url =>
     url.startsWith(expectedUrl)
   );
-  await SpecialPowers.spawn(tab, [elementId], async function(elemId) {
+  await SpecialPowers.spawn(tab, [elementId], async function (elemId) {
     content.document.getElementById(elemId).click();
   });
   await loadedPromise;
@@ -37,7 +37,7 @@ async function testLinkOpensUrl({ win, tab, elementId, expectedUrl }) {
 let expectedEngineAlias;
 let expectedIconURL;
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.separatePrivateDefault", true],
@@ -50,12 +50,18 @@ add_setup(async function() {
   const originalPrivateDefault = await Services.search.getDefaultPrivate();
   // We have to use a built-in engine as we are currently hard-coding the aliases.
   const privateEngine = await Services.search.getEngineByName("DuckDuckGo");
-  await Services.search.setDefaultPrivate(privateEngine);
+  await Services.search.setDefaultPrivate(
+    privateEngine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
   expectedEngineAlias = privateEngine.aliases[0];
   expectedIconURL = privateEngine.iconURI.spec;
 
   registerCleanupFunction(async () => {
-    await Services.search.setDefaultPrivate(originalPrivateDefault);
+    await Services.search.setDefaultPrivate(
+      originalPrivateDefault,
+      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+    );
   });
 });
 
@@ -64,7 +70,7 @@ add_setup(async function() {
  */
 add_task(async function test_myths_link() {
   Services.prefs.setCharPref("app.support.baseURL", "https://example.com/");
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     Services.prefs.clearUserPref("app.support.baseURL");
   });
 
@@ -94,7 +100,7 @@ function urlBarHasNormalFocus(win) {
 add_task(async function test_search_icon() {
   let { win, tab } = await openAboutPrivateBrowsing();
 
-  await SpecialPowers.spawn(tab, [expectedIconURL], async function(iconURL) {
+  await SpecialPowers.spawn(tab, [expectedIconURL], async function (iconURL) {
     is(
       content.document.body.getAttribute("style"),
       `--newtab-search-icon: url(${iconURL});`,
@@ -111,7 +117,7 @@ add_task(async function test_search_icon() {
 add_task(async function test_search_handoff_on_keydown() {
   let { win, tab } = await openAboutPrivateBrowsing();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     let btn = content.document.getElementById("search-handoff-button");
     btn.click();
     ok(btn.classList.contains("focused"), "in-content search has focus styles");
@@ -123,7 +129,7 @@ add_task(async function test_search_handoff_on_keydown() {
   let searchPromise = UrlbarTestUtils.promiseSearchComplete(win);
 
   await new Promise(r => EventUtils.synthesizeKey("f", {}, win, r));
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       content.document
         .getElementById("search-handoff-button")
@@ -140,7 +146,7 @@ add_task(async function test_search_handoff_on_keydown() {
 
   // Hitting ESC should reshow the in-content search
   await new Promise(r => EventUtils.synthesizeKey("KEY_Escape", {}, win, r));
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       !content.document
         .getElementById("search-handoff-button")
@@ -158,7 +164,7 @@ add_task(async function test_search_handoff_on_keydown() {
 add_task(async function test_search_handoff_on_composition_start() {
   let { win, tab } = await openAboutPrivateBrowsing();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     content.document.getElementById("search-handoff-button").click();
   });
   ok(urlBarHasHiddenFocus(win), "Urlbar has hidden focus");
@@ -176,7 +182,7 @@ add_task(async function test_search_handoff_on_composition_start() {
 add_task(async function test_search_handoff_on_paste() {
   let { win, tab } = await openAboutPrivateBrowsing();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     content.document.getElementById("search-handoff-button").click();
   });
   ok(urlBarHasHiddenFocus(win), "Urlbar has hidden focus");
@@ -211,7 +217,7 @@ add_task(async function test_search_handoff_search_mode() {
 
   let { win, tab } = await openAboutPrivateBrowsing();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     let btn = content.document.getElementById("search-handoff-button");
     btn.click();
     ok(btn.classList.contains("focused"), "in-content search has focus styles");
@@ -223,7 +229,7 @@ add_task(async function test_search_handoff_search_mode() {
   let searchPromise = UrlbarTestUtils.promiseSearchComplete(win);
 
   await new Promise(r => EventUtils.synthesizeKey("f", {}, win, r));
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       content.document
         .getElementById("search-handoff-button")
@@ -246,7 +252,7 @@ add_task(async function test_search_handoff_search_mode() {
 
   // Hitting ESC should reshow the in-content search
   await new Promise(r => EventUtils.synthesizeKey("KEY_Escape", {}, win, r));
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       !content.document
         .getElementById("search-handoff-button")

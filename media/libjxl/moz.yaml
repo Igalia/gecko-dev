@@ -10,9 +10,9 @@ origin:
 
   url: https://github.com/libjxl/libjxl
 
-  release: 59f7d19e454bc5e1edd692187e1178f5926fdfd9 (2022-07-28T11:13:01Z).
+  release: 69d06e17771830beae7fb62b76de5978b52546fc (2023-07-21T14:55:24Z).
 
-  revision: 59f7d19e454bc5e1edd692187e1178f5926fdfd9
+  revision: 69d06e17771830beae7fb62b76de5978b52546fc
 
   license: Apache-2.0
 
@@ -35,3 +35,4 @@ vendoring:
     - doc
     - third_party/testdata
     - tools
+    - lib/lib.gni # Symlink is not permitted in mozilla-central

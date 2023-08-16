@@ -11,7 +11,6 @@
 #include "AsyncPanZoomAnimation.h"
 #include "AsyncPanZoomController.h"
 #include "FrameMetrics.h"
-#include "Layers.h"
 #include "Units.h"
 #include "OverscrollHandoffState.h"
 #include "mozilla/Assertions.h"
@@ -148,9 +147,9 @@ class GenericFlingAnimation : public AsyncPanZoomAnimation,
       // We may have reached the end of the scroll range along one axis but
       // not the other. In such a case we only want to hand off the relevant
       // component of the fling.
-      if (FuzzyEqualsAdditive(overscroll.x, 0.0f, COORDINATE_EPSILON)) {
+      if (mApzc.IsZero(overscroll.x)) {
         velocity.x = 0;
-      } else if (FuzzyEqualsAdditive(overscroll.y, 0.0f, COORDINATE_EPSILON)) {
+      } else if (mApzc.IsZero(overscroll.y)) {
         velocity.y = 0;
       }
 

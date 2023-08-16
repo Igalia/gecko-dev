@@ -1,4 +1,6 @@
-/* globals dnsResolve */
+// These are globlas defined for proxy servers, in ProxyAutoConfig.cpp. See
+// PACGlobalFunctions
+/* globals dnsResolve, alert */
 
 /* This test checks that using a PAC script still works when TRR is on.
    Steps:
@@ -9,12 +11,11 @@
    We run these steps for TRR mode 2 and 3, and with fetchOffMainThread = true/false
 */
 
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
 );
-const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
-  Ci.nsIDNSService
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
 );
 
 registerCleanupFunction(async () => {
@@ -29,8 +30,7 @@ function FindProxyForURL(url, host) {
   return "DIRECT";
 }
 
-const CID = Components.ID("{5645d2c1-d6d8-4091-b117-fe7ee4027db7}");
-XPCOMUtils.defineLazyGetter(this, "systemSettings", function() {
+XPCOMUtils.defineLazyGetter(this, "systemSettings", function () {
   return {
     QueryInterface: ChromeUtils.generateQI(["nsISystemProxySettings"]),
 
@@ -97,10 +97,7 @@ async function do_test_pac_dnsResolve() {
   await new Promise(resolve => chan.asyncOpen(new ChannelListener(resolve)));
   await consolePromise;
 
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  let h2Port = env.get("MOZHTTP2_PORT");
+  let h2Port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(h2Port, null);
   Assert.notEqual(h2Port, "");
 

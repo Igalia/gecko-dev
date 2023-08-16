@@ -67,8 +67,9 @@ static nsresult ResolveHost(const nsACString& host,
   }
 
   nsCOMPtr<nsICancelable> tmpOutstanding;
-  return dns->AsyncResolveNative(host, nsIDNSService::RESOLVE_TYPE_DEFAULT, 0,
-                                 nullptr, listener, nullptr, aOriginAttributes,
+  return dns->AsyncResolveNative(host, nsIDNSService::RESOLVE_TYPE_DEFAULT,
+                                 nsIDNSService::RESOLVE_DEFAULT_FLAGS, nullptr,
+                                 listener, nullptr, aOriginAttributes,
                                  getter_AddRefs(tmpOutstanding));
 }
 
@@ -124,6 +125,10 @@ NS_IMETHODIMP nsUDPOutputStream::Close() {
 }
 
 NS_IMETHODIMP nsUDPOutputStream::Flush() { return NS_OK; }
+
+NS_IMETHODIMP nsUDPOutputStream::StreamStatus() {
+  return mIsClosed ? NS_BASE_STREAM_CLOSED : NS_OK;
+}
 
 NS_IMETHODIMP nsUDPOutputStream::Write(const char* aBuf, uint32_t aCount,
                                        uint32_t* _retval) {
@@ -432,16 +437,12 @@ void nsUDPSocket::OnSocketReady(PRFileDesc* fd, int16_t outFlags) {
   uint32_t segsize = UDP_PACKET_CHUNK_SIZE;
   uint32_t segcount = 0;
   net_ResolveSegmentParams(segsize, segcount);
-  nsresult rv = NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut),
-                            true, true, segsize, segcount);
-
-  if (NS_FAILED(rv)) {
-    return;
-  }
+  NS_NewPipe2(getter_AddRefs(pipeIn), getter_AddRefs(pipeOut), true, true,
+              segsize, segcount);
 
   RefPtr<nsUDPOutputStream> os = new nsUDPOutputStream(this, mFD, prClientAddr);
-  rv = NS_AsyncCopy(pipeIn, os, mSts, NS_ASYNCCOPY_VIA_READSEGMENTS,
-                    UDP_PACKET_CHUNK_SIZE);
+  nsresult rv = NS_AsyncCopy(pipeIn, os, mSts, NS_ASYNCCOPY_VIA_READSEGMENTS,
+                             UDP_PACKET_CHUNK_SIZE);
 
   if (NS_FAILED(rv)) {
     return;
@@ -790,7 +791,7 @@ class SocketListenerProxy final : public nsIUDPSocketListener {
   explicit SocketListenerProxy(nsIUDPSocketListener* aListener)
       : mListener(new nsMainThreadPtrHolder<nsIUDPSocketListener>(
             "SocketListenerProxy::mListener", aListener)),
-        mTarget(GetCurrentEventTarget()) {}
+        mTarget(GetCurrentSerialEventTarget()) {}
 
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIUDPSOCKETLISTENER
@@ -882,7 +883,7 @@ class SocketListenerProxyBackground final : public nsIUDPSocketListener {
 
  public:
   explicit SocketListenerProxyBackground(nsIUDPSocketListener* aListener)
-      : mListener(aListener), mTarget(GetCurrentEventTarget()) {}
+      : mListener(aListener), mTarget(GetCurrentSerialEventTarget()) {}
 
   NS_DECL_THREADSAFE_ISUPPORTS
   NS_DECL_NSIUDPSOCKETLISTENER
@@ -1082,7 +1083,7 @@ nsUDPSocket::AsyncListen(nsIUDPSocketListener* aListener) {
   NS_ENSURE_TRUE(mSyncListener == nullptr, NS_ERROR_IN_PROGRESS);
   {
     MutexAutoLock lock(mLock);
-    mListenerTarget = GetCurrentEventTarget();
+    mListenerTarget = GetCurrentSerialEventTarget();
     if (NS_IsMainThread()) {
       // PNecko usage
       mListener = new SocketListenerProxy(aListener);
@@ -1145,6 +1146,11 @@ nsUDPSocket::SendWithAddress(const NetAddr* aAddr,
                              uint32_t* _retval) {
   NS_ENSURE_ARG(aAddr);
   NS_ENSURE_ARG_POINTER(_retval);
+
+  if (StaticPrefs::network_http_http3_block_loopback_ipv6_addr() &&
+      aAddr->raw.family == AF_INET6 && aAddr->IsLoopbackAddr()) {
+    return NS_ERROR_CONNECTION_REFUSED;
+  }
 
   *_retval = 0;
 

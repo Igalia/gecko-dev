@@ -4,7 +4,7 @@
 Remote Settings
 ===============
 
-The `remote-settings.js <https://searchfox.org/mozilla-central/source/services/settings/remote-settings.js>`_ module offers the ability to fetch remote settings that are kept in sync with Mozilla servers.
+The :searchfox:`remote-settings.sys.mjs <services/settings/remote-settings.sys.mjs>` module offers the ability to fetch remote settings that are kept in sync with Mozilla servers.
 
 
 Usage
@@ -14,7 +14,7 @@ The ``get()`` method returns the list of entries for a specific key. Each entry 
 
 .. code-block:: js
 
-    const { RemoteSettings } = ChromeUtils.import("resource://services-settings/remote-settings.js");
+    const { RemoteSettings } = ChromeUtils.import("resource://services-settings/remote-settings.sys.mjs");
 
     const data = await RemoteSettings("a-key").get();
 
@@ -177,7 +177,12 @@ It is possible to package a dump of the server records that will be loaded into 
 
 The JSON dump will serve as the default dataset for ``.get()``, instead of doing a round-trip to pull the latest data. It will also reduce the amount of data to be downloaded on the first synchronization.
 
-#. Place the JSON dump of the server records in the ``services/settings/dumps/main/`` folder
+#. Place the JSON dump of the server records in the ``services/settings/dumps/main/`` folder. Using this command:
+   ::
+
+      CID="your-collection"
+      curl "https://firefox.settings.services.mozilla.com/v1/buckets/main/collections/${CID}/changeset?_expected=0" | jq '{"data": .changes, "timestamp": .timestamp}' > services/settings/dumps/main/${CID}.json``
+
 #. Add the filename to the ``FINAL_TARGET_FILES`` list in ``services/settings/dumps/main/moz.build``
 #. Add the filename to the ``[browser]`` section of ``mobile/android/installer/package-manifest.in`` IF the file should be bundled with Android.
 
@@ -222,10 +227,13 @@ To package an attachment for consumers of the `download()` method:
 .. note::
 
    ``<attachment id>`` is used to derive the file names of the packaged attachment dump, and as the
-   key for the (optional) cache where attachment updates from the network are saved. If the cache
-   is enabled, the attachment identifier is expected to be fixed across client application updates.
+   key for the cache where attachment updates from the network are saved.
+   The attachment identifier is expected to be fixed across client application updates.
    If that expectation cannot be met, the ``attachmentId`` option of the ``download`` method of the
    attachment downloader should be used to override the attachment ID with a custom (stable) value.
+   In order to keep track of the cached attachment, and prevent it from being pruned automatically,
+   the attachment identifier will have to be explicitly listed in the ``keepAttachmentsIds = [<attachment id>]``
+   option of the RemoteSettings client constructor.
 
 .. note::
 
@@ -320,7 +328,7 @@ The polling for changes process sends two notifications that observers can regis
 
 * ``remote-settings:changes-poll-start``: Polling for changes is starting. triggered either by the scheduled timer or a push broadcast.
 * ``remote-settings:changes-poll-end``: Polling for changes has ended
-* ``remote-settings:sync-error``: A synchronization error occured. Notification subject provides information about the error and affected
+* ``remote-settings:sync-error``: A synchronization error occurred. Notification subject provides information about the error and affected
   collection in the ``wrappedJSObject`` attribute.
 * ``remote-settings:broken-sync-error``: Synchronization seems to be consistently failing. Profile is at risk.
 

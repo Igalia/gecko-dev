@@ -92,17 +92,18 @@ const char* gInaccessibleProperties[] = {
     "-x-cols",
     "-x-lang",
     "-x-span",
-    "-x-text-zoom",
+    "-x-text-scale",
     "-moz-default-appearance",
+    "-moz-theme",
     "-moz-inert",
     "-moz-script-level",  // parsed by UA sheets only
-    "-moz-script-size-multiplier",
-    "-moz-script-min-size",
     "-moz-math-variant",
     "-moz-math-display",                     // parsed by UA sheets only
     "-moz-top-layer",                        // parsed by UA sheets only
     "-moz-min-font-size-ratio",              // parsed by UA sheets only
+    "-moz-box-collapse",                     // chrome-only internal properties
     "-moz-font-smoothing-background-color",  // chrome-only internal properties
+    "-moz-subtree-hidden-only-visually",     // chrome-only internal properties
     "-moz-window-input-region-margin",       // chrome-only internal properties
     "-moz-window-opacity",                   // chrome-only internal properties
     "-moz-window-transform",                 // chrome-only internal properties

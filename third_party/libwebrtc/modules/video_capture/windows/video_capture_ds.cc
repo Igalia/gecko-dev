@@ -35,7 +35,7 @@ VideoCaptureDS::~VideoCaptureDS() {
   }
   if (_graphBuilder) {
     if (sink_filter_)
-      _graphBuilder->RemoveFilter(sink_filter_);
+      _graphBuilder->RemoveFilter(sink_filter_.get());
     if (_captureFilter)
       _graphBuilder->RemoveFilter(_captureFilter);
     if (_dvFilter)
@@ -57,7 +57,7 @@ VideoCaptureDS::~VideoCaptureDS() {
 
 int32_t VideoCaptureDS::Init(const char* deviceUniqueIdUTF8) {
   const int32_t nameLength = (int32_t)strlen((char*)deviceUniqueIdUTF8);
-  if (nameLength > kVideoCaptureUniqueNameLength)
+  if (nameLength >= kVideoCaptureUniqueNameLength)
     return -1;
 
   // Store the device name
@@ -101,27 +101,19 @@ int32_t VideoCaptureDS::Init(const char* deviceUniqueIdUTF8) {
   // Create the sink filte used for receiving Captured frames.
   sink_filter_ = new ComRefCount<CaptureSinkFilter>(this);
 
-  hr = _graphBuilder->AddFilter(sink_filter_, SINK_FILTER_NAME);
+  hr = _graphBuilder->AddFilter(sink_filter_.get(), SINK_FILTER_NAME);
   if (FAILED(hr)) {
     RTC_LOG(LS_INFO) << "Failed to add the send filter to the graph.";
     return -1;
   }
 
-  _inputSendPin = GetInputPin(sink_filter_);
+  _inputSendPin = GetInputPin(sink_filter_.get());
   if (!_inputSendPin) {
     RTC_LOG(LS_INFO) << "Failed to get input send pin";
     return -1;
   }
 
-  // Temporary connect here.
-  // This is done so that no one else can use the capture device.
   if (SetCameraOutput(_requestedCapability) != 0) {
-    return -1;
-  }
-  hr = _mediaControl->Pause();
-  if (FAILED(hr)) {
-    RTC_LOG(LS_INFO)
-        << "Failed to Pause the Capture device. Is it already occupied? " << hr;
     return -1;
   }
   RTC_LOG(LS_INFO) << "Capture device '" << deviceUniqueIdUTF8
@@ -130,8 +122,6 @@ int32_t VideoCaptureDS::Init(const char* deviceUniqueIdUTF8) {
 }
 
 int32_t VideoCaptureDS::StartCapture(const VideoCaptureCapability& capability) {
-  MutexLock lock(&api_lock_);
-
   if (capability != _requestedCapability) {
     DisconnectGraph();
 
@@ -139,7 +129,13 @@ int32_t VideoCaptureDS::StartCapture(const VideoCaptureCapability& capability) {
       return -1;
     }
   }
-  HRESULT hr = _mediaControl->Run();
+  HRESULT hr = _mediaControl->Pause();
+  if (FAILED(hr)) {
+    RTC_LOG(LS_INFO)
+        << "Failed to Pause the Capture device. Is it already occupied? " << hr;
+    return -1;
+  }
+  hr = _mediaControl->Run();
   if (FAILED(hr)) {
     RTC_LOG(LS_INFO) << "Failed to start the Capture device.";
     return -1;
@@ -148,9 +144,7 @@ int32_t VideoCaptureDS::StartCapture(const VideoCaptureCapability& capability) {
 }
 
 int32_t VideoCaptureDS::StopCapture() {
-  MutexLock lock(&api_lock_);
-
-  HRESULT hr = _mediaControl->Pause();
+  HRESULT hr = _mediaControl->StopWhenReady();
   if (FAILED(hr)) {
     RTC_LOG(LS_INFO) << "Failed to stop the capture graph. " << hr;
     return -1;
@@ -235,8 +229,13 @@ int32_t VideoCaptureDS::SetCameraOutput(
 
     // Check if this is a DV camera and we need to add MS DV Filter
     if (pmt->subtype == MEDIASUBTYPE_dvsl ||
-        pmt->subtype == MEDIASUBTYPE_dvsd || pmt->subtype == MEDIASUBTYPE_dvhd)
+        pmt->subtype == MEDIASUBTYPE_dvsd ||
+        pmt->subtype == MEDIASUBTYPE_dvhd) {
       isDVCamera = true;  // This is a DV camera. Use MS DV filter
+    }
+
+    FreeMediaType(pmt);
+    pmt = NULL;
   }
   RELEASE_AND_CLEAR(streamConfig);
 

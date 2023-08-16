@@ -92,7 +92,7 @@ nsNumberControlFrame* nsNumberControlFrame::GetNumberControlFrameForSpinButton(
   // be wrapped around any of the elements between aFrame and the
   // nsNumberControlFrame that we're looking for (e.g. flex wrappers).
   nsIContent* content = aFrame->GetContent();
-  auto* nacHost = content->GetClosestNativeAnonymousSubtreeRootParent();
+  auto* nacHost = content->GetClosestNativeAnonymousSubtreeRootParentOrHost();
   if (!nacHost) {
     return nullptr;
   }
@@ -137,16 +137,17 @@ int32_t nsNumberControlFrame::GetSpinButtonForPointerEvent(
 }
 
 void nsNumberControlFrame::SpinnerStateChanged() const {
-  MOZ_ASSERT(mSpinUp && mSpinDown,
-             "We should not be called when we have no spinner");
-
-  nsIFrame* spinUpFrame = mSpinUp->GetPrimaryFrame();
-  if (spinUpFrame && spinUpFrame->IsThemed()) {
-    spinUpFrame->InvalidateFrame();
+  if (mSpinUp) {
+    nsIFrame* spinUpFrame = mSpinUp->GetPrimaryFrame();
+    if (spinUpFrame && spinUpFrame->IsThemed()) {
+      spinUpFrame->InvalidateFrame();
+    }
   }
-  nsIFrame* spinDownFrame = mSpinDown->GetPrimaryFrame();
-  if (spinDownFrame && spinDownFrame->IsThemed()) {
-    spinDownFrame->InvalidateFrame();
+  if (mSpinDown) {
+    nsIFrame* spinDownFrame = mSpinDown->GetPrimaryFrame();
+    if (spinDownFrame && spinDownFrame->IsThemed()) {
+      spinDownFrame->InvalidateFrame();
+    }
   }
 }
 

@@ -3,6 +3,8 @@
  * http://creativecommons.org/publicdomain/zero/1.0/
  */
 
+/* eslint-env worker */
+
 const Cr = {
   NS_ERROR_NOT_IMPLEMENTED: 2147500033,
 };
@@ -24,7 +26,7 @@ addEventListener("message", async function onMessage(event) {
   function executeSoon(callback) {
     const channel = new MessageChannel();
     channel.port1.postMessage("");
-    channel.port2.onmessage = function() {
+    channel.port2.onmessage = function () {
       callback();
     };
   }
@@ -34,11 +36,11 @@ addEventListener("message", async function onMessage(event) {
       const task = add_task.tasks[add_task.index++];
       info("add_task | Entering test " + task.name);
       task()
-        .then(function() {
+        .then(function () {
           executeSoon(runNextTest);
           info("add_task | Leaving test " + task.name);
         })
-        .catch(function(ex) {
+        .catch(function (ex) {
           postMessage({ op: "failure", message: "" + ex });
         });
     } else {

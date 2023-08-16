@@ -2,13 +2,14 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-use api::{BlobImageRequest, RasterizedBlobImage, ImageFormat};
+use api::{BlobImageRequest, RasterizedBlobImage, ImageFormat, ImageDescriptorFlags};
 use api::{DebugFlags, FontInstanceKey, FontKey, FontTemplate, GlyphIndex};
 use api::{ExternalImageData, ExternalImageType, ExternalImageId, BlobImageResult};
 use api::{DirtyRect, GlyphDimensions, IdNamespace, DEFAULT_TILE_SIZE};
 use api::{ColorF, ImageData, ImageDescriptor, ImageKey, ImageRendering, TileSize};
 use api::{BlobImageHandler, BlobImageKey, VoidPtrToSizeFn};
 use api::units::*;
+use euclid::size2;
 use crate::{render_api::{ClearCache, AddFont, ResourceUpdate, MemoryReport}, util::WeakTable};
 use crate::image_tiling::{compute_tile_size, compute_tile_range};
 #[cfg(feature = "capture")]
@@ -19,10 +20,10 @@ use crate::capture::PlainExternalImage;
 use crate::capture::CaptureConfig;
 use crate::composite::{NativeSurfaceId, NativeSurfaceOperation, NativeTileId, NativeSurfaceOperationDetails};
 use crate::device::TextureFilter;
-use crate::glyph_cache::GlyphCache;
+use crate::glyph_cache::{GlyphCache, CachedGlyphInfo};
 use crate::glyph_cache::GlyphCacheEntry;
-use crate::glyph_rasterizer::{GLYPH_FLASHING, FontInstance, GlyphFormat, GlyphKey, GlyphRasterizer};
-use crate::glyph_rasterizer::{SharedFontResources, BaseFontInstance};
+use glyph_rasterizer::{GLYPH_FLASHING, FontInstance, GlyphFormat, GlyphKey, GlyphRasterizer, GlyphRasterJob};
+use glyph_rasterizer::{SharedFontResources, BaseFontInstance};
 use crate::gpu_cache::{GpuCache, GpuCacheAddress, GpuCacheHandle};
 use crate::gpu_types::UvRectKind;
 use crate::internal_types::{
@@ -33,6 +34,7 @@ use crate::profiler::{self, TransactionProfile, bytes_to_mb};
 use crate::render_task_graph::{RenderTaskId, RenderTaskGraphBuilder};
 use crate::render_task_cache::{RenderTaskCache, RenderTaskCacheKey, RenderTaskParent};
 use crate::render_task_cache::{RenderTaskCacheEntry, RenderTaskCacheEntryHandle};
+use crate::renderer::GpuBufferBuilder;
 use crate::surface::SurfaceBuilder;
 use euclid::point2;
 use smallvec::SmallVec;
@@ -50,6 +52,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::u32;
 use crate::texture_cache::{TextureCache, TextureCacheHandle, Eviction, TargetShader};
 use crate::picture_textures::PictureTextures;
+use peek_poke::PeekPoke;
 
 // Counter for generating unique native surface ids
 static NEXT_NATIVE_SURFACE_ID: AtomicUsize = AtomicUsize::new(0);
@@ -173,7 +176,7 @@ type RasterizedBlob = FastHashMap<TileOffset, RasterizedBlobImage>;
 
 #[cfg_attr(feature = "capture", derive(Serialize))]
 #[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Copy, Clone, PartialEq)]
+#[derive(Debug, Copy, Clone, PartialEq, PeekPoke, Default)]
 pub struct ImageGeneration(pub u32);
 
 impl ImageGeneration {
@@ -432,7 +435,7 @@ impl RenderTarget {
 
     /// Returns true if this texture was used within `threshold` frames of
     /// the current frame.
-    pub fn used_recently(&self, current_frame_id: FrameId, threshold: usize) -> bool {
+    pub fn used_recently(&self, current_frame_id: FrameId, threshold: u64) -> bool {
         self.last_frame_used + threshold >= current_frame_id
     }
 }
@@ -538,7 +541,7 @@ impl ResourceCache {
             ImageFormat::RGBA8,
         );
         let workers = Arc::new(ThreadPoolBuilder::new().build().unwrap());
-        let glyph_rasterizer = GlyphRasterizer::new(workers, true).unwrap();
+        let glyph_rasterizer = GlyphRasterizer::new(workers, true);
         let cached_glyphs = GlyphCache::new();
         let fonts = SharedFontResources::new(IdNamespace(0));
         let picture_textures = PictureTextures::new(
@@ -591,6 +594,7 @@ impl ResourceCache {
         &mut self,
         key: RenderTaskCacheKey,
         gpu_cache: &mut GpuCache,
+        gpu_buffer_builder: &mut GpuBufferBuilder,
         rg_builder: &mut RenderTaskGraphBuilder,
         user_data: Option<[f32; 4]>,
         is_opaque: bool,
@@ -599,18 +603,19 @@ impl ResourceCache {
         f: F,
     ) -> RenderTaskId
     where
-        F: FnOnce(&mut RenderTaskGraphBuilder) -> RenderTaskId,
+        F: FnOnce(&mut RenderTaskGraphBuilder, &mut GpuBufferBuilder) -> RenderTaskId,
     {
         self.cached_render_tasks.request_render_task(
             key,
             &mut self.texture_cache,
             gpu_cache,
+            gpu_buffer_builder,
             rg_builder,
             user_data,
             is_opaque,
             parent,
             surface_builder,
-            |render_graph| Ok(f(render_graph))
+            |render_graph, gpu_buffer_builder| Ok(f(render_graph, gpu_buffer_builder))
         ).expect("Failed to request a render task from the resource cache!")
     }
 
@@ -1102,12 +1107,32 @@ impl ResourceCache {
         debug_assert_eq!(self.state, State::AddResources);
 
         self.glyph_rasterizer.prepare_font(&mut font);
+        let glyph_key_cache = self.cached_glyphs.insert_glyph_key_cache_for_font(&font);
+        let texture_cache = &mut self.texture_cache;
         self.glyph_rasterizer.request_glyphs(
-            &mut self.cached_glyphs,
             font,
             glyph_keys,
-            &mut self.texture_cache,
-            gpu_cache,
+            |key| {
+                if let Some(entry) = glyph_key_cache.try_get(key) {
+                    match entry {
+                        GlyphCacheEntry::Cached(ref glyph) => {
+                            // Skip the glyph if it is already has a valid texture cache handle.
+                            if !texture_cache.request(&glyph.texture_cache_handle, gpu_cache) {
+                                return false;
+                            }
+                            // This case gets hit when we already rasterized the glyph, but the
+                            // glyph has been evicted from the texture cache. Just force it to
+                            // pending so it gets rematerialized.
+                        }
+                        // Otherwise, skip the entry if it is blank or pending.
+                        GlyphCacheEntry::Blank | GlyphCacheEntry::Pending => return false,
+                    }
+                };
+
+                glyph_key_cache.add_glyph(*key, GlyphCacheEntry::Pending);
+
+                true
+            }
         );
     }
 
@@ -1279,10 +1304,48 @@ impl ResourceCache {
         debug_assert_eq!(self.state, State::AddResources);
         self.state = State::QueryResources;
 
+        let cached_glyphs = &mut self.cached_glyphs;
+        let texture_cache = &mut self.texture_cache;
+
         self.glyph_rasterizer.resolve_glyphs(
-            &mut self.cached_glyphs,
-            &mut self.texture_cache,
-            gpu_cache,
+            |job, can_use_r8_format| {
+                let GlyphRasterJob { font, key, result } = job;
+                let glyph_key_cache = cached_glyphs.get_glyph_key_cache_for_font_mut(&*font);
+                let glyph_info = match result {
+                    Err(_) => GlyphCacheEntry::Blank,
+                    Ok(ref glyph) if glyph.width == 0 || glyph.height == 0 => {
+                        GlyphCacheEntry::Blank
+                    }
+                    Ok(glyph) => {
+                        let mut texture_cache_handle = TextureCacheHandle::invalid();
+                        texture_cache.request(&texture_cache_handle, gpu_cache);
+                        texture_cache.update(
+                            &mut texture_cache_handle,
+                            ImageDescriptor {
+                                size: size2(glyph.width, glyph.height),
+                                stride: None,
+                                format: glyph.format.image_format(can_use_r8_format),
+                                flags: ImageDescriptorFlags::empty(),
+                                offset: 0,
+                            },
+                            TextureFilter::Linear,
+                            Some(CachedImageData::Raw(Arc::new(glyph.bytes))),
+                            [glyph.left, -glyph.top, glyph.scale, 0.0],
+                            DirtyRect::All,
+                            gpu_cache,
+                            Some(glyph_key_cache.eviction_notice()),
+                            UvRectKind::Rect,
+                            Eviction::Auto,
+                            TargetShader::Text,
+                        );
+                        GlyphCacheEntry::Cached(CachedGlyphInfo {
+                            texture_cache_handle,
+                            format: glyph.format,
+                        })
+                    }
+                };
+                glyph_key_cache.insert(key, glyph_info);
+            },
             profile,
         );
 
@@ -1761,7 +1824,7 @@ impl ResourceCache {
         &mut self,
         total_bytes_threshold: usize,
         total_bytes_red_line_threshold: usize,
-        frames_threshold: usize,
+        frames_threshold: u64,
     ) {
         // Get the total GPU memory size used by the current render target pool
         let mut rt_pool_size_in_bytes: usize = self.render_target_pool

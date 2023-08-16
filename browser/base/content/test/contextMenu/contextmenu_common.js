@@ -26,8 +26,8 @@ function openContextMenuFor(element, shiftkey, waitForSpellCheck) {
   }
 
   if (waitForSpellCheck) {
-    var { onSpellCheck } = SpecialPowers.ChromeUtils.import(
-      "resource://testing-common/AsyncSpellCheckTestHelper.jsm"
+    var { onSpellCheck } = SpecialPowers.ChromeUtils.importESModule(
+      "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"
     );
     onSpellCheck(element, actuallyOpenContextMenuFor);
   } else {
@@ -338,7 +338,7 @@ async function test_contextmenu(selector, menuItems, options = {}) {
     await SpecialPowers.spawn(
       gBrowser.selectedBrowser,
       [[lastElementSelector, selector]],
-      async function([contentLastElementSelector, contentSelector]) {
+      async function ([contentLastElementSelector, contentSelector]) {
         if (contentLastElementSelector) {
           let contentLastElement = content.document.querySelector(
             contentLastElementSelector
@@ -363,9 +363,9 @@ async function test_contextmenu(selector, menuItems, options = {}) {
     await SpecialPowers.spawn(
       gBrowser.selectedBrowser,
       [selector],
-      async function(contentSelector) {
-        let { onSpellCheck } = ChromeUtils.import(
-          "resource://testing-common/AsyncSpellCheckTestHelper.jsm"
+      async function (contentSelector) {
+        let { onSpellCheck } = ChromeUtils.importESModule(
+          "resource://testing-common/AsyncSpellCheckTestHelper.sys.mjs"
         );
         let element = content.document.querySelector(contentSelector);
         await new Promise(resolve => onSpellCheck(element, resolve));

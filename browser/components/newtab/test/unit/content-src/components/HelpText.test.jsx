@@ -14,8 +14,7 @@ describe("<HelpText>", () => {
       <HelpText
         text={{ string_id: "test_id" }}
         hasImg={{
-          src:
-            "chrome://activity-stream/content/data/content/assets/cfr_fb_container.png",
+          src: "chrome://activity-stream/content/data/content/assets/cfr_fb_container.png",
         }}
       />
     );
@@ -32,12 +31,10 @@ describe("<HelpText>", () => {
       <HelpText
         text={"Sample help text"}
         hasImg={{
-          src:
-            "chrome://activity-stream/content/data/content/assets/cfr_fb_container.png",
+          src: "chrome://activity-stream/content/data/content/assets/cfr_fb_container.png",
         }}
       />
     );
-    console.log(shallowWrapper.find("p.helptext").text());
     assert.equal(shallowWrapper.find("p.helptext").text(), "Sample help text");
     assert.lengthOf(shallowWrapper.find("img.helptext-img"), 1);
   });

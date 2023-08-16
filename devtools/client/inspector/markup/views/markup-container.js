@@ -4,16 +4,16 @@
 
 "use strict";
 
-const { KeyCodes } = require("devtools/client/shared/keycodes");
+const { KeyCodes } = require("resource://devtools/client/shared/keycodes.js");
 const {
   flashElementOn,
   flashElementOff,
-} = require("devtools/client/inspector/markup/utils");
+} = require("resource://devtools/client/inspector/markup/utils.js");
 
 loader.lazyRequireGetter(
   this,
   "wrapMoveFocus",
-  "devtools/client/shared/focus",
+  "resource://devtools/client/shared/focus.js",
   true
 );
 
@@ -755,21 +755,27 @@ MarkupContainer.prototype = {
    * Update the container's editor to the current state of the
    * viewed node.
    */
-  update() {
+  update(mutationBreakpoints) {
     if (this.node.pseudoClassLocks.length) {
       this.elt.classList.add("pseudoclass-locked");
     } else {
       this.elt.classList.remove("pseudoclass-locked");
     }
 
-    // Show and hide icon for DOM Mutation Breakpoints
-    const hasMutationBreakpoint = Object.values(
-      this.node.mutationBreakpoints
-    ).some(Boolean);
-    if (hasMutationBreakpoint) {
-      this.mutationMarker.classList.add("has-mutations");
-    } else {
-      this.mutationMarker.classList.remove("has-mutations");
+    if (mutationBreakpoints) {
+      const allMutationsDisabled = Array.from(
+        mutationBreakpoints.values()
+      ).every(element => element === false);
+
+      if (mutationBreakpoints.size > 0) {
+        this.mutationMarker.classList.add("has-mutations");
+        this.mutationMarker.classList.toggle(
+          "mutation-breakpoint-disabled",
+          allMutationsDisabled
+        );
+      } else {
+        this.mutationMarker.classList.remove("has-mutations");
+      }
     }
 
     this.updateIsDisplayed();

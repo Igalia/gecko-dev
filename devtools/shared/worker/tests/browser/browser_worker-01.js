@@ -8,17 +8,19 @@
 
 const BUFFER_SIZE = 8;
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   Services.prefs.clearUserPref("security.allow_parent_unrestricted_js_loads");
 });
 
-add_task(async function() {
+add_task(async function () {
   // Test both CJS and JSM versions
 
   await testWorker("JSM", () =>
     ChromeUtils.import("resource://devtools/shared/worker/worker.js")
   );
-  await testWorker("CommonJS", () => require("devtools/shared/worker/worker"));
+  await testWorker("CommonJS", () =>
+    require("resource://devtools/shared/worker/worker.js")
+  );
   await testTransfer();
 });
 

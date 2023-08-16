@@ -342,11 +342,6 @@ static IInspectable* GetUISettings() {
   // expected, sigh.
   static StaticRefPtr<IInspectable> sUiSettingsAsInspectable;
 
-  if (!IsWin10OrLater()) {
-    // Windows.UI.ViewManagement.UISettings is Win10+ only.
-    return nullptr;
-  }
-
   if (!sUiSettingsAsInspectable) {
     ComPtr<IInspectable> uiSettingsAsInspectable;
     ::RoActivateInstance(
@@ -398,6 +393,20 @@ static IInspectable* GetUISettings() {
           });
       (void)NS_WARN_IF(FAILED(
           uiSettings3->add_ColorValuesChanged(callback.Get(), &unusedToken)));
+    }
+
+    ComPtr<IUISettings4> uiSettings4;
+    if (SUCCEEDED(uiSettingsAsInspectable.As(&uiSettings4))) {
+      EventRegistrationToken unusedToken;
+      auto callback =
+          Callback<ITypedEventHandler<UISettings*, IInspectable*>>([](auto...) {
+            // Transparent effects changes change media queries only.
+            LookAndFeel::NotifyChangedAllWindows(
+                widget::ThemeChangeKind::MediaQueriesOnly);
+            return S_OK;
+          });
+      (void)NS_WARN_IF(FAILED(uiSettings4->add_AdvancedEffectsEnabledChanged(
+          callback.Get(), &unusedToken)));
     }
 
     sUiSettingsAsInspectable = dont_AddRef(uiSettingsAsInspectable.Detach());
@@ -551,12 +560,30 @@ double WindowsUIUtils::ComputeTextScaleFactor() {
 #endif
 }
 
+bool WindowsUIUtils::ComputeTransparencyEffects() {
+  constexpr bool kDefault = true;
+#ifndef __MINGW32__
+  ComPtr<IInspectable> settings = GetUISettings();
+  if (NS_WARN_IF(!settings)) {
+    return kDefault;
+  }
+  ComPtr<IUISettings4> uiSettings4;
+  if (NS_WARN_IF(FAILED(settings.As(&uiSettings4)))) {
+    return kDefault;
+  }
+  boolean transparencyEffects = kDefault;
+  if (NS_WARN_IF(FAILED(
+          uiSettings4->get_AdvancedEffectsEnabled(&transparencyEffects)))) {
+    return kDefault;
+  }
+  return transparencyEffects;
+#else
+  return kDefault;
+#endif
+}
+
 void WindowsUIUtils::UpdateInTabletMode() {
 #ifndef __MINGW32__
-  if (!IsWin10OrLater()) {
-    return;
-  }
-
   nsresult rv;
   nsCOMPtr<nsIWindowMediator> winMediator(
       do_GetService(NS_WINDOWMEDIATOR_CONTRACTID, &rv));
@@ -644,10 +671,6 @@ Result<HStringUniquePtr, HRESULT> ConvertToWindowsString(
 
 static Result<Ok, nsresult> RequestShare(
     const std::function<HRESULT(IDataRequestedEventArgs* pArgs)>& aCallback) {
-  if (!IsWin10OrLater()) {
-    return Err(NS_ERROR_FAILURE);
-  }
-
   HWND hwnd = GetForegroundWindow();
   if (!hwnd) {
     return Err(NS_ERROR_FAILURE);

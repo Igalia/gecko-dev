@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a provider, returning open tabs matches for the urlbar.
  * It is also used to register and unregister open tabs.
@@ -34,6 +32,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -42,6 +41,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
 
   /**
    * Returns the type of this provider.
+   *
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
@@ -52,6 +52,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
@@ -75,6 +76,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
 
   /**
    * Return urls that is opening on given user context id.
+   *
    * @param {integer} userContextId Containers user context id
    * @param {boolean} isInPrivateWindow In private browsing window or not
    * @returns {Array} urls
@@ -89,6 +91,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
 
   /**
    * Return userContextId that will be used in moz_openpages_temp table.
+   *
    * @param {integer} userContextId Containers user context id
    * @param {boolean} isInPrivateWindow In private browsing window or not
    * @returns {interger} userContextId
@@ -101,21 +104,21 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
    * Copy over cached open tabs to the memory table once the Urlbar
    * connection has been initialized.
    */
-  static promiseDBPopulated = lazy.PlacesUtils.largeCacheDBConnDeferred.promise.then(
-    async () => {
+  static promiseDBPopulated =
+    lazy.PlacesUtils.largeCacheDBConnDeferred.promise.then(async () => {
       // Must be set before populating.
       UrlbarProviderOpenTabs.memoryTableInitialized = true;
       // Populate the table with the current cached tabs.
       for (let [userContextId, urls] of UrlbarProviderOpenTabs._openTabs) {
         for (let url of urls) {
-          await addToMemoryTable(url, userContextId).catch(Cu.reportError);
+          await addToMemoryTable(url, userContextId).catch(console.error);
         }
       }
-    }
-  );
+    });
 
   /**
    * Registers a tab as open.
+   *
    * @param {string} url Address of the tab
    * @param {integer} userContextId Containers user context id
    * @param {boolean} isInPrivateWindow In private browsing window or not
@@ -130,11 +133,12 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
       UrlbarProviderOpenTabs._openTabs.set(userContextId, []);
     }
     UrlbarProviderOpenTabs._openTabs.get(userContextId).push(url);
-    await addToMemoryTable(url, userContextId).catch(Cu.reportError);
+    await addToMemoryTable(url, userContextId).catch(console.error);
   }
 
   /**
    * Unregisters a previously registered open tab.
+   *
    * @param {string} url Address of the tab
    * @param {integer} userContextId Containers user context id
    * @param {boolean} isInPrivateWindow In private browsing window or not
@@ -150,15 +154,16 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
       let index = openTabs.indexOf(url);
       if (index != -1) {
         openTabs.splice(index, 1);
-        await removeFromMemoryTable(url, userContextId).catch(Cu.reportError);
+        await removeFromMemoryTable(url, userContextId).catch(console.error);
       }
     }
   }
 
   /**
    * Starts querying.
+   *
    * @param {object} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        match.
    * @returns {Promise} resolved when the query stops.
    */
@@ -200,6 +205,7 @@ export class UrlbarProviderOpenTabs extends UrlbarProvider {
 
 /**
  * Adds an open page to the memory table.
+ *
  * @param {string} url Address of the page
  * @param {number} userContextId Containers user context id
  * @returns {Promise} resolved after the addition.
@@ -230,6 +236,7 @@ async function addToMemoryTable(url, userContextId) {
 
 /**
  * Removes an open page from the memory table.
+ *
  * @param {string} url Address of the page
  * @param {number} userContextId Containers user context id
  * @returns {Promise} resolved after the removal.

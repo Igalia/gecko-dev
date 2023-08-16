@@ -14,6 +14,7 @@
 #include "mozilla/Scoped.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
+#include "mozilla/StaticPrefs_gfx.h"
 #include "mozilla/StaticPrefs_print.h"
 #include "nsPrintfCString.h"
 
@@ -767,7 +768,7 @@ bool DrawTargetCairo::LockBits(uint8_t** aData, IntSize* aSize,
   if (cairo_surface_get_type(surf) == CAIRO_SURFACE_TYPE_IMAGE &&
       cairo_surface_status(surf) == CAIRO_STATUS_SUCCESS) {
     PointDouble offset;
-    cairo_surface_get_device_offset(target, &offset.x, &offset.y);
+    cairo_surface_get_device_offset(target, &offset.x.value, &offset.y.value);
     // verify the device offset can be converted to integers suitable for a
     // bounds rect
     IntPoint origin(int32_t(-offset.x), int32_t(-offset.y));
@@ -1202,8 +1203,8 @@ void DrawTargetCairo::ClearRect(const Rect& aRect) {
   AutoPrepareForDrawing prep(this, mContext);
 
   if (!mContext || aRect.Width() < 0 || aRect.Height() < 0 ||
-      !IsFinite(aRect.X()) || !IsFinite(aRect.Width()) ||
-      !IsFinite(aRect.Y()) || !IsFinite(aRect.Height())) {
+      !std::isfinite(aRect.X()) || !std::isfinite(aRect.Width()) ||
+      !std::isfinite(aRect.Y()) || !std::isfinite(aRect.Height())) {
     gfxCriticalNote << "ClearRect with invalid argument " << gfx::hexa(mContext)
                     << " with " << aRect.Width() << "x" << aRect.Height()
                     << " [" << aRect.X() << ", " << aRect.Y() << "]";
@@ -1681,11 +1682,6 @@ void DrawTargetCairo::PopLayer() {
   SetPermitSubpixelAA(layer.mWasPermittingSubpixelAA);
 }
 
-already_AddRefed<PathBuilder> DrawTargetCairo::CreatePathBuilder(
-    FillRule aFillRule /* = FillRule::FILL_WINDING */) const {
-  return MakeAndAddRef<PathBuilderCairo>(aFillRule);
-}
-
 void DrawTargetCairo::ClearSurfaceForUnboundedSource(
     const CompositionOp& aOperator) {
   if (aOperator != CompositionOp::OP_SOURCE) return;
@@ -1757,10 +1753,13 @@ already_AddRefed<DrawTarget> DrawTargetCairo::CreateSimilarDrawTarget(
 #endif
 #ifdef CAIRO_HAS_QUARTZ_SURFACE
     case CAIRO_SURFACE_TYPE_QUARTZ:
-      similar = cairo_quartz_surface_create_cg_layer(
-          mSurface, GfxFormatToCairoContent(aFormat), aSize.width,
-          aSize.height);
-      break;
+      if (StaticPrefs::gfx_cairo_quartz_cg_layer_enabled()) {
+        similar = cairo_quartz_surface_create_cg_layer(
+            mSurface, GfxFormatToCairoContent(aFormat), aSize.width,
+            aSize.height);
+        break;
+      }
+      [[fallthrough]];
 #endif
     default:
       similar = cairo_surface_create_similar(mSurface,

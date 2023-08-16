@@ -7,7 +7,7 @@
  * Tests image caches can be displayed in the network monitor
  */
 
-add_task(async function() {
+add_task(async function () {
   const { monitor } = await initNetMonitor(IMAGE_CACHE_URL, {
     enableCache: true,
     requestCount: 1,
@@ -33,7 +33,7 @@ add_task(async function() {
   // flag will be applied to the loadgroup, such that the sub resources
   // are forced to be revalidated. So we use `BrowserTestUtils.loadURI` to
   // avoid having `VALIDATE_ALWAYS` applied.
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, IMAGE_CACHE_URL);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, IMAGE_CACHE_URL);
   await waitForEvents;
 
   const requests = document.querySelectorAll(".request-list-item");

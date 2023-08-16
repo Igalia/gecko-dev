@@ -4,7 +4,7 @@
 "use strict";
 
 const RELATIVE_DIR = "toolkit/components/pdfjs/test/";
-const TESTROOT = "http://example.com/browser/" + RELATIVE_DIR;
+const TESTROOT = "https://example.com/browser/" + RELATIVE_DIR;
 
 var MockFilePicker = SpecialPowers.MockFilePicker;
 MockFilePicker.init(window);
@@ -41,11 +41,11 @@ function createPromiseForFilePicker() {
   });
 }
 
-add_setup(async function() {
+add_setup(async function () {
   tempDir = createTemporarySaveDirectory();
   MockFilePicker.displayDirectory = tempDir;
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     MockFilePicker.cleanup();
     await cleanupDownloads();
     tempDir.remove(true);
@@ -59,15 +59,12 @@ add_task(async function test_downloading_pdf_nonprivate_window() {
   const pdfUrl = TESTROOT + "file_pdfjs_test.pdf";
 
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.download.improvements_to_download_panel", true],
-      ["browser.download.always_ask_before_handling_new_types", false],
-    ],
+    set: [["browser.download.always_ask_before_handling_new_types", false]],
   });
 
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
-    async function(browser) {
+    async function (browser) {
       await waitForPdfJS(browser, pdfUrl);
 
       const tabCount = gBrowser.tabs.length;
@@ -101,7 +98,7 @@ add_task(async function test_downloading_pdf_nonprivate_window() {
 
       SpecialPowers.clipboardCopyString("");
       DownloadsCommon.copyDownloadLink(dl);
-      const copiedUrl = SpecialPowers.getClipboardData("text/unicode");
+      const copiedUrl = SpecialPowers.getClipboardData("text/plain");
       is(copiedUrl, pdfUrl, "The copied url must be the original one");
 
       is(
@@ -116,7 +113,7 @@ add_task(async function test_downloading_pdf_nonprivate_window() {
         "InitialDownloadsLoaded",
         true
       );
-      BrowserTestUtils.loadURI(browser, "about:downloads");
+      BrowserTestUtils.loadURIString(browser, "about:downloads");
       await downloadsLoaded;
 
       info("Wait for the clipboard to contain the url of the pdf");

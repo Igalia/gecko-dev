@@ -7,16 +7,12 @@
 
 const TEST_URL = URL_ROOT_SSL + "early_console_document.html";
 
-add_task(async function() {
-  // Enable Multiprocess Browser Toolbox (it's still disabled for non-Nightly builds).
-  await pushPref("devtools.browsertoolbox.fission", true);
+add_task(async function () {
+  // Enable Multiprocess Browser Toolbox.
   await pushPref("devtools.browsertoolbox.scope", "everything");
 
-  const {
-    client,
-    resourceCommand,
-    targetCommand,
-  } = await initMultiProcessResourceCommand();
+  const { client, resourceCommand, targetCommand } =
+    await initMultiProcessResourceCommand();
 
   const d = Date.now();
   const CACHED_MESSAGE_TEXT = `cached-${d}`;
@@ -46,17 +42,16 @@ add_task(async function() {
     "isAlreadyExistingResource is true for the existing message"
   );
 
-  const {
-    onResource: onMochitestRuntimeLog,
-  } = await resourceCommand.waitForNextResource(
-    resourceCommand.TYPES.CONSOLE_MESSAGE,
-    {
-      ignoreExistingResources: false,
-      predicate({ message }) {
-        return message.arguments[0] === LIVE_MESSAGE_TEXT;
-      },
-    }
-  );
+  const { onResource: onMochitestRuntimeLog } =
+    await resourceCommand.waitForNextResource(
+      resourceCommand.TYPES.CONSOLE_MESSAGE,
+      {
+        ignoreExistingResources: false,
+        predicate({ message }) {
+          return message.arguments[0] === LIVE_MESSAGE_TEXT;
+        },
+      }
+    );
   console.log(LIVE_MESSAGE_TEXT);
 
   info("Wait for runtime browser mochitest log");

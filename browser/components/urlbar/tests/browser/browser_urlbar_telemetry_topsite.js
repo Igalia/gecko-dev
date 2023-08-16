@@ -9,11 +9,8 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
 });
 
 const EN_US_TOPSITES =
@@ -43,7 +40,8 @@ function assertTelemetryResults(histograms, type, index, method) {
 
 /**
  * Updates the Top Sites feed.
- * @param {function} condition
+ *
+ * @param {Function} condition
  *   A callback that returns true after Top Sites are successfully updated.
  * @param {boolean} searchShortcuts
  *   True if Top Sites search shortcuts should be enabled.
@@ -52,6 +50,10 @@ async function updateTopSites(condition, searchShortcuts = false) {
   // Toggle the pref to clear the feed cache and force an update.
   await SpecialPowers.pushPrefEnv({
     set: [
+      [
+        "browser.newtabpage.activity-stream.discoverystream.endpointSpocsClear",
+        "",
+      ],
       ["browser.newtabpage.activity-stream.feeds.system.topsites", false],
       ["browser.newtabpage.activity-stream.feeds.system.topsites", true],
       [
@@ -68,11 +70,12 @@ async function updateTopSites(condition, searchShortcuts = false) {
   }, "Waiting for top sites to be updated");
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.suggest.topsites", true],
       ["browser.newtabpage.activity-stream.default.sites", EN_US_TOPSITES],
+      ["browser.urlbar.suggest.quickactions", false],
     ],
   });
   await updateTopSites(

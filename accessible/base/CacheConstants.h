@@ -7,6 +7,7 @@
 #ifndef _CacheConstants_h_
 #define _CacheConstants_h_
 
+#include "nsGkAtoms.h"
 #include "RelationType.h"
 
 namespace mozilla {
@@ -19,7 +20,7 @@ class CacheDomain {
   static constexpr uint64_t Bounds = ((uint64_t)0x1) << 2;
   static constexpr uint64_t Resolution = ((uint64_t)0x1) << 3;
   static constexpr uint64_t Text = ((uint64_t)0x1) << 4;
-  static constexpr uint64_t DOMNodeID = ((uint64_t)0x1) << 5;
+  static constexpr uint64_t DOMNodeIDAndClass = ((uint64_t)0x1) << 5;
   static constexpr uint64_t State = ((uint64_t)0x1) << 6;
   static constexpr uint64_t GroupInfo = ((uint64_t)0x1) << 7;
   static constexpr uint64_t Actions = ((uint64_t)0x1) << 8;
@@ -31,6 +32,10 @@ class CacheDomain {
   static constexpr uint64_t Viewport = ((uint64_t)0x1) << 14;
   static constexpr uint64_t ARIA = ((uint64_t)0x1) << 15;
   static constexpr uint64_t Relations = ((uint64_t)0x1) << 16;
+#ifdef XP_WIN
+  // Used for MathML.
+  static constexpr uint64_t InnerHTML = ((uint64_t)0x1) << 17;
+#endif
   static constexpr uint64_t All = ~((uint64_t)0x0);
 };
 
@@ -61,7 +66,7 @@ struct RelationData {
  * CONTROLLER_FOR relation, while the `for` attribute of a <label> describes a
  * LABEL_FOR relation. To ensure we process these attributes appropriately,
  * RelationData.mValidTag contains the atom for the tag this attribute/relation
- * type paring is valid on. If the pairing is valid for all tag types, this
+ * type pairing is valid on. If the pairing is valid for all tag types, this
  * field is null.
  */
 static constexpr RelationData kRelationTypeAtoms[] = {
@@ -78,6 +83,10 @@ static constexpr RelationData kRelationTypeAtoms[] = {
     {nsGkAtoms::aria_flowto, nullptr, RelationType::FLOWS_TO,
      RelationType::FLOWS_FROM},
 };
+
+// The count of numbers needed to serialize an nsRect. This is used when
+// flattening character rects into an array of ints.
+constexpr int32_t kNumbersInRect = 4;
 
 }  // namespace a11y
 }  // namespace mozilla

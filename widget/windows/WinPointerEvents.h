@@ -7,7 +7,8 @@
 #define WinPointerEvents_h__
 
 #include "mozilla/MouseEvents.h"
-#include "nsWindow.h"
+#include "touchinjection_sdk80.h"
+#include <windef.h>
 
 // Define PointerEvent related macros and structures when building code on
 // Windows version before Win8.
@@ -118,7 +119,6 @@ class WinPointerEvents final {
   POINTER_INPUT_TYPE GetPointerType(uint32_t aPointerId);
   bool GetPointerInfo(uint32_t aPointerId, POINTER_INFO* aPointerInfo);
   bool GetPointerPenInfo(uint32_t aPointerId, POINTER_PEN_INFO* aPenInfo);
-  bool ShouldEnableInkCollector();
   bool ShouldRollupOnPointerEvent(UINT aMsg, WPARAM aWParam);
   bool ShouldFirePointerEventByWinPointerMessages();
   WinPointerInfo* GetCachedPointerInfo(UINT aMsg, WPARAM aWParam);

@@ -50,12 +50,17 @@ const MAPPINGS = {
   "panelUI.js": "browser/components/customizableui/content/panelUI.js",
   "viewSourceUtils.js":
     "toolkit/components/viewsource/content/viewSourceUtils.js",
+  "browserPlacesViews.js":
+    "browser/components/places/content/browserPlacesViews.js",
   "places-tree.js": "browser/components/places/content/places-tree.js",
   "places-menupopup.js":
     "browser/components/places/content/places-menupopup.js",
+  "shopping-sidebar.js":
+    "browser/components/shopping/content/shopping-sidebar.js",
 };
 
-const globalScriptsRegExp = /^\s*Services.scriptloader.loadSubScript\(\"(.*?)\", this\);$/;
+const globalScriptsRegExp =
+  /^\s*Services.scriptloader.loadSubScript\(\"(.*?)\", this\);$/;
 
 function getGlobalScriptIncludes(scriptPath) {
   let fileData;

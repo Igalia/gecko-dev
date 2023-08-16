@@ -15,6 +15,7 @@
 #include "prmon.h"
 #include "prthread.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/gtest/MozAssertions.h"
 #include "mozilla/Services.h"
 
 #include "mozilla/Monitor.h"
@@ -162,12 +163,12 @@ class TimerHelper {
   }
 
   void Cancel() {
-    mTarget->Dispatch(NS_NewRunnableFunction("~TimerHelper timer cancel",
-                                             [this] {
-                                               MonitorAutoLock lock(mMonitor);
-                                               mTimer->Cancel();
-                                             }),
-                      NS_DISPATCH_SYNC);
+    NS_DispatchAndSpinEventLoopUntilComplete(
+        "~TimerHelper timer cancel"_ns, mTarget,
+        NS_NewRunnableFunction("~TimerHelper timer cancel", [this] {
+          MonitorAutoLock lock(mMonitor);
+          mTimer->Cancel();
+        }));
   }
 
  private:
@@ -883,7 +884,7 @@ TEST(Timers, ClosureCallback)
         mon.Notify();
       },
       50, nsITimer::TYPE_ONE_SHOT, "(test) Timers.ClosureCallback", testThread);
-  ASSERT_TRUE(NS_SUCCEEDED(rv));
+  ASSERT_NS_SUCCEEDED(rv);
 
   ReentrantMonitorAutoEnter mon(*newMon);
   while (!notifiedThread) {

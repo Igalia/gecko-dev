@@ -3,9 +3,8 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # add this directory to the path
-from __future__ import absolute_import
-import sys
 import os
+import sys
 
 sys.path.append(os.path.dirname(__file__))
 

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -15,31 +15,27 @@ features: [Temporal]
 
 const actual = [];
 const expected = [
-  "get extra",
-  "get overflow",
+  // CopyDataProperties
+  "ownKeys options",
+  "getOwnPropertyDescriptor options.extra",
+  "get options.extra",
+  // Temporal.Calendar.prototype.dateAdd
+  "get options.overflow",
+  // overwriting property in custom calendar dateAdd
+  "getOwnPropertyDescriptor options.overflow",
 ];
-const options = new Proxy({ extra: 5 }, {
-  get(target, key) {
-    actual.push(`get ${key}`);
-    const result = target[key];
-    if (result === undefined) {
-      return undefined;
-    }
-    return TemporalHelpers.toPrimitiveObserver(actual, result, key);
-  },
-  has(target, key) {
-    actual.push(`has ${key}`);
-    return key in target;
-  },
-});
+const options = TemporalHelpers.propertyBagObserver(actual, { extra: 5 }, "options");
 
+let dateAddCalls = 0;
 class CustomCalendar extends Temporal.Calendar {
   constructor() {
     super("iso8601");
   }
   dateAdd(date, duration, options) {
     const result = super.dateAdd(date, duration, options);
-    options.overflow = 'meatloaf';
+    dateAddCalls++;
+    if (dateAddCalls == 3)
+      options.overflow = 'meatloaf';
     return result;
   }
   yearMonthFromFields(...args) {

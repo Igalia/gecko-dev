@@ -11,12 +11,14 @@
 
 #include "nsSubDocumentFrame.h"
 
+#include "mozilla/ComputedStyleInlines.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/StaticPrefs_layout.h"
 #include "mozilla/Unused.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/HTMLFrameElement.h"
+#include "mozilla/dom/ImageDocument.h"
 #include "mozilla/dom/BrowserParent.h"
 
 #include "nsCOMPtr.h"
@@ -45,7 +47,6 @@
 #include "RetainedDisplayListBuilder.h"
 #include "nsObjectLoadingContent.h"
 
-#include "Layers.h"
 #include "mozilla/layers/WebRenderUserData.h"
 #include "mozilla/layers/WebRenderScrollData.h"
 #include "mozilla/layers/RenderRootStateManager.h"
@@ -73,7 +74,8 @@ nsSubDocumentFrame::nsSubDocumentFrame(ComputedStyle* aStyle,
       mIsInline(false),
       mPostedReflowCallback(false),
       mDidCreateDoc(false),
-      mCallingShow(false) {}
+      mCallingShow(false),
+      mIsInObjectOrEmbed(false) {}
 
 #ifdef ACCESSIBILITY
 a11y::AccType nsSubDocumentFrame::AccessibleType() {
@@ -145,7 +147,13 @@ void nsSubDocumentFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
         frameloader->Hide();
       }
     }
+
+    if (RefPtr<BrowsingContext> bc = frameloader->GetExtantBrowsingContext()) {
+      mIsInObjectOrEmbed = bc->IsEmbedderTypeObjectOrEmbed();
+    }
   }
+
+  MaybeUpdateRemoteStyle();
 
   PropagateIsUnderHiddenEmbedderElementToSubView(
       PresShell()->IsUnderHiddenEmbedderElement() ||
@@ -156,22 +164,15 @@ void nsSubDocumentFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 
 void nsSubDocumentFrame::PropagateIsUnderHiddenEmbedderElementToSubView(
     bool aIsUnderHiddenEmbedderElement) {
-  if (mFrameLoader && mFrameLoader->IsRemoteFrame()) {
-    mFrameLoader->SendIsUnderHiddenEmbedderElement(
-        aIsUnderHiddenEmbedderElement);
+  if (!mFrameLoader) {
     return;
   }
 
-  if (!mInnerView) {
-    return;
-  }
-
-  nsView* subdocView = mInnerView->GetFirstChild();
-  while (subdocView) {
-    if (mozilla::PresShell* presShell = subdocView->GetPresShell()) {
-      presShell->SetIsUnderHiddenEmbedderElement(aIsUnderHiddenEmbedderElement);
+  if (BrowsingContext* bc = mFrameLoader->GetExtantBrowsingContext()) {
+    if (bc->IsUnderHiddenEmbedderElement() != aIsUnderHiddenEmbedderElement) {
+      Unused << bc->SetIsUnderHiddenEmbedderElement(
+          aIsUnderHiddenEmbedderElement);
     }
-    subdocView = subdocView->GetNextSibling();
   }
 }
 
@@ -181,7 +182,7 @@ void nsSubDocumentFrame::ShowViewer() {
   }
 
   RefPtr<nsFrameLoader> frameloader = FrameLoader();
-  if (!frameloader) {
+  if (!frameloader || frameloader->IsDead()) {
     return;
   }
 
@@ -348,7 +349,7 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
     return;
   }
 
-  if (IsContentHidden()) {
+  if (HidesContent()) {
     return;
   }
 
@@ -456,14 +457,6 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
                                                            visible, dirty);
 
     if (subdocRootFrame) {
-      nsIFrame* rootScrollFrame = presShell->GetRootScrollFrame();
-      nsDisplayListBuilder::AutoCurrentScrollParentIdSetter idSetter(
-          aBuilder,
-          ignoreViewportScrolling && rootScrollFrame &&
-                  rootScrollFrame->GetContent()
-              ? nsLayoutUtils::FindOrCreateIDFor(rootScrollFrame->GetContent())
-              : aBuilder->GetCurrentScrollParentId());
-
       bool hasDocumentLevelListenersForApzAwareEvents =
           gfxPlatform::AsyncPanZoomEnabled() &&
           nsLayoutUtils::HasDocumentLevelListenersForApzAwareEvents(presShell);
@@ -485,21 +478,13 @@ void nsSubDocumentFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
         bounds = bounds.ScaleToOtherAppUnitsRoundOut(parentAPD, subdocAPD);
       }
 
-      // If we are in print preview/page layout we want to paint the grey
-      // background behind the page, not the canvas color. The canvas color gets
-      // painted on the page itself.
-      if (nsLayoutUtils::NeedsPrintPreviewBackground(presContext)) {
-        presShell->AddPrintPreviewBackgroundItem(aBuilder, &childItems, frame,
-                                                 bounds);
-      } else {
-        // Add the canvas background color to the bottom of the list. This
-        // happens after we've built the list so that
-        // AddCanvasBackgroundColorItem can monkey with the contents if
-        // necessary.
-        presShell->AddCanvasBackgroundColorItem(
-            aBuilder, &childItems, frame, bounds, NS_RGBA(0, 0, 0, 0),
-            AddCanvasBackgroundColorFlags::ForceDraw);
-      }
+      // Add the canvas background color to the bottom of the list. This
+      // happens after we've built the list so that
+      // AddCanvasBackgroundColorItem can monkey with the contents if
+      // necessary.
+      presShell->AddCanvasBackgroundColorItem(
+          aBuilder, &childItems, frame, bounds, NS_RGBA(0, 0, 0, 0),
+          AddCanvasBackgroundColorFlags::ForceDraw);
     }
   }
 
@@ -615,7 +600,7 @@ nscoord nsSubDocumentFrame::GetPrefISize(gfxContext* aRenderingContext) {
 
 /* virtual */
 IntrinsicSize nsSubDocumentFrame::GetIntrinsicSize() {
-  const auto containAxes = StyleDisplay()->GetContainSizeAxes();
+  const auto containAxes = GetContainSizeAxes();
   if (containAxes.IsBoth()) {
     // Intrinsic size of 'contain:size' replaced elements is determined by
     // contain-intrinsic-size.
@@ -822,33 +807,66 @@ void nsSubDocumentFrame::MaybeUpdateEmbedderColorScheme() {
     return;
   }
 
-  auto usedColorScheme = LookAndFeel::ColorSchemeForFrame(this);
-  bool needUpdate = [&] {
-    switch (bc->GetEmbedderColorScheme()) {
-      case PrefersColorSchemeOverride::Light:
-        return usedColorScheme != ColorScheme::Light;
-      case PrefersColorSchemeOverride::Dark:
-        return usedColorScheme != ColorScheme::Dark;
-      case PrefersColorSchemeOverride::None:
-      case PrefersColorSchemeOverride::EndGuard_:
-        break;
-    }
-    return true;
-  }();
-  if (!needUpdate) {
+  auto ToOverride = [](ColorScheme aScheme) -> PrefersColorSchemeOverride {
+    return aScheme == ColorScheme::Dark ? PrefersColorSchemeOverride::Dark
+                                        : PrefersColorSchemeOverride::Light;
+  };
+
+  EmbedderColorSchemes schemes{
+      ToOverride(LookAndFeel::ColorSchemeForFrame(this, ColorSchemeMode::Used)),
+      ToOverride(
+          LookAndFeel::ColorSchemeForFrame(this, ColorSchemeMode::Preferred))};
+  if (bc->GetEmbedderColorSchemes() == schemes) {
     return;
   }
 
-  auto value = usedColorScheme == ColorScheme::Dark
-                   ? PrefersColorSchemeOverride::Dark
-                   : PrefersColorSchemeOverride::Light;
-  Unused << bc->SetEmbedderColorScheme(value);
+  Unused << bc->SetEmbedderColorSchemes(schemes);
+}
+
+void nsSubDocumentFrame::MaybeUpdateRemoteStyle(
+    ComputedStyle* aOldComputedStyle) {
+  if (!mIsInObjectOrEmbed) {
+    return;
+  }
+
+  if (aOldComputedStyle &&
+      aOldComputedStyle->StyleVisibility()->mImageRendering ==
+          Style()->StyleVisibility()->mImageRendering) {
+    return;
+  }
+
+  if (!mFrameLoader) {
+    return;
+  }
+
+  if (mFrameLoader->IsRemoteFrame()) {
+    mFrameLoader->UpdateRemoteStyle(
+        Style()->StyleVisibility()->mImageRendering);
+    return;
+  }
+
+  BrowsingContext* context = mFrameLoader->GetExtantBrowsingContext();
+  if (!context) {
+    return;
+  }
+
+  Document* document = context->GetDocument();
+  if (!document) {
+    return;
+  }
+
+  if (document->IsImageDocument()) {
+    document->AsImageDocument()->UpdateRemoteStyle(
+        Style()->StyleVisibility()->mImageRendering);
+  }
 }
 
 void nsSubDocumentFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
   nsAtomicContainerFrame::DidSetComputedStyle(aOldComputedStyle);
 
   MaybeUpdateEmbedderColorScheme();
+
+  MaybeUpdateRemoteStyle(aOldComputedStyle);
 
   // If this presshell has invisible ancestors, we don't need to propagate the
   // visibility style change to the subdocument since the subdocument should
@@ -1183,7 +1201,7 @@ void nsSubDocumentFrame::EndSwapDocShells(nsIFrame* aOther) {
   // And repaint them, for good measure, in case there's nothing
   // interesting that happens during reflow.
   if (weakThis.IsAlive()) {
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_IS_DIRTY);
     InvalidateFrameSubtree();
     PropagateIsUnderHiddenEmbedderElementToSubView(
@@ -1191,8 +1209,8 @@ void nsSubDocumentFrame::EndSwapDocShells(nsIFrame* aOther) {
         !StyleVisibility()->IsVisible());
   }
   if (weakOther.IsAlive()) {
-    other->PresShell()->FrameNeedsReflow(other, IntrinsicDirty::TreeChange,
-                                         NS_FRAME_IS_DIRTY);
+    other->PresShell()->FrameNeedsReflow(
+        other, IntrinsicDirty::FrameAndAncestors, NS_FRAME_IS_DIRTY);
     other->InvalidateFrameSubtree();
     other->PropagateIsUnderHiddenEmbedderElementToSubView(
         other->PresShell()->IsUnderHiddenEmbedderElement() ||
@@ -1235,19 +1253,16 @@ nsPoint nsSubDocumentFrame::GetExtraOffset() const {
 }
 
 void nsSubDocumentFrame::SubdocumentIntrinsicSizeOrRatioChanged() {
-  if (MOZ_UNLIKELY(HasAllStateBits(NS_FRAME_IS_DIRTY))) {
-    // We will be reflowed soon anyway.
-    return;
-  }
-
   const nsStylePosition* pos = StylePosition();
   bool dependsOnIntrinsics =
       !pos->mWidth.ConvertsToLength() || !pos->mHeight.ConvertsToLength();
 
   if (dependsOnIntrinsics || pos->mObjectFit != StyleObjectFit::Fill) {
-    auto dirtyHint = dependsOnIntrinsics ? IntrinsicDirty::StyleChange
-                                         : IntrinsicDirty::Resize;
+    auto dirtyHint = dependsOnIntrinsics
+                         ? IntrinsicDirty::FrameAncestorsAndDescendants
+                         : IntrinsicDirty::None;
     PresShell()->FrameNeedsReflow(this, dirtyHint, NS_FRAME_IS_DIRTY);
+    InvalidateFrame();
   }
 }
 
@@ -1376,7 +1391,7 @@ bool nsDisplayRemote::CreateWebRenderCommands(
   auto rect = LayoutDeviceRect::FromAppUnits(destRect, auPerDevPixel);
   rect += mOffset;
 
-  aBuilder.PushIFrame(mozilla::wr::ToLayoutRect(rect), !BackfaceIsHidden(),
+  aBuilder.PushIFrame(rect, !BackfaceIsHidden(),
                       mozilla::wr::AsPipelineId(mPaintData.mLayersId),
                       /*ignoreMissingPipelines*/ true);
 

@@ -4,8 +4,6 @@
 "use strict";
 
 /* eslint no-unused-vars: [2, {"vars": "local"}] */
-/* import-globals-from ../../../shared/test/shared-head.js */
-/* import-globals-from ../../../inspector/test/shared-head.js */
 
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
@@ -18,31 +16,43 @@ Services.scriptloader.loadSubScript(
   this
 );
 
+// Load APZ test utils so we properly wait after resize
+Services.scriptloader.loadSubScript(
+  "chrome://mochitests/content/browser/gfx/layers/apz/test/mochitest/apz_test_utils.js",
+  this
+);
+Services.scriptloader.loadSubScript(
+  "chrome://mochikit/content/tests/SimpleTest/paint_listener.js",
+  this
+);
+
 const {
   _loadPreferredDevices,
-} = require("devtools/client/responsive/actions/devices");
-const { getStr } = require("devtools/client/responsive/utils/l10n");
+} = require("resource://devtools/client/responsive/actions/devices.js");
+const {
+  getStr,
+} = require("resource://devtools/client/responsive/utils/l10n.js");
 const {
   getTopLevelWindow,
-} = require("devtools/client/responsive/utils/window");
+} = require("resource://devtools/client/responsive/utils/window.js");
 const {
   addDevice,
   removeDevice,
   removeLocalDevices,
-} = require("devtools/client/shared/devices");
-const { KeyCodes } = require("devtools/client/shared/keycodes");
-const asyncStorage = require("devtools/shared/async-storage");
-const localTypes = require("devtools/client/responsive/types");
+} = require("resource://devtools/client/shared/devices.js");
+const { KeyCodes } = require("resource://devtools/client/shared/keycodes.js");
+const asyncStorage = require("resource://devtools/shared/async-storage.js");
+const localTypes = require("resource://devtools/client/responsive/types.js");
 
 loader.lazyRequireGetter(
   this,
   "ResponsiveUIManager",
-  "devtools/client/responsive/manager"
+  "resource://devtools/client/responsive/manager.js"
 );
 loader.lazyRequireGetter(
   this,
   "message",
-  "devtools/client/responsive/utils/message"
+  "resource://devtools/client/responsive/utils/message.js"
 );
 
 const E10S_MULTI_ENABLED =
@@ -91,6 +101,10 @@ registerCleanupFunction(async () => {
   Services.prefs.clearUserPref("devtools.responsive.viewport.width");
   await asyncStorage.removeItem("devtools.responsive.deviceState");
   await removeLocalDevices();
+
+  delete window.waitForAllPaintsFlushed;
+  delete window.waitForAllPaints;
+  delete window.promiseAllPaintsDone;
 });
 
 /**
@@ -130,7 +144,7 @@ function addRDMTaskWithPreAndPost(url, preTask, task, postTask, options) {
     waitForDeviceList = !!options.waitForDeviceList;
   }
 
-  add_task(async function() {
+  add_task(async function () {
     let tab;
     let browser;
     let preTaskValue = null;
@@ -210,7 +224,7 @@ async function spawnViewportTask(ui, args, task) {
 }
 
 function waitForFrameLoad(ui, targetURL) {
-  return spawnViewportTask(ui, { targetURL }, async function(args) {
+  return spawnViewportTask(ui, { targetURL }, async function (args) {
     if (
       (content.document.readyState == "complete" ||
         content.document.readyState == "interactive") &&
@@ -223,7 +237,7 @@ function waitForFrameLoad(ui, targetURL) {
 }
 
 function waitForViewportResizeTo(ui, width, height) {
-  return new Promise(function(resolve) {
+  return new Promise(function (resolve) {
     const isSizeMatching = data => data.width == width && data.height == height;
 
     // If the viewport has already the expected size, we resolve the promise immediately.
@@ -251,7 +265,7 @@ function waitForViewportResizeTo(ui, width, height) {
       resolve();
     };
 
-    const onBrowserLoadEnd = async function() {
+    const onBrowserLoadEnd = async function () {
       const data = ui.getViewportSize(ui);
       onContentResize(data);
     };
@@ -267,7 +281,7 @@ function waitForViewportResizeTo(ui, width, height) {
   });
 }
 
-var setViewportSize = async function(ui, manager, width, height) {
+var setViewportSize = async function (ui, manager, width, height) {
   const size = ui.getViewportSize();
   info(
     `Current size: ${size.width} x ${size.height}, ` +
@@ -282,13 +296,19 @@ var setViewportSize = async function(ui, manager, width, height) {
 
 // This performs the same function as setViewportSize, but additionally
 // ensures that reflow of the viewport has completed.
-var setViewportSizeAndAwaitReflow = async function(ui, manager, width, height) {
+var setViewportSizeAndAwaitReflow = async function (
+  ui,
+  manager,
+  width,
+  height
+) {
   await setViewportSize(ui, manager, width, height);
   await promiseContentReflow(ui);
+  await promiseApzFlushedRepaints();
 };
 
 function getViewportDevicePixelRatio(ui) {
-  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function() {
+  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function () {
     // Note that devicePixelRatio doesn't return the override to privileged
     // code, see bug 1759962.
     return content.browsingContext.overrideDPPX || content.devicePixelRatio;
@@ -514,29 +534,29 @@ function getSessionHistory(browser) {
     const browsingContext = browser.browsingContext;
     const uri = browsingContext.currentWindowGlobal.documentURI.displaySpec;
     const history = browsingContext.sessionHistory;
-    const body = ContentTask.spawn(browser, browsingContext, function(
-      // eslint-disable-next-line no-shadow
-      browsingContext
-    ) {
-      const docShell = browsingContext.docShell.QueryInterface(
-        Ci.nsIWebNavigation
-      );
-      return docShell.document.body;
-    });
-    /* eslint-disable no-undef */
-    const { SessionHistory } = ChromeUtils.import(
-      "resource://gre/modules/sessionstore/SessionHistory.jsm"
+    const body = ContentTask.spawn(
+      browser,
+      browsingContext,
+      function (
+        // eslint-disable-next-line no-shadow
+        browsingContext
+      ) {
+        const docShell = browsingContext.docShell.QueryInterface(
+          Ci.nsIWebNavigation
+        );
+        return docShell.document.body;
+      }
+    );
+    const { SessionHistory } = ChromeUtils.importESModule(
+      "resource://gre/modules/sessionstore/SessionHistory.sys.mjs"
     );
     return SessionHistory.collectFromParent(uri, body, history);
-    /* eslint-enable no-undef */
   }
-  return ContentTask.spawn(browser, null, function() {
-    /* eslint-disable no-undef */
-    const { SessionHistory } = ChromeUtils.import(
-      "resource://gre/modules/sessionstore/SessionHistory.jsm"
+  return ContentTask.spawn(browser, null, function () {
+    const { SessionHistory } = ChromeUtils.importESModule(
+      "resource://gre/modules/sessionstore/SessionHistory.sys.mjs"
     );
     return SessionHistory.collect(docShell);
-    /* eslint-enable no-undef */
   });
 }
 
@@ -683,7 +703,7 @@ async function testUserAgent(ui, expected) {
 }
 
 async function testUserAgentFromBrowser(browser, expected) {
-  const ua = await SpecialPowers.spawn(browser, [], async function() {
+  const ua = await SpecialPowers.spawn(browser, [], async function () {
     return content.navigator.userAgent;
   });
   is(ua, expected, `UA should be set to ${expected}`);
@@ -706,7 +726,7 @@ function testViewportDimensions(ui, w, h) {
 
 async function changeUserAgentInput(ui, value) {
   const { Simulate } = ui.toolWindow.require(
-    "devtools/client/shared/vendor/react-dom-test-utils"
+    "resource://devtools/client/shared/vendor/react-dom-test-utils.js"
   );
   const { document, store } = ui.toolWindow;
   const browser = ui.getViewportBrowser();
@@ -732,7 +752,7 @@ async function changeUserAgentInput(ui, value) {
  */
 function addDeviceInModal(ui, device) {
   const { Simulate } = ui.toolWindow.require(
-    "devtools/client/shared/vendor/react-dom-test-utils"
+    "resource://devtools/client/shared/vendor/react-dom-test-utils.js"
   );
   const { document, store } = ui.toolWindow;
 
@@ -775,7 +795,7 @@ function addDeviceInModal(ui, device) {
 
 async function editDeviceInModal(ui, device, newDevice) {
   const { Simulate } = ui.toolWindow.require(
-    "devtools/client/shared/vendor/react-dom-test-utils"
+    "resource://devtools/client/shared/vendor/react-dom-test-utils.js"
   );
   const { document, store } = ui.toolWindow;
 
@@ -861,14 +881,14 @@ async function setTouchAndMetaViewportSupport(ui, value) {
 // are all as expected.
 async function testViewportZoomWidthAndHeight(msg, ui, zoom, width, height) {
   if (typeof zoom !== "undefined") {
-    const resolution = await spawnViewportTask(ui, {}, function() {
+    const resolution = await spawnViewportTask(ui, {}, function () {
       return content.windowUtils.getResolution();
     });
     is(resolution, zoom, msg + " should have expected zoom.");
   }
 
   if (typeof width !== "undefined" || typeof height !== "undefined") {
-    const innerSize = await spawnViewportTask(ui, {}, function() {
+    const innerSize = await spawnViewportTask(ui, {}, function () {
       return {
         width: content.innerWidth,
         height: content.innerHeight,
@@ -884,7 +904,7 @@ async function testViewportZoomWidthAndHeight(msg, ui, zoom, width, height) {
 }
 
 function promiseContentReflow(ui) {
-  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function() {
+  return SpecialPowers.spawn(ui.getViewportBrowser(), [], async function () {
     return new Promise(resolve => {
       content.window.requestAnimationFrame(() => {
         content.window.requestAnimationFrame(resolve);
@@ -910,7 +930,7 @@ async function promiseRDMZoom(ui, browser, zoom) {
   //
   // This also has the side effect of updating layout which ensures that any
   // remote frame dimension update message gets there in time.
-  await BrowserTestUtils.waitForCondition(function() {
+  await BrowserTestUtils.waitForCondition(function () {
     return browser.getBoundingClientRect().width != width;
   });
 }
@@ -948,8 +968,8 @@ async function waitForDevicePixelRatio(
   const dpx = await SpecialPowers.spawn(
     ui.getViewportBrowser(),
     [{ expected }],
-    function(args) {
-      const getDpr = function() {
+    function (args) {
+      const getDpr = function () {
         return content.browsingContext.overrideDPPX || content.devicePixelRatio;
       };
       const initial = getDpr();

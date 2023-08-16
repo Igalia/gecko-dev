@@ -8,9 +8,11 @@
 const TEST_URI =
   "http://example.com/browser/devtools/client/webconsole/" +
   "test/browser/test-batching.html";
-const { l10n } = require("devtools/client/webconsole/utils/messages");
+const {
+  l10n,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
   const messageNumber = 100;
   await testSimpleBatchLogging(hud, messageNumber);
@@ -18,11 +20,13 @@ add_task(async function() {
 });
 
 async function testSimpleBatchLogging(hud, messageNumber) {
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [messageNumber], function(
-    numMessages
-  ) {
-    content.wrappedJSObject.batchLog(numMessages);
-  });
+  await SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [messageNumber],
+    function (numMessages) {
+      content.wrappedJSObject.batchLog(numMessages);
+    }
+  );
   const allMessages = await waitFor(async () => {
     const msgs = await findAllMessagesVirtualized(hud);
     if (msgs.length == messageNumber) {
@@ -41,11 +45,13 @@ async function testSimpleBatchLogging(hud, messageNumber) {
 }
 
 async function testBatchLoggingAndClear(hud, messageNumber) {
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [messageNumber], function(
-    numMessages
-  ) {
-    content.wrappedJSObject.batchLogAndClear(numMessages);
-  });
+  await SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [messageNumber],
+    function (numMessages) {
+      content.wrappedJSObject.batchLogAndClear(numMessages);
+    }
+  );
   await waitFor(() =>
     findConsoleAPIMessage(hud, l10n.getStr("consoleCleared"))
   );

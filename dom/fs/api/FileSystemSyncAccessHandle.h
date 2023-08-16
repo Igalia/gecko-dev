@@ -7,6 +7,8 @@
 #ifndef DOM_FS_FILESYSTEMSYNCACCESSHANDLE_H_
 #define DOM_FS_FILESYSTEMSYNCACCESSHANDLE_H_
 
+#include "mozilla/dom/PFileSystemManager.h"
+#include "mozilla/dom/quota/ForwardDecls.h"
 #include "nsCOMPtr.h"
 #include "nsISupports.h"
 #include "nsWrapperCache.h"
@@ -16,18 +18,50 @@ class nsIGlobalObject;
 namespace mozilla {
 
 class ErrorResult;
+class TaskQueue;
 
 namespace dom {
 
+class FileSystemAccessHandleChild;
+class FileSystemAccessHandleControlChild;
 struct FileSystemReadWriteOptions;
+class FileSystemManager;
 class MaybeSharedArrayBufferViewOrMaybeSharedArrayBuffer;
 class Promise;
+class StrongWorkerRef;
 
 class FileSystemSyncAccessHandle final : public nsISupports,
                                          public nsWrapperCache {
  public:
+  enum struct State : uint8_t { Initial = 0, Open, Closing, Closed };
+
+  static Result<RefPtr<FileSystemSyncAccessHandle>, nsresult> Create(
+      nsIGlobalObject* aGlobal, RefPtr<FileSystemManager>& aManager,
+      mozilla::ipc::RandomAccessStreamParams&& aStreamParams,
+      mozilla::ipc::ManagedEndpoint<PFileSystemAccessHandleChild>&&
+          aAccessHandleChildEndpoint,
+      mozilla::ipc::Endpoint<PFileSystemAccessHandleControlChild>&&
+          aAccessHandleControlChildEndpoint,
+      const fs::FileSystemEntryMetadata& aMetadata);
+
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(FileSystemSyncAccessHandle)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(FileSystemSyncAccessHandle)
+
+  void LastRelease();
+
+  void ClearActor();
+
+  void ClearControlActor();
+
+  bool IsOpen() const;
+
+  bool IsClosing() const;
+
+  bool IsClosed() const;
+
+  [[nodiscard]] RefPtr<BoolPromise> BeginClose();
+
+  [[nodiscard]] RefPtr<BoolPromise> OnClose();
 
   // WebIDL Boilerplate
   nsIGlobalObject* GetParentObject() const;
@@ -38,24 +72,59 @@ class FileSystemSyncAccessHandle final : public nsISupports,
   // WebIDL Interface
   uint64_t Read(
       const MaybeSharedArrayBufferViewOrMaybeSharedArrayBuffer& aBuffer,
-      const FileSystemReadWriteOptions& aOptions);
+      const FileSystemReadWriteOptions& aOptions, ErrorResult& aRv);
 
   uint64_t Write(
       const MaybeSharedArrayBufferViewOrMaybeSharedArrayBuffer& aBuffer,
-      const FileSystemReadWriteOptions& aOptions);
+      const FileSystemReadWriteOptions& aOptions, ErrorResult& aRv);
 
-  already_AddRefed<Promise> Truncate(uint64_t aSize, ErrorResult& aError);
+  void Truncate(uint64_t aSize, ErrorResult& aError);
 
-  already_AddRefed<Promise> GetSize(ErrorResult& aError);
+  uint64_t GetSize(ErrorResult& aError);
 
-  already_AddRefed<Promise> Flush(ErrorResult& aError);
+  void Flush(ErrorResult& aError);
 
-  already_AddRefed<Promise> Close(ErrorResult& aError);
+  void Close();
 
  private:
-  virtual ~FileSystemSyncAccessHandle() = default;
+  FileSystemSyncAccessHandle(
+      nsIGlobalObject* aGlobal, RefPtr<FileSystemManager>& aManager,
+      mozilla::ipc::RandomAccessStreamParams&& aStreamParams,
+      RefPtr<FileSystemAccessHandleChild> aActor,
+      RefPtr<FileSystemAccessHandleControlChild> aControlActor,
+      RefPtr<TaskQueue> aIOTaskQueue,
+      const fs::FileSystemEntryMetadata& aMetadata);
+
+  virtual ~FileSystemSyncAccessHandle();
+
+  uint64_t ReadOrWrite(
+      const MaybeSharedArrayBufferViewOrMaybeSharedArrayBuffer& aBuffer,
+      const FileSystemReadWriteOptions& aOptions, const bool aRead,
+      ErrorResult& aRv);
+
+  nsresult EnsureStream();
 
   nsCOMPtr<nsIGlobalObject> mGlobal;
+
+  RefPtr<FileSystemManager> mManager;
+
+  RefPtr<FileSystemAccessHandleChild> mActor;
+
+  RefPtr<FileSystemAccessHandleControlChild> mControlActor;
+
+  RefPtr<TaskQueue> mIOTaskQueue;
+
+  nsCOMPtr<nsIRandomAccessStream> mStream;
+
+  RefPtr<StrongWorkerRef> mWorkerRef;
+
+  MozPromiseHolder<BoolPromise> mClosePromiseHolder;
+
+  mozilla::ipc::RandomAccessStreamParams mStreamParams;
+
+  const fs::FileSystemEntryMetadata mMetadata;
+
+  State mState;
 };
 
 }  // namespace dom

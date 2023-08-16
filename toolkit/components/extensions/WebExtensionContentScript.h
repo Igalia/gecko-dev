@@ -105,7 +105,7 @@ class MOZ_STACK_CLASS DocInfo final {
 
 class MozDocumentMatcher : public nsISupports, public nsWrapperCache {
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(MozDocumentMatcher)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(MozDocumentMatcher)
 
   using MatchGlobArray = nsTArray<RefPtr<MatchGlob>>;
 
@@ -136,13 +136,6 @@ class MozDocumentMatcher : public nsISupports, public nsWrapperCache {
 
   MatchPatternSet* GetExcludeMatches() { return mExcludeMatches; }
   const MatchPatternSet* GetExcludeMatches() const { return mExcludeMatches; }
-
-  void GetIncludeGlobs(Nullable<MatchGlobArray>& aGlobs) {
-    ToNullable(mExcludeGlobs, aGlobs);
-  }
-  void GetExcludeGlobs(Nullable<MatchGlobArray>& aGlobs) {
-    ToNullable(mExcludeGlobs, aGlobs);
-  }
 
   Nullable<uint64_t> GetFrameID() const { return mFrameID; }
 
@@ -179,25 +172,6 @@ class MozDocumentMatcher : public nsISupports, public nsWrapperCache {
   Nullable<uint64_t> mFrameID;
   bool mMatchAboutBlank;
   Nullable<dom::Sequence<OriginAttributesPattern>> mOriginAttributesPatterns;
-
- private:
-  template <typename T, typename U>
-  void ToNullable(const Nullable<T>& aInput, Nullable<U>& aOutput) {
-    if (aInput.IsNull()) {
-      aOutput.SetNull();
-    } else {
-      aOutput.SetValue(aInput.Value());
-    }
-  }
-
-  template <typename T, typename U>
-  void ToNullable(const Nullable<T>& aInput, Nullable<nsTArray<U>>& aOutput) {
-    if (aInput.IsNull()) {
-      aOutput.SetNull();
-    } else {
-      aOutput.SetValue(aInput.Value().Clone());
-    }
-  }
 };
 
 class WebExtensionContentScript final : public MozDocumentMatcher {

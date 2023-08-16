@@ -15,6 +15,7 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/WrappingOperations.h"
 
 #include <string.h>
@@ -27,7 +28,9 @@
 #include "builtin/Array.h"
 #include "builtin/Eval.h"
 #include "builtin/ModuleObject.h"
+#include "builtin/Object.h"
 #include "builtin/Promise.h"
+#include "gc/GC.h"
 #include "jit/AtomicOperations.h"
 #include "jit/BaselineJIT.h"
 #include "jit/Jit.h"
@@ -36,6 +39,7 @@
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/friend/StackLimits.h"    // js::AutoCheckRecursionLimit
 #include "js/friend/WindowProxy.h"    // js::IsWindowProxy
+#include "js/Printer.h"
 #include "util/CheckedArithmetic.h"
 #include "util/StringBuffer.h"
 #include "vm/AsyncFunction.h"
@@ -45,7 +49,7 @@
 #include "vm/EqualityOperations.h"  // js::StrictlyEqual
 #include "vm/GeneratorObject.h"
 #include "vm/Iteration.h"
-#include "vm/JSAtom.h"
+#include "vm/JSAtomUtils.h"  // AtomToPrintableString
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
@@ -53,12 +57,12 @@
 #include "vm/Opcodes.h"
 #include "vm/PIC.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/Printer.h"
 #include "vm/Scope.h"
 #include "vm/Shape.h"
 #include "vm/SharedStencil.h"  // GCThingIndex
 #include "vm/StringType.h"
 #include "vm/ThrowMsgKind.h"  // ThrowMsgKind
+#include "vm/Time.h"
 #ifdef ENABLE_RECORD_TUPLE
 #  include "vm/RecordType.h"
 #  include "vm/TupleType.h"
@@ -186,7 +190,7 @@ static bool IsSelfHostedOrKnownBuiltinCtor(JSFunction* fun, JSContext* cx) {
     return true;
   }
 
-  // GetBuiltinConstructor in ArrayGroupToMap
+  // GetBuiltinConstructor in MapGroupBy
   if (fun == cx->global()->maybeGetConstructor(JSProto_Map)) {
     return true;
   }
@@ -350,9 +354,6 @@ static bool AddRecordSpreadOperation(JSContext* cx, HandleValue recHandle,
 }
 #endif
 
-static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
-                                                              RunState& state);
-
 InterpreterFrame* InvokeState::pushInterpreterFrame(JSContext* cx) {
   return cx->interpreterStack().pushInvokeFrame(cx, args_, construct_);
 }
@@ -367,6 +368,36 @@ InterpreterFrame* RunState::pushInterpreterFrame(JSContext* cx) {
     return asInvoke()->pushInterpreterFrame(cx);
   }
   return asExecute()->pushInterpreterFrame(cx);
+}
+
+static MOZ_ALWAYS_INLINE bool MaybeEnterInterpreterTrampoline(JSContext* cx,
+                                                              RunState& state) {
+#ifdef NIGHTLY_BUILD
+  if (jit::JitOptions.emitInterpreterEntryTrampoline &&
+      cx->runtime()->hasJitRuntime()) {
+    js::jit::JitRuntime* jitRuntime = cx->runtime()->jitRuntime();
+    JSScript* script = state.script();
+
+    uint8_t* codeRaw = nullptr;
+    auto p = jitRuntime->getInterpreterEntryMap()->lookup(script);
+    if (p) {
+      codeRaw = p->value().raw();
+    } else if (js::jit::JitCode* code =
+                   jitRuntime->generateEntryTrampolineForScript(cx, script)) {
+      js::jit::EntryTrampoline entry(cx, code);
+      if (!jitRuntime->getInterpreterEntryMap()->put(script, entry)) {
+        return false;
+      }
+      codeRaw = code->raw();
+    }
+
+    MOZ_ASSERT(codeRaw, "Should have a valid trampoline here.");
+    // The C++ entry thunk is located at the vmInterpreterEntryOffset offset.
+    codeRaw += jitRuntime->vmInterpreterEntryOffset();
+    return js::jit::EnterInterpreterEntryTrampoline(codeRaw, cx, &state);
+  }
+#endif
+  return Interpret(cx, state);
 }
 
 // MSVC with PGO inlines a lot of functions in RunScript, resulting in large
@@ -403,11 +434,11 @@ bool js::RunScript(JSContext* cx, RunState& state) {
   if (measuringTime) {
     cx->setIsMeasuringExecutionTime(true);
     cx->setIsExecuting(true);
-    startTime = ReallyNow();
+    startTime = mozilla::TimeStamp::Now();
   }
   auto timerEnd = mozilla::MakeScopeExit([&]() {
     if (measuringTime) {
-      mozilla::TimeDuration delta = ReallyNow() - startTime;
+      mozilla::TimeDuration delta = mozilla::TimeStamp::Now() - startTime;
       cx->realm()->timers.executionTime += delta;
       cx->setIsMeasuringExecutionTime(false);
       cx->setIsExecuting(false);
@@ -424,7 +455,7 @@ bool js::RunScript(JSContext* cx, RunState& state) {
       break;
   }
 
-  bool ok = Interpret(cx, state);
+  bool ok = MaybeEnterInterpreterTrampoline(cx, state);
 
   return ok;
 }
@@ -479,11 +510,17 @@ MOZ_ALWAYS_INLINE bool CallJSNativeConstructor(JSContext* cx, Native native,
    * constructor to return the callee, the assertion can be removed or
    * (another) conjunct can be added to the antecedent.
    *
-   * Exception: (new Object(Object)) returns the callee. Also allow if this may
-   *            be due to a debugger hook since fuzzing may let this happen.
+   * Exceptions:
+   * - (new Object(Object)) returns the callee.
+   * - The bound function construct hook can return an arbitrary object,
+   *   including the callee.
+   *
+   * Also allow if this may be due to a debugger hook since fuzzing may let this
+   * happen.
    */
   MOZ_ASSERT(args.rval().isObject());
   MOZ_ASSERT_IF(!JS_IsNativeFunction(callee, obj_construct) &&
+                    !callee->is<BoundFunctionObject>() &&
                     !cx->insideDebuggerEvaluationWithOnNativeCallHook,
                 args.rval() != ObjectValue(*callee));
 
@@ -759,13 +796,6 @@ bool js::InternalConstructWithProvidedThis(JSContext* cx, HandleValue fval,
 
 bool js::CallGetter(JSContext* cx, HandleValue thisv, HandleValue getter,
                     MutableHandleValue rval) {
-  // Invoke could result in another try to get or set the same id again, see
-  // bug 355497.
-  AutoCheckRecursionLimit recursion(cx);
-  if (!recursion.check(cx)) {
-    return false;
-  }
-
   FixedInvokeArgs<0> args(cx);
 
   return Call(cx, getter, thisv, args, rval, CallReason::Getter);
@@ -773,13 +803,7 @@ bool js::CallGetter(JSContext* cx, HandleValue thisv, HandleValue getter,
 
 bool js::CallSetter(JSContext* cx, HandleValue thisv, HandleValue setter,
                     HandleValue v) {
-  AutoCheckRecursionLimit recursion(cx);
-  if (!recursion.check(cx)) {
-    return false;
-  }
-
   FixedInvokeArgs<1> args(cx);
-
   args[0].set(v);
 
   RootedValue ignored(cx);
@@ -1743,7 +1767,7 @@ static MOZ_ALWAYS_INLINE bool LessThanImpl(JSContext* cx,
   double lhsNum = lhs.toNumber();
   double rhsNum = rhs.toNumber();
 
-  if (mozilla::IsNaN(lhsNum) || mozilla::IsNaN(rhsNum)) {
+  if (std::isnan(lhsNum) || std::isnan(rhsNum)) {
     res = mozilla::Maybe<bool>(mozilla::Nothing());
     return true;
   }
@@ -1957,8 +1981,8 @@ void js::ReportInNotObjectError(JSContext* cx, HandleValue lref,
                             InformalValueTypeName(rref));
 }
 
-static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
-                                                              RunState& state) {
+bool MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER js::Interpret(JSContext* cx,
+                                                           RunState& state) {
 /*
  * Define macros for an interpreter loop. Opcode dispatch is done by
  * indirect goto (aka a threaded interpreter), which is technically
@@ -3419,6 +3443,21 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
             case jit::EnterJitStatus::NotEntered:
               break;
           }
+
+#ifdef NIGHTLY_BUILD
+          // If entry trampolines are enabled, call back into
+          // MaybeEnterInterpreterTrampoline so we can generate an
+          // entry trampoline for the new frame.
+          if (jit::JitOptions.emitInterpreterEntryTrampoline) {
+            if (MaybeEnterInterpreterTrampoline(cx, state)) {
+              interpReturnOK = true;
+              CHECK_BRANCH();
+              REGS.sp = args.spAfterCall();
+              goto jit_return;
+            }
+            goto error;
+          }
+#endif
         }
 
         funScript = fun->nonLazyScript();
@@ -3568,10 +3607,9 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(Object)
 
     CASE(CallSiteObj) {
-      JSObject* cso = ProcessCallSiteObjOperation(cx, script, REGS.pc);
-      if (!cso) {
-        goto error;
-      }
+      JSObject* cso = script->getObject(REGS.pc);
+      MOZ_ASSERT(!cso->as<ArrayObject>().isExtensible());
+      MOZ_ASSERT(cso->as<ArrayObject>().containsPure(cx->names().raw));
       PUSH_OBJECT(*cso);
     }
     END_CASE(CallSiteObj)
@@ -3751,6 +3789,12 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     }
     END_CASE(GetArg)
 
+    CASE(GetFrameArg) {
+      uint32_t i = GET_ARGNO(REGS.pc);
+      PUSH_COPY(REGS.fp()->unaliasedFormal(i, DONT_CHECK_ALIASING));
+    }
+    END_CASE(GetFrameArg)
+
     CASE(SetArg) {
       unsigned i = GET_ARGNO(REGS.pc);
       if (script->argsObjAliasesFormals()) {
@@ -3793,6 +3837,19 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
       REGS.fp()->unaliasedLocal(i) = REGS.sp[-1];
     }
     END_CASE(SetLocal)
+
+    CASE(ArgumentsLength) {
+      MOZ_ASSERT(!script->needsArgsObj());
+      PUSH_INT32(REGS.fp()->numActualArgs());
+    }
+    END_CASE(ArgumentsLength)
+
+    CASE(GetActualArg) {
+      MOZ_ASSERT(!script->needsArgsObj());
+      uint32_t index = REGS.sp[-1].toInt32();
+      REGS.sp[-1] = REGS.fp()->unaliasedActual(index);
+    }
+    END_CASE(GetActualArg)
 
     CASE(GlobalOrEvalDeclInstantiation) {
       GCThingIndex lastFun = GET_GCTHING_INDEX(REGS.pc);
@@ -4237,6 +4294,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(DebugLeaveLexicalEnv)
 
     CASE(FreshenLexicalEnv) {
+#ifdef DEBUG
+      Scope* scope = script->getScope(REGS.pc);
+      auto envChain = REGS.fp()->environmentChain();
+      auto* envScope = &envChain->as<BlockLexicalEnvironmentObject>().scope();
+      MOZ_ASSERT(scope == envScope);
+#endif
+
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
         DebugEnvironments::onPopLexical(cx, REGS.fp(), REGS.pc);
       }
@@ -4248,6 +4312,13 @@ static MOZ_NEVER_INLINE JS_HAZ_JSNATIVE_CALLER bool Interpret(JSContext* cx,
     END_CASE(FreshenLexicalEnv)
 
     CASE(RecreateLexicalEnv) {
+#ifdef DEBUG
+      Scope* scope = script->getScope(REGS.pc);
+      auto envChain = REGS.fp()->environmentChain();
+      auto* envScope = &envChain->as<BlockLexicalEnvironmentObject>().scope();
+      MOZ_ASSERT(scope == envScope);
+#endif
+
       if (MOZ_UNLIKELY(cx->realm()->isDebuggee())) {
         DebugEnvironments::onPopLexical(cx, REGS.fp(), REGS.pc);
       }
@@ -5269,7 +5340,7 @@ ArrayObject* js::ArrayFromArgumentsObject(JSContext* cx,
 JSObject* js::NewObjectOperation(JSContext* cx, HandleScript script,
                                  const jsbytecode* pc) {
   if (JSOp(*pc) == JSOp::NewObject) {
-    Rooted<Shape*> shape(cx, script->getShape(pc));
+    Rooted<SharedShape*> shape(cx, script->getShape(pc));
     return PlainObject::createWithShape(cx, shape);
   }
 
@@ -5278,7 +5349,7 @@ JSObject* js::NewObjectOperation(JSContext* cx, HandleScript script,
 }
 
 JSObject* js::NewPlainObjectBaselineFallback(JSContext* cx,
-                                             Handle<Shape*> shape,
+                                             Handle<SharedShape*> shape,
                                              gc::AllocKind allocKind,
                                              gc::AllocSite* site) {
   MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
@@ -5289,14 +5360,14 @@ JSObject* js::NewPlainObjectBaselineFallback(JSContext* cx,
     ar.emplace(cx, shape);
   }
 
-  gc::InitialHeap initialHeap = site->initialHeap();
+  gc::Heap initialHeap = site->initialHeap();
   return NativeObject::create(cx, allocKind, initialHeap, shape, site);
 }
 
 JSObject* js::NewPlainObjectOptimizedFallback(JSContext* cx,
-                                              Handle<Shape*> shape,
+                                              Handle<SharedShape*> shape,
                                               gc::AllocKind allocKind,
-                                              gc::InitialHeap initialHeap) {
+                                              gc::Heap initialHeap) {
   MOZ_ASSERT(shape->getObjectClass() == &PlainObject::class_);
 
   mozilla::Maybe<AutoRealm> ar;
@@ -5319,7 +5390,7 @@ ArrayObject* js::NewArrayObjectBaselineFallback(JSContext* cx, uint32_t length,
                                                 gc::AllocKind allocKind,
                                                 gc::AllocSite* site) {
   NewObjectKind newKind =
-      site->initialHeap() == gc::TenuredHeap ? TenuredObject : GenericObject;
+      site->initialHeap() == gc::Heap::Tenured ? TenuredObject : GenericObject;
   ArrayObject* array = NewDenseFullyAllocatedArray(cx, length, newKind, site);
   // It's important that we allocate an object with the alloc kind we were
   // expecting so that a new arena gets allocated if the current arena for that
@@ -5409,6 +5480,12 @@ bool js::ThrowCheckIsObject(JSContext* cx, CheckIsObjectKind kind) {
       JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
                                 JSMSG_GET_ASYNC_ITER_RETURNED_PRIMITIVE);
       break;
+#ifdef ENABLE_DECORATORS
+    case CheckIsObjectKind::DecoratorReturn:
+      JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
+                                JSMSG_DECORATOR_INVALID_RETURN_TYPE);
+      break;
+#endif
     default:
       MOZ_CRASH("Unknown kind");
   }

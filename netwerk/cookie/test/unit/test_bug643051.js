@@ -1,6 +1,8 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { CookieXPCShellUtils } = ChromeUtils.import(
-  "resource://testing-common/CookieXPCShellUtils.jsm"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
+const { CookieXPCShellUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CookieXPCShellUtils.sys.mjs"
 );
 
 CookieXPCShellUtils.init(this);

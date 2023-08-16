@@ -6,22 +6,25 @@
 // Test whether a visit information is annotated correctly when clicking a tile.
 
 if (AppConstants.platform === "macosx") {
+  requestLongerTimeout(4);
+} else {
   requestLongerTimeout(2);
 }
 
-const { XPCOMUtils } = ChromeUtils.import(
-  "resource://gre/modules/XPCOMUtils.jsm"
-);
-XPCOMUtils.defineLazyModuleGetters(this, {
-  NewTabUtils: "resource://gre/modules/NewTabUtils.jsm",
-  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.jsm",
-  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
 });
 
 const OPEN_TYPE = {
   CURRENT_BY_CLICK: 0,
   NEWTAB_BY_CLICK: 1,
-  NEWTAB_BY_CONTEXTMENU: 2,
+  NEWTAB_BY_MIDDLECLICK: 2,
+  NEWTAB_BY_CONTEXTMENU: 3,
+  NEWWINDOW_BY_CONTEXTMENU: 4,
+  NEWWINDOW_BY_CONTEXTMENU_OF_TILE: 5,
 };
 
 const FRECENCY = {
@@ -29,6 +32,10 @@ const FRECENCY = {
   VISITED: 100,
   SPONSORED: -1,
   BOOKMARKED: 2075,
+  MIDDLECLICK_TYPED: 100,
+  MIDDLECLICK_BOOKMARKED: 175,
+  NEWWINDOW_TYPED: 100,
+  NEWWINDOW_BOOKMARKED: 175,
 };
 
 const {
@@ -37,13 +44,32 @@ const {
   VISIT_SOURCE_BOOKMARKED,
 } = PlacesUtils.history;
 
+/**
+ * To be used before checking database contents when they depend on a visit
+ * being added to History.
+ * @param {string} href the page to await notifications for.
+ */
+async function waitForVisitNotification(href) {
+  await PlacesTestUtils.waitForNotification("page-visited", events =>
+    events.some(e => e.url === href)
+  );
+}
+
 async function assertDatabase({ targetURL, expected }) {
-  const frecency = await PlacesTestUtils.fieldInDB(targetURL, "frecency");
+  const frecency = await PlacesTestUtils.getDatabaseValue(
+    "moz_places",
+    "frecency",
+    { url: targetURL }
+  );
   Assert.equal(frecency, expected.frecency, "Frecency is correct");
 
-  const placesId = await PlacesTestUtils.fieldInDB(targetURL, "id");
+  const placesId = await PlacesTestUtils.getDatabaseValue("moz_places", "id", {
+    url: targetURL,
+  });
   const expectedTriggeringPlaceId = expected.triggerURL
-    ? await PlacesTestUtils.fieldInDB(expected.triggerURL, "id")
+    ? await PlacesTestUtils.getDatabaseValue("moz_places", "id", {
+        url: expected.triggerURL,
+      })
     : null;
   const db = await PlacesUtils.promiseDBConnection();
   const rows = await db.execute(
@@ -61,30 +87,12 @@ async function assertDatabase({ targetURL, expected }) {
   );
 }
 
-async function openAndTest({
-  linkSelector,
-  linkURL,
-  redirectTo = null,
-  openType = OPEN_TYPE.CURRENT_BY_CLICK,
-  expected,
-}) {
-  const destinationURL = redirectTo || linkURL;
-
-  info("Open specific link and wait for loading.");
-  const isNewTab = openType !== OPEN_TYPE.CURRENT_BY_CLICK;
-  const onLoad = isNewTab
-    ? BrowserTestUtils.waitForNewTab(gBrowser, destinationURL, true)
-    : BrowserTestUtils.browserLoaded(
-        gBrowser.selectedBrowser,
-        false,
-        destinationURL
-      );
-
+async function waitForLocationChanged(destinationURL) {
   // If nodeIconChanged of browserPlacesViews.js is called after the target node
   // is lost during test, "No DOM node set for aPlacesNode" error occur. To avoid
   // this failure, wait for the onLocationChange event that triggers
   // nodeIconChanged to occur.
-  const onLocationChanged = new Promise(resolve => {
+  return new Promise(resolve => {
     gBrowser.addTabsProgressListener({
       async onLocationChange(aBrowser, aWebProgress, aRequest, aLocation) {
         if (aLocation.spec === destinationURL) {
@@ -97,6 +105,16 @@ async function openAndTest({
       },
     });
   });
+}
+
+async function openAndTest({
+  linkSelector,
+  linkURL,
+  redirectTo = null,
+  openType = OPEN_TYPE.CURRENT_BY_CLICK,
+  expected,
+}) {
+  const destinationURL = redirectTo || linkURL;
 
   // Wait for content is ready.
   await SpecialPowers.spawn(
@@ -109,14 +127,66 @@ async function openAndTest({
     }
   );
 
-  // Open the link by type.
-  if (openType === OPEN_TYPE.NEWTAB_BY_CLICK) {
+  info("Open specific link by type and wait for loading.");
+  let promiseVisited = waitForVisitNotification(destinationURL);
+  if (openType === OPEN_TYPE.CURRENT_BY_CLICK) {
+    const onLoad = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      destinationURL
+    );
+    const onLocationChanged = waitForLocationChanged(destinationURL);
+
     await BrowserTestUtils.synthesizeMouseAtCenter(
       linkSelector,
-      { ctrlKey: isNewTab, metaKey: isNewTab },
+      {},
       gBrowser.selectedBrowser
     );
+
+    await onLoad;
+    await onLocationChanged;
+  } else if (openType === OPEN_TYPE.NEWTAB_BY_CLICK) {
+    const onLoad = BrowserTestUtils.waitForNewTab(
+      gBrowser,
+      destinationURL,
+      true
+    );
+    const onLocationChanged = waitForLocationChanged(destinationURL);
+
+    await BrowserTestUtils.synthesizeMouseAtCenter(
+      linkSelector,
+      { ctrlKey: true, metaKey: true },
+      gBrowser.selectedBrowser
+    );
+
+    const tab = await onLoad;
+    await onLocationChanged;
+    BrowserTestUtils.removeTab(tab);
+  } else if (openType === OPEN_TYPE.NEWTAB_BY_MIDDLECLICK) {
+    const onLoad = BrowserTestUtils.waitForNewTab(
+      gBrowser,
+      destinationURL,
+      true
+    );
+    const onLocationChanged = waitForLocationChanged(destinationURL);
+
+    await BrowserTestUtils.synthesizeMouseAtCenter(
+      linkSelector,
+      { button: 1 },
+      gBrowser.selectedBrowser
+    );
+
+    const tab = await onLoad;
+    await onLocationChanged;
+    BrowserTestUtils.removeTab(tab);
   } else if (openType === OPEN_TYPE.NEWTAB_BY_CONTEXTMENU) {
+    const onLoad = BrowserTestUtils.waitForNewTab(
+      gBrowser,
+      destinationURL,
+      true
+    );
+    const onLocationChanged = waitForLocationChanged(destinationURL);
+
     const onPopup = BrowserTestUtils.waitForEvent(document, "popupshown");
     await BrowserTestUtils.synthesizeMouseAtCenter(
       linkSelector,
@@ -128,22 +198,49 @@ async function openAndTest({
     const openLinkMenuItem = contextMenu.querySelector(
       "#context-openlinkintab"
     );
-    openLinkMenuItem.click();
-    contextMenu.hidePopup();
-  } else {
+    contextMenu.activateItem(openLinkMenuItem);
+
+    const tab = await onLoad;
+    await onLocationChanged;
+    BrowserTestUtils.removeTab(tab);
+  } else if (openType === OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU) {
+    const onLoad = BrowserTestUtils.waitForNewWindow({ url: destinationURL });
+
+    const onPopup = BrowserTestUtils.waitForEvent(document, "popupshown");
     await BrowserTestUtils.synthesizeMouseAtCenter(
       linkSelector,
-      {},
+      { type: "contextmenu" },
       gBrowser.selectedBrowser
     );
-  }
+    await onPopup;
+    const contextMenu = document.getElementById("contentAreaContextMenu");
+    const openLinkMenuItem = contextMenu.querySelector("#context-openlink");
+    contextMenu.activateItem(openLinkMenuItem);
 
-  const maybeNewTab = await onLoad;
-  await onLocationChanged;
+    const win = await onLoad;
+    await BrowserTestUtils.closeWindow(win);
+  } else if (openType === OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU_OF_TILE) {
+    const onLoad = BrowserTestUtils.waitForNewWindow({ url: destinationURL });
 
-  if (isNewTab) {
-    BrowserTestUtils.removeTab(maybeNewTab);
+    await SpecialPowers.spawn(
+      gBrowser.selectedBrowser,
+      [linkSelector],
+      async selector => {
+        const link = content.document.querySelector(selector);
+        const list = link.closest("li");
+        const contextMenu = list.querySelector(".context-menu-button");
+        contextMenu.click();
+        const target = list.querySelector(
+          "[data-l10n-id=newtab-menu-open-new-window]"
+        );
+        target.click();
+      }
+    );
+
+    const win = await onLoad;
+    await BrowserTestUtils.closeWindow(win);
   }
+  await promiseVisited;
 
   info("Check database for the destination.");
   await assertDatabase({ targetURL: destinationURL, expected });
@@ -166,7 +263,7 @@ function unpin(link) {
   NewTabUtils.pinnedLinks.unpin(link);
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await clearHistoryAndBookmarks();
   registerCleanupFunction(async () => {
     await clearHistoryAndBookmarks();
@@ -174,17 +271,75 @@ add_setup(async function() {
 });
 
 add_task(async function basic() {
+  const SPONSORED_LINK = {
+    label: "test_label",
+    url: "https://example.com/",
+    sponsored_position: 1,
+    sponsored_tile_id: 12345,
+    sponsored_impression_url: "https://impression.example.com/",
+    sponsored_click_url: "https://click.example.com/",
+  };
+  const NORMAL_LINK = {
+    label: "test_label",
+    url: "https://example.com/",
+  };
+  const BOOKMARKS = [
+    {
+      parentGuid: PlacesUtils.bookmarks.toolbarGuid,
+      url: Services.io.newURI("https://example.com/"),
+      title: "test bookmark",
+    },
+  ];
+
   const testData = [
     {
       description: "Sponsored tile",
-      link: {
-        label: "test_label",
-        url: "http://example.com/",
-        sponsored_position: 1,
-        sponsored_tile_id: 12345,
-        sponsored_impression_url: "http://impression.example.com/",
-        sponsored_click_url: "http://click.example.com/",
+      link: SPONSORED_LINK,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
       },
+    },
+    {
+      description: "Sponsored tile in new tab by click with key",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    },
+    {
+      description: "Sponsored tile in new tab by middle click",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    },
+    {
+      description: "Sponsored tile in new tab by context menu",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    },
+    {
+      description: "Sponsored tile in new window by context menu",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    },
+    {
+      description: "Sponsored tile in new window by context menu of tile",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU_OF_TILE,
       expected: {
         source: VISIT_SOURCE_SPONSORED,
         frecency: FRECENCY.SPONSORED,
@@ -192,17 +347,58 @@ add_task(async function basic() {
     },
     {
       description: "Bookmarked result",
-      link: {
-        label: "test_label",
-        url: "http://example.com/",
+      link: NORMAL_LINK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_BOOKMARKED,
+        frecency: FRECENCY.BOOKMARKED,
       },
-      bookmarks: [
-        {
-          parentGuid: PlacesUtils.bookmarks.toolbarGuid,
-          url: Services.io.newURI("http://example.com/"),
-          title: "test bookmark",
-        },
-      ],
+    },
+    {
+      description: "Bookmarked result in new tab by click with key",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_BOOKMARKED,
+        frecency: FRECENCY.BOOKMARKED,
+      },
+    },
+    {
+      description: "Bookmarked result in new tab by middle click",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_BOOKMARKED,
+        frecency: FRECENCY.MIDDLECLICK_BOOKMARKED,
+      },
+    },
+    {
+      description: "Bookmarked result in new tab by context menu",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CONTEXTMENU,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_BOOKMARKED,
+        frecency: FRECENCY.MIDDLECLICK_BOOKMARKED,
+      },
+    },
+    {
+      description: "Bookmarked result in new window by context menu",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_BOOKMARKED,
+        frecency: FRECENCY.NEWWINDOW_BOOKMARKED,
+      },
+    },
+    {
+      description: "Bookmarked result in new window by context menu of tile",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU_OF_TILE,
+      bookmarks: BOOKMARKS,
       expected: {
         source: VISIT_SOURCE_BOOKMARKED,
         frecency: FRECENCY.BOOKMARKED,
@@ -210,21 +406,61 @@ add_task(async function basic() {
     },
     {
       description: "Sponsored and bookmarked result",
-      link: {
-        label: "test_label",
-        url: "http://example.com/",
-        sponsored_position: 1,
-        sponsored_tile_id: 12345,
-        sponsored_impression_url: "http://impression.example.com/",
-        sponsored_click_url: "http://click.example.com/",
+      link: SPONSORED_LINK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.BOOKMARKED,
       },
-      bookmarks: [
-        {
-          parentGuid: PlacesUtils.bookmarks.toolbarGuid,
-          url: Services.io.newURI("http://example.com/"),
-          title: "test bookmark",
-        },
-      ],
+    },
+    {
+      description:
+        "Sponsored and bookmarked result in new tab by click with key",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.BOOKMARKED,
+      },
+    },
+    {
+      description: "Sponsored and bookmarked result in new tab by middle click",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.MIDDLECLICK_BOOKMARKED,
+      },
+    },
+    {
+      description: "Sponsored and bookmarked result in new tab by context menu",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CONTEXTMENU,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.MIDDLECLICK_BOOKMARKED,
+      },
+    },
+    {
+      description:
+        "Sponsored and bookmarked result in new window by context menu",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      bookmarks: BOOKMARKS,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.NEWWINDOW_BOOKMARKED,
+      },
+    },
+    {
+      description:
+        "Sponsored and bookmarked result in new window by context menu of tile",
+      link: SPONSORED_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU_OF_TILE,
+      bookmarks: BOOKMARKS,
       expected: {
         source: VISIT_SOURCE_SPONSORED,
         frecency: FRECENCY.BOOKMARKED,
@@ -232,10 +468,52 @@ add_task(async function basic() {
     },
     {
       description: "Organic tile",
-      link: {
-        label: "test_label",
-        url: "http://example.com/",
+      link: NORMAL_LINK,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.TYPED,
       },
+    },
+    {
+      description: "Organic tile in new tab by click with key",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.TYPED,
+      },
+    },
+    {
+      description: "Organic tile in new tab by middle click",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.MIDDLECLICK_TYPED,
+      },
+    },
+    {
+      description: "Organic tile in new tab by context menu",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWTAB_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.MIDDLECLICK_TYPED,
+      },
+    },
+    {
+      description: "Organic tile in new window by context menu",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.NEWWINDOW_TYPED,
+      },
+    },
+    {
+      description: "Organic tile in new window by context menu of tile",
+      link: NORMAL_LINK,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU_OF_TILE,
       expected: {
         source: VISIT_SOURCE_ORGANIC,
         frecency: FRECENCY.TYPED,
@@ -243,35 +521,24 @@ add_task(async function basic() {
     },
   ];
 
-  for (const { description, link, bookmarks, expected } of testData) {
+  for (const { description, link, openType, bookmarks, expected } of testData) {
     info(description);
 
     await BrowserTestUtils.withNewTab("about:home", async () => {
       // Setup test tile.
       await pin(link);
 
-      // Test with new tab.
       for (const bookmark of bookmarks || []) {
         await PlacesUtils.bookmarks.insert(bookmark);
       }
+
       await openAndTest({
         linkSelector: ".top-site-button",
         linkURL: link.url,
-        openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+        openType,
         expected,
       });
 
-      await clearHistoryAndBookmarks();
-
-      // Test with same tab.
-      for (const bookmark of bookmarks || []) {
-        await PlacesUtils.bookmarks.insert(bookmark);
-      }
-      await openAndTest({
-        linkSelector: ".top-site-button",
-        linkURL: link.url,
-        expected,
-      });
       await clearHistoryAndBookmarks();
 
       unpin(link);
@@ -281,15 +548,14 @@ add_task(async function basic() {
 
 add_task(async function redirection() {
   await BrowserTestUtils.withNewTab("about:home", async () => {
-    const redirectTo = "http://example.com/";
+    const redirectTo = "https://example.com/";
     const link = {
       label: "test_label",
-      url:
-        "http://example.com/browser/browser/components/newtab/test/browser/redirect_to.sjs?/",
+      url: "https://example.com/browser/browser/components/newtab/test/browser/redirect_to.sjs?/",
       sponsored_position: 1,
       sponsored_tile_id: 12345,
-      sponsored_impression_url: "http://impression.example.com/",
-      sponsored_click_url: "http://click.example.com/",
+      sponsored_impression_url: "https://impression.example.com/",
+      sponsored_click_url: "https://click.example.com/",
     };
 
     // Setup test tile.
@@ -330,6 +596,7 @@ add_task(async function redirection() {
         triggerURL: link.url,
       },
     });
+
     // Check for URL causes the redirection.
     await assertDatabase({
       targetURL: link.url,
@@ -358,8 +625,8 @@ add_task(async function inherit() {
       url: firstURL,
       sponsored_position: 1,
       sponsored_tile_id: 12345,
-      sponsored_impression_url: "http://impression.example.com/",
-      sponsored_click_url: "http://click.example.com/",
+      sponsored_impression_url: "https://impression.example.com/",
+      sponsored_click_url: "https://click.example.com/",
     };
 
     // Setup test tile.
@@ -375,11 +642,41 @@ add_task(async function inherit() {
       },
     });
 
-    info("Open link on first page to show second page in new tab");
+    info("Open link on first page to show second page in new window");
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: secondURL,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+        triggerURL: link.url,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
+    info(
+      "Open link on first page to show second page in new tab by click with key"
+    );
     await openAndTest({
       linkSelector: "a",
       linkURL: secondURL,
       openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+        triggerURL: link.url,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
+    info(
+      "Open link on first page to show second page in new tab by middle click"
+    );
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: secondURL,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
       expected: {
         source: VISIT_SOURCE_SPONSORED,
         frecency: FRECENCY.SPONSORED,
@@ -399,6 +696,19 @@ add_task(async function inherit() {
       },
     });
 
+    info("Open link on first page to show second page in new window");
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: thirdURL,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+        triggerURL: link.url,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
     info(
       "Open link on second page to show third page in new tab by context menu"
     );
@@ -406,6 +716,21 @@ add_task(async function inherit() {
       linkSelector: "a",
       linkURL: thirdURL,
       openType: OPEN_TYPE.NEWTAB_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+        triggerURL: link.url,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
+    info(
+      "Open link on second page to show third page in new tab by middle click"
+    );
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: thirdURL,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
       expected: {
         source: VISIT_SOURCE_SPONSORED,
         frecency: FRECENCY.SPONSORED,
@@ -446,8 +771,11 @@ add_task(async function inherit() {
       value: host,
       waitForFocus: SimpleTest.waitForFocus,
     });
+    let promiseVisited = waitForVisitNotification(host);
     EventUtils.synthesizeKey("KEY_Enter");
     await onLoad;
+    await promiseVisited;
+
     await assertDatabase({
       targetURL: host,
       expected: {
@@ -474,8 +802,8 @@ add_task(async function timeout() {
       url: firstURL,
       sponsored_position: 1,
       sponsored_tile_id: 12345,
-      sponsored_impression_url: "http://impression.example.com/",
-      sponsored_click_url: "http://click.example.com/",
+      sponsored_impression_url: "https://impression.example.com/",
+      sponsored_click_url: "https://click.example.com/",
     };
 
     // Setup a test tile.
@@ -500,11 +828,39 @@ add_task(async function timeout() {
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
     await new Promise(r => setTimeout(r, 1000));
 
-    info("Open link on first page to show second page in new tab");
+    info("Open link on first page to show second page in new window");
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: secondURL,
+      openType: OPEN_TYPE.NEWWINDOW_BY_CONTEXTMENU,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.VISITED,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
+    info(
+      "Open link on first page to show second page in new tab by click with key"
+    );
     await openAndTest({
       linkSelector: "a",
       linkURL: secondURL,
       openType: OPEN_TYPE.NEWTAB_BY_CLICK,
+      expected: {
+        source: VISIT_SOURCE_ORGANIC,
+        frecency: FRECENCY.VISITED,
+      },
+    });
+    await PlacesTestUtils.clearHistoryVisits();
+
+    info(
+      "Open link on first page to show second page in new tab by middle click"
+    );
+    await openAndTest({
+      linkSelector: "a",
+      linkURL: secondURL,
+      openType: OPEN_TYPE.NEWTAB_BY_MIDDLECLICK,
       expected: {
         source: VISIT_SOURCE_ORGANIC,
         frecency: FRECENCY.VISITED,
@@ -523,6 +879,102 @@ add_task(async function timeout() {
     });
 
     unpin(link);
+    await clearHistoryAndBookmarks();
+  });
+});
+
+add_task(async function fixup() {
+  await BrowserTestUtils.withNewTab("about:home", async () => {
+    const destinationURL = "https://example.com/?a";
+    const link = {
+      label: "test",
+      url: "https://example.com?a",
+      sponsored_position: 1,
+      sponsored_tile_id: 12345,
+      sponsored_impression_url: "https://impression.example.com/",
+      sponsored_click_url: "https://click.example.com/",
+    };
+
+    info("Setup pin");
+    await pin(link);
+
+    info("Click sponsored tile");
+    let promiseVisited = waitForVisitNotification(destinationURL);
+    const onLoad = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      destinationURL
+    );
+    const onLocationChanged = waitForLocationChanged(destinationURL);
+    await BrowserTestUtils.synthesizeMouseAtCenter(
+      ".top-site-button",
+      {},
+      gBrowser.selectedBrowser
+    );
+    await onLoad;
+    await onLocationChanged;
+    await promiseVisited;
+
+    info("Check the DB");
+    await assertDatabase({
+      targetURL: destinationURL,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    });
+
+    info("Clean up");
+    unpin(link);
+    await clearHistoryAndBookmarks();
+  });
+});
+
+add_task(async function noTriggeringURL() {
+  await BrowserTestUtils.withNewTab("about:home", async browser => {
+    Services.telemetry.clearScalars();
+
+    const dummyTriggeringSponsoredURL =
+      "https://example.com/dummyTriggeringSponsoredURL";
+    const targetURL = "https://example.com/";
+
+    info("Setup dummy triggering sponsored URL");
+    browser.setAttribute("triggeringSponsoredURL", dummyTriggeringSponsoredURL);
+    browser.setAttribute("triggeringSponsoredURLVisitTimeMS", Date.now());
+
+    info("Open URL whose host is the same as dummy triggering sponsored URL");
+    let promiseVisited = waitForVisitNotification(targetURL);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window,
+      value: targetURL,
+      waitForFocus: SimpleTest.waitForFocus,
+    });
+    const onLoad = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      targetURL
+    );
+    EventUtils.synthesizeKey("KEY_Enter");
+    await onLoad;
+    await promiseVisited;
+
+    info("Check DB");
+    await assertDatabase({
+      targetURL,
+      expected: {
+        source: VISIT_SOURCE_SPONSORED,
+        frecency: FRECENCY.SPONSORED,
+      },
+    });
+
+    info("Check telemetry");
+    const scalars = TelemetryTestUtils.getProcessScalars("parent", false, true);
+    TelemetryTestUtils.assertScalar(
+      scalars,
+      "places.sponsored_visit_no_triggering_url",
+      1
+    );
+
     await clearHistoryAndBookmarks();
   });
 });

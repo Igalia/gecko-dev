@@ -96,7 +96,7 @@ class AsyncRequestHelper final : public Runnable,
                      const LSRequestParams& aParams)
       : Runnable("dom::LocalStorageManager2::AsyncRequestHelper"),
         mManager(aManager),
-        mOwningEventTarget(GetCurrentEventTarget()),
+        mOwningEventTarget(GetCurrentSerialEventTarget()),
         mActor(nullptr),
         mPromise(aPromise),
         mParams(aParams),
@@ -476,7 +476,7 @@ nsresult AsyncRequestHelper::Dispatch() {
   nsCOMPtr<nsIEventTarget> domFileThread =
       RemoteLazyInputStreamThread::GetOrCreate();
   if (NS_WARN_IF(!domFileThread)) {
-    return NS_ERROR_FAILURE;
+    return NS_ERROR_ILLEGAL_DURING_SHUTDOWN;
   }
 
   nsresult rv = domFileThread->Dispatch(this, NS_DISPATCH_NORMAL);

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -31,5 +31,17 @@ TemporalHelpers.assertPlainDateTime(result3, 1970, 1, "M01", 1, 0, 0, 0, 0, 0, 0
 str = "1970-01-01T00:00+01:00[Etc/Ignored]";
 const result4 = instance.getPlainDateTimeFor(str);
 TemporalHelpers.assertPlainDateTime(result4, 1969, 12, "M12", 31, 23, 0, 0, 0, 0, 0, "date-time + offset + IANA annotation ignores the IANA annotation");
+
+str = "1970-01-01T00:00Z[u-ca=hebrew]";
+const result6 = instance.getPlainDateTimeFor(str);
+TemporalHelpers.assertPlainDateTime(result6, 1970, 1, "M01", 1, 0, 0, 0, 0, 0, 0, "date-time + Z + Calendar ignores the Calendar");
+
+str = "1970-01-01T00:00+01:00[u-ca=hebrew]";
+const result5 = instance.getPlainDateTimeFor(str);
+TemporalHelpers.assertPlainDateTime(result5, 1969, 12, "M12", 31, 23, 0, 0, 0, 0, 0, "date-time + offset + Calendar ignores the Calendar");
+
+str = "1970-01-01T00:00+01:00[Etc/Ignored][u-ca=hebrew]";
+const result7 = instance.getPlainDateTimeFor(str);
+TemporalHelpers.assertPlainDateTime(result7, 1969, 12, "M12", 31, 23, 0, 0, 0, 0, 0, "date-time + offset + IANA annotation + Calendar ignores the Calendar and IANA annotation");
 
 reportCompare(0, 0);

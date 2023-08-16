@@ -25,7 +25,7 @@ function getBreakpointsForSource(state, selectedSource) {
 
   return breakpoints.filter(bp => {
     const location = getLocation(bp, selectedSource);
-    return location.sourceId === selectedSource.id;
+    return location.source.id === selectedSource.id;
   });
 }
 
@@ -51,7 +51,7 @@ function findBreakpointAtLocation(
 
 // returns the closest active column breakpoint
 function findClosestBreakpoint(breakpoints, column) {
-  if (!breakpoints || breakpoints.length == 0) {
+  if (!breakpoints || !breakpoints.length) {
     return null;
   }
 

@@ -2,8 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from head.js */
-const { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
 
 add_task(async function test_experiment_messaging_system() {
   const LOCALE = Services.locale.appLocaleAsBCP47;
@@ -35,7 +36,7 @@ add_task(async function test_experiment_messaging_system() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [LOCALE], async function(locale) {
+  await SpecialPowers.spawn(tab, [LOCALE], async function (locale) {
     const infoBody = content.document.getElementById("info-body");
     const promoLink = content.document.getElementById(
       "private-browsing-promo-link"
@@ -117,7 +118,7 @@ add_task(async function test_experiment_promo_action() {
 
   let expectedUrl = "https://foo.example.com";
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       content.document.querySelector(".promo"),
       "should render the promo experiment message"
@@ -214,7 +215,7 @@ add_task(async function test_experiment_open_spotlight_action() {
     "receiveMessage"
   );
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     ok(
       content.document.querySelector(".promo"),
       "should render the promo experiment message"

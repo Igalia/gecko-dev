@@ -4,13 +4,12 @@
 
 /* eslint no-shadow: error, mozilla/no-aArgs: error */
 
-"use strict";
-
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "SearchUtils",
     maxLogLevel: SearchUtils.loggingEnabled ? "Debug" : "Warn",
@@ -44,7 +43,7 @@ class LoadListener {
    *   The initial channel to load from.
    * @param {RegExp} expectedContentType
    *   A regular expression to match the expected content type to.
-   * @param {function} callback
+   * @param {Function} callback
    *   A callback to receive the loaded data. The callback is passed the bytes
    *   (array) and the content type received. The bytes argument may be null if
    *   no data could be loaded.
@@ -148,6 +147,7 @@ export var SearchUtils = {
     SUGGEST_JSON: "application/x-suggestions+json",
     SEARCH: "text/html",
     OPENSEARCH: "application/opensearchdescription+xml",
+    TRENDING_JSON: "application/x-trending+json",
   },
 
   ENGINES_URLS: {
@@ -156,9 +156,9 @@ export var SearchUtils = {
     "prod-preview":
       "https://firefox.settings.services.mozilla.com/v1/buckets/main-preview/collections/search-config/records",
     "stage-main":
-      "https://settings.stage.mozaws.net/v1/buckets/main/collections/search-config/records",
+      "https://firefox.settings.services.allizom.org/v1/buckets/main/collections/search-config/records",
     "stage-preview":
-      "https://settings.stage.mozaws.net/v1/buckets/main-preview/collections/search-config/records",
+      "https://firefox.settings.services.allizom.org/v1/buckets/main-preview/collections/search-config/records",
   },
 
   // The following constants are left undocumented in nsISearchService.idl
@@ -176,6 +176,17 @@ export var SearchUtils = {
   MOZ_PARAM: {
     DATE: "moz:date",
     LOCALE: "moz:locale",
+  },
+
+  // Query parameters can have the property "purpose", whose value
+  // indicates the context that initiated a search. This list contains
+  // defined search contexts.
+  PARAM_PURPOSES: {
+    CONTEXTMENU: "contextmenu",
+    HOMEPAGE: "homepage",
+    KEYWORD: "keyword",
+    NEWTAB: "newtab",
+    SEARCHBAR: "searchbar",
   },
 
   LoadListener,
@@ -219,6 +230,7 @@ export var SearchUtils = {
 
   /**
    * Wrapper function for nsIIOService::newURI.
+   *
    * @param {string} urlSpec
    *        The URL string from which to create an nsIURI.
    * @returns {nsIURI} an nsIURI object, or null if the creation of the URI failed.
@@ -273,7 +285,19 @@ export var SearchUtils = {
    *   The current settings version.
    */
   get SETTINGS_VERSION() {
-    return 6;
+    return 9;
+  },
+
+  /**
+   * Indicates the channel that the build is on, with added hardening for ESR
+   * since some ESR builds may be self-built or not on the same channel.
+   *
+   * @returns {string}
+   *   Returns the modified channel, with a focus on ESR if the application
+   *   version is indicating ESR.
+   */
+  get MODIFIED_APP_CHANNEL() {
+    return AppConstants.IS_ESR ? "esr" : AppConstants.MOZ_UPDATE_CHANNEL;
   },
 
   /**
@@ -294,9 +318,7 @@ export var SearchUtils = {
 
     // Use a random name if our input had no valid characters.
     if (result.length < minLength) {
-      result = Math.random()
-        .toString(36)
-        .replace(/^.*\./, "");
+      result = Math.random().toString(36).replace(/^.*\./, "");
     }
 
     // Force max length.
@@ -317,7 +339,7 @@ export var SearchUtils = {
       name +
       disclaimer.replace(/\$appName/g, Services.appinfo.name);
 
-    let data = new TextEncoder("utf-8").encode(salt);
+    let data = new TextEncoder().encode(salt);
     let hasher = Cc["@mozilla.org/security/hash;1"].createInstance(
       Ci.nsICryptoHash
     );
@@ -325,6 +347,30 @@ export var SearchUtils = {
     hasher.update(data, data.length);
 
     return hasher.finish(true);
+  },
+
+  /**
+   * Tests whether the given URI is a secure OpenSearch submission URI or a
+   * secure OpenSearch update URI.
+   *
+   * Note: We don't want to count something served via localhost as insecure.
+   * We also don't want to count sites with .onion as their top-level domain
+   * as insecure because .onion URLs actually can't use https and are secured
+   * in other ways.
+   *
+   * @param {nsIURI} uri
+   *  The URI to be tested.
+   * @returns {boolean}
+   *  Whether the URI is secure for OpenSearch purposes.
+   */
+  isSecureURIForOpenSearch(uri) {
+    const loopbackAddresses = ["127.0.0.1", "[::1]", "localhost"];
+
+    return (
+      uri.schemeIs("https") ||
+      loopbackAddresses.includes(uri.host) ||
+      uri.host.toLowerCase().endsWith(".onion")
+    );
   },
 };
 
@@ -337,6 +383,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
 
 // Can't use defineLazyPreferenceGetter because we want the value
 // from the default branch
-XPCOMUtils.defineLazyGetter(SearchUtils, "distroID", () => {
+ChromeUtils.defineLazyGetter(SearchUtils, "distroID", () => {
   return Services.prefs.getDefaultBranch("distribution.").getCharPref("id", "");
 });

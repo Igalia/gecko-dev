@@ -15,18 +15,21 @@ namespace mozilla {
 namespace dom {
 class SystemFontListEntry;
 };
+namespace gfx {
+class FTUserFontData;
+};
 };  // namespace mozilla
 
 class FontNameCache;
 typedef struct FT_FaceRec_* FT_Face;
 class nsZipArchive;
 class WillShutdownObserver;
-class FTUserFontData;
 
 class FT2FontEntry final : public gfxFT2FontEntryBase {
   friend class gfxFT2FontList;
 
   using FontListEntry = mozilla::dom::SystemFontListEntry;
+  using FTUserFontData = mozilla::gfx::FTUserFontData;
 
  public:
   explicit FT2FontEntry(const nsACString& aFaceName)
@@ -103,7 +106,9 @@ class FT2FontEntry final : public gfxFT2FontEntryBase {
   void AddSizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf,
                               FontListSizes* aSizes) const override;
 
-  RefPtr<mozilla::gfx::SharedFTFace> mFTFace;
+  // Strong reference (addref'd), but held in an atomic ptr rather than a
+  // normal RefPtr.
+  mozilla::Atomic<mozilla::gfx::SharedFTFace*> mFTFace;
 
   FT_MM_Var* mMMVar = nullptr;
 
@@ -114,8 +119,14 @@ class FT2FontEntry final : public gfxFT2FontEntryBase {
 
   nsTHashSet<uint32_t> mAvailableTables;
 
-  bool mHasVariations = false;
-  bool mHasVariationsInitialized = false;
+  enum class HasVariationsState : int8_t {
+    Uninitialized = -1,
+    No = 0,
+    Yes = 1,
+  };
+  std::atomic<HasVariationsState> mHasVariations =
+      HasVariationsState::Uninitialized;
+
   bool mMMVarInitialized = false;
 };
 

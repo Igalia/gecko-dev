@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a provider that offers input history (aka adaptive
  * history) results. These results map typed search strings to Urlbar results.
@@ -35,6 +33,15 @@ const QUERYINDEX = {
   SWITCHTAB: 8,
 };
 
+// Constants to support an alternative frecency algorithm.
+const PAGES_USE_ALT_FRECENCY = Services.prefs.getBoolPref(
+  "places.frecency.pages.alternative.featureGate",
+  false
+);
+const PAGES_FRECENCY_FIELD = PAGES_USE_ALT_FRECENCY
+  ? "alt_frecency"
+  : "frecency";
+
 // This SQL query fragment provides the following:
 //   - whether the entry is bookmarked (QUERYINDEX_BOOKMARKED)
 //   - the bookmark title, if it is a bookmark (QUERYINDEX_BOOKMARKTITLE)
@@ -51,7 +58,7 @@ const SQL_BOOKMARK_TAGS_FRAGMENT = `EXISTS(SELECT 1 FROM moz_bookmarks WHERE fk 
 
 const SQL_ADAPTIVE_QUERY = `/* do not warn (bug 487789) */
    SELECT h.url, h.title, ${SQL_BOOKMARK_TAGS_FRAGMENT}, h.visit_count,
-          h.typed, h.id, t.open_count, h.frecency
+          h.typed, h.id, t.open_count, ${PAGES_FRECENCY_FIELD}
    FROM (
      SELECT ROUND(MAX(use_count) * (1 + (input = :search_string)), 1) AS rank,
             place_id
@@ -69,7 +76,7 @@ const SQL_ADAPTIVE_QUERY = `/* do not warn (bug 487789) */
                             t.open_count,
                             :matchBehavior, :searchBehavior,
                             NULL)
-   ORDER BY rank DESC, h.frecency DESC
+   ORDER BY rank DESC, ${PAGES_FRECENCY_FIELD} DESC
    LIMIT :maxResults`;
 
 /**
@@ -78,6 +85,8 @@ const SQL_ADAPTIVE_QUERY = `/* do not warn (bug 487789) */
 class ProviderInputHistory extends UrlbarProvider {
   /**
    * Unique name for the provider, used by the context to filter on providers.
+   *
+   * @returns {string}
    */
   get name() {
     return "InputHistory";
@@ -85,6 +94,8 @@ class ProviderInputHistory extends UrlbarProvider {
 
   /**
    * The type of the provider, must be one of UrlbarUtils.PROVIDER_TYPE.
+   *
+   * @returns {UrlbarUtils.PROVIDER_TYPE}
    */
   get type() {
     return UrlbarUtils.PROVIDER_TYPE.PROFILE;
@@ -94,6 +105,7 @@ class ProviderInputHistory extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
@@ -107,12 +119,13 @@ class ProviderInputHistory extends UrlbarProvider {
   }
 
   /**
-   * Starts querying.
+   * Starts querying. Extended classes should return a Promise resolved when the
+   * provider is done searching AND returning results.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        result. A UrlbarResult should be passed to it.
-   * @note Extended classes should return a Promise resolved when the provider
-   *       is done searching AND returning results.
+   * @returns {Promise}
    */
   async startQuery(queryContext, addCallback) {
     let instance = this.queryInstance;
@@ -195,9 +208,10 @@ class ProviderInputHistory extends UrlbarProvider {
 
   /**
    * Obtains the query to search for adaptive results.
+   *
    * @param {UrlbarQueryContext} queryContext
    *   The current queryContext.
-   * @returns {array} Contains the optimized query with which to search the
+   * @returns {Array} Contains the optimized query with which to search the
    *  database and an object containing the params to bound.
    */
   _getAdaptiveQuery(queryContext) {
@@ -208,10 +222,11 @@ class ProviderInputHistory extends UrlbarProvider {
         search_string: queryContext.searchString.toLowerCase(),
         matchBehavior: Ci.mozIPlacesAutoComplete.MATCH_ANYWHERE,
         searchBehavior: lazy.UrlbarPrefs.get("defaultBehavior"),
-        userContextId: lazy.UrlbarProviderOpenTabs.getUserContextIdForOpenPagesTable(
-          queryContext.userContextId,
-          queryContext.isPrivate
-        ),
+        userContextId:
+          lazy.UrlbarProviderOpenTabs.getUserContextIdForOpenPagesTable(
+            queryContext.userContextId,
+            queryContext.isPrivate
+          ),
         maxResults: queryContext.maxResults,
       },
     ];

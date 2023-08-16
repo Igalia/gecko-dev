@@ -49,7 +49,7 @@ static const RedirEntry kRedirMap[] = {
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
-    {"certerror", "chrome://browser/content/certerror/aboutNetError.xhtml",
+    {"certerror", "chrome://global/content/aboutNetError.xhtml",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
@@ -70,7 +70,11 @@ static const RedirEntry kRedirMap[] = {
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::IS_SECURE_CHROME_UI},
-    {"firefoxview", "chrome://browser/content/firefoxview.html",
+    {"firefoxview", "chrome://browser/content/firefoxview/firefoxview.html",
+     nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
+         nsIAboutModule::HIDE_FROM_ABOUTABOUT},
+    {"firefoxview-next",
+     "chrome://browser/content/firefoxview/firefoxview-next.html",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"policies", "chrome://browser/content/policies/aboutPolicies.html",
@@ -91,6 +95,14 @@ static const RedirEntry kRedirMap[] = {
     {"sessionrestore", "chrome://browser/content/aboutSessionRestore.xhtml",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT |
          nsIAboutModule::IS_SECURE_CHROME_UI},
+#ifdef NIGHTLY_BUILD
+    {"shoppingsidebar", "chrome://browser/content/shopping/shopping.html",
+     nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
+         nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT |
+         nsIAboutModule::IS_SECURE_CHROME_UI},
+#endif
     {"tabcrashed", "chrome://browser/content/aboutTabCrashed.xhtml",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT},
@@ -100,27 +112,36 @@ static const RedirEntry kRedirMap[] = {
     // Actual activity stream URL for home and newtab are set in channel
     // creation
     {"home", "about:blank", ACTIVITY_STREAM_FLAGS},
-    {"newtab", "about:blank", ACTIVITY_STREAM_FLAGS},
+    {"newtab", "chrome://browser/content/blanktab.html", ACTIVITY_STREAM_FLAGS},
     {"welcome", "about:blank",
      nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
          nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
          nsIAboutModule::ALLOW_SCRIPT},
+    {"messagepreview",
+     "chrome://browser/content/messagepreview/messagepreview.html",
+     nsIAboutModule::URI_MUST_LOAD_IN_CHILD |
+         nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
+         nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"pocket-saved", "chrome://pocket/content/panels/saved.html",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-         nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"pocket-signup", "chrome://pocket/content/panels/signup.html",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-         nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"pocket-home", "chrome://pocket/content/panels/home.html",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-         nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"pocket-style-guide", "chrome://pocket/content/panels/style-guide.html",
      nsIAboutModule::URI_SAFE_FOR_UNTRUSTED_CONTENT |
-         nsIAboutModule::URI_CAN_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_MUST_LOAD_IN_CHILD | nsIAboutModule::ALLOW_SCRIPT |
+         nsIAboutModule::URI_CAN_LOAD_IN_PRIVILEGEDABOUT_PROCESS |
          nsIAboutModule::HIDE_FROM_ABOUTABOUT},
     {"preferences", "chrome://browser/content/preferences/preferences.xhtml",
      nsIAboutModule::ALLOW_SCRIPT | nsIAboutModule::IS_SECURE_CHROME_UI},

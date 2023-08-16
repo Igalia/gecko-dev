@@ -10,12 +10,11 @@
 #include "mozilla/Maybe.h"
 #include "mozilla/TextUtils.h"
 
-#include "gc/Barrier.h"
+#include "gc/AllocKind.h"
 #include "gc/MaybeRooted.h"
 #include "js/Class.h"
 #include "js/experimental/TypedData.h"  // js::detail::TypedArrayLengthSlot
-#include "js/Result.h"
-#include "js/ScalarType.h"  // js::Scalar::Type
+#include "js/ScalarType.h"              // js::Scalar::Type
 #include "vm/ArrayBufferObject.h"
 #include "vm/ArrayBufferViewObject.h"
 #include "vm/JSObject.h"
@@ -129,12 +128,8 @@ class TypedArrayObject : public ArrayBufferViewObject {
                                          const JS::HandleValueArray args,
                                          MutableHandleObject res);
 
-  /*
-   * Maximum allowed byte length for any typed array.
-   */
-  static size_t maxByteLength() {
-    return ArrayBufferObject::maxBufferByteLength();
-  }
+  // Maximum allowed byte length for any typed array.
+  static constexpr size_t MaxByteLength = ArrayBufferObject::MaxByteLength;
 
   static bool isOriginalLengthGetter(Native native);
 
@@ -175,6 +170,9 @@ extern TypedArrayObject* NewTypedArrayWithTemplateAndArray(
 extern TypedArrayObject* NewTypedArrayWithTemplateAndBuffer(
     JSContext* cx, HandleObject templateObj, HandleObject arrayBuffer,
     HandleValue byteOffset, HandleValue length);
+
+extern TypedArrayObject* NewUint8ArrayWithLength(
+    JSContext* cx, int32_t len, gc::Heap heap = gc::Heap::Default);
 
 inline bool IsTypedArrayClass(const JSClass* clasp) {
   return &TypedArrayObject::classes[0] <= clasp &&

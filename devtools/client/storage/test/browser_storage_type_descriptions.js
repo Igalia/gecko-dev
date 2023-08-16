@@ -8,7 +8,7 @@
 
 "use strict";
 
-const getStorageTypeURL = require("devtools/client/storage/utils/doc-utils");
+const getStorageTypeURL = require("resource://devtools/client/storage/utils/doc-utils.js");
 
 const storeItems = [
   "Cache",
@@ -34,7 +34,7 @@ function testTree() {
 /**
  * Test that description is shown for each of the tree items
  */
-const testDescriptions = async function() {
+const testDescriptions = async function () {
   const doc = gPanelWindow.document;
   const win = doc.defaultView;
   // Expand all nodes so that the synthesized click event actually works
@@ -71,7 +71,7 @@ const testDescriptions = async function() {
   }
 };
 
-add_task(async function() {
+add_task(async function () {
   await openTabAndSetupStorage(MAIN_DOMAIN + "storage-empty-objectstores.html");
 
   testTree();

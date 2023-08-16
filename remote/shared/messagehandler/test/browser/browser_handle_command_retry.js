@@ -3,13 +3,9 @@
 
 "use strict";
 
-const { WindowGlobalMessageHandler } = ChromeUtils.import(
-  "chrome://remote/content/shared/messagehandler/WindowGlobalMessageHandler.jsm"
-);
-
 // We are forcing the actors to shutdown while queries are unresolved.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(
   /Actor 'MessageHandlerFrame' destroyed before query 'MessageHandlerFrameParent:sendCommand' was resolved/

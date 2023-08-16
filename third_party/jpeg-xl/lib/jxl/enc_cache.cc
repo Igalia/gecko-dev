@@ -11,10 +11,8 @@
 #include <type_traits>
 
 #include "lib/jxl/ac_strategy.h"
-#include "lib/jxl/aux_out.h"
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/padded_bytes.h"
-#include "lib/jxl/base/profiler.h"
 #include "lib/jxl/base/span.h"
 #include "lib/jxl/color_encoding_internal.h"
 #include "lib/jxl/common.h"
@@ -22,6 +20,7 @@
 #include "lib/jxl/dct_scales.h"
 #include "lib/jxl/dct_util.h"
 #include "lib/jxl/dec_frame.h"
+#include "lib/jxl/enc_aux_out.h"
 #include "lib/jxl/enc_frame.h"
 #include "lib/jxl/enc_group.h"
 #include "lib/jxl/enc_modular.h"
@@ -39,8 +38,6 @@ Status InitializePassesEncoder(const Image3F& opsin, const JxlCmsInterface& cms,
                                ThreadPool* pool, PassesEncoderState* enc_state,
                                ModularFrameEncoder* modular_frame_encoder,
                                AuxOut* aux_out) {
-  PROFILER_FUNC;
-
   PassesSharedState& JXL_RESTRICT shared = enc_state->shared;
 
   enc_state->histogram_idx.resize(shared.frame_dim.num_groups);
@@ -93,10 +90,12 @@ Status InitializePassesEncoder(const Image3F& opsin, const JxlCmsInterface& cms,
     // and kModular for the smallest DC (first in the bitstream)
     if (cparams.progressive_dc == 0) {
       cparams.modular_mode = true;
-      // TODO(jon): tweak mapping from image dist to dist for modular DC
+      cparams.speed_tier =
+          SpeedTier(std::max(static_cast<int>(SpeedTier::kTortoise),
+                             static_cast<int>(cparams.speed_tier) - 1));
       cparams.butteraugli_distance =
           std::max(kMinButteraugliDistance,
-                   enc_state->cparams.butteraugli_distance * 0.03f);
+                   enc_state->cparams.butteraugli_distance * 0.02f);
     } else {
       cparams.max_error_mode = true;
       for (size_t c = 0; c < 3; c++) {
@@ -168,17 +167,17 @@ Status InitializePassesEncoder(const Image3F& opsin, const JxlCmsInterface& cms,
     // dc_frame_info.dc_level = shared.frame_header.dc_level + 1, and
     // dc_frame_info.dc_level is used by EncodeFrame. However, if EncodeFrame
     // outputs multiple frames, this assumption could be wrong.
-    shared.dc_storage =
-        CopyImage(dec_state->shared->dc_frames[shared.frame_header.dc_level]);
+    const Image3F& dc_frame =
+        dec_state->shared->dc_frames[shared.frame_header.dc_level];
+    shared.dc_storage = Image3F(dc_frame.xsize(), dc_frame.ysize());
+    CopyImageTo(dc_frame, &shared.dc_storage);
     ZeroFillImage(&shared.quant_dc);
     shared.dc = &shared.dc_storage;
     JXL_CHECK(encoded_size == 0);
   } else {
     auto compute_dc_coeffs = [&](int group_index, int /* thread */) {
       modular_frame_encoder->AddVarDCTDC(
-          dc, group_index,
-          enc_state->cparams.butteraugli_distance >= 2.0f &&
-              enc_state->cparams.speed_tier < SpeedTier::kFalcon,
+          dc, group_index, enc_state->cparams.speed_tier < SpeedTier::kFalcon,
           enc_state, /*jpeg_transcode=*/false);
     };
     JXL_RETURN_IF_ERROR(RunOnPool(pool, 0, shared.frame_dim.num_dc_groups,
@@ -197,16 +196,10 @@ Status InitializePassesEncoder(const Image3F& opsin, const JxlCmsInterface& cms,
                                 ThreadPool::NoInit, compute_ac_meta,
                                 "Compute AC Metadata"));
 
-  if (aux_out != nullptr) {
-    aux_out->InspectImage3F("compressed_image:InitializeFrameEncCache:dc_dec",
-                            shared.dc_storage);
-  }
   return true;
 }
 
 void EncCache::InitOnce() {
-  PROFILER_FUNC;
-
   if (num_nzeroes.xsize() == 0) {
     num_nzeroes = Image3I(kGroupDimInBlocks, kGroupDimInBlocks);
   }

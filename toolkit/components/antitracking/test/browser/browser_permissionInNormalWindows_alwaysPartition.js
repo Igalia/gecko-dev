@@ -1,5 +1,3 @@
-/* import-globals-from antitracking_head.js */
-
 AntiTracking.runTest(
   "Test whether we receive any persistent permissions in normal windows",
   // Blocking callback
@@ -14,10 +12,6 @@ AntiTracking.runTest(
       let chromeScript = SpecialPowers.loadChromeScript(_ => {
         /* eslint-env mozilla/chrome-script */
         addMessageListener("go", _ => {
-          const { Services } = ChromeUtils.import(
-            "resource://gre/modules/Services.jsm"
-          );
-
           function ok(what, msg) {
             sendAsyncMessage("ok", { what: !!what, msg });
           }
@@ -28,13 +22,17 @@ AntiTracking.runTest(
 
           // We should use the principal of the TEST_DOMAIN since the storage
           // permission is saved under it.
-          let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-            "http://example.net/"
-          );
+          let principal =
+            Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+              "http://example.net/"
+            );
 
           for (let perm of Services.perms.getAllForPrincipal(principal)) {
             // Ignore permissions other than storage access
-            if (!perm.type.startsWith("3rdPartyStorage^")) {
+            if (
+              !perm.type.startsWith("3rdPartyStorage^") &&
+              !perm.type.startsWith("3rdPartyFrameStorage^")
+            ) {
               continue;
             }
             is(
@@ -67,13 +65,17 @@ AntiTracking.runTest(
       // so we don't check it.
       if (!SpecialPowers.useRemoteSubframes) {
         let Services = SpecialPowers.Services;
-        let principal = Services.scriptSecurityManager.createContentPrincipalFromOrigin(
-          "http://example.net/"
-        );
+        let principal =
+          Services.scriptSecurityManager.createContentPrincipalFromOrigin(
+            "http://example.net/"
+          );
 
         for (let perm of Services.perms.getAllForPrincipal(principal)) {
           // Ignore permissions other than storage access
-          if (!perm.type.startsWith("3rdPartyStorage^")) {
+          if (
+            !perm.type.startsWith("3rdPartyStorage^") &&
+            !perm.type.startsWith("3rdPartyFrameStorage^")
+          ) {
             continue;
           }
           is(

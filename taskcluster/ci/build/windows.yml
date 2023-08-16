@@ -5,9 +5,6 @@
 job-defaults:
     run:
         using: mozharness
-    fetches:
-        toolchain:
-            - win64-pdbstr
 
 win32/debug:
     description: "Win32 Debug"
@@ -23,7 +20,6 @@ win32/debug:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -39,13 +35,9 @@ win32/debug:
         mozconfig-variant: debug
         extra-config:
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -55,12 +47,11 @@ win32/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -78,7 +69,6 @@ win32/opt:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -93,14 +83,10 @@ win32/opt:
         extra-config:
             stage_platform: win32
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['integration']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -110,14 +96,65 @@ win32/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
+
+win32-fuzzing/debug:
+    description: "Win32 Fuzzing Debug"
+    index:
+        product: firefox
+        job-name: win32-fuzzing-debug
+    attributes:
+        enable-full-crashsymbols: true
+    treeherder:
+        platform: windows2012-32/debug
+        symbol: Bf
+        tier: 1
+    worker-type: b-linux-gcp
+    worker:
+        max-run-time: 7200
+        env:
+            PERFHERDER_EXTRA_OPTIONS: fuzzing
+    run:
+        actions: [get-secrets, build]
+        options: [append-env-variables-from-configs]
+        script: mozharness/scripts/fx_desktop_build.py
+        secrets: true
+        config:
+            - builds/releng_base_firefox.py
+            - builds/releng_base_linux_64_builds.py
+            - builds/taskcluster_sub_win32/debug.py
+        extra-config:
+            stage_platform: win32
+            mozconfig_platform: win32
+        mozconfig-variant: debug-fuzzing
+    run-on-projects: ['trunk']
+    use-sccache: true
+    fetches:
+        toolchain:
+            - linux64-clang
+            - linux64-rust-cross
+            - linux64-rust-size
+            - linux64-nasm
+            - linux64-node
+            - linux64-cbindgen
+            - linux64-sccache
+            - linux64-dump_syms
+            - linux64-wine
+            - linux64-winchecksec
+            - nsis
+            - sysroot-x86_64-linux-gnu
+            - sysroot-wasm32-wasi
+            - vs
+        fetch:
+            - upx-3.95-win
+    optimization:
+        skip-unless-expanded: null
 
 win64/debug:
     description: "Win64 Debug"
@@ -133,7 +170,6 @@ win64/debug:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -149,13 +185,9 @@ win64/debug:
         mozconfig-variant: debug
         extra-config:
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -165,30 +197,28 @@ win64/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
-win64-hybrid/plain:
+win64-non-unified/plain:
     description: "Win64 Hybrid Plain"
     index:
         product: firefox
-        job-name: win64-hybrid-plain
+        job-name: win64-non-unified-plain
     treeherder:
         platform: windows2012-64/debug
-        symbol: Bp-hybrid
+        symbol: Bp-nu
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
-            PERFHERDER_EXTRA_OPTIONS: hybrid
+            PERFHERDER_EXTRA_OPTIONS: non-unified
     run:
         options: [append-env-variables-from-configs]
         actions: [get-secrets, build]
@@ -197,17 +227,13 @@ win64-hybrid/plain:
         config:
             - builds/releng_base_firefox.py
             - builds/releng_base_linux_64_builds.py
-        mozconfig-variant: hybrid
+        mozconfig-variant: non-unified
         extra-config:
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     use-sccache: true
     run-on-projects: ['integration']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -217,12 +243,11 @@ win64-hybrid/plain:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -239,7 +264,6 @@ win64-fuzzing/debug:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: fuzzing
@@ -254,15 +278,11 @@ win64-fuzzing/debug:
             - builds/taskcluster_sub_win64/debug.py
         extra-config:
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: debug-fuzzing
     run-on-projects: ['trunk']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -272,12 +292,11 @@ win64-fuzzing/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -292,7 +311,7 @@ win64-plain/debug:
         platform: windows2012-64/debug
         symbol: Bp
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 7200
         env:
@@ -320,7 +339,7 @@ win64-plain/debug:
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
+            - vs
             - nsis
             - sysroot-wasm32-wasi
     optimization:
@@ -340,7 +359,6 @@ win64/opt:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -355,18 +373,10 @@ win64/opt:
         extra-config:
             stage_platform: win64
             mozconfig_platform: win64
-            env:
-                # Setting LD_PRELOAD at the worker level would set it during
-                # fetch-content, which can fail randomly when a tar/unzip subprocess
-                # of fetch-content starts while the library is being extracted by
-                # another.
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['integration']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -376,12 +386,11 @@ win64/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -394,7 +403,7 @@ win64-plain/opt:
         platform: windows2012-64/opt
         symbol: Bp
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 7200
         env:
@@ -422,7 +431,7 @@ win64-plain/opt:
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
+            - vs
             - nsis
             - sysroot-wasm32-wasi
     optimization:
@@ -456,9 +465,8 @@ win32-shippable/opt:
         symbol: Bpgo(B)
         tier: 1
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -474,12 +482,8 @@ win32-shippable/opt:
         extra-config:
             stage_platform: win32
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -488,12 +492,11 @@ win32-shippable/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -514,9 +517,8 @@ win64-shippable/opt:
         symbol: Bpgo(B)
         tier: 1
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-xlarge-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -532,12 +534,9 @@ win64-shippable/opt:
         extra-config:
             stage_platform: win64
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
+            max_build_output_timeout: 3600
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -546,12 +545,61 @@ win64-shippable/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
+        fetch:
+            - upx-3.95-win
+
+win64-nightlyasrelease/opt:
+    description: "Win64 Opt Nightly-As-Release"
+    use-pgo: win64-shippable/opt
+    attributes:
+        enable-full-crashsymbols: true
+    index:
+        product: firefox
+        job-name: win64-nightlyasrelease-opt
+    treeherder:
+        platform: win64-nightlyasrelease/opt
+        symbol: Bpgo(Bnar)
+    worker-type: b-linux-xlarge-gcp
+    worker:
+        max-run-time: 10800
+        env:
+            PERFHERDER_EXTRA_OPTIONS: "nightly-as-release"
+            MOZ_AUTOMATION_PACKAGE_TESTS: "1"
+    run:
+        actions: [get-secrets, build]
+        options: [append-env-variables-from-configs]
+        script: mozharness/scripts/fx_desktop_build.py
+        secrets: true
+        config:
+            - builds/releng_base_firefox.py
+            - builds/releng_base_linux_64_builds.py
+            - taskcluster_nightly.py
+        extra-config:
+            stage_platform: win64
+            mozconfig_platform: win64
+            max_build_output_timeout: 3600
+        mozconfig-variant: nightly-as-release
+    run-on-projects: [trunk-only]
+    fetches:
+        toolchain:
+            - linux64-clang
+            - linux64-rust-cross
+            - linux64-rust-size
+            - linux64-nasm
+            - linux64-node
+            - linux64-cbindgen
+            - linux64-dump_syms
+            - linux64-wine
+            - linux64-winchecksec
+            - nsis
+            - sysroot-x86_64-linux-gnu
+            - sysroot-wasm32-wasi
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -566,7 +614,6 @@ win32-add-on-devel/opt:
         tier: 2
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
     run:
         actions: [get-secrets, build]
@@ -579,15 +626,11 @@ win32-add-on-devel/opt:
         extra-config:
             stage_platform: win32-add-on-devel
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: add-on-devel
     run-on-projects: ['mozilla-beta', 'mozilla-release']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -597,12 +640,11 @@ win32-add-on-devel/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -617,7 +659,6 @@ win64-add-on-devel/opt:
         tier: 2
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
     run:
         actions: [get-secrets, build]
@@ -630,15 +671,11 @@ win64-add-on-devel/opt:
         extra-config:
             stage_platform: win64-on-devel
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: add-on-devel
     run-on-projects: ['mozilla-beta', 'mozilla-release']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -648,12 +685,11 @@ win64-add-on-devel/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -668,7 +704,6 @@ win64-noopt/debug:
         tier: 2
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
     run:
         actions: [get-secrets, build]
@@ -682,14 +717,10 @@ win64-noopt/debug:
         mozconfig-variant: noopt-debug
         extra-config:
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['mozilla-central']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -699,12 +730,11 @@ win64-noopt/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -719,7 +749,6 @@ win32-noopt/debug:
         tier: 2
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
     run:
         actions: [get-secrets, build]
@@ -733,14 +762,10 @@ win32-noopt/debug:
         mozconfig-variant: noopt-debug
         extra-config:
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['mozilla-central']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -750,12 +775,11 @@ win32-noopt/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -768,7 +792,7 @@ win32-rusttests/opt:
         platform: windows2012-32/opt
         symbol: BR
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 5400
         env:
@@ -788,20 +812,17 @@ win32-rusttests/opt:
             disable_package_metrics: true
         mozconfig-variant: rusttests
     run-on-projects: ['mozilla-central']
-    use-sccache: true
     fetches:
         toolchain:
             - win64-clang
             - win64-rust
             - win64-cbindgen
-            - win64-sccache
             - win64-nasm
             - win64-node
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
-            - sysroot-wasm32-wasi
+            - vs
     optimization:
         test-inclusive: [rusttests]
 
@@ -814,7 +835,7 @@ win32-rusttests/debug:
         platform: windows2012-32/debug
         symbol: BR
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 5400
         env:
@@ -834,20 +855,17 @@ win32-rusttests/debug:
             disable_package_metrics: true
         mozconfig-variant: rusttests-debug
     run-on-projects: ['mozilla-central']
-    use-sccache: true
     fetches:
         toolchain:
             - win64-clang
             - win64-rust
             - win64-cbindgen
-            - win64-sccache
             - win64-nasm
             - win64-node
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
-            - sysroot-wasm32-wasi
+            - vs
     optimization:
         test-inclusive: [rusttests]
 
@@ -860,7 +878,7 @@ win64-rusttests/opt:
         platform: windows2012-64/opt
         symbol: BR
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 5400
         env:
@@ -877,20 +895,17 @@ win64-rusttests/opt:
             - builds/taskcluster_sub_win64/rusttests_opt.py
         mozconfig-variant: rusttests
     run-on-projects: ['mozilla-central']
-    use-sccache: true
     fetches:
         toolchain:
             - win64-clang
             - win64-rust
             - win64-cbindgen
-            - win64-sccache
             - win64-nasm
             - win64-node
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
-            - sysroot-wasm32-wasi
+            - vs
     optimization:
         test-inclusive: [rusttests]
 
@@ -903,7 +918,7 @@ win64-rusttests/debug:
         platform: windows2012-64/debug
         symbol: BR
         tier: 1
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         max-run-time: 5400
         env:
@@ -920,20 +935,17 @@ win64-rusttests/debug:
             - builds/taskcluster_sub_win64/rusttests_opt.py
         mozconfig-variant: rusttests-debug
     run-on-projects: ['trunk']
-    use-sccache: true
     fetches:
         toolchain:
             - win64-clang
             - win64-rust
             - win64-cbindgen
-            - win64-sccache
             - win64-nasm
             - win64-node
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
-            - sysroot-wasm32-wasi
+            - vs
     optimization:
         test-inclusive: [rusttests]
 
@@ -948,7 +960,7 @@ win64-ccov/opt:
         platform: windows2012-64/ccov
         symbol: B
         tier: 2
-    worker-type: b-win2012
+    worker-type: b-win2022
     worker:
         artifacts:
             - name: public/code-coverage-grcov.zip
@@ -983,7 +995,57 @@ win64-ccov/opt:
             - win64-winchecksec
             - win64-mozmake
             - win64-dump_syms
-            - win64-vs2017
+            - vs
+            - nsis
+            - sysroot-wasm32-wasi
+
+win64-fuzzing-ccov/opt:
+    description: "Win64 Fuzzing Opt w/ Coverage"
+    index:
+        product: firefox
+        job-name: win64-ccov-fuzzing-opt
+    treeherder:
+        platform: windows2012-64/ccov
+        symbol: Bocf
+    worker-type: b-win2022
+    worker:
+        artifacts:
+            - name: public/code-coverage-grcov.zip
+              path: workspace\obj-build\code-coverage-grcov.zip
+              type: file
+        max-run-time: 9000
+        env:
+            RUSTC_BOOTSTRAP: '1'
+            PERFHERDER_EXTRA_OPTIONS: "fuzzing-ccov"
+    run:
+        using: mozharness
+        actions: [get-secrets, build]
+        options: [append-env-variables-from-configs]
+        config:
+            - builds/releng_base_firefox.py
+            - builds/taskcluster_base_windows.py
+            - builds/taskcluster_base_win64.py
+            - builds/taskcluster_sub_win64/ccov_opt.py
+        script: mozharness/scripts/fx_desktop_build.py
+        secrets: true
+        mozconfig-variant: fuzzing-ccov
+        tooltool-downloads: public
+    run-on-projects: ['mozilla-central']
+    use-sccache: false
+    fetches:
+        toolchain:
+            - win64-clang
+            - win64-rust
+            - win64-rust-size
+            - win64-cbindgen
+            - win64-grcov
+            - win64-sccache
+            - win64-nasm
+            - win64-node
+            - win64-winchecksec
+            - win64-mozmake
+            - win64-dump_syms
+            - vs
             - nsis
             - sysroot-wasm32-wasi
 
@@ -998,7 +1060,6 @@ win64-asan/debug:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: "debug asan"
@@ -1013,14 +1074,10 @@ win64-asan/debug:
             - builds/taskcluster_sub_win64/asan_debug.py
         extra-config:
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: debug-asan
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1030,13 +1087,12 @@ win64-asan/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
             - win64-llvm-symbolizer
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -1053,7 +1109,6 @@ win64-asan/opt:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: "opt asan"
@@ -1069,14 +1124,10 @@ win64-asan/opt:
         extra-config:
             stage_platform: win64-asan
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: nightly-asan
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1086,13 +1137,12 @@ win64-asan/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
             - win64-llvm-symbolizer
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -1111,9 +1161,8 @@ win64-asan-reporter-shippable/opt:
     treeherder:
         platform: win64-asan-reporter/opt
         symbol: BoR
-    worker-type: b-linux
+    worker-type: b-linux-xlarge-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: "asan-reporter"
@@ -1131,9 +1180,7 @@ win64-asan-reporter-shippable/opt:
         extra-config:
             stage_platform: win64-asan-reporter
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
+            max_build_output_timeout: 3600
         mozconfig-variant: nightly-asan-reporter
         mar-channel-id:
             firefox-mozilla-central-asan
@@ -1142,7 +1189,6 @@ win64-asan-reporter-shippable/opt:
     run-on-projects: ['mozilla-central']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1151,13 +1197,12 @@ win64-asan-reporter-shippable/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
             - win64-llvm-symbolizer
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -1171,7 +1216,6 @@ win64-asan-fuzzing/opt:
         symbol: Bof
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: fuzzing-asan
@@ -1186,14 +1230,10 @@ win64-asan-fuzzing/opt:
         extra-config:
             stage_platform: win64-fuzzing-asan
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: nightly-fuzzing-asan
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1203,13 +1243,12 @@ win64-asan-fuzzing/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
             - win64-llvm-symbolizer
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -1241,9 +1280,8 @@ win32-devedition/opt:
         platform: windows2012-32-devedition/opt
         symbol: B
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -1259,14 +1297,10 @@ win32-devedition/opt:
         extra-config:
             stage_platform: win32-devedition
             mozconfig_platform: win32
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: devedition
     run-on-projects: ['mozilla-beta']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1275,12 +1309,11 @@ win32-devedition/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -1300,9 +1333,8 @@ win64-devedition/opt:
         platform: windows2012-64-devedition/opt
         symbol: B
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-xlarge-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 10800
         env:
             MOZ_AUTOMATION_PACKAGE_TESTS: "1"
@@ -1318,14 +1350,11 @@ win64-devedition/opt:
         extra-config:
             stage_platform: win64-devedition
             mozconfig_platform: win64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
+            max_build_output_timeout: 3600
         mozconfig-variant: devedition
     run-on-projects: ['mozilla-beta']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1334,12 +1363,11 @@ win64-devedition/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
 
@@ -1356,7 +1384,6 @@ win64-aarch64/debug:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64
@@ -1371,14 +1398,10 @@ win64-aarch64/debug:
             - builds/taskcluster_sub_win64/debug.py
         extra-config:
             mozconfig_platform: win64-aarch64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: debug
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1388,12 +1411,11 @@ win64-aarch64/debug:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -1417,7 +1439,6 @@ win64-aarch64/opt:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64
@@ -1433,14 +1454,10 @@ win64-aarch64/opt:
         extra-config:
             stage_platform: win64-aarch64
             mozconfig_platform: win64-aarch64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['integration']
     use-sccache: true
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1450,12 +1467,11 @@ win64-aarch64/opt:
             - linux64-sccache
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -1472,7 +1488,6 @@ win64-aarch64-eme/opt:
         tier: 1
     worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64-eme
@@ -1521,9 +1536,8 @@ win64-aarch64-shippable/opt:
         platform: windows2012-aarch64-shippable/opt
         symbol: B
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64
@@ -1620,9 +1634,8 @@ win64-aarch64-shippable-no-eme/opt:
         platform: windows2012-aarch64/opt
         symbol: Nn
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64-no-eme
@@ -1639,13 +1652,9 @@ win64-aarch64-shippable-no-eme/opt:
         extra-config:
             stage_platform: win64-aarch64
             mozconfig_platform: win64-aarch64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
     run-on-projects: ['all']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1654,12 +1663,11 @@ win64-aarch64-shippable-no-eme/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win
     optimization:
@@ -1683,9 +1691,8 @@ win64-aarch64-devedition/opt:
         platform: windows2012-aarch64-devedition/opt
         symbol: B
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             MOZ_ARTIFACT_TASK: {task-reference: '<win64-aarch64-opt>'}
@@ -1781,9 +1788,8 @@ win64-aarch64-devedition-no-eme/opt:
         platform: windows2012-aarch64-devedition/opt
         symbol: Nn
         tier: 1
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
-        docker-image: {in-tree: debian11-amd64-build}
         max-run-time: 7200
         env:
             PERFHERDER_EXTRA_OPTIONS: aarch64-no-eme
@@ -1800,14 +1806,10 @@ win64-aarch64-devedition-no-eme/opt:
         extra-config:
             stage_platform: win64-aarch64
             mozconfig_platform: win64-aarch64
-            env:
-                LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         mozconfig-variant: devedition
     run-on-projects: ['mozilla-beta']
     fetches:
         toolchain:
-            - linux64-binutils
             - linux64-clang
             - linux64-rust-cross
             - linux64-rust-size
@@ -1816,11 +1818,10 @@ win64-aarch64-devedition-no-eme/opt:
             - linux64-cbindgen
             - linux64-dump_syms
             - linux64-wine
-            - linux64-liblowercase
             - linux64-winchecksec
             - nsis
             - sysroot-x86_64-linux-gnu
             - sysroot-wasm32-wasi
-            - win64-vs2017
+            - vs
         fetch:
             - upx-3.95-win

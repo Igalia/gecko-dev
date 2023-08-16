@@ -15,10 +15,7 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=553917
       var g_bundl =
         stringBundleService.createBundle("chrome://global/locale/mathml/mathml.properties");
 
-      const allow_linethickness_names = !SpecialPowers.getBoolPref('mathml.mfrac_linethickness_names.disabled');
-      const allow_mathsize_names = !SpecialPowers.getBoolPref('mathml.mathsize_names.disabled');
       const allow_mathspace_names = !SpecialPowers.getBoolPref('mathml.mathspace_names.disabled');
-      const allow_scriptsizemultiplier_attribute = !SpecialPowers.getBoolPref('mathml.scriptsizemultiplier_attribute.disabled');
       
       var g_errorInfo = {
       /*<math><mroot></mroot></math>
@@ -37,11 +34,10 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=553917
           status: [false, false, false],
           args: [["BAD!","width","mpadded"], ["BAD!","height","mpadded"], ["BAD!","voffset","mpadded"]]
         },
-      /*<math scriptlevel="BAD!"></math>
-        <math scriptsizemultiplier="BAD!"></math>*/
+      /*<math scriptlevel="BAD!"></math>*/
         AttributeParsingErrorNoTag: {
-          status: [false, !allow_scriptsizemultiplier_attribute],
-          args: [["BAD!","scriptlevel"], ["BAD!","scriptsizemultiplier"]]
+          status: [false],
+          args: [["BAD!","scriptlevel"]]
         },
       /* <math><mo rspace="2..0px">+</mo></math>
         <math><mo minsize="1.5notaunit">+</mo></math>
@@ -72,12 +68,12 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=553917
                      false,
                      false,
                      false,
-                     allow_linethickness_names,
-                     allow_linethickness_names,
-                     allow_linethickness_names,
-                     allow_mathsize_names,
-                     allow_mathsize_names,
-                     allow_mathsize_names,
+                     false,
+                     false,
+                     false,
+                     false,
+                     false,
+                     false,
                      allow_mathspace_names,
                      allow_mathspace_names,
                      allow_mathspace_names,
@@ -190,7 +186,6 @@ https://bugzilla.mozilla.org/show_bug.cgi?id=553917
     
     <!-- AttributeParsingErrorNoTag -->
     <math scriptlevel="BAD!"></math>
-    <math scriptsizemultiplier="BAD!"></math>
     
     <!-- LengthParsingError -->
     <math><mo rspace="2..0px">+</mo></math>

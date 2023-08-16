@@ -120,9 +120,11 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
           "Target and source should have the same userContextId attribute.");
 
       nsAutoString providedOrigin, targetOrigin;
-      nsresult rv = nsContentUtils::GetUTFOrigin(targetPrin, targetOrigin);
+      nsresult rv = nsContentUtils::GetWebExposedOriginSerialization(
+          targetPrin, targetOrigin);
       NS_ENSURE_SUCCESS(rv, rv);
-      rv = nsContentUtils::GetUTFOrigin(mProvidedPrincipal, providedOrigin);
+      rv = nsContentUtils::GetWebExposedOriginSerialization(mProvidedPrincipal,
+                                                            providedOrigin);
       NS_ENSURE_SUCCESS(rv, rv);
 
       nsAutoString errorText;
@@ -164,7 +166,6 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
       do_QueryObject(targetWindow);
 
   JS::CloneDataPolicy cloneDataPolicy;
-  cloneDataPolicy.allowErrorStackFrames();
 
   MOZ_DIAGNOSTIC_ASSERT(targetWindow);
   if (mCallerAgentClusterId.isSome() && targetWindow->GetDocGroup() &&
@@ -189,13 +190,7 @@ MOZ_CAN_RUN_SCRIPT_BOUNDARY NS_IMETHODIMP PostMessageEvent::Run() {
     holder = &mHolder.ref<StructuredCloneHolder>();
   } else {
     MOZ_ASSERT(mHolder.constructed<ipc::StructuredCloneData>());
-    // It's not possible to send shared objects over IPC so we have a different
-    // policy.
-    JS::CloneDataPolicy cloneDataPolicyIPC;
-    cloneDataPolicyIPC.allowErrorStackFrames();
-
-    mHolder.ref<ipc::StructuredCloneData>().Read(cx, &messageData,
-                                                 cloneDataPolicyIPC, rv);
+    mHolder.ref<ipc::StructuredCloneData>().Read(cx, &messageData, rv);
     holder = &mHolder.ref<ipc::StructuredCloneData>();
   }
   if (NS_WARN_IF(rv.Failed())) {

@@ -48,7 +48,7 @@ struct OffThreadTask {
   OffThreadToken* token;
 };
 
-BEGIN_TEST(testCompileScript) {
+BEGIN_TEST(testCompileNonsyntactic) {
   CHECK(testCompile(true));
 
   CHECK(testCompile(false));
@@ -104,11 +104,11 @@ bool testCompile(bool nonSyntactic) {
   CHECK(CompileToStencilOffThread(cx, options, srcBuf, task.OffThreadCallback,
                                   &task));
   CHECK(token = task.waitUntilDone(cx));
-  CHECK(stencil = FinishCompileToStencilOffThread(cx, token));
+  CHECK(stencil = FinishOffThreadStencil(cx, token));
   InstantiateOptions instantiateOptions(options);
   CHECK(script = InstantiateGlobalStencil(cx, instantiateOptions, stencil));
   CHECK_EQUAL(script->hasNonSyntacticScope(), nonSyntactic);
 
   return true;
 }
-END_TEST(testCompileScript);
+END_TEST(testCompileNonsyntactic);

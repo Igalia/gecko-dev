@@ -366,6 +366,11 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
     NotifyObservers(chan, NS_HTTP_ON_MODIFY_REQUEST_TOPIC);
   }
 
+  // Same as OnModifyRequest but before cookie headers are written.
+  void OnModifyRequestBeforeCookies(nsIHttpChannel* chan) {
+    NotifyObservers(chan, NS_HTTP_ON_MODIFY_REQUEST_BEFORE_COOKIES_TOPIC);
+  }
+
   void OnModifyDocumentRequest(nsIIdentChannel* chan) {
     NotifyObservers(chan, NS_DOCUMENT_ON_MODIFY_REQUEST_TOPIC);
   }
@@ -433,6 +438,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   uint32_t DefaultHpackBuffer() const { return mDefaultHpackBuffer; }
 
+  static bool IsHttp3Enabled();
   bool IsHttp3VersionSupported(const nsACString& version);
 
   static bool IsHttp3SupportedByServer(nsHttpResponseHead* aResponseHead);
@@ -521,10 +527,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   friend class SocketProcessChild;
   void SetHttpHandlerInitArgs(const HttpHandlerInitArgs& aArgs);
   void SetDeviceModelId(const nsACString& aModelId);
-
-  // Checks if there are any user certs or active smart cards on a different
-  // thread. Updates mSpeculativeConnectEnabled when done.
-  void MaybeEnableSpeculativeConnect();
 
   // We only allow DNSUtils and TRRServiceChannel itself to create
   // TRRServiceChannel.
@@ -621,7 +623,7 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
   // cache support
   uint32_t mLastUniqueID;
-  uint32_t mSessionStartTime{0};
+  Atomic<uint32_t, Relaxed> mSessionStartTime{0};
 
   // useragent components
   nsCString mLegacyAppName{"Mozilla"};
@@ -734,10 +736,6 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
   // The ratio for dispatching transactions from the focused window.
   float mFocusedWindowTransactionRatio{0.9f};
 
-  // We may disable speculative connect if the browser has user certificates
-  // installed as that might randomly popup the certificate choosing window.
-  Atomic<bool, Relaxed> mSpeculativeConnectEnabled{false};
-
   // If true, the transactions from active tab will be dispatched first.
   bool mActiveTabPriority{true};
 
@@ -780,8 +778,9 @@ class nsHttpHandler final : public nsIHttpProtocolHandler,
 
  private:
   [[nodiscard]] nsresult SpeculativeConnectInternal(
-      nsIURI* aURI, nsIPrincipal* aPrincipal, nsIInterfaceRequestor* aCallbacks,
-      bool anonymous);
+      nsIURI* aURI, nsIPrincipal* aPrincipal,
+      Maybe<OriginAttributes>&& aOriginAttributes,
+      nsIInterfaceRequestor* aCallbacks, bool anonymous);
   void ExcludeHttp2OrHttp3Internal(const nsHttpConnectionInfo* ci);
 
   // State for generating channelIds
@@ -859,7 +858,29 @@ class nsHttpsHandler : public nsIHttpProtocolHandler,
   NS_DECL_NSIPROTOCOLHANDLER
   NS_FORWARD_NSIPROXIEDPROTOCOLHANDLER(gHttpHandler->)
   NS_FORWARD_NSIHTTPPROTOCOLHANDLER(gHttpHandler->)
-  NS_FORWARD_NSISPECULATIVECONNECT(gHttpHandler->)
+
+  NS_IMETHOD SpeculativeConnect(nsIURI* aURI, nsIPrincipal* aPrincipal,
+                                nsIInterfaceRequestor* aCallbacks,
+                                bool aAnonymous) override {
+    return gHttpHandler->SpeculativeConnect(aURI, aPrincipal, aCallbacks,
+                                            aAnonymous);
+  }
+
+  NS_IMETHOD SpeculativeConnectWithOriginAttributes(
+      nsIURI* aURI, JS::Handle<JS::Value> originAttributes,
+      nsIInterfaceRequestor* aCallbacks, bool aAnonymous,
+      JSContext* cx) override {
+    return gHttpHandler->SpeculativeConnectWithOriginAttributes(
+        aURI, originAttributes, aCallbacks, aAnonymous, cx);
+  }
+
+  NS_IMETHOD_(void)
+  SpeculativeConnectWithOriginAttributesNative(
+      nsIURI* aURI, mozilla::OriginAttributes&& originAttributes,
+      nsIInterfaceRequestor* aCallbacks, bool aAnonymous) override {
+    gHttpHandler->SpeculativeConnectWithOriginAttributesNative(
+        aURI, std::move(originAttributes), aCallbacks, aAnonymous);
+  }
 
   nsHttpsHandler() = default;
 

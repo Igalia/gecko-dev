@@ -2,22 +2,12 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys
-
-import mozpack.path as mozpath
+import helpers  # Import test helpers module.
 import mozunit
-
-# Import test helpers module.
-OUR_DIR = mozpath.abspath(mozpath.dirname(__file__))
-sys.path.append(OUR_DIR)
-
-import helpers
 
 helpers.setup()
 
-from GenerateWebIDLBindings import (
-    load_and_parse_JSONSchema,
-)
+from GenerateWebIDLBindings import load_and_parse_JSONSchema
 
 
 def test_all_jsonschema_load_and_parse_smoketest():

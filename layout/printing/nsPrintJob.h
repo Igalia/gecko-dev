@@ -8,6 +8,7 @@
 
 #include "mozilla/Attributes.h"
 #include "mozilla/layout/RemotePrintJobChild.h"
+#include "mozilla/Maybe.h"
 #include "mozilla/UniquePtr.h"
 
 #include "nsCOMPtr.h"
@@ -148,7 +149,7 @@ class nsPrintJob final : public nsIWebProgressListener,
   // If FinishPrintPreview() fails, caller may need to reset the state of the
   // object, for example by calling CleanupOnFailure().
   MOZ_CAN_RUN_SCRIPT_BOUNDARY nsresult FinishPrintPreview();
-  void FirePrintingErrorEvent(nsresult aPrintError);
+  MOZ_CAN_RUN_SCRIPT_BOUNDARY void FirePrintingErrorEvent(nsresult aPrintError);
 
   bool CheckBeforeDestroy() const;
   nsresult Cancel();
@@ -283,6 +284,15 @@ class nsPrintJob final : public nsIWebProgressListener,
 
   int32_t mNumPrintablePages = 0;
 
+  // Indicates if the page has a specific orientation from @page { size }.
+  // Stores true if this is landscape, false if this is portrait, or nothing
+  // if there is no page-size-orientation.
+  mozilla::Maybe<bool> mMaybeCSSPageLandscape;
+
+  // Indicates if the page has a specific size from @page { size }.
+  // Stores the page size if one was found.
+  mozilla::Maybe<nsSize> mMaybeCSSPageSize;
+
   // If true, indicates that we have started Printing but have not gone to the
   // timer to start printing the pages. It gets turned off right before we go
   // to the timer.
@@ -296,7 +306,6 @@ class nsPrintJob final : public nsIWebProgressListener,
   bool mDoingInitialReflow = false;
   bool mIsDestroying = false;
   bool mDisallowSelectionPrint = false;
-  bool mIsForModalWindow = false;
 };
 
 #endif  // nsPrintJob_h

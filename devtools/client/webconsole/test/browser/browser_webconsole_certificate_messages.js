@@ -18,18 +18,13 @@ const TLS_expected_message =
   "This site uses a deprecated version of TLS. " +
   "Please upgrade to TLS 1.2 or 1.3.";
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   // Set preferences back to their original values
   Services.prefs.clearUserPref("security.tls.version.min");
   Services.prefs.clearUserPref("security.tls.version.max");
 });
 
-add_task(async function() {
-  // Run with server side targets in order to avoid the restart
-  // of console and error resource listeners during a client side target switching.
-  // This leads to unexpected order between console and error messages
-  await pushPref("devtools.target-switching.server.enabled", true);
-
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
 
   info("Test TLS warnings");

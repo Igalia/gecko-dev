@@ -44,8 +44,8 @@ async function test_autocomplete(data) {
   gURLBar.blur();
 }
 
-add_task(async function() {
-  registerCleanupFunction(async function() {
+add_task(async function () {
+  registerCleanupFunction(async function () {
     Services.prefs.clearUserPref("browser.urlbar.autoFill");
     Services.prefs.clearUserPref("browser.urlbar.suggest.quickactions");
     gURLBar.handleRevert();
@@ -58,6 +58,15 @@ add_task(async function() {
     "http://example.com/",
     "http://example.com/foo",
   ]);
+  // Bookmark the page so it ignores autofill threshold and doesn't risk to
+  // not be autofilled.
+  let bm = await PlacesUtils.bookmarks.insert({
+    url: "http://example.com/",
+    parentGuid: PlacesUtils.bookmarks.toolbarGuid,
+  });
+  registerCleanupFunction(async function () {
+    await PlacesUtils.bookmarks.remove(bm);
+  });
 
   await test_autocomplete({
     desc: "DELETE the autofilled part should search",
@@ -195,8 +204,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc:
-      "Right arrow key and then backspace should delete the backslash and not re-trigger autofill",
+    desc: "Right arrow key and then backspace should delete the backslash and not re-trigger autofill",
     typed: "ex",
     autofilled: "example.com/",
     modified: "example.com",
@@ -205,8 +213,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc:
-      "Right arrow key, selecting the last few characters using the keyboard, and then backspace should delete the characters and not re-trigger autofill",
+    desc: "Right arrow key, selecting the last few characters using the keyboard, and then backspace should delete the characters and not re-trigger autofill",
     typed: "ex",
     autofilled: "example.com/",
     modified: "example.c",
@@ -221,8 +228,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc:
-      "End and then backspace should delete the backslash and not re-trigger autofill",
+    desc: "End and then backspace should delete the backslash and not re-trigger autofill",
     typed: "ex",
     autofilled: "example.com/",
     modified: "example.com",
@@ -236,8 +242,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc:
-      "Clicking in the input after the text and then backspace should delete the backslash and not re-trigger autofill",
+    desc: "Clicking in the input after the text and then backspace should delete the backslash and not re-trigger autofill",
     typed: "ex",
     autofilled: "example.com/",
     modified: "example.com",
@@ -251,8 +256,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc:
-      "Selecting the next result and then backspace should delete the last character and not re-trigger autofill",
+    desc: "Selecting the next result and then backspace should delete the last character and not re-trigger autofill",
     typed: "ex",
     autofilled: "example.com/",
     modified: "example.com/fo",

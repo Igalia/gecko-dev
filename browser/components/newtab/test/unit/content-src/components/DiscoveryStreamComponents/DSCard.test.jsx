@@ -10,16 +10,19 @@ import {
   StatusMessage,
   SponsorLabel,
 } from "content-src/components/DiscoveryStreamComponents/DSContextFooter/DSContextFooter";
-import { actionCreators as ac, actionTypes as at } from "common/Actions.jsm";
+import {
+  actionCreators as ac,
+  actionTypes as at,
+} from "common/Actions.sys.mjs";
 import { DSLinkMenu } from "content-src/components/DiscoveryStreamComponents/DSLinkMenu/DSLinkMenu";
 import React from "react";
-import { INITIAL_STATE } from "common/Reducers.jsm";
+import { INITIAL_STATE } from "common/Reducers.sys.mjs";
 import { SafeAnchor } from "content-src/components/DiscoveryStreamComponents/SafeAnchor/SafeAnchor";
 import { shallow, mount } from "enzyme";
 import { FluentOrText } from "content-src/components/FluentOrText/FluentOrText";
 
 const DEFAULT_PROPS = {
-  url: "url",
+  url: "about:robots",
   title: "title",
   App: {
     isForStartupCache: false,
@@ -51,18 +54,9 @@ describe("<DSCard>", () => {
   it("should render a SafeAnchor", () => {
     wrapper.setProps({ url: "https://foo.com" });
 
-    assert.equal(
-      wrapper
-        .children()
-        .at(0)
-        .type(),
-      SafeAnchor
-    );
+    assert.equal(wrapper.children().at(0).type(), SafeAnchor);
     assert.propertyVal(
-      wrapper
-        .children()
-        .at(0)
-        .props(),
+      wrapper.children().at(0).props(),
       "url",
       "https://foo.com"
     );
@@ -70,23 +64,14 @@ describe("<DSCard>", () => {
 
   it("should pass onLinkClick prop", () => {
     assert.propertyVal(
-      wrapper
-        .children()
-        .at(0)
-        .props(),
+      wrapper.children().at(0).props(),
       "onLinkClick",
       wrapper.instance().onLinkClick
     );
   });
 
   it("should render DSLinkMenu", () => {
-    assert.equal(
-      wrapper
-        .children()
-        .at(1)
-        .type(),
-      DSLinkMenu
-    );
+    assert.equal(wrapper.children().at(1).type(), DSLinkMenu);
   });
 
   it("should start with no .active class", () => {
@@ -131,6 +116,33 @@ describe("<DSCard>", () => {
     assert.equal(defaultMeta.props().timeToRead, 4);
   });
 
+  it("should not show save to pocket button for spocs", () => {
+    wrapper.setProps({
+      id: "fooidx",
+      pos: 1,
+      type: "foo",
+      flightId: 12345,
+      saveToPocketCard: true,
+    });
+
+    let stpButton = wrapper.find(".card-stp-button");
+
+    assert.lengthOf(stpButton, 0);
+  });
+
+  it("should show save to pocket button for non-spocs", () => {
+    wrapper.setProps({
+      id: "fooidx",
+      pos: 1,
+      type: "foo",
+      saveToPocketCard: true,
+    });
+
+    let stpButton = wrapper.find(".card-stp-button");
+
+    assert.lengthOf(stpButton, 1);
+  });
+
   describe("onLinkClick", () => {
     let fakeWindow;
 
@@ -166,7 +178,7 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1 }],
+          tiles: [{ id: "fooidx", pos: 1, type: "organic" }],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -193,7 +205,7 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1 }],
+          tiles: [{ id: "fooidx", pos: 1, type: "spoc" }],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -227,7 +239,9 @@ describe("<DSCard>", () => {
         ac.ImpressionStats({
           click: 0,
           source: "FOO",
-          tiles: [{ id: "fooidx", pos: 1, shim: "click shim" }],
+          tiles: [
+            { id: "fooidx", pos: 1, shim: "click shim", type: "organic" },
+          ],
           window_inner_width: 1000,
           window_inner_height: 900,
         })
@@ -331,7 +345,7 @@ describe("<DSCard>", () => {
         dispatch,
         ac.AlsoToMain({
           type: at.SAVE_TO_POCKET,
-          data: { site: { url: "url", title: "title" } },
+          data: { site: { url: "about:robots", title: "title" } },
         })
       );
       assert.calledWith(
@@ -340,6 +354,7 @@ describe("<DSCard>", () => {
           event: "SAVE_TO_POCKET",
           source: "CARDGRID_HOVER",
           action_position: 1,
+          value: { card_type: "organic" },
         })
       );
       assert.calledWith(

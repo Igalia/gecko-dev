@@ -46,7 +46,6 @@ using mozilla::Nothing;
 using mozilla::Span;
 
 class FuncType;
-class TypeIdDesc;
 
 // A Module can either be asm.js or wasm.
 
@@ -160,13 +159,13 @@ class Export {
   Export() = default;
   explicit Export(CacheableName&& fieldName, uint32_t index,
                   DefinitionKind kind);
-  explicit Export(CacheableName&& fieldName, DefinitionKind kind);
 
   const CacheableName& fieldName() const { return fieldName_; }
 
   DefinitionKind kind() const { return pod.kind_; }
   uint32_t funcIndex() const;
   uint32_t tagIndex() const;
+  uint32_t memoryIndex() const;
   uint32_t globalIndex() const;
   uint32_t tableIndex() const;
 
@@ -197,8 +196,7 @@ enum class FuncFlags : uint8_t {
 // A FuncDesc describes a single function definition.
 
 struct FuncDesc {
-  FuncType* type;
-  TypeIdDesc* typeId;
+  const FuncType* type;
   // Bit pack to keep this struct small on 32-bit systems
   uint32_t typeIndex : 24;
   FuncFlags flags : 8;
@@ -208,11 +206,8 @@ struct FuncDesc {
   static_assert(sizeof(FuncFlags) == sizeof(uint8_t));
 
   FuncDesc() = default;
-  FuncDesc(FuncType* type, TypeIdDesc* typeId, uint32_t typeIndex)
-      : type(type),
-        typeId(typeId),
-        typeIndex(typeIndex),
-        flags(FuncFlags::None) {}
+  FuncDesc(const FuncType* type, uint32_t typeIndex)
+      : type(type), typeIndex(typeIndex), flags(FuncFlags::None) {}
 
   bool isExported() const {
     return uint8_t(flags) & uint8_t(FuncFlags::Exported);
@@ -342,7 +337,7 @@ using GlobalDescVector = Vector<GlobalDesc, 0, SystemAllocPolicy>;
 
 // The TagOffsetVector represents the offsets in the layout of the
 // data buffer stored in a Wasm exception.
-using TagOffsetVector = Vector<uint32_t, 0, SystemAllocPolicy>;
+using TagOffsetVector = Vector<uint32_t, 2, SystemAllocPolicy>;
 
 struct TagType : AtomicRefCounted<TagType> {
   ValTypeVector argTypes_;
@@ -374,15 +369,11 @@ using SharedTagType = RefPtr<const TagType>;
 struct TagDesc {
   TagKind kind;
   SharedTagType type;
-  uint32_t globalDataOffset;
   bool isExport;
 
-  TagDesc() : globalDataOffset(UINT32_MAX), isExport(false) {}
+  TagDesc() : isExport(false) {}
   TagDesc(TagKind kind, const SharedTagType& type, bool isExport = false)
-      : kind(kind),
-        type(type),
-        globalDataOffset(UINT32_MAX),
-        isExport(isExport) {}
+      : kind(kind), type(type), isExport(isExport) {}
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 };
@@ -436,7 +427,11 @@ using ElemSegmentVector = Vector<SharedElemSegment, 0, SystemAllocPolicy>;
 // Instance mem.drops it and the Module is destroyed, each DataSegment is
 // individually atomically ref-counted.
 
+constexpr uint32_t InvalidMemoryIndex = UINT32_MAX;
+static_assert(InvalidMemoryIndex > MaxMemories, "Invariant");
+
 struct DataSegmentEnv {
+  uint32_t memoryIndex;
   Maybe<InitExpr> offsetIfActive;
   uint32_t bytecodeOffset;
   uint32_t length;
@@ -445,6 +440,7 @@ struct DataSegmentEnv {
 using DataSegmentEnvVector = Vector<DataSegmentEnv, 0, SystemAllocPolicy>;
 
 struct DataSegment : AtomicRefCounted<DataSegment> {
+  uint32_t memoryIndex;
   Maybe<InitExpr> offsetIfActive;
   Bytes bytes;
 
@@ -456,6 +452,7 @@ struct DataSegment : AtomicRefCounted<DataSegment> {
 
   [[nodiscard]] bool init(const ShareableBytes& bytecode,
                           const DataSegmentEnv& src) {
+    memoryIndex = src.memoryIndex;
     if (src.offsetIfActive) {
       offsetIfActive.emplace();
       if (!offsetIfActive->clone(*src.offsetIfActive)) {
@@ -591,11 +588,13 @@ struct MemoryDesc {
     return limits.initial * PageSize;
   }
 
-  MemoryDesc() = default;
+  MemoryDesc() {}
   explicit MemoryDesc(Limits limits) : limits(limits) {}
 };
 
 WASM_DECLARE_CACHEABLE_POD(MemoryDesc);
+
+using MemoryDescVector = Vector<MemoryDesc, 1, SystemAllocPolicy>;
 
 // We don't need to worry about overflow with a Memory32 field when
 // using a uint64_t.
@@ -613,28 +612,25 @@ static_assert(MaxMemory32LimitField <= UINT64_MAX / PageSize);
 
 struct TableDesc {
   RefType elemType;
-  bool isImportedOrExported;
+  bool isImported;
+  bool isExported;
   bool isAsmJS;
-  uint32_t globalDataOffset;
   uint32_t initialLength;
   Maybe<uint32_t> maximumLength;
-
-  WASM_CHECK_CACHEABLE_POD(elemType, isImportedOrExported, isAsmJS,
-                           globalDataOffset, initialLength, maximumLength);
+  Maybe<InitExpr> initExpr;
 
   TableDesc() = default;
   TableDesc(RefType elemType, uint32_t initialLength,
-            Maybe<uint32_t> maximumLength, bool isAsmJS,
-            bool isImportedOrExported = false)
+            Maybe<uint32_t> maximumLength, Maybe<InitExpr>&& initExpr,
+            bool isAsmJS, bool isImported = false, bool isExported = false)
       : elemType(elemType),
-        isImportedOrExported(isImportedOrExported),
+        isImported(isImported),
+        isExported(isExported),
         isAsmJS(isAsmJS),
-        globalDataOffset(UINT32_MAX),
         initialLength(initialLength),
-        maximumLength(maximumLength) {}
+        maximumLength(maximumLength),
+        initExpr(std::move(initExpr)) {}
 };
-
-WASM_DECLARE_CACHEABLE_POD(TableDesc);
 
 using TableDescVector = Vector<TableDesc, 0, SystemAllocPolicy>;
 

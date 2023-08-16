@@ -116,7 +116,7 @@ class ReportErrorRunnable final : public WorkerDebuggeeRunnable {
       // the ServiceWorkerManager to report on any controlled documents.
       if (aWorkerPrivate->IsServiceWorker()) {
         RefPtr<RemoteWorkerChild> actor(
-            aWorkerPrivate->GetRemoteWorkerControllerWeakRef());
+            aWorkerPrivate->GetRemoteWorkerController());
 
         Unused << NS_WARN_IF(!actor);
 
@@ -195,7 +195,7 @@ class ReportGenericErrorRunnable final : public WorkerDebuggeeRunnable {
 
     if (aWorkerPrivate->IsServiceWorker()) {
       RefPtr<RemoteWorkerChild> actor(
-          aWorkerPrivate->GetRemoteWorkerControllerWeakRef());
+          aWorkerPrivate->GetRemoteWorkerController());
 
       Unused << NS_WARN_IF(!actor);
 
@@ -224,7 +224,7 @@ class ReportGenericErrorRunnable final : public WorkerDebuggeeRunnable {
 }  // namespace
 
 void WorkerErrorBase::AssignErrorBase(JSErrorBase* aReport) {
-  CopyUTF8toUTF16(MakeStringSpan(aReport->filename), mFilename);
+  CopyUTF8toUTF16(MakeStringSpan(aReport->filename.c_str()), mFilename);
   mLineNumber = aReport->lineno;
   mColumnNumber = aReport->column;
   mErrorNumber = aReport->errorNumber;

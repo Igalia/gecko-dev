@@ -1,14 +1,11 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
+  PerfTestHelpers: "resource://testing-common/PerfTestHelpers.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AboutNewTab: "resource:///modules/AboutNewTab.jsm",
-  PerfTestHelpers: "resource://testing-common/PerfTestHelpers.jsm",
 });
 
 /**
@@ -273,6 +270,15 @@ function disableFxaBadge() {
   });
 }
 
+function rectInBoundingClientRect(r, bcr) {
+  return (
+    bcr.x <= r.x1 &&
+    bcr.y <= r.y1 &&
+    bcr.x + bcr.width >= r.x2 &&
+    bcr.y + bcr.height >= r.y2
+  );
+}
+
 async function getBookmarksToolbarRect() {
   // Temporarily open the bookmarks toolbar to measure its rect
   let bookmarksToolbar = gNavToolbox.querySelector("#PersonalToolbar");
@@ -313,7 +319,8 @@ function computeMaxTabCount() {
   let currentTabCount = gBrowser.tabs.length;
   let newTabButton = gBrowser.tabContainer.newTabButton;
   let newTabRect = newTabButton.getBoundingClientRect();
-  let tabStripRect = gBrowser.tabContainer.arrowScrollbox.getBoundingClientRect();
+  let tabStripRect =
+    gBrowser.tabContainer.arrowScrollbox.getBoundingClientRect();
   let availableTabStripWidth = tabStripRect.width - newTabRect.width;
 
   let tabMinWidth = parseInt(
@@ -382,6 +389,7 @@ async function addDummyHistoryEntries(searchStr = "") {
 
   for (let i = 0; i < NUM_VISITS; ++i) {
     visits.push({
+      // eslint-disable-next-line @microsoft/sdl/no-insecure-url
       uri: `http://example.com/urlbar-reflows-${i}`,
       title: `Reflow test for URL bar entry #${i} - ${searchStr}`,
     });
@@ -389,7 +397,7 @@ async function addDummyHistoryEntries(searchStr = "") {
 
   await PlacesTestUtils.addVisits(visits);
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
   });
 }
@@ -534,7 +542,7 @@ function compareFrames(frame, previousFrame) {
   // The following code block merges rects that are close to each other
   // (less than kMaxEmptyPixels away).
   // This is needed to avoid having a rect for each letter when a label moves.
-  let areRectsContiguous = function(r1, r2) {
+  let areRectsContiguous = function (r1, r2) {
     return (
       r1.y2 >= r2.y1 - 1 - kMaxEmptyPixels &&
       r2.x1 - 1 - kMaxEmptyPixels <= r1.x2 &&
@@ -724,7 +732,7 @@ async function runUrlbarTest(
 
   URLBar.focus();
   URLBar.value = SEARCH_TERM;
-  let testFn = async function() {
+  let testFn = async function () {
     let popup = URLBar.view;
     let oldOnQueryResults = popup.onQueryResults.bind(popup);
     let oldOnQueryFinished = popup.onQueryFinished.bind(popup);
@@ -778,7 +786,7 @@ async function runUrlbarTest(
   };
 
   let urlbarRect = URLBar.textbox.getBoundingClientRect();
-  const SHADOW_SIZE = 14;
+  const SHADOW_SIZE = 17;
   let expectedRects = {
     filter: rects => {
       // We put text into the urlbar so expect its textbox to change.
@@ -895,6 +903,9 @@ async function checkLoadedScripts({
       return !intermittent[scriptType].has(c);
     });
 
+    if (loadedList[scriptType].length) {
+      console.log("Unexpected scripts:", loadedList[scriptType]);
+    }
     is(
       loadedList[scriptType].length,
       0,

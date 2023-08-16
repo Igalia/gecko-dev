@@ -18,15 +18,14 @@ class GMPProcessChild final : public mozilla::ipc::ProcessChild {
   typedef mozilla::ipc::ProcessChild ProcessChild;
 
  public:
-  explicit GMPProcessChild(ProcessId aParentPid);
+  using ProcessChild::ProcessChild;
   ~GMPProcessChild();
 
   bool Init(int aArgc, char* aArgv[]) override;
   void CleanUp() override;
 
  private:
-  GMPChild mPlugin;
-  DISALLOW_COPY_AND_ASSIGN(GMPProcessChild);
+  const RefPtr<GMPChild> mPlugin = new GMPChild;
 };
 
 }  // namespace mozilla::gmp

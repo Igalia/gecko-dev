@@ -2,11 +2,10 @@
   "$schema": "http://json-schema.org/draft-04/schema#",
   "type": "object",
   "properties": {
-
     "3rdparty": {
       "type": "object",
       "properties": {
-        "Extensions" : {
+        "Extensions": {
           "type": "object",
           "patternProperties": {
             "^.*$": {
@@ -36,19 +35,19 @@
     "Authentication": {
       "type": "object",
       "properties": {
-        "SPNEGO" : {
+        "SPNEGO": {
           "type": "array",
           "items": {
             "type": "string"
           }
         },
-        "Delegated" : {
+        "Delegated": {
           "type": "array",
           "items": {
             "type": "string"
           }
         },
-        "NTLM" : {
+        "NTLM": {
           "type": "array",
           "items": {
             "type": "string"
@@ -175,6 +174,55 @@
       }
     },
 
+    "Containers": {
+      "type": "object",
+      "properties": {
+        "Default": {
+          "type": ["array", "JSON"],
+          "items": {
+            "properties": {
+              "name": {
+                "type": "string"
+              },
+              "icon": {
+                "type": "string",
+                "enum": [
+                  "fingerprint",
+                  "briefcase",
+                  "dollar",
+                  "cart",
+                  "vacation",
+                  "gift",
+                  "food",
+                  "fruit",
+                  "pet",
+                  "tree",
+                  "chill",
+                  "circle",
+                  "fence"
+                ]
+              },
+              "color": {
+                "type": "string",
+                "enum": [
+                  "blue",
+                  "turquoise",
+                  "green",
+                  "yellow",
+                  "orange",
+                  "red",
+                  "pink",
+                  "purple",
+                  "toolbar"
+                ]
+              }
+            },
+            "type": "object"
+          }
+        }
+      }
+    },
+
     "Cookies": {
       "type": "object",
       "properties": {
@@ -225,14 +273,27 @@
 
         "Behavior": {
           "type": "string",
-          "enum": ["accept", "reject-foreign", "reject", "limit-foreign", "reject-tracker", "reject-tracker-and-partition-foreign"]
+          "enum": [
+            "accept",
+            "reject-foreign",
+            "reject",
+            "limit-foreign",
+            "reject-tracker",
+            "reject-tracker-and-partition-foreign"
+          ]
         },
 
         "BehaviorPrivateBrowsing": {
           "type": "string",
-          "enum": ["accept", "reject-foreign", "reject", "limit-foreign", "reject-tracker", "reject-tracker-and-partition-foreign"]
+          "enum": [
+            "accept",
+            "reject-foreign",
+            "reject",
+            "limit-foreign",
+            "reject-tracker",
+            "reject-tracker-and-partition-foreign"
+          ]
         }
-
       }
     },
 
@@ -390,8 +451,13 @@
       "type": "boolean"
     },
 
-    "DisplayBookmarksToolbar": {
+    "DisableThirdPartyModuleBlocking": {
       "type": "boolean"
+    },
+
+    "DisplayBookmarksToolbar": {
+      "type": ["boolean", "string"],
+      "enum": ["always", "never", "newtab"]
     },
 
     "DisplayMenuBar": {
@@ -443,6 +509,9 @@
         "Fingerprinting": {
           "type": "boolean"
         },
+        "EmailTracking": {
+          "type": "boolean"
+        },
         "Exceptions": {
           "type": "array",
           "strict": false,
@@ -486,19 +555,19 @@
     "Extensions": {
       "type": "object",
       "properties": {
-        "Install" : {
+        "Install": {
           "type": "array",
           "items": {
             "type": "string"
           }
         },
-        "Uninstall" : {
+        "Uninstall": {
           "type": "array",
           "items": {
             "type": "string"
           }
         },
-        "Locked" : {
+        "Locked": {
           "type": "array",
           "items": {
             "type": "string"
@@ -521,7 +590,13 @@
               "type": "array",
               "items": {
                 "type": "string",
-                "enum": ["extension", "dictionary", "locale", "theme", "sitepermission"]
+                "enum": [
+                  "extension",
+                  "dictionary",
+                  "locale",
+                  "theme",
+                  "sitepermission"
+                ]
               }
             },
             "blocked_install_message": {
@@ -548,7 +623,12 @@
           "properties": {
             "installation_mode": {
               "type": "string",
-              "enum": ["allowed", "blocked", "force_installed", "normal_installed"]
+              "enum": [
+                "allowed",
+                "blocked",
+                "force_installed",
+                "normal_installed"
+              ]
             },
             "install_url": {
               "type": "string"
@@ -558,6 +638,10 @@
             },
             "updates_disabled": {
               "type": "boolean"
+            },
+            "default_area": {
+              "type": "string",
+              "enum": ["navbar", "menupanel"]
             }
           }
         }
@@ -592,35 +676,6 @@
         "Snippets": {
           "type": "boolean"
         },
-        "Locked": {
-          "type": "boolean"
-        }
-      }
-    },
-
-    "FlashPlugin": {
-      "type": "object",
-      "properties": {
-        "Allow": {
-          "type": "array",
-          "strict": false,
-          "items": {
-            "type": "origin"
-          }
-        },
-
-        "Block": {
-          "type": "array",
-          "strict": false,
-          "items": {
-            "type": "origin"
-          }
-        },
-
-        "Default": {
-          "type": "boolean"
-        },
-
         "Locked": {
           "type": "boolean"
         }
@@ -778,7 +833,7 @@
     },
 
     "ManualAppUpdateOnly": {
-        "type": "boolean"
+      "type": "boolean"
     },
 
     "NetworkPrediction": {
@@ -802,7 +857,7 @@
     },
 
     "OverrideFirstRunPage": {
-      "type": "string",
+      "type": "string"
     },
 
     "OverridePostUpdatePage": {
@@ -1241,6 +1296,20 @@
       "type": "object",
       "patternProperties": {
         "^.*$": { "type": "string" }
+      },
+      "properties": {
+        "Add": {
+          "type": "object",
+          "patternProperties": {
+            "^.*$": { "type": "string" }
+          }
+        },
+        "Delete": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
 
@@ -1275,7 +1344,7 @@
           "type": "string"
         }
       },
-      "required": ["Title", "URL"],
+      "required": ["Title", "URL"]
     },
 
     "UserMessaging": {
@@ -1310,7 +1379,7 @@
     },
 
     "WebsiteFilter": {
-      "type": "object",
+      "type": ["object", "JSON"],
       "properties": {
         "Block": {
           "type": "array",

@@ -4,7 +4,7 @@
 
 "use strict";
 
-define(function(require, exports, module) {
+define(function (require, exports, module) {
   const {
     Component,
     createRef,
@@ -49,6 +49,7 @@ define(function(require, exports, module) {
         showAllTabsMenu: PropTypes.bool,
         allTabsMenuButtonTooltip: PropTypes.string,
         onAllTabsMenuClick: PropTypes.func,
+        tall: PropTypes.bool,
 
         // To render a sidebar toggle button before the tab menu provide a function that
         // returns a React component for the button.
@@ -332,6 +333,7 @@ define(function(require, exports, module) {
                 role: "tab",
                 onClick: this.onClickTab.bind(this, index),
                 onMouseDown: this.onMouseDown.bind(this),
+                "data-tab-index": index,
               },
               title,
               badge && !isTabSelected && showBadge()
@@ -424,7 +426,11 @@ define(function(require, exports, module) {
     render() {
       return dom.div(
         {
-          className: ["tabs", this.props.className].join(" "),
+          className: [
+            "tabs",
+            ...(this.props.tall ? ["tabs-tall"] : []),
+            this.props.className,
+          ].join(" "),
           ref: this.tabsEl,
         },
         this.renderMenuItems(),

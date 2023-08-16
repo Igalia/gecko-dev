@@ -18,8 +18,6 @@ namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(XRInputSource, mParent, mTargetRaySpace,
                                       mGripSpace, mGamepad)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(XRInputSource, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(XRInputSource, Release)
 
 // Follow the controller profile ids from
 // https://github.com/immersive-web/webxr-input-profiles.
@@ -108,6 +106,12 @@ nsTArray<nsString> GetInputSourceProfile(gfx::VRControllerType aType) {
       break;
     case gfx::VRControllerType::PicoNeo2:
       id.AssignLiteral("pico-neo2");
+      profile.AppendElement(id);
+      id.AssignLiteral("generic-trigger-squeeze-thumbstick");
+      profile.AppendElement(id);
+      break;
+    case gfx::VRControllerType::Pico4:
+      id.AssignLiteral("pico-4");
       profile.AppendElement(id);
       id.AssignLiteral("generic-trigger-squeeze-thumbstick");
       profile.AppendElement(id);

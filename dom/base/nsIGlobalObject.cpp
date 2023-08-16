@@ -5,14 +5,18 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsIGlobalObject.h"
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/CycleCollectedJSContext.h"
+#include "mozilla/Result.h"
 #include "mozilla/StorageAccess.h"
+#include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/BlobURLProtocolHandler.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "mozilla/dom/Report.h"
 #include "mozilla/dom/ReportingObserver.h"
 #include "mozilla/dom/ServiceWorker.h"
 #include "mozilla/dom/ServiceWorkerRegistration.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "nsContentUtils.h"
 #include "nsThreadUtils.h"
 #include "nsGlobalWindowInner.h"
@@ -29,6 +33,7 @@ using mozilla::MallocSizeOf;
 using mozilla::Maybe;
 using mozilla::MicroTaskRunnable;
 using mozilla::dom::BlobURLProtocolHandler;
+using mozilla::dom::CallerType;
 using mozilla::dom::ClientInfo;
 using mozilla::dom::Report;
 using mozilla::dom::ReportingObserver;
@@ -66,11 +71,7 @@ nsIGlobalObject::~nsIGlobalObject() {
   MOZ_DIAGNOSTIC_ASSERT(mEventTargetObjects.isEmpty());
 }
 
-nsIPrincipal* nsIGlobalObject::PrincipalOrNull() {
-  if (!NS_IsMainThread()) {
-    return nullptr;
-  }
-
+nsIPrincipal* nsIGlobalObject::PrincipalOrNull() const {
   JSObject* global = GetGlobalJSObjectPreserveColor();
   if (NS_WARN_IF(!global)) return nullptr;
 
@@ -374,6 +375,41 @@ void nsIGlobalObject::SetByteLengthQueuingStrategySizeFunction(
   mByteLengthQueuingStrategySizeFunction = aFunction;
 }
 
-bool nsIGlobalObject::ShouldResistFingerprinting() const {
-  return nsContentUtils::ShouldResistFingerprinting();
+mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult>
+nsIGlobalObject::GetStorageKey() {
+  return mozilla::Err(NS_ERROR_NOT_AVAILABLE);
+}
+
+mozilla::Result<bool, nsresult> nsIGlobalObject::HasEqualStorageKey(
+    const mozilla::ipc::PrincipalInfo& aStorageKey) {
+  auto result = GetStorageKey();
+  if (result.isErr()) {
+    return result.propagateErr();
+  }
+
+  const auto& storageKey = result.inspect();
+
+  return mozilla::ipc::StorageKeysEqual(storageKey, aStorageKey);
+}
+
+mozilla::RTPCallerType nsIGlobalObject::GetRTPCallerType() const {
+  if (PrincipalOrNull() && PrincipalOrNull()->IsSystemPrincipal()) {
+    return RTPCallerType::SystemPrincipal;
+  }
+
+  if (ShouldResistFingerprinting(RFPTarget::ReduceTimerPrecision)) {
+    return RTPCallerType::ResistFingerprinting;
+  }
+
+  if (CrossOriginIsolated()) {
+    return RTPCallerType::CrossOriginIsolated;
+  }
+
+  return RTPCallerType::Normal;
+}
+
+bool nsIGlobalObject::ShouldResistFingerprinting(CallerType aCallerType,
+                                                 RFPTarget aTarget) const {
+  return aCallerType != CallerType::System &&
+         ShouldResistFingerprinting(aTarget);
 }

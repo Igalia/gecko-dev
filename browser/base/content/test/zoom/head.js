@@ -1,17 +1,13 @@
 /* Any copyright is dedicated to the Public Domain.
  * https://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { BrowserTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BrowserTestUtils.jsm"
-);
-
 let gContentPrefs = Cc["@mozilla.org/content-pref/service;1"].getService(
   Ci.nsIContentPrefService2
 );
 
 let gLoadContext = Cu.createLoadContext();
 
-registerCleanupFunction(async function() {
+registerCleanupFunction(async function () {
   await new Promise(resolve => {
     gContentPrefs.removeByName(window.FullZoom.name, gLoadContext, {
       handleResult() {},
@@ -80,7 +76,7 @@ var FullZoomHelper = {
           resolve(value);
         },
         handleError(error) {
-          Cu.reportError(error);
+          console.error(error);
         },
       });
     });
@@ -135,7 +131,7 @@ var FullZoomHelper = {
         }
       }, true);
 
-      this.waitForLocationChange().then(function() {
+      this.waitForLocationChange().then(function () {
         didZoom = true;
         if (didLoad) {
           resolve();
@@ -172,7 +168,7 @@ var FullZoomHelper = {
         gBrowser.goForward();
       }
 
-      this.waitForLocationChange().then(function() {
+      this.waitForLocationChange().then(function () {
         didZoom = true;
         if (didPs) {
           resolve();
@@ -182,8 +178,8 @@ var FullZoomHelper = {
   },
 
   failAndContinue: function failAndContinue(func) {
-    return function(err) {
-      Cu.reportError(err);
+    return function (err) {
+      console.error(err);
       ok(false, err);
       func();
     };
@@ -220,7 +216,7 @@ async function promiseTabLoadEvent(tab, url) {
   let loaded = BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, handle);
 
   if (url) {
-    BrowserTestUtils.loadURI(tab.linkedBrowser, url);
+    BrowserTestUtils.loadURIString(tab.linkedBrowser, url);
   }
 
   return loaded;

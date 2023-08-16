@@ -19,10 +19,6 @@
 #include "vm/PlainObject.h"  // js::PlainObject
 
 #include "debugger/DebugAPI-inl.h"
-#include "vm/ArrayObject-inl.h"
-#include "vm/JSAtom-inl.h"
-#include "vm/JSScript-inl.h"
-#include "vm/NativeObject-inl.h"
 #include "vm/Stack-inl.h"
 
 using namespace js;
@@ -354,21 +350,12 @@ static const JSFunctionSpec generator_methods[] = {
 
 JSObject* js::NewTenuredObjectWithFunctionPrototype(
     JSContext* cx, Handle<GlobalObject*> global) {
-  RootedObject proto(cx,
-                     GlobalObject::getOrCreateFunctionPrototype(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &cx->global()->getFunctionPrototype());
   return NewPlainObjectWithProto(cx, proto, TenuredObject);
 }
 
 static JSObject* CreateGeneratorFunction(JSContext* cx, JSProtoKey key) {
-  RootedObject proto(
-      cx, GlobalObject::getOrCreateFunctionConstructor(cx, cx->global()));
-  if (!proto) {
-    return nullptr;
-  }
-
+  RootedObject proto(cx, &cx->global()->getFunctionConstructor());
   Handle<PropertyName*> name = cx->names().GeneratorFunction;
   return NewFunctionWithProto(cx, Generator, 1, FunctionFlags::NATIVE_CTOR,
                               nullptr, name, proto, gc::AllocKind::FUNCTION,
@@ -495,7 +482,7 @@ bool JSObject::is<js::AbstractGeneratorObject>() const {
 }
 
 GeneratorResumeKind js::ParserAtomToResumeKind(
-    JSContext* cx, frontend::TaggedParserAtomIndex atom) {
+    frontend::TaggedParserAtomIndex atom) {
   if (atom == frontend::TaggedParserAtomIndex::WellKnown::next()) {
     return GeneratorResumeKind::Next;
   }

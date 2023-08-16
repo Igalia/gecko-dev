@@ -11,12 +11,11 @@
 #include "mozilla/dom/XRView.h"
 #include "mozilla/dom/XRReferenceSpace.h"
 #include "VRDisplayClient.h"
+#define VRB_ERROR(format, ...) __android_log_print(ANDROID_LOG_ERROR, "VRB", format, ##__VA_ARGS__);
 
 namespace mozilla::dom {
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(XRFrame, mParent, mSession)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(XRFrame, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(XRFrame, Release)
 
 XRFrame::XRFrame(nsISupports* aParent, XRSession* aXRSession)
     : mParent(aParent),
@@ -83,30 +82,18 @@ already_AddRefed<XRViewerPose> XRFrame::GetViewerPose(
     headTransform.SetRotationFromQuaternion(viewerOrientation);
     headTransform.PostTranslate(viewerPosition);
 
-    gfx::Matrix4x4Double originTransform;
-    originTransform.SetRotationFromQuaternion(
-        aReferenceSpace.GetEffectiveOriginOrientation().Inverse());
-    originTransform.PreTranslate(-aReferenceSpace.GetEffectiveOriginPosition());
-
-    headTransform *= originTransform;
+    headTransform *= aReferenceSpace.GetEffectiveOriginTransform().Inverse();
 
     viewerPose = mSession->PooledViewerPose(headTransform, emulatedPosition);
 
     auto updateEye = [&](int32_t viewIndex, gfx::VRDisplayState::Eye eye) {
-      auto offset = displayInfo.GetEyeTranslation(eye);
-      auto eyeFromHead = gfx::Matrix4x4Double::Translation(
-          gfx::PointDouble3D(offset.x, offset.y, offset.z));
-      auto eyeTransform = eyeFromHead * headTransform;
-      gfx::PointDouble3D eyePosition;
-      gfx::QuaternionDouble eyeRotation;
-      gfx::PointDouble3D eyeScale;
-      eyeTransform.Decompose(eyePosition, eyeRotation, eyeScale);
+      auto eyeFromHead = displayInfo.GetEyeTransform(eye);
+      auto viewTransform = eyeFromHead * headTransform;
 
       const gfx::VRFieldOfView fov = displayInfo.mDisplayState.eyeFOV[eye];
       gfx::Matrix4x4 projection =
           fov.ConstructProjectionMatrix(depthNear, depthFar, true);
-      viewerPose->GetEye(viewIndex)->Update(eyePosition, eyeRotation,
-                                            projection);
+      viewerPose->GetEye(viewIndex)->Update(viewTransform, projection);
     };
 
     updateEye(0, gfx::VRDisplayState::Eye_Left);
@@ -125,8 +112,7 @@ already_AddRefed<XRViewerPose> XRFrame::GetViewerPose(
 
     viewerPose =
         mSession->PooledViewerPose(gfx::Matrix4x4Double(), emulatedPosition);
-    viewerPose->GetEye(0)->Update(gfx::PointDouble3D(), gfx::QuaternionDouble(),
-                                  projection);
+    viewerPose->GetEye(0)->Update(gfx::Matrix4x4Double(), projection);
   }
 
   return viewerPose.forget();
@@ -158,13 +144,9 @@ already_AddRefed<XRPose> XRFrame::GetPose(const XRSpace& aSpace,
   // TODO (Bug 1616393) - Check if poses must be limited:
   // https://immersive-web.github.io/webxr/#poses-must-be-limited
 
-  const bool emulatedPosition = aSpace.IsPositionEmulated();
-  gfx::Matrix4x4Double base;
-  base.SetRotationFromQuaternion(
-      aBaseSpace.GetEffectiveOriginOrientation().Inverse());
-  base.PreTranslate(-aBaseSpace.GetEffectiveOriginPosition());
+  const bool emulatedPosition = aSpace.IsPositionEmulated() || aBaseSpace.IsPositionEmulated();
 
-  gfx::Matrix4x4Double matrix = aSpace.GetEffectiveOriginTransform() * base;
+  gfx::Matrix4x4Double matrix = aSpace.GetEffectiveOriginTransform() * aBaseSpace.GetEffectiveOriginTransform().Inverse();
 
   RefPtr<XRRigidTransform> transform = new XRRigidTransform(mParent, matrix);
   RefPtr<XRPose> pose = new XRPose(mParent, transform, emulatedPosition);

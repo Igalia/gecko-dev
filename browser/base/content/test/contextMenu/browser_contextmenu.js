@@ -39,6 +39,7 @@ let hasContainers =
   ContextualIdentityService.getPublicIdentities().length;
 
 const example_base =
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://example.com/browser/browser/base/content/test/contextMenu/";
 const chrome_base =
   "chrome://mochitests/content/browser/browser/base/content/test/contextMenu/";
@@ -59,7 +60,7 @@ function getThisFrameSubMenu(base_menu) {
   return base_menu;
 }
 
-add_task(async function init() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.search.separatePrivateDefault.ui.enabled", true],
@@ -120,7 +121,7 @@ add_task(async function test_setup_html() {
 
   await BrowserTestUtils.openNewForegroundTab(gBrowser, url);
 
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
     let doc = content.document;
     let audioIframe = doc.querySelector("#test-audio-in-iframe");
     // media documents always use a <video> tag.
@@ -258,6 +259,7 @@ add_task(async function test_image() {
         true,
         "context-sendimage",
         true,
+        ...getTextRecognitionItems(),
         ...(Services.prefs.getBoolPref("browser.menu.showViewImageInfo", false)
           ? ["context-viewimageinfo", true]
           : []),
@@ -668,6 +670,10 @@ add_task(async function test_iframe() {
       true,
       "---",
       null,
+      "context-take-frame-screenshot",
+      true,
+      "---",
+      null,
       "context-viewframesource",
       true,
       "context-viewframeinfo",
@@ -920,6 +926,7 @@ add_task(async function test_image_in_iframe() {
     true,
     "context-sendimage",
     true,
+    ...getTextRecognitionItems(),
     ...(Services.prefs.getBoolPref("browser.menu.showViewImageInfo", false)
       ? ["context-viewimageinfo", true]
       : []),
@@ -1153,27 +1160,36 @@ add_task(async function test_copylinkcommand() {
 
       // The easiest way to check the clipboard is to paste the contents
       // into a textbox.
-      await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
-        let doc = content.document;
-        let input = doc.getElementById("test-input");
-        input.focus();
-        input.value = "";
-      });
+      await SpecialPowers.spawn(
+        gBrowser.selectedBrowser,
+        [],
+        async function () {
+          let doc = content.document;
+          let input = doc.getElementById("test-input");
+          input.focus();
+          input.value = "";
+        }
+      );
       document.commandDispatcher
         .getControllerForCommand("cmd_paste")
         .doCommand("cmd_paste");
-      await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
-        let doc = content.document;
-        let input = doc.getElementById("test-input");
-        Assert.equal(
-          input.value,
-          "http://mozilla.com/",
-          "paste for command cmd_paste"
-        );
-        // Don't keep focus, because that may affect clipboard commands in
-        // subsequently-opened menus.
-        input.blur();
-      });
+      await SpecialPowers.spawn(
+        gBrowser.selectedBrowser,
+        [],
+        async function () {
+          let doc = content.document;
+          let input = doc.getElementById("test-input");
+          Assert.equal(
+            input.value,
+            // eslint-disable-next-line @microsoft/sdl/no-insecure-url
+            "http://mozilla.com/",
+            "paste for command cmd_paste"
+          );
+          // Don't keep focus, because that may affect clipboard commands in
+          // subsequently-opened menus.
+          input.blur();
+        }
+      );
     },
   });
 });
@@ -1218,28 +1234,36 @@ add_task(async function test_dom_full_screen() {
           ["full-screen-api.transition-duration.leave", "0 0"],
         ],
       });
-      await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
-        let doc = content.document;
-        let win = doc.defaultView;
-        let full_screen_element = doc.getElementById("test-dom-full-screen");
-        let awaitFullScreenChange = ContentTaskUtils.waitForEvent(
-          win,
-          "fullscreenchange"
-        );
-        full_screen_element.requestFullscreen();
-        await awaitFullScreenChange;
-      });
+      await SpecialPowers.spawn(
+        gBrowser.selectedBrowser,
+        [],
+        async function () {
+          let doc = content.document;
+          let win = doc.defaultView;
+          let full_screen_element = doc.getElementById("test-dom-full-screen");
+          let awaitFullScreenChange = ContentTaskUtils.waitForEvent(
+            win,
+            "fullscreenchange"
+          );
+          full_screen_element.requestFullscreen();
+          await awaitFullScreenChange;
+        }
+      );
     },
     async postCheckContextMenuFn() {
-      await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
-        let win = content.document.defaultView;
-        let awaitFullScreenChange = ContentTaskUtils.waitForEvent(
-          win,
-          "fullscreenchange"
-        );
-        content.document.exitFullscreen();
-        await awaitFullScreenChange;
-      });
+      await SpecialPowers.spawn(
+        gBrowser.selectedBrowser,
+        [],
+        async function () {
+          let win = content.document.defaultView;
+          let awaitFullScreenChange = ContentTaskUtils.waitForEvent(
+            win,
+            "fullscreenchange"
+          );
+          content.document.exitFullscreen();
+          await awaitFullScreenChange;
+        }
+      );
     },
   });
 });
@@ -1304,7 +1328,9 @@ add_task(async function test_select_text() {
 
 add_task(async function test_select_text_search_service_not_initialized() {
   // Pretend the search service is not initialised.
-  Services.search.wrappedJSObject._initialized = false;
+  Services.search.wrappedJSObject.forceInitializationStatusForTests(
+    "not initialized"
+  );
   await test_contextmenu(
     "#test-select-text",
     [
@@ -1331,8 +1357,9 @@ add_task(async function test_select_text_search_service_not_initialized() {
       },
     }
   );
-  // Pretend the search service is not initialised.
-  Services.search.wrappedJSObject._initialized = true;
+
+  // Restore the search service initialization status
+  Services.search.wrappedJSObject.forceInitializationStatusForTests("success");
 });
 
 add_task(async function test_select_text_link() {
@@ -1386,7 +1413,7 @@ add_task(async function test_select_text_link() {
         await SpecialPowers.spawn(
           gBrowser.selectedBrowser,
           [],
-          async function() {
+          async function () {
             let win = content.document.defaultView;
             win.getSelection().removeAllRanges();
           }
@@ -1429,6 +1456,7 @@ add_task(async function test_imagelink() {
     true,
     "context-sendimage",
     true,
+    ...getTextRecognitionItems(),
     ...(Services.prefs.getBoolPref("browser.menu.showViewImageInfo", false)
       ? ["context-viewimageinfo", true]
       : []),
@@ -1527,6 +1555,7 @@ add_task(async function test_longdesc() {
     true,
     "context-sendimage",
     true,
+    ...getTextRecognitionItems(),
     ...(Services.prefs.getBoolPref("browser.menu.showViewImageInfo", false)
       ? ["context-viewimageinfo", true]
       : []),
@@ -1561,6 +1590,10 @@ add_task(async function test_srcdoc() {
       "---",
       null,
       "context-printframe",
+      true,
+      "---",
+      null,
+      "context-take-frame-screenshot",
       true,
       "---",
       null,
@@ -1883,7 +1916,7 @@ async function selectText(selector) {
   await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [selector],
-    async function(contentSelector) {
+    async function (contentSelector) {
       info(`Selecting text of ${contentSelector}`);
       let doc = content.document;
       let win = doc.defaultView;
@@ -1896,4 +1929,15 @@ async function selectText(selector) {
       win.getSelection().addRange(div);
     }
   );
+}
+
+/**
+ * Not all platforms support text recognition.
+ * @returns {string[]}
+ */
+function getTextRecognitionItems() {
+  return Services.prefs.getBoolPref("dom.text-recognition.enabled") &&
+    Services.appinfo.isTextRecognitionSupported
+    ? ["context-imagetext", true]
+    : [];
 }

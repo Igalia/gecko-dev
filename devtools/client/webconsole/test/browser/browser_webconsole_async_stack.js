@@ -24,7 +24,7 @@ promiseThen(onPromiseThen);
 
 </script>`;
 
-add_task(async function() {
+add_task(async function () {
   await pushPref("javascript.options.asyncstack_capture_debuggee_only", false);
   const hud = await openNewTabAndConsole(TEST_URI);
 
@@ -76,14 +76,14 @@ async function getSimplifiedStack(messageEl) {
     const frames = messageEl.querySelectorAll(
       ".message-body-wrapper > .stacktrace .frame"
     );
-    return frames.length > 0 ? frames : null;
+    return frames.length ? frames : null;
   }, "Couldn't find stacktrace");
 
   return Array.from(framesEl)
     .map(frameEl =>
-      Array.from(
-        frameEl.querySelectorAll(".title,.location-async-cause")
-      ).map(el => el.textContent.trim())
+      Array.from(frameEl.querySelectorAll(".title,.location-async-cause")).map(
+        el => el.textContent.trim()
+      )
     )
     .flat()
     .join("\n");

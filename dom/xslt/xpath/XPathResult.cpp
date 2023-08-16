@@ -44,9 +44,8 @@ XPathResult::XPathResult(const XPathResult& aResult)
 
 XPathResult::~XPathResult() { RemoveObserver(); }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(XPathResult)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(XPathResult)
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(XPathResult)
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(XPathResult)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mParent) { tmp->RemoveObserver(); }
@@ -97,7 +96,7 @@ nsINode* XPathResult::IterateNext(ErrorResult& aRv) {
   return mResultNodes.SafeElementAt(mCurrentPos++);
 }
 
-void XPathResult::NodeWillBeDestroyed(const nsINode* aNode) {
+void XPathResult::NodeWillBeDestroyed(nsINode* aNode) {
   nsCOMPtr<nsIMutationObserver> kungFuDeathGrip(this);
   // Set to null to avoid unregistring unnecessarily
   mDocument = nullptr;

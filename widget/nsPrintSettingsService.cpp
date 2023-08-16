@@ -42,6 +42,9 @@ static const char kEdgeLeft[] = "print_edge_left";
 static const char kEdgeBottom[] = "print_edge_bottom";
 static const char kEdgeRight[] = "print_edge_right";
 
+static const char kIgnoreUnwriteableMargins[] =
+    "print_ignore_unwriteable_margins";
+
 static const char kUnwriteableMarginTopTwips[] =
     "print_unwriteable_margin_top_twips";
 static const char kUnwriteableMarginLeftTwips[] =
@@ -117,7 +120,10 @@ nsPrintSettingsService::SerializeToPrintData(nsIPrintSettings* aSettings,
   data->printBGColors() = aSettings->GetPrintBGColors();
   data->printBGImages() = aSettings->GetPrintBGImages();
 
+  data->ignoreUnwriteableMargins() = aSettings->GetIgnoreUnwriteableMargins();
   data->honorPageRuleMargins() = aSettings->GetHonorPageRuleMargins();
+  data->usePageRuleSizeAsPaperSize() =
+      aSettings->GetUsePageRuleSizeAsPaperSize();
   data->showMarginGuides() = aSettings->GetShowMarginGuides();
   data->printSelectionOnly() = aSettings->GetPrintSelectionOnly();
 
@@ -192,6 +198,8 @@ nsPrintSettingsService::DeserializeToPrintSettings(const PrintData& data,
   settings->SetPrintBGColors(data.printBGColors());
   settings->SetPrintBGImages(data.printBGImages());
   settings->SetHonorPageRuleMargins(data.honorPageRuleMargins());
+  settings->SetUsePageRuleSizeAsPaperSize(data.usePageRuleSizeAsPaperSize());
+  settings->SetIgnoreUnwriteableMargins(data.ignoreUnwriteableMargins());
   settings->SetShowMarginGuides(data.showMarginGuides());
   settings->SetPrintSelectionOnly(data.printSelectionOnly());
 
@@ -352,23 +360,25 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
   if (aFlags & nsIPrintSettings::kInitSaveUnwriteableMargins) {
     nsIntMargin margin;
     bool allPrefsRead =
-        GETINTPREF(kUnwriteableMarginTopTwips, &margin.top) &&
-        GETINTPREF(kUnwriteableMarginRightTwips, &margin.right) &&
-        GETINTPREF(kUnwriteableMarginBottomTwips, &margin.bottom) &&
-        GETINTPREF(kUnwriteableMarginLeftTwips, &margin.left);
+        GETINTPREF(kUnwriteableMarginTopTwips, &margin.top.value) &&
+        GETINTPREF(kUnwriteableMarginRightTwips, &margin.right.value) &&
+        GETINTPREF(kUnwriteableMarginBottomTwips, &margin.bottom.value) &&
+        GETINTPREF(kUnwriteableMarginLeftTwips, &margin.left.value);
     if (!allPrefsRead) {
       // We failed to read the new unwritable margin twips prefs. Try to read
       // the old ones in case they exist.
-      allPrefsRead =
-          ReadInchesIntToTwipsPref(
-              GetPrefName(kUnwriteableMarginTop, aPrinterName), margin.top) &&
-          ReadInchesIntToTwipsPref(
-              GetPrefName(kUnwriteableMarginLeft, aPrinterName), margin.left) &&
-          ReadInchesIntToTwipsPref(
-              GetPrefName(kUnwriteableMarginBottom, aPrinterName),
-              margin.bottom) &&
-          ReadInchesIntToTwipsPref(
-              GetPrefName(kUnwriteableMarginRight, aPrinterName), margin.right);
+      allPrefsRead = ReadInchesIntToTwipsPref(
+                         GetPrefName(kUnwriteableMarginTop, aPrinterName),
+                         margin.top.value) &&
+                     ReadInchesIntToTwipsPref(
+                         GetPrefName(kUnwriteableMarginLeft, aPrinterName),
+                         margin.left.value) &&
+                     ReadInchesIntToTwipsPref(
+                         GetPrefName(kUnwriteableMarginBottom, aPrinterName),
+                         margin.bottom.value) &&
+                     ReadInchesIntToTwipsPref(
+                         GetPrefName(kUnwriteableMarginRight, aPrinterName),
+                         margin.right.value);
     }
     // SetUnwriteableMarginInTwips does its own validation and drops negative
     // values individually.  We still want to block overly large values though,
@@ -384,38 +394,42 @@ nsresult nsPrintSettingsService::ReadPrefs(nsIPrintSettings* aPS,
     int32_t halfInch = NS_INCHES_TO_INT_TWIPS(0.5);
     nsIntMargin margin(halfInch, halfInch, halfInch, halfInch);
     bool prefRead = ReadInchesToTwipsPref(GetPrefName(kMarginTop, aPrinterName),
-                                          margin.top);
+                                          margin.top.value);
     prefRead = ReadInchesToTwipsPref(GetPrefName(kMarginLeft, aPrinterName),
-                                     margin.left) ||
+                                     margin.left.value) ||
                prefRead;
     prefRead = ReadInchesToTwipsPref(GetPrefName(kMarginBottom, aPrinterName),
-                                     margin.bottom) ||
+                                     margin.bottom.value) ||
                prefRead;
 
     prefRead = ReadInchesToTwipsPref(GetPrefName(kMarginRight, aPrinterName),
-                                     margin.right) ||
+                                     margin.right.value) ||
                prefRead;
-    ;
     if (prefRead && MarginIsOK(margin)) {
       aPS->SetMarginInTwips(margin);
       noValidPrefsFound = false;
+
+      prefRead = GETBOOLPREF(kIgnoreUnwriteableMargins, &b);
+      if (prefRead) {
+        aPS->SetIgnoreUnwriteableMargins(b);
+      }
     }
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveEdges) {
     nsIntMargin margin(0, 0, 0, 0);
     bool prefRead = ReadInchesIntToTwipsPref(
-        GetPrefName(kEdgeTop, aPrinterName), margin.top);
+        GetPrefName(kEdgeTop, aPrinterName), margin.top.value);
     prefRead = ReadInchesIntToTwipsPref(GetPrefName(kEdgeLeft, aPrinterName),
-                                        margin.left) ||
+                                        margin.left.value) ||
                prefRead;
 
     prefRead = ReadInchesIntToTwipsPref(GetPrefName(kEdgeBottom, aPrinterName),
-                                        margin.bottom) ||
+                                        margin.bottom.value) ||
                prefRead;
 
     prefRead = ReadInchesIntToTwipsPref(GetPrefName(kEdgeRight, aPrinterName),
-                                        margin.right) ||
+                                        margin.right.value) ||
                prefRead;
     ;
     if (prefRead && MarginIsOK(margin)) {
@@ -581,6 +595,8 @@ nsresult nsPrintSettingsService::WritePrefs(nsIPrintSettings* aPS,
                              margin.bottom);
     WriteInchesFromTwipsPref(GetPrefName(kMarginRight, aPrinterName),
                              margin.right);
+    Preferences::SetBool(GetPrefName(kIgnoreUnwriteableMargins, aPrinterName),
+                         aPS->GetIgnoreUnwriteableMargins());
   }
 
   if (aFlags & nsIPrintSettings::kInitSaveEdges) {
@@ -807,7 +823,7 @@ nsPrintSettingsService::InitPrintSettingsFromPrinter(
     const nsAString& aPrinterName, nsIPrintSettings* aPrintSettings) {
   // Don't get print settings from the printer in the child when printing via
   // parent, these will be retrieved in the parent later in the print process.
-  if (XRE_IsContentProcess() && StaticPrefs::print_print_via_parent()) {
+  if (XRE_IsContentProcess()) {
     return NS_OK;
   }
 
@@ -919,14 +935,20 @@ nsPrintSettingsService::InitPrintSettingsFromPrefs(nsIPrintSettings* aPS,
  *  Save all of the printer settings; if we can find a printer name, save
  *  printer-specific preferences. Otherwise, save generic ones.
  */
-nsresult nsPrintSettingsService::SavePrintSettingsToPrefs(
-    nsIPrintSettings* aPS, bool aUsePrinterNamePrefix, uint32_t aFlags) {
+nsresult nsPrintSettingsService::MaybeSavePrintSettingsToPrefs(
+    nsIPrintSettings* aPS, uint32_t aFlags) {
   NS_ENSURE_ARG_POINTER(aPS);
   MOZ_DIAGNOSTIC_ASSERT(XRE_GetProcessType() == GeckoProcessType_Default);
+  MOZ_ASSERT(!(aFlags & nsIPrintSettings::kInitSavePrinterName),
+             "Use SaveLastUsedPrintNameToPrefs");
+
+  if (!Preferences::GetBool("print.save_print_settings", false)) {
+    return NS_OK;
+  }
 
   // Get the printer name from the PrinterSettings for an optional prefix.
   nsAutoString prtName;
-  nsresult rv = GetAdjustedPrinterName(aPS, aUsePrinterNamePrefix, prtName);
+  nsresult rv = GetAdjustedPrinterName(aPS, true, prtName);
   NS_ENSURE_SUCCESS(rv, rv);
 
 #ifndef MOZ_WIDGET_ANDROID
@@ -935,13 +957,27 @@ nsresult nsPrintSettingsService::SavePrintSettingsToPrefs(
   // without a good way for us to fix things for them (unprefixed prefs act as
   // defaults and can result in values being inappropriately propagated to
   // prefixed prefs).
-  if (prtName.IsEmpty() && aFlags != nsIPrintSettings::kInitSavePrinterName) {
+  if (prtName.IsEmpty()) {
     MOZ_DIAGNOSTIC_ASSERT(false, "Print settings must be saved with a prefix");
     return NS_ERROR_FAILURE;
   }
 #endif
 
   return WritePrefs(aPS, prtName, aFlags);
+}
+
+nsresult nsPrintSettingsService::MaybeSaveLastUsedPrinterNameToPrefs(
+    const nsAString& aPrinterName) {
+  MOZ_DIAGNOSTIC_ASSERT(XRE_GetProcessType() == GeckoProcessType_Default);
+
+  if (!Preferences::GetBool("print.save_print_settings", false)) {
+    return NS_OK;
+  }
+
+  if (!aPrinterName.IsEmpty()) {
+    Preferences::SetString(kPrinterName, aPrinterName);
+  }
+  return NS_OK;
 }
 
 //-----------------------------------------------------

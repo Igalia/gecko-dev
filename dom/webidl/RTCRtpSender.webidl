@@ -12,19 +12,27 @@
 interface RTCRtpSender {
   readonly attribute MediaStreamTrack? track;
   readonly attribute RTCDtlsTransport? transport;
+  static RTCRtpCapabilities? getCapabilities(DOMString kind);
   [NewObject]
-  Promise<void> setParameters (optional RTCRtpParameters parameters = {});
-  RTCRtpParameters getParameters();
+  Promise<undefined> setParameters (RTCRtpSendParameters parameters);
+  RTCRtpSendParameters getParameters();
   [Throws]
-  Promise<void> replaceTrack(MediaStreamTrack? withTrack);
+  Promise<undefined> replaceTrack(MediaStreamTrack? withTrack);
+  [Throws]
+  undefined setStreams(MediaStream... streams);
   [NewObject]
   Promise<RTCStatsReport> getStats();
-  [Pref="media.peerconnection.dtmf.enabled"]
   readonly attribute RTCDTMFSender? dtmf;
   [ChromeOnly]
   sequence<MediaStream> getStreams();
   [ChromeOnly]
-  void setStreams(sequence<MediaStream> streams);
+  undefined setStreamsImpl(MediaStream... streams);
   [ChromeOnly]
-  void setTrack(MediaStreamTrack? track);
+  undefined setTrack(MediaStreamTrack? track);
+};
+
+// https://w3c.github.io/webrtc-encoded-transform/#specification
+partial interface RTCRtpSender {
+  [SetterThrows,
+   Pref="media.peerconnection.scripttransform.enabled"] attribute RTCRtpTransform? transform;
 };

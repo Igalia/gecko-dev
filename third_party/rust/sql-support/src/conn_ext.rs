@@ -58,6 +58,11 @@ pub trait ConnExt {
         Ok(())
     }
 
+    /// Execute a single statement.
+    fn execute_one(&self, stmt: &str) -> SqlResult<()> {
+        self.execute_all(&[stmt])
+    }
+
     /// Equivalent to `Connection::execute` but caches the statement so that subsequent
     /// calls to `execute_cached` will have improved performance.
     fn execute_cached<P: Params>(&self, sql: &str, params: P) -> SqlResult<usize> {
@@ -69,6 +74,14 @@ pub trait ConnExt {
     fn query_one<T: FromSql>(&self, sql: &str) -> SqlResult<T> {
         let res: T = self.conn().query_row_and_then(sql, [], |row| row.get(0))?;
         Ok(res)
+    }
+
+    /// Return true if a query returns any rows
+    fn exists<P: Params>(&self, sql: &str, params: P) -> SqlResult<bool> {
+        let conn = self.conn();
+        let mut stmt = conn.prepare(sql)?;
+        let exists = stmt.query(params)?.next()?.is_some();
+        Ok(exists)
     }
 
     /// Execute a query that returns 0 or 1 result columns, returning None
@@ -113,7 +126,7 @@ pub trait ConnExt {
             .ok_or(rusqlite::Error::QueryReturnedNoRows)?)
     }
 
-    /// Helper for when you'd like to get a Vec<T> of all the rows returned by a
+    /// Helper for when you'd like to get a `Vec<T>` of all the rows returned by a
     /// query that takes named arguments. See also
     /// `query_rows_and_then_cached`.
     fn query_rows_and_then<T, E, P, F>(&self, sql: &str, params: P, mapper: F) -> Result<Vec<T>, E>
@@ -126,7 +139,7 @@ pub trait ConnExt {
         query_rows_and_then_cachable(self.conn(), sql, params, mapper, false)
     }
 
-    /// Helper for when you'd like to get a Vec<T> of all the rows returned by a
+    /// Helper for when you'd like to get a `Vec<T>` of all the rows returned by a
     /// query that takes named arguments.
     fn query_rows_and_then_cached<T, E, P, F>(
         &self,
@@ -223,6 +236,15 @@ pub trait ConnExt {
     fn unchecked_transaction_imm(&self) -> SqlResult<UncheckedTransaction<'_>> {
         UncheckedTransaction::new(self.conn(), TransactionBehavior::Immediate)
     }
+
+    /// Get the DB size in bytes
+    fn get_db_size(&self) -> Result<u32, rusqlite::Error> {
+        let page_count: u32 = self.query_one("SELECT * from pragma_page_count()")?;
+        let page_size: u32 = self.query_one("SELECT * from pragma_page_size()")?;
+        let freelist_count: u32 = self.query_one("SELECT * from pragma_freelist_count()")?;
+
+        Ok((page_count - freelist_count) * page_size)
+    }
 }
 
 impl ConnExt for Connection {
@@ -235,14 +257,14 @@ impl ConnExt for Connection {
 impl<'conn> ConnExt for Transaction<'conn> {
     #[inline]
     fn conn(&self) -> &Connection {
-        &*self
+        self
     }
 }
 
 impl<'conn> ConnExt for Savepoint<'conn> {
     #[inline]
     fn conn(&self) -> &Connection {
-        &*self
+        self
     }
 }
 
@@ -365,7 +387,7 @@ impl<'conn> Drop for UncheckedTransaction<'conn> {
 impl<'conn> ConnExt for UncheckedTransaction<'conn> {
     #[inline]
     fn conn(&self) -> &Connection {
-        &*self
+        self
     }
 }
 

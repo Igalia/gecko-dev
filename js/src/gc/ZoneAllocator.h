@@ -13,11 +13,11 @@
 
 #include "mozilla/Maybe.h"
 
+#include "jsfriendapi.h"
 #include "jstypes.h"
 #include "gc/Cell.h"
 #include "gc/Scheduling.h"
 #include "js/GCAPI.h"
-#include "js/HeapAPI.h"
 #include "js/shadow/Zone.h"  // JS::shadow::Zone
 #include "vm/MallocProvider.h"
 

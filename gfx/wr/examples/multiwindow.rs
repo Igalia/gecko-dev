@@ -44,7 +44,8 @@ impl RenderNotifier for Notifier {
     fn new_frame_ready(&self,
                        _: DocumentId,
                        _scrolled: bool,
-                       composite_needed: bool) {
+                       composite_needed: bool,
+                       _: FramePublishId) {
         self.wake_up(composite_needed);
     }
 }
@@ -87,9 +88,9 @@ impl Window {
             glutin::Api::WebGl => unimplemented!(),
         };
 
-        let opts = webrender::RendererOptions {
+        let opts = webrender::WebRenderOptions {
             clear_color,
-            ..webrender::RendererOptions::default()
+            ..webrender::WebRenderOptions::default()
         };
 
         let device_size = {
@@ -99,7 +100,7 @@ impl Window {
             DeviceIntSize::new(size.width as i32, size.height as i32)
         };
         let notifier = Box::new(Notifier::new(events_loop.create_proxy()));
-        let (renderer, sender) = webrender::Renderer::new(gl.clone(), notifier, opts, None).unwrap();
+        let (renderer, sender) = webrender::create_webrender_instance(gl.clone(), notifier, opts, None).unwrap();
         let mut api = sender.create_api();
         let document_id = api.add_document(device_size);
 
@@ -275,8 +276,6 @@ impl Window {
 
         txn.set_display_list(
             self.epoch,
-            None,
-            layout_size,
             builder.end(),
         );
         txn.set_root_pipeline(self.pipeline_id);

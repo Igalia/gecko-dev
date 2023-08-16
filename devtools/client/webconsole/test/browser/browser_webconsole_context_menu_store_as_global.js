@@ -18,7 +18,7 @@ const TEST_URI = `data:text/html;charset=utf-8,<!DOCTYPE html><script>
   console.log("foo", window.symbol);
 </script>`;
 
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
 
   const messages = await waitFor(() => findConsoleAPIMessages(hud, "foo"));
@@ -102,7 +102,7 @@ async function storeAsVariable(hud, msg, type, varIdx, equalTo) {
 
   info("Click on store as global variable");
   const onceInputSet = hud.jsterm.once("set-input-value");
-  storeMenuItem.click();
+  menuPopup.activateItem(storeMenuItem);
 
   info("Wait for console input to be updated with the temp variable");
   await onceInputSet;

@@ -1,15 +1,11 @@
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionPreferencesManager",
-  "resource://gre/modules/ExtensionPreferencesManager.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "ContextualIdentityService",
-  "resource://gre/modules/ContextualIdentityService.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ContextualIdentityService:
+    "resource://gre/modules/ContextualIdentityService.sys.mjs",
+  ExtensionPreferencesManager:
+    "resource://gre/modules/ExtensionPreferencesManager.sys.mjs",
+});
 
 const CONTAINERS_PREF = "privacy.userContext.enabled";
 
@@ -39,7 +35,7 @@ add_task(async function test_contextualIdentities_without_permissions() {
     useAddonManager: "temporary",
     background,
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: { id: "testing@thing.com" },
       },
       permissions: [],
@@ -146,7 +142,7 @@ add_task(async function test_contextualIdentity_events() {
     background,
     useAddonManager: "temporary",
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: { id: "testing@thing.com" },
       },
       permissions: ["contextualIdentities"],
@@ -345,7 +341,7 @@ add_task(async function test_contextualIdentity_with_permissions() {
       useAddonManager: "temporary",
       background,
       manifest: {
-        applications: {
+        browser_specific_settings: {
           gecko: { id },
         },
         permissions: ["contextualIdentities"],
@@ -392,7 +388,7 @@ add_task(async function test_contextualIdentity_extensions_enable_containers() {
       useAddonManager: "temporary",
       background,
       manifest: {
-        applications: {
+        browser_specific_settings: {
           gecko: { id },
         },
         permissions: ["contextualIdentities"],
@@ -490,7 +486,7 @@ add_task(async function test_contextualIdentity_preference_change() {
       background,
       manifest: {
         version,
-        applications: {
+        browser_specific_settings: {
           gecko: { id },
         },
         permissions: ["contextualIdentities"],
@@ -528,7 +524,7 @@ add_task(
     let extension = ExtensionTestUtils.loadExtension({
       useAddonManager: "permanent",
       manifest: {
-        applications: {
+        browser_specific_settings: {
           gecko: { id: "eventpage@mochitest" },
         },
         permissions: ["contextualIdentities"],

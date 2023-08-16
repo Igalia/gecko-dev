@@ -6,9 +6,11 @@
 #ifndef GFX_FONTENTRY_H
 #define GFX_FONTENTRY_H
 
+#include <limits>
 #include <math.h>
 #include <new>
 #include <utility>
+#include "COLRFonts.h"
 #include "ThebesRLBoxTypes.h"
 #include "gfxFontUtils.h"
 #include "gfxFontVariations.h"
@@ -57,9 +59,6 @@ namespace fontlist {
 struct Face;
 struct Family;
 }  // namespace fontlist
-namespace gfx {
-struct DeviceColor;
-}
 }  // namespace mozilla
 
 typedef struct gr_face gr_face;
@@ -129,6 +128,8 @@ struct gfxFontFeatureInfo {
   uint32_t mLangSys;
 };
 
+class gfxFontEntryCallbacks;
+
 class gfxFontEntry {
  public:
   typedef mozilla::gfx::DrawTarget DrawTarget;
@@ -181,8 +182,9 @@ class gfxFontEntry {
   bool IsItalic() const { return SlantStyle().Min().IsItalic(); }
   bool IsOblique() const { return SlantStyle().Min().IsOblique(); }
   bool IsUpright() const { return SlantStyle().Min().IsNormal(); }
-  inline bool SupportsItalic();
-  inline bool SupportsBold();  // defined below, because of RangeFlags use
+  inline bool SupportsItalic();  // defined below, because of RangeFlags use
+  inline bool SupportsBold();
+  inline bool MayUseSyntheticSlant();
   bool IgnoreGDEF() const { return mIgnoreGDEF; }
   bool IgnoreGSUB() const { return mIgnoreGSUB; }
 
@@ -211,11 +213,12 @@ class gfxFontEntry {
   virtual bool HasFontTable(uint32_t aTableTag);
 
   inline bool HasGraphiteTables() {
-    if (!mCheckedForGraphiteTables) {
-      CheckForGraphiteTables();
-      mCheckedForGraphiteTables = true;
+    LazyFlag flag = mHasGraphiteTables;
+    if (flag == LazyFlag::Uninitialized) {
+      flag = CheckForGraphiteTables() ? LazyFlag::Yes : LazyFlag::No;
+      mHasGraphiteTables = flag;
     }
-    return mHasGraphiteTables;
+    return flag == LazyFlag::Yes;
   }
 
   inline bool HasCmapTable() {
@@ -268,22 +271,17 @@ class gfxFontEntry {
   void NotifyGlyphsChanged();
 
   bool TryGetColorGlyphs();
-  bool GetColorLayersInfo(uint32_t aGlyphId,
-                          const mozilla::gfx::DeviceColor& aDefaultColor,
-                          nsTArray<uint16_t>& layerGlyphs,
-                          nsTArray<mozilla::gfx::DeviceColor>& layerColors);
-  bool HasColorLayersForGlyph(uint32_t aGlyphId) {
-    MOZ_ASSERT(GetCOLR());
-    return gfxFontUtils::HasColorLayersForGlyph(GetCOLR(), aGlyphId);
-  }
 
   bool HasColorBitmapTable() {
-    if (!mCheckedForColorBitmapTables) {
-      mHasColorBitmapTable = HasFontTable(TRUETYPE_TAG('C', 'B', 'D', 'T')) ||
-                             HasFontTable(TRUETYPE_TAG('s', 'b', 'i', 'x'));
-      mCheckedForColorBitmapTables = true;
+    LazyFlag flag = mHasColorBitmapTable;
+    if (flag == LazyFlag::Uninitialized) {
+      flag = HasFontTable(TRUETYPE_TAG('C', 'B', 'D', 'T')) ||
+                     HasFontTable(TRUETYPE_TAG('s', 'b', 'i', 'x'))
+                 ? LazyFlag::Yes
+                 : LazyFlag::No;
+      mHasColorBitmapTable = flag;
     }
-    return mHasColorBitmapTable;
+    return flag == LazyFlag::Yes;
   }
 
   // Access to raw font table data (needed for Harfbuzz):
@@ -456,6 +454,7 @@ class gfxFontEntry {
 
   bool HasBoldVariableWeight();
   bool HasItalicVariation();
+  bool HasSlantVariation();
   bool HasOpticalSize();
 
   void CheckForVariationAxes();
@@ -484,6 +483,14 @@ class gfxFontEntry {
   // Return the tracking (in font units) to be applied for the given size.
   // (This is a floating-point number because of possible interpolation.)
   float TrackingForCSSPx(float aSize) const;
+
+  mozilla::gfx::Rect GetFontExtents(float aFUnitScaleFactor) const {
+    // Flip the y-axis here to match the orientation of Gecko's coordinates.
+    return mozilla::gfx::Rect(float(mXMin) * aFUnitScaleFactor,
+                              float(-mYMax) * aFUnitScaleFactor,
+                              float(mXMax - mXMin) * aFUnitScaleFactor,
+                              float(mYMax - mYMin) * aFUnitScaleFactor);
+  }
 
   nsCString mName;
   nsCString mFamilyName;
@@ -556,7 +563,7 @@ class gfxFontEntry {
   // descriptors, it is treated as the initial value for font-matching (and
   // so that is what we record in the font entry), but when rendering the
   // range is NOT clamped.
-  enum class RangeFlags : uint8_t {
+  enum class RangeFlags : uint16_t {
     eNoFlags = 0,
     eAutoWeight = (1 << 0),
     eAutoStretch = (1 << 1),
@@ -568,16 +575,18 @@ class gfxFontEntry {
     eBoldVariableWeight = (1 << 3),
     // Whether the face has an 'ital' axis.
     eItalicVariation = (1 << 4),
+    // Whether the face has a 'slnt' axis.
+    eSlantVariation = (1 << 5),
 
     // Flags to record if the face uses a non-CSS-compatible scale
     // for weight and/or stretch, in which case we won't map the
     // properties to the variation axes (though they can still be
     // explicitly set using font-variation-settings).
-    eNonCSSWeight = (1 << 5),
-    eNonCSSStretch = (1 << 6),
+    eNonCSSWeight = (1 << 6),
+    eNonCSSStretch = (1 << 7),
 
     // Whether the font has an 'opsz' axis.
-    eOpticalSize = (1 << 7)
+    eOpticalSize = (1 << 8)
   };
   RangeFlags mRangeFlags = RangeFlags::eNoFlags;
 
@@ -592,22 +601,29 @@ class gfxFontEntry {
   bool mSkipDefaultFeatureSpaceCheck : 1;
 
   mozilla::Atomic<bool> mSVGInitialized;
-  mozilla::Atomic<bool> mHasSpaceFeaturesInitialized;
-  mozilla::Atomic<bool> mHasSpaceFeatures;
-  mozilla::Atomic<bool> mHasSpaceFeaturesKerning;
-  mozilla::Atomic<bool> mHasSpaceFeaturesNonKerning;
-  mozilla::Atomic<bool> mGraphiteSpaceContextualsInitialized;
-  mozilla::Atomic<bool> mHasGraphiteSpaceContextuals;
-  mozilla::Atomic<bool> mSpaceGlyphIsInvisible;
-  mozilla::Atomic<bool> mSpaceGlyphIsInvisibleInitialized;
-  mozilla::Atomic<bool> mHasGraphiteTables;
-  mozilla::Atomic<bool> mCheckedForGraphiteTables;
   mozilla::Atomic<bool> mHasCmapTable;
   mozilla::Atomic<bool> mGrFaceInitialized;
   mozilla::Atomic<bool> mCheckedForColorGlyph;
   mozilla::Atomic<bool> mCheckedForVariationAxes;
-  mozilla::Atomic<bool> mHasColorBitmapTable;
-  mozilla::Atomic<bool> mCheckedForColorBitmapTables;
+
+  // Atomic flags that are lazily evaluated - initially set to UNINITIALIZED,
+  // changed to NO or YES once we determine the actual value.
+  enum class LazyFlag : uint8_t { Uninitialized = 0xff, No = 0, Yes = 1 };
+
+  std::atomic<LazyFlag> mSpaceGlyphIsInvisible;
+  std::atomic<LazyFlag> mHasGraphiteTables;
+  std::atomic<LazyFlag> mHasGraphiteSpaceContextuals;
+  std::atomic<LazyFlag> mHasColorBitmapTable;
+
+  enum class SpaceFeatures : uint8_t {
+    Uninitialized = 0xff,
+    None = 0,
+    HasFeatures = 1 << 0,
+    Kerning = 1 << 1,
+    NonKerning = 1 << 2
+  };
+
+  std::atomic<SpaceFeatures> mHasSpaceFeatures;
 
  protected:
   friend class gfxPlatformFontList;
@@ -619,7 +635,9 @@ class gfxFontEntry {
 
   virtual gfxFont* CreateFontInstance(const gfxFontStyle* aFontStyle) = 0;
 
-  virtual void CheckForGraphiteTables();
+  inline bool CheckForGraphiteTables() {
+    return HasFontTable(TRUETYPE_TAG('S', 'i', 'l', 'f'));
+  }
 
   // Copy a font table into aBuffer.
   // The caller will be responsible for ownership of the data.
@@ -698,13 +716,7 @@ class gfxFontEntry {
   // number of current users of this entry's mGrFace
   nsrefcnt mGrFaceRefCnt = 0;
 
-  static tainted_opaque_gr<const void*> GrGetTable(
-      rlbox_sandbox_gr& sandbox, tainted_opaque_gr<const void*> aAppFaceHandle,
-      tainted_opaque_gr<unsigned int> aName,
-      tainted_opaque_gr<unsigned int*> aLen);
-  static void GrReleaseTable(rlbox_sandbox_gr& sandbox,
-                             tainted_opaque_gr<const void*> aAppFaceHandle,
-                             tainted_opaque_gr<const void*> aTableBuffer);
+  friend class gfxFontEntryCallbacks;
 
   // For memory reporting: size of user-font data belonging to this entry.
   // We record this in the font entry because the actual data block may be
@@ -717,6 +729,13 @@ class gfxFontEntry {
   uint16_t mUnitsPerEm = 0;
 
   uint16_t mNumTrakSizes = 0;
+
+  // Font extents in FUnits. (To be set from the 'head' table; default to
+  // "huge" to avoid any clipping if real extents not available.)
+  int16_t mXMin = std::numeric_limits<int16_t>::min();
+  int16_t mYMin = std::numeric_limits<int16_t>::min();
+  int16_t mXMax = std::numeric_limits<int16_t>::max();
+  int16_t mYMax = std::numeric_limits<int16_t>::max();
 
  private:
   /**
@@ -813,6 +832,7 @@ class gfxFontEntry {
 };
 
 MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(gfxFontEntry::RangeFlags)
+MOZ_MAKE_ENUM_CLASS_BITWISE_OPERATORS(gfxFontEntry::SpaceFeatures)
 
 inline bool gfxFontEntry::SupportsItalic() {
   return SlantStyle().Max().IsItalic() ||
@@ -829,6 +849,22 @@ inline bool gfxFontEntry::SupportsBold() {
   return Weight().Max().IsBold() ||
          ((mRangeFlags & RangeFlags::eAutoWeight) == RangeFlags::eAutoWeight &&
           HasBoldVariableWeight());
+}
+
+inline bool gfxFontEntry::MayUseSyntheticSlant() {
+  if (!IsUpright()) {
+    return false;  // The resource is already non-upright.
+  }
+  if (HasSlantVariation()) {
+    if (mRangeFlags & RangeFlags::eAutoSlantStyle) {
+      return false;
+    }
+    if (!SlantStyle().IsSingle()) {
+      return false;  // The resource has a 'slnt' axis, and has not been
+                     // clamped to just its upright setting.
+    }
+  }
+  return true;
 }
 
 // used when iterating over all fonts looking for a match for a given character
@@ -1106,33 +1142,28 @@ class gfxFontFamily {
   };
 };
 
-// Wrapper for either a mozilla::fontlist::Family in the shared font list or an
-// unshared gfxFontFamily that belongs just to the current process. This does
-// not own a reference, it just wraps a raw pointer and records the type.
+// Wrapper for either a raw pointer to a mozilla::fontlist::Family in the shared
+// font list or a strong pointer to an unshared gfxFontFamily that belongs just
+// to the current process.
 struct FontFamily {
-  FontFamily() : mUnshared(nullptr), mIsShared(false) {}
-
+  FontFamily() = default;
   FontFamily(const FontFamily& aOther) = default;
 
-  explicit FontFamily(gfxFontFamily* aFamily)
-      : mUnshared(aFamily), mIsShared(false) {}
+  explicit FontFamily(RefPtr<gfxFontFamily>&& aFamily)
+      : mUnshared(std::move(aFamily)) {}
 
-  explicit FontFamily(mozilla::fontlist::Family* aFamily)
-      : mShared(aFamily), mIsShared(true) {}
+  explicit FontFamily(gfxFontFamily* aFamily) : mUnshared(aFamily) {}
+
+  explicit FontFamily(mozilla::fontlist::Family* aFamily) : mShared(aFamily) {}
 
   bool operator==(const FontFamily& aOther) const {
-    return mIsShared == aOther.mIsShared &&
-           (mIsShared ? mShared == aOther.mShared
-                      : mUnshared == aOther.mUnshared);
+    return mShared == aOther.mShared && mUnshared == aOther.mUnshared;
   }
 
-  bool IsNull() const { return mIsShared ? !mShared : !mUnshared; }
+  bool IsNull() const { return !mShared && !mUnshared; }
 
-  union {
-    gfxFontFamily* mUnshared;
-    mozilla::fontlist::Family* mShared;
-  };
-  bool mIsShared;
+  RefPtr<gfxFontFamily> mUnshared;
+  mozilla::fontlist::Family* mShared = nullptr;
 };
 
 // Struct used in the gfxFontGroup font list to keep track of a font family
@@ -1146,6 +1177,10 @@ struct FamilyAndGeneric final {
                             mozilla::StyleGenericFontFamily aGeneric =
                                 mozilla::StyleGenericFontFamily(0))
       : mFamily(aFamily), mGeneric(aGeneric) {}
+  explicit FamilyAndGeneric(RefPtr<gfxFontFamily>&& aFamily,
+                            mozilla::StyleGenericFontFamily aGeneric =
+                                mozilla::StyleGenericFontFamily(0))
+      : mFamily(std::move(aFamily)), mGeneric(aGeneric) {}
   explicit FamilyAndGeneric(mozilla::fontlist::Family* aFamily,
                             mozilla::StyleGenericFontFamily aGeneric =
                                 mozilla::StyleGenericFontFamily(0))

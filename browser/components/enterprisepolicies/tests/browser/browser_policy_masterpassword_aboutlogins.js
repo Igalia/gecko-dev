@@ -3,14 +3,8 @@
 
 "use strict";
 
-let { LoginTestUtils } = ChromeUtils.import(
-  "resource://testing-common/LoginTestUtils.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "TestUtils",
-  "resource://testing-common/TestUtils.jsm"
+let { LoginTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/LoginTestUtils.sys.mjs"
 );
 
 // Test that create in about:logins asks for primary password
@@ -31,7 +25,7 @@ add_task(async function test_policy_admin() {
   // Fake the subdialog
   let dialogURL = "";
   let originalOpenDialog = window.openDialog;
-  window.openDialog = function(aDialogURL, unused, unused2, aCallback) {
+  window.openDialog = function (aDialogURL, unused, unused2, aCallback) {
     dialogURL = aDialogURL;
     if (aCallback) {
       aCallback();

@@ -28,6 +28,7 @@
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/Event.h"
 #include "mozilla/dom/ShadowRoot.h"
+#include "mozilla/dom/WorkerScope.h"
 #include "mozilla/StaticPrefs_dom.h"
 #include "mozilla/SVGUtils.h"
 #include "mozilla/SVGOuterSVGFrame.h"
@@ -94,7 +95,6 @@ void Event::ConstructorInit(EventTarget* aOwner, nsPresContext* aPresContext,
         }
      */
     mEvent = new WidgetEvent(false, eVoidEvent);
-    mEvent->mTime = PR_Now();
   }
 
   InitPresContextData(aPresContext);
@@ -105,8 +105,9 @@ void Event::InitPresContextData(nsPresContext* aPresContext) {
   // Get the explicit original target (if it's anonymous make it null)
   {
     nsCOMPtr<nsIContent> content = GetTargetFromFrame();
-    mExplicitOriginalTarget = content;
-    if (content && content->IsInNativeAnonymousSubtree()) {
+    if (content && !content->IsInNativeAnonymousSubtree()) {
+      mExplicitOriginalTarget = std::move(content);
+    } else {
       mExplicitOriginalTarget = nullptr;
     }
   }
@@ -129,11 +130,7 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(Event)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(Event)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(Event)
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN(Event)
-  NS_IMPL_CYCLE_COLLECTION_TRACE_PRESERVED_WRAPPER
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(Event)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Event)
   if (tmp->mEventIsInternal) {
@@ -375,10 +372,8 @@ already_AddRefed<Event> Event::Constructor(EventTarget* aEventTarget,
 }
 
 uint16_t Event::EventPhase() const {
-  // Note, remember to check that this works also
-  // if or when Bug 235441 is fixed.
   if ((mEvent->mCurrentTarget && mEvent->mCurrentTarget == mEvent->mTarget) ||
-      mEvent->mFlags.InTargetPhase()) {
+      mEvent->mFlags.mInTargetPhase) {
     return Event_Binding::AT_TARGET;
   }
   if (mEvent->mFlags.mInCapturePhase) {
@@ -424,10 +419,13 @@ void Event::PreventDefaultInternal(bool aCalledByDefaultHandler,
     nsCOMPtr<nsPIDOMWindowInner> win(do_QueryInterface(mOwner));
     if (win) {
       if (Document* doc = win->GetExtantDoc()) {
-        AutoTArray<nsString, 1> params;
-        GetType(*params.AppendElement());
-        doc->WarnOnceAbout(Document::ePreventDefaultFromPassiveListener, false,
-                           params);
+        if (!doc->HasWarnedAbout(
+                Document::ePreventDefaultFromPassiveListener)) {
+          AutoTArray<nsString, 1> params;
+          GetType(*params.AppendElement());
+          doc->WarnOnceAbout(Document::ePreventDefaultFromPassiveListener,
+                             false, params);
+        }
       }
     }
     return;
@@ -439,25 +437,12 @@ void Event::PreventDefaultInternal(bool aCalledByDefaultHandler,
     return;
   }
 
-  WidgetDragEvent* dragEvent = mEvent->AsDragEvent();
-  if (!dragEvent) {
-    return;
-  }
-
-  nsIPrincipal* principal = nullptr;
-  nsCOMPtr<nsINode> node =
-      nsINode::FromEventTargetOrNull(mEvent->mCurrentTarget);
-  if (node) {
-    principal = node->NodePrincipal();
-  } else {
-    nsCOMPtr<nsIScriptObjectPrincipal> sop =
-        do_QueryInterface(mEvent->mCurrentTarget);
-    if (sop) {
-      principal = sop->GetPrincipal();
+  // If this is called by default handlers, the caller will call
+  // UpdateDefaultPreventedOnContentFor when necessary.
+  if (!aCalledByDefaultHandler) {
+    if (WidgetDragEvent* dragEvent = mEvent->AsDragEvent()) {
+      dragEvent->UpdateDefaultPreventedOnContent(dragEvent->mCurrentTarget);
     }
-  }
-  if (principal && !principal->IsSystemPrincipal()) {
-    dragEvent->mDefaultPreventedOnContent = true;
   }
 }
 
@@ -765,9 +750,7 @@ double Event::TimeStamp() {
     MOZ_ASSERT(mOwner->PrincipalOrNull());
 
     return nsRFPService::ReduceTimePrecisionAsMSecs(
-        ret, perf->GetRandomTimelineSeed(),
-        mOwner->PrincipalOrNull()->IsSystemPrincipal(),
-        mOwner->CrossOriginIsolated());
+        ret, perf->GetRandomTimelineSeed(), perf->GetRTPCallerType());
   }
 
   WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
@@ -777,8 +760,7 @@ double Event::TimeStamp() {
 
   return nsRFPService::ReduceTimePrecisionAsMSecs(
       ret, workerPrivate->GetRandomTimelineSeed(),
-      workerPrivate->UsesSystemPrincipal(),
-      workerPrivate->CrossOriginIsolated());
+      workerPrivate->GlobalScope()->GetRTPCallerType());
 }
 
 void Event::Serialize(IPC::MessageWriter* aWriter,
@@ -829,15 +811,13 @@ void Event::SetOwner(EventTarget* aOwner) {
     return;
   }
 
-  nsCOMPtr<nsINode> n = do_QueryInterface(aOwner);
-  if (n) {
+  if (nsINode* n = aOwner->GetAsNode()) {
     mOwner = n->OwnerDoc()->GetScopeObject();
     return;
   }
 
-  nsCOMPtr<nsPIDOMWindowInner> w = do_QueryInterface(aOwner);
-  if (w) {
-    mOwner = do_QueryInterface(w);
+  if (nsPIDOMWindowInner* w = aOwner->GetAsWindowInner()) {
+    mOwner = w->AsGlobal();
     return;
   }
 
@@ -862,7 +842,7 @@ void Event::GetWidgetEventType(WidgetEvent* aEvent, nsAString& aType) {
   const char16_t* name = GetEventName(aEvent->mMessage);
 
   if (name) {
-    aType.Assign(name);
+    aType.AssignLiteral(name, nsString::char_traits::length(name));
     return;
   } else if (aEvent->mMessage == eUnidentifiedEvent &&
              aEvent->mSpecifiedEventType) {

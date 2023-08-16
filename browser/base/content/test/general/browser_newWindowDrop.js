@@ -4,28 +4,23 @@ const { SearchTestUtils } = ChromeUtils.importESModule(
 
 SearchTestUtils.init(this);
 
-registerCleanupFunction(async function cleanup() {
-  await Services.search.setDefault(originalEngine);
-});
-
-let originalEngine;
 add_task(async function test_setup() {
   // Opening multiple windows on debug build takes too long time.
   requestLongerTimeout(10);
 
   // Stop search-engine loads from hitting the network
-  await SearchTestUtils.installSearchExtension({
-    name: "MozSearch",
-    search_url: "https://example.com/",
-    search_url_get_params: "q={searchTerms}",
-  });
-  let engine = Services.search.getEngineByName("MozSearch");
-  originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "MozSearch",
+      search_url: "https://example.com/",
+      search_url_get_params: "q={searchTerms}",
+    },
+    { setAsDefault: true }
+  );
 
   // Move New Window button to nav bar, to make it possible to drag and drop.
-  let { CustomizableUI } = ChromeUtils.import(
-    "resource:///modules/CustomizableUI.jsm"
+  let { CustomizableUI } = ChromeUtils.importESModule(
+    "resource:///modules/CustomizableUI.sys.mjs"
   );
   let origPlacement = CustomizableUI.getPlacementOfWidget("new-window-button");
   if (!origPlacement || origPlacement.area != CustomizableUI.AREA_NAVBAR) {
@@ -35,7 +30,7 @@ add_task(async function test_setup() {
       0
     );
     CustomizableUI.ensureWidgetPlacedInWindow("new-window-button", window);
-    registerCleanupFunction(function() {
+    registerCleanupFunction(function () {
       CustomizableUI.removeWidgetFromArea("new-window-button");
     });
   }

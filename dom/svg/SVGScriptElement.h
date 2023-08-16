@@ -30,8 +30,8 @@ class SVGScriptElement final : public SVGScriptElementBase,
   SVGScriptElement(already_AddRefed<mozilla::dom::NodeInfo>&& aNodeInfo,
                    FromParser aFromParser);
 
-  virtual JSObject* WrapNode(JSContext* aCx,
-                             JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapNode(JSContext* aCx,
+                     JS::Handle<JSObject*> aGivenProto) override;
 
  public:
   // interfaces:
@@ -39,32 +39,33 @@ class SVGScriptElement final : public SVGScriptElementBase,
   NS_DECL_ISUPPORTS_INHERITED
 
   // nsIScriptElement
-  virtual bool GetScriptType(nsAString& type) override;
-  virtual void GetScriptText(nsAString& text) override;
-  virtual void GetScriptCharset(nsAString& charset) override;
-  virtual void FreezeExecutionAttrs(Document* aOwnerDoc) override;
-  virtual CORSMode GetCORSMode() const override;
+  void GetScriptText(nsAString& text) const override;
+  void GetScriptCharset(nsAString& charset) override;
+  void FreezeExecutionAttrs(const Document* aOwnerDoc) override;
+  CORSMode GetCORSMode() const override;
 
   // ScriptElement
-  virtual bool HasScriptContent() override;
+  bool HasScriptContent() override;
 
   // nsIContent specializations:
-  virtual nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aSubjectPrincipal,
-                                bool aNotify) override;
-  virtual bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
-                              const nsAString& aValue,
-                              nsIPrincipal* aMaybeScriptedPrincipal,
-                              nsAttrValue& aResult) override;
+  nsresult BindToTree(BindContext&, nsINode& aParent) override;
+  bool ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
+                      const nsAString& aValue,
+                      nsIPrincipal* aMaybeScriptedPrincipal,
+                      nsAttrValue& aResult) override;
 
-  virtual nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
+  nsresult Clone(dom::NodeInfo*, nsINode** aResult) const override;
 
   // WebIDL
   void GetType(nsAString& aType);
   void SetType(const nsAString& aType, ErrorResult& rv);
+  bool Async() { return mForceAsync || GetBoolAttr(nsGkAtoms::async); }
+  void SetAsync(bool aValue) {
+    mForceAsync = false;
+    SetBoolAttr(nsGkAtoms::async, aValue);
+  }
+  bool Defer() { return GetBoolAttr(nsGkAtoms::defer); }
+  void SetDefer(bool aDefer) { SetBoolAttr(nsGkAtoms::defer, aDefer); }
   void GetCrossOrigin(nsAString& aCrossOrigin);
   void SetCrossOrigin(const nsAString& aCrossOrigin, ErrorResult& aError);
   already_AddRefed<DOMSVGAnimatedString> Href();
@@ -72,11 +73,13 @@ class SVGScriptElement final : public SVGScriptElementBase,
  protected:
   ~SVGScriptElement() = default;
 
-  virtual StringAttributesInfo GetStringInfo() override;
+  StringAttributesInfo GetStringInfo() override;
 
   // SVG Script elements don't have the ability to set async properties on
   // themselves, so this will always return false.
-  virtual bool GetAsyncState() override { return false; }
+  bool GetAsyncState() override { return false; }
+
+  nsIContent* GetAsContent() override { return this; }
 
   enum { HREF, XLINK_HREF };
   SVGAnimatedString mStringAttributes[2];

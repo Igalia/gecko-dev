@@ -317,13 +317,16 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   nsresult DispatchPendingMediaEvents();
 
   // Return true if we can activate autoplay assuming enough data has arrived.
-  bool CanActivateAutoplay();
+  // https://html.spec.whatwg.org/multipage/media.html#eligible-for-autoplay
+  bool IsEligibleForAutoplay();
 
   // Notify that state has changed that might cause an autoplay element to
   // start playing.
   // If the element is 'autoplay' and is ready to play back (not paused,
   // autoplay pref enabled, etc), it should start playing back.
   void CheckAutoplayDataReady();
+
+  void RunAutoplay();
 
   // Check if the media element had crossorigin set when loading started
   bool ShouldCheckAllowOrigin();
@@ -350,6 +353,8 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // redirects.
   bool HadCrossOriginRedirects();
 
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const override;
+
   // Principal of the currently playing video resource. Anything accessing the
   // image container of this element must have a principal that subsumes this
   // principal. If there are no live video tracks but content has been rendered
@@ -366,12 +371,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // Update the visual size of the media. Called from the decoder on the
   // main thread when/if the size changes.
   virtual void UpdateMediaSize(const nsIntSize& aSize);
-  // Like UpdateMediaSize, but only updates the size if no size has yet
-  // been set.
-  void UpdateInitialMediaSize(const nsIntSize& aSize);
 
-  void Invalidate(bool aImageSizeChanged, Maybe<nsIntSize>& aNewIntrinsicSize,
-                  bool aForceInvalidate) override;
+  void Invalidate(ImageSizeChanged aImageSizeChanged,
+                  const Maybe<nsIntSize>& aNewIntrinsicSize,
+                  ForceInvalidate aForceInvalidate) override;
 
   // Returns the CanPlayStatus indicating if we can handle the
   // full MIME type including the optional codecs parameter.
@@ -655,6 +658,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // These functions return accumulated time, which are used for the telemetry
   // usage. Return -1 for error.
   double TotalVideoPlayTime() const;
+  double TotalVideoHDRPlayTime() const;
   double VisiblePlayTime() const;
   double InvisiblePlayTime() const;
   double VideoDecodeSuspendedTime() const;
@@ -766,7 +770,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // that will soon be gone.
   bool IsBeingDestroyed();
 
-  void OnVisibilityChange(Visibility aNewVisibility);
+  virtual void OnVisibilityChange(Visibility aNewVisibility);
 
   // Begin testing only methods
   float ComputedVolume() const;
@@ -796,6 +800,7 @@ class HTMLMediaElement : public nsGenericHTMLElement,
     CREATE_PATTERN,
     CREATE_IMAGEBITMAP,
     CAPTURE_STREAM,
+    CREATE_VIDEOFRAME,
   };
   void LogVisibility(CallerAPI aAPI);
 
@@ -1351,14 +1356,14 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // suspend-video-decoder is disabled.
   void MarkAsTainted();
 
-  virtual nsresult AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aMaybeScriptedPrincipal,
-                                bool aNotify) override;
-  virtual nsresult OnAttrSetButNotChanged(int32_t aNamespaceID, nsAtom* aName,
-                                          const nsAttrValueOrString& aValue,
-                                          bool aNotify) override;
+  virtual void AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                            const nsAttrValue* aValue,
+                            const nsAttrValue* aOldValue,
+                            nsIPrincipal* aMaybeScriptedPrincipal,
+                            bool aNotify) override;
+  virtual void OnAttrSetButNotChanged(int32_t aNamespaceID, nsAtom* aName,
+                                      const nsAttrValueOrString& aValue,
+                                      bool aNotify) override;
 
   bool DetachExistingMediaKeys();
   bool TryRemoveMediaKeysAssociation();
@@ -1632,16 +1637,10 @@ class HTMLMediaElement : public nsGenericHTMLElement,
   // True if loadeddata has been fired.
   bool mLoadedDataFired = false;
 
-  // Indicates whether current playback is a result of user action
-  // (ie. calling of the Play method), or automatic playback due to
-  // the 'autoplay' attribute being set. A true value indicates the
-  // latter case.
-  // The 'autoplay' HTML attribute indicates that the video should
-  // start playing when loaded. The 'autoplay' attribute of the object
-  // is a mirror of the HTML attribute. These are different from this
-  // 'mAutoplaying' flag, which indicates whether the current playback
-  // is a result of the autoplay attribute.
-  bool mAutoplaying = true;
+  // One of the factors determines whether a media element with 'autoplay'
+  // attribute is allowed to start playing.
+  // https://html.spec.whatwg.org/multipage/media.html#can-autoplay-flag
+  bool mCanAutoplayFlag = true;
 
   // Playback of the video is paused either due to calling the
   // 'Pause' method, or playback not yet having started.

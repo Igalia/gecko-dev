@@ -4,16 +4,18 @@
 // Loaded into the same scope as head_xpc.js
 /* import-globals-from head_xpc.js */
 
-const { Preferences } = ChromeUtils.import(
-  "resource://gre/modules/Preferences.jsm"
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
-const { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
+const { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
+);
 
-const { NormandyApi } = ChromeUtils.import(
-  "resource://normandy/lib/NormandyApi.jsm"
+const { NormandyApi } = ChromeUtils.importESModule(
+  "resource://normandy/lib/NormandyApi.sys.mjs"
 );
-const { NormandyTestUtils } = ChromeUtils.import(
-  "resource://testing-common/NormandyTestUtils.jsm"
+const { NormandyTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
 );
 
 const CryptoHash = Components.Constructor(
@@ -42,7 +44,7 @@ class MockResponse {
 }
 
 function withServer(server) {
-  return function(testFunction) {
+  return function (testFunction) {
     return NormandyTestUtils.decorate(
       NormandyTestUtils.withMockPreferences(),
       async function inner({ mockPreferences, ...args }) {
@@ -76,7 +78,7 @@ function makeMockApiServer(directory) {
   const server = new HttpServer();
   server.registerDirectory("/", directory);
 
-  server.setIndexHandler(async function(request, response) {
+  server.setIndexHandler(async function (request, response) {
     response.processAsync();
     const dir = request.getProperty("directory");
     const index = dir.clone();

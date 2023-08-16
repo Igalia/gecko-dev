@@ -7,16 +7,13 @@ DIRS += []
 
 CompiledModules(
     "ast.js",
-    "async-requests.js",
     "breakpoints.js",
     "event-listeners.js",
     "exceptions.js",
     "expressions.js",
-    "file-search.js",
     "index.js",
     "pause.js",
     "pending-breakpoints.js",
-    "preview.js",
     "project-text-search.js",
     "quick-open.js",
     "source-actors.js",

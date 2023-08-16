@@ -49,6 +49,9 @@ class Isolate;
 class RegExpMatchInfo;
 class RegExpStack;
 
+template <typename T>
+class Handle;
+
 }  // namespace internal
 }  // namespace v8
 
@@ -122,7 +125,6 @@ constexpr inline bool IsAligned(T value, U alignment) {
   return (value & (alignment - 1)) == 0;
 }
 
-using byte = uint8_t;
 using Address = uintptr_t;
 static const Address kNullAddress = 0;
 
@@ -442,6 +444,8 @@ inline constexpr bool IsDecimalDigit(base::uc32 c) {
   return c >= '0' && c <= '9';
 }
 
+inline constexpr int AsciiAlphaToLower(base::uc32 c) { return c | 0x20; }
+
 inline bool is_uint24(int64_t val) { return (val >> 24) == 0; }
 inline bool is_int24(int64_t val) {
   int64_t limit = int64_t(1) << 23;
@@ -449,10 +453,10 @@ inline bool is_int24(int64_t val) {
 }
 
 inline bool IsIdentifierStart(base::uc32 c) {
-  return js::unicode::IsIdentifierStart(uint32_t(c));
+  return js::unicode::IsIdentifierStart(char32_t(c));
 }
 inline bool IsIdentifierPart(base::uc32 c) {
-  return js::unicode::IsIdentifierPart(uint32_t(c));
+  return js::unicode::IsIdentifierPart(char32_t(c));
 }
 
 // Wrappers to disambiguate char16_t and uc16.
@@ -655,6 +659,25 @@ inline uint8_t* ByteArrayData::data() {
   return reinterpret_cast<uint8_t*>(immediatelyAfter);
 }
 
+template <typename T>
+T* ByteArrayData::typedData() {
+  static_assert(alignof(T) <= alignof(ByteArrayData));
+  MOZ_ASSERT(uintptr_t(data()) % alignof(T) == 0);
+  return reinterpret_cast<T*>(data());
+}
+
+template <typename T>
+T ByteArrayData::getTyped(uint32_t index) {
+  MOZ_ASSERT(index < length / sizeof(T));
+  return typedData<T>()[index];
+}
+
+template <typename T>
+void ByteArrayData::setTyped(uint32_t index, T value) {
+  MOZ_ASSERT(index < length / sizeof(T));
+  typedData<T>()[index] = value;
+}
+
 // A fixed-size array of bytes.
 class ByteArray : public HeapObject {
  protected:
@@ -666,15 +689,11 @@ class ByteArray : public HeapObject {
   PseudoHandle<ByteArrayData> takeOwnership(Isolate* isolate);
   PseudoHandle<ByteArrayData> maybeTakeOwnership(Isolate* isolate);
 
-  byte get(uint32_t index) { return inner()->get(index); }
-  void set(uint32_t index, byte val) { inner()->set(index, val); }
-  uint16_t get_uint16(uint32_t index) { return inner()->get_uint16(index); }
-  void set_uint16(uint32_t index, uint16_t value) {
-    inner()->set_uint16(index, value);
-  }
+  uint8_t get(uint32_t index) { return inner()->get(index); }
+  void set(uint32_t index, uint8_t val) { inner()->set(index, val); }
 
   uint32_t length() const { return inner()->length; }
-  byte* GetDataStartAddress() { return inner()->data(); }
+  uint8_t* GetDataStartAddress() { return inner()->data(); }
 
   static ByteArray cast(Object object) {
     ByteArray b;
@@ -686,6 +705,30 @@ class ByteArray : public HeapObject {
 
   friend class SMRegExpMacroAssembler;
 };
+
+// This is a convenience class used in V8 for treating a ByteArray as an array
+// of fixed-size integers. This version supports integral types up to 32 bits.
+template <typename T>
+class FixedIntegerArray : public ByteArray {
+  static_assert(alignof(T) <= alignof(ByteArrayData));
+  static_assert(std::is_integral<T>::value);
+
+ public:
+  static Handle<FixedIntegerArray<T>> New(Isolate* isolate, uint32_t length);
+
+  T get(uint32_t index) { return inner()->template getTyped<T>(index); };
+  void set(uint32_t index, T value) {
+    inner()->template setTyped<T>(index, value);
+  }
+
+  static FixedIntegerArray<T> cast(Object object) {
+    FixedIntegerArray<T> f;
+    f.setValue(object.value());
+    return f;
+  }
+};
+
+using FixedUInt16Array = FixedIntegerArray<uint16_t>;
 
 // Like Handles in SM, V8 handles are references to marked pointers.
 // Unlike SM, where Rooted pointers are created individually on the
@@ -994,6 +1037,10 @@ inline bool IsIgnoreCase(RegExpFlags flags) { return flags.ignoreCase(); }
 inline bool IsMultiline(RegExpFlags flags) { return flags.multiline(); }
 inline bool IsDotAll(RegExpFlags flags) { return flags.dotAll(); }
 inline bool IsSticky(RegExpFlags flags) { return flags.sticky(); }
+inline bool IsUnicodeSets(RegExpFlags flags) { return flags.unicodeSets(); }
+inline bool IsEitherUnicode(RegExpFlags flags) {
+  return flags.unicode() || flags.unicodeSets();
+}
 
 class Histogram {
  public:
@@ -1065,6 +1112,9 @@ class Isolate {
 
   // Allocates a fixed array initialized with undefined values.
   Handle<FixedArray> NewFixedArray(int length);
+
+  template <typename T>
+  Handle<FixedIntegerArray<T>> NewFixedIntegerArray(uint32_t length);
 
   template <typename Char>
   Handle<String> InternalizeString(const base::Vector<const Char>& str);
@@ -1153,7 +1203,7 @@ class StackLimitCheck {
   // Use this to check for stack-overflow when entering runtime from JS code.
   bool JsHasOverflowed() {
     js::AutoCheckRecursionLimit recursion(cx_);
-    return !recursion.checkConservativeDontReport(cx_);
+    return !recursion.checkDontReport(cx_);
   }
 
  private:
@@ -1183,6 +1233,10 @@ class Code : public HeapObject {
   }
 };
 
+// Only used in function signature of functions we don't implement
+// (NativeRegExpMacroAssembler::CheckStackGuardState)
+class InstructionStream {};
+
 // Origin: https://github.com/v8/v8/blob/master/src/codegen/label.h
 class Label {
  public:
@@ -1207,60 +1261,7 @@ class Label {
   friend class SMRegExpMacroAssembler;
 };
 
-//**************************************************
-// Constant Flags
-//**************************************************
-
-// V8 uses this for differential fuzzing to handle stack overflows.
-// We address the same problem in StackLimitCheck::HasOverflowed.
-const bool FLAG_correctness_fuzzer_suppressions = false;
-
-// Instead of using a flag for this, we provide an implementation of
-// CanReadUnaligned in SMRegExpMacroAssembler.
-const bool FLAG_enable_regexp_unaligned_accesses = false;
-
-// This is used to guard a prototype implementation of sequence properties.
-// See: https://github.com/tc39/proposal-regexp-unicode-sequence-properties
-// TODO: Expose this behind a pref once it is past stage 2?
-const bool FLAG_harmony_regexp_sequence = false;
-
-// This is only used in a helper function in regex.h that we never call.
-const bool FLAG_regexp_interpret_all = false;
-
-// This is used to guard a prototype implementation of mode modifiers,
-// which can modify the regexp flags on the fly inside the pattern.
-// As far as I can tell, there isn't even a TC39 proposal for this.
-const bool FLAG_regexp_mode_modifiers = false;
-
-// This is used to guard an old prototype implementation of possessive
-// quantifiers, which never got past the point of adding parser support.
-const bool FLAG_regexp_possessive_quantifier = false;
-
-// These affect the default level of optimization. We can still turn
-// optimization off on a case-by-case basis in CompilePattern - for
-// example, if a regexp is too long - so we might as well turn these
-// flags on unconditionally.
-const bool FLAG_regexp_optimization = true;
-#if MOZ_BIG_ENDIAN()
-// peephole optimization not supported on big endian
-const bool FLAG_regexp_peephole_optimization = false;
-#else
-const bool FLAG_regexp_peephole_optimization = true;
-#endif
-
-// This is used to control whether regexps tier up from interpreted to
-// compiled. We control this with --no-native-regexp and
-// --regexp-warmup-threshold.
-const bool FLAG_regexp_tier_up = true;
-
-//**************************************************
-// Debugging Flags
-//**************************************************
-
-#define FLAG_trace_regexp_bytecodes js::jit::JitOptions.traceRegExpInterpreter
-#define FLAG_trace_regexp_parser js::jit::JitOptions.traceRegExpParser
-#define FLAG_trace_regexp_peephole_optimization \
-  js::jit::JitOptions.traceRegExpPeephole
+#define v8_flags js::jit::JitOptions
 
 #define V8_USE_COMPUTED_GOTO 1
 #define COMPILING_IRREGEXP_FOR_EXTERNAL_EMBEDDER

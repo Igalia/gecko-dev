@@ -22,6 +22,7 @@
 // XXX Avoid including this here by moving function bodies to the cpp file
 #include "nsIPrincipal.h"
 
+class nsIContent;
 class nsIParser;
 class nsIPrincipal;
 class nsIURI;
@@ -91,7 +92,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   /**
    * Script source text for inline script elements.
    */
-  virtual void GetScriptText(nsAString& text) = 0;
+  virtual void GetScriptText(nsAString& text) const = 0;
 
   virtual void GetScriptCharset(nsAString& charset) = 0;
 
@@ -105,10 +106,10 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
    *  - GetScriptURI()
    *  - GetScriptExternal()
    */
-  virtual void FreezeExecutionAttrs(mozilla::dom::Document*) = 0;
+  virtual void FreezeExecutionAttrs(const mozilla::dom::Document*) = 0;
 
   /**
-   * Is the script a module script. Currently only supported by HTML scripts.
+   * Is the script a module script.
    */
   bool GetScriptIsModule() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -116,7 +117,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script an import map. Currently only supported by HTML scripts.
+   * Is the script an import map.
    */
   bool GetScriptIsImportMap() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -124,7 +125,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script deferred. Currently only supported by HTML scripts.
+   * Is the script deferred.
    */
   bool GetScriptDeferred() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -132,7 +133,7 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
   }
 
   /**
-   * Is the script async. Currently only supported by HTML scripts.
+   * Is the script async.
    */
   bool GetScriptAsync() {
     MOZ_ASSERT(mFrozen, "Not ready for this call yet!");
@@ -269,6 +270,16 @@ class nsIScriptElement : public nsIScriptLoaderObserver {
    * retreive async state from script elements without bringing the type in.
    */
   virtual bool GetAsyncState() = 0;
+
+  /**
+   * Allow implementing elements to avoid unnecessary QueryReferences.
+   */
+  virtual nsIContent* GetAsContent() = 0;
+
+  /**
+   * Determine whether this is a(n) classic/module/importmap script.
+   */
+  void DetermineKindFromType(const mozilla::dom::Document* aOwnerDoc);
 
   /**
    * The start line number of the script.

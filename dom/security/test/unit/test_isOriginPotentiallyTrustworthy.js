@@ -6,16 +6,8 @@
  * <https://w3c.github.io/webappsec-secure-contexts/#is-origin-trustworthy>.
  */
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyServiceGetter(
-  this,
-  "gContentSecurityManager",
-  "@mozilla.org/contentsecuritymanager;1",
-  "nsIContentSecurityManager"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
 
 Services.prefs.setCharPref(

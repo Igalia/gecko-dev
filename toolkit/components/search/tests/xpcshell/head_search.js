@@ -6,31 +6,31 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  RemoteSettingsClient:
+    "resource://services-settings/RemoteSettingsClient.sys.mjs",
   SearchEngineSelector: "resource://gre/modules/SearchEngineSelector.sys.mjs",
   SearchService: "resource://gre/modules/SearchService.sys.mjs",
   SearchSettings: "resource://gre/modules/SearchSettings.sys.mjs",
   SearchTestUtils: "resource://testing-common/SearchTestUtils.sys.mjs",
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  Region: "resource://gre/modules/Region.jsm",
-  RemoteSettings: "resource://services-settings/remote-settings.js",
-  RemoteSettingsClient: "resource://services-settings/RemoteSettingsClient.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
-  TestUtils: "resource://testing-common/TestUtils.jsm",
-  sinon: "resource://testing-common/Sinon.jsm",
-});
-
-var { HttpServer } = ChromeUtils.import("resource://testing-common/httpd.js");
-var { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+var { HttpServer } = ChromeUtils.importESModule(
+  "resource://testing-common/httpd.sys.mjs"
 );
-const { ExtensionTestUtils } = ChromeUtils.import(
-  "resource://testing-common/ExtensionXPCShellUtils.jsm"
+var { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
+);
+const { ExtensionTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/ExtensionXPCShellUtils.sys.mjs"
 );
 
 SearchTestUtils.init(this);
@@ -44,8 +44,6 @@ var XULRuntime = Cc["@mozilla.org/xre/runtime;1"].getService(Ci.nsIXULRuntime);
 // Expand the amount of information available in error logs
 Services.prefs.setBoolPref("browser.search.log", true);
 Services.prefs.setBoolPref("browser.region.log", true);
-
-Services.prefs.setBoolPref("browser.search.modernConfig", true);
 
 AddonTestUtils.init(this, false);
 AddonTestUtils.createAppInfo(
@@ -67,13 +65,13 @@ SearchSettings.SETTNGS_INVALIDATION_DELAY = 250;
 
 async function promiseSettingsData() {
   let path = PathUtils.join(PathUtils.profileDir, SETTINGS_FILENAME);
-  return JSON.parse(await IOUtils.readUTF8(path, { decompress: true }));
+  return IOUtils.readJSON(path, { decompress: true });
 }
 
 function promiseSaveSettingsData(data) {
-  return IOUtils.write(
+  return IOUtils.writeJSON(
     PathUtils.join(PathUtils.profileDir, SETTINGS_FILENAME),
-    new TextEncoder().encode(JSON.stringify(data)),
+    data,
     { compress: true }
   );
 }
@@ -148,6 +146,7 @@ const kTestEngineName = "Test search engine";
 
 /**
  * Waits for the settings file to be saved.
+ *
  * @returns {Promise} Resolved when the settings file is saved.
  */
 function promiseAfterSettings() {
@@ -205,8 +204,10 @@ async function readJSONFile(file) {
  * on actualObj.
  *
  * @param {object} expectedObj
+ *   The source object that we expect to match
  * @param {object} actualObj
- * @param {function} skipProp
+ *   The object to check against the source
+ * @param {Function} skipProp
  *   A function that is called with the property name and its value, to see if
  *   testing that property should be skipped or not.
  */
@@ -295,7 +296,7 @@ async function setupRemoteSettings() {
   sinon.stub(settings, "get").returns([
     {
       id: "load-paths",
-      matches: ["[other]addEngineWithDetails:searchignore@mozilla.com"],
+      matches: ["[addon]searchignore@mozilla.com"],
       _status: "synced",
     },
     {
@@ -309,6 +310,7 @@ async function setupRemoteSettings() {
 /**
  * Helper function that sets up a server and respnds to region
  * fetch requests.
+ *
  * @param {string} region
  *   The region that the server will respond with.
  * @param {Promise|null} waitToRespond
@@ -334,16 +336,23 @@ function useCustomGeoServer(region, waitToRespond = Promise.resolve()) {
 /**
  * @typedef {object} TelemetryDetails
  * @property {string} engineId
+ *   The telemetry ID for the search engine.
  * @property {string} [displayName]
+ *   The search engine's display name.
  * @property {string} [loadPath]
+ *   The load path for the search engine.
  * @property {string} [submissionUrl]
- * @property {string} [verified].
+ *   The submission URL for the search engine.
+ * @property {string} [verified]
+ *   Whether the search engine is verified.
+ */
 
 /**
  * Asserts that default search engine telemetry has been correctly reported
  * to Glean.
  *
  * @param {object} expected
+ *   An object containing telemetry details for normal and private engines.
  * @param {TelemetryDetails} expected.normal
  *   An object with the expected details for the normal search engine.
  * @param {TelemetryDetails} [expected.private]
@@ -464,29 +473,42 @@ registerCleanupFunction(async () => {
 });
 
 let consoleAllowList = [
+  // Harness issues.
   'property "localProfileDir" is non-configurable and can\'t be deleted',
   'property "profileDir" is non-configurable and can\'t be deleted',
+  // These can be emitted by `resource://services-settings/Utils.jsm` when
+  // remote settings is fetched (e.g. via IgnoreLists).
+  "NetworkError: Network request failed",
+  // Also remote settings, see bug 1812040.
+  "Unexpected content-type",
 ];
 
-function observe(subject) {
-  let msg = subject.wrappedJSObject;
-  let messageContents = msg.arguments[0]?.message || msg.arguments[0];
-  if (
-    msg.level == "error" &&
-    !consoleAllowList.some(e => messageContents.includes(e))
-  ) {
-    Assert.ok(false, "Unexpected console message: " + messageContents);
-  }
-}
-
-const ConsoleAPIStorage = Cc["@mozilla.org/consoleAPI-storage;1"].getService(
-  Ci.nsIConsoleAPIStorage
-);
-ConsoleAPIStorage.addLogEventListener(
-  observe,
-  Cc["@mozilla.org/systemprincipal;1"].createInstance(Ci.nsIPrincipal)
-);
+let endConsoleListening = TestUtils.listenForConsoleMessages();
 
 registerCleanupFunction(async () => {
-  ConsoleAPIStorage.removeLogEventListener(observe);
+  let msgs = await endConsoleListening();
+  for (let msg of msgs) {
+    msg = msg.wrappedJSObject;
+    if (msg.level != "error") {
+      continue;
+    }
+
+    if (!msg.arguments?.length) {
+      Assert.ok(
+        false,
+        "Unexpected console message received during test: " + msg
+      );
+    } else {
+      let firstArg = msg.arguments[0];
+      // Use the appropriate message depending on the object supplied to
+      // the first argument.
+      let message = firstArg.messageContents ?? firstArg.message ?? firstArg;
+      if (!consoleAllowList.some(e => message.includes(e))) {
+        Assert.ok(
+          false,
+          "Unexpected console message received during test: " + message
+        );
+      }
+    }
+  }
 });

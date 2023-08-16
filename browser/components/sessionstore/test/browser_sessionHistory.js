@@ -18,7 +18,7 @@ add_task(async function test_load_start() {
 
   // Load a new URI.
   let historyReplacePromise = promiseOnHistoryReplaceEntry(browser);
-  BrowserTestUtils.loadURI(browser, PAGE);
+  BrowserTestUtils.loadURIString(browser, PAGE);
 
   // Remove the tab before it has finished loading.
   await historyReplacePromise;
@@ -61,7 +61,7 @@ add_task(async function test_hashchange() {
     "hashchange",
     true
   );
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.document.querySelector("#a").click();
   });
   info("About to watch for a hash change event");
@@ -90,7 +90,7 @@ add_task(async function test_pageshow() {
   await promiseBrowserLoaded(browser);
 
   // Create a second shistory entry.
-  BrowserTestUtils.loadURI(browser, URL2);
+  BrowserTestUtils.loadURIString(browser, URL2);
   await promiseBrowserLoaded(browser);
 
   // Wait until shistory changes.
@@ -136,7 +136,7 @@ add_task(async function test_subframes() {
   is(entries[0].children.length, 1, "the entry has one child");
 
   // Navigate the subframe.
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.document.querySelector("#a1").click();
   });
   await promiseBrowserLoaded(
@@ -167,7 +167,7 @@ add_task(async function test_subframes() {
     "hashchange",
     true
   );
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.document.querySelector("#a2").click();
   });
   await eventPromise;
@@ -200,7 +200,7 @@ add_task(async function test_about_page_navigate() {
   // Verify that the title is also recorded.
   is(entries[0].title, "about:blank", "title is correct");
 
-  BrowserTestUtils.loadURI(browser, "about:robots");
+  BrowserTestUtils.loadURIString(browser, "about:robots");
   await promiseBrowserLoaded(browser);
 
   // Check that we have changed the history entry.
@@ -228,7 +228,7 @@ add_task(async function test_pushstate_replacestate() {
   is(entries.length, 1, "there is one shistory entry");
   is(entries[0].url, "http://example.com/1", "url is correct");
 
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.window.history.pushState({}, "", "test-entry/");
   });
 
@@ -238,7 +238,7 @@ add_task(async function test_pushstate_replacestate() {
   is(entries.length, 2, "there is another shistory entry");
   is(entries[1].url, "http://example.com/test-entry/", "url is correct");
 
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     content.window.history.replaceState({}, "", "test-entry2/");
   });
 

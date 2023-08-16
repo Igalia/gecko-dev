@@ -64,6 +64,8 @@ struct BaseEventFlags {
   bool mInBubblingPhase : 1;
   // If mInCapturePhase is true, the event is in capture phase or target phase.
   bool mInCapturePhase : 1;
+  // If mInTargetPhase is true, the event is in target phase.
+  bool mInTargetPhase : 1;
   // If mInSystemGroup is true, the event is being dispatched in system group.
   bool mInSystemGroup : 1;
   // If mCancelable is true, the event can be consumed.  I.e., calling
@@ -181,15 +183,6 @@ struct BaseEventFlags {
   bool mPostedToRemoteProcess : 1;
   // If mCameFromAnotherProcess is true, the event came from another process.
   bool mCameFromAnotherProcess : 1;
-
-  // At lease one of the event in the event path had non privileged click
-  // listener.
-  bool mHadNonPrivilegedClickListeners : 1;
-
-  // If the event is being handled in target phase, returns true.
-  inline bool InTargetPhase() const {
-    return (mInBubblingPhase && mInCapturePhase);
-  }
 
   /**
    * Helper methods for methods of DOM Event.
@@ -419,20 +412,14 @@ struct EventFlags : public BaseEventFlags {
 
 class WidgetEventTime {
  public:
-  // Elapsed time, in milliseconds, from a platform-specific zero time
-  // to the time the message was created
-  uint64_t mTime;
-  // Timestamp when the message was created. Set in parallel to 'time' until we
-  // determine if it is safe to drop 'time' (see bug 77992).
+  // Timestamp when the message was created.
   TimeStamp mTimeStamp;
 
-  WidgetEventTime() : mTime(0), mTimeStamp(TimeStamp::Now()) {}
+  WidgetEventTime() : mTimeStamp(TimeStamp::Now()) {}
 
-  WidgetEventTime(uint64_t aTime, TimeStamp aTimeStamp)
-      : mTime(aTime), mTimeStamp(aTimeStamp) {}
+  explicit WidgetEventTime(TimeStamp aTimeStamp) : mTimeStamp(aTimeStamp) {}
 
   void AssignEventTime(const WidgetEventTime& aOther) {
-    mTime = aOther.mTime;
     mTimeStamp = aOther.mTimeStamp;
   }
 };

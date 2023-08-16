@@ -43,8 +43,8 @@ list of acceptable features is given below:
      - Clang
      -
    * - Current minimal requirement
-     - 7.1
-     - 5.0
+     - 8.1
+     - 7.0
      -
    * - Feature
      - GCC
@@ -249,7 +249,7 @@ list of acceptable features is given below:
    * - Inline variables (C++17)
      - 7.0
      - 3.9
-     - **No** (clang 5 has bugs with inline variables)
+     - Yes
    * - constexpr_if (C++17)
      - 7.0
      - 3.9
@@ -531,8 +531,7 @@ Safety utilities
 Strings
 ~~~~~~~
 
-See the `Mozilla internal string
-guide <https://developer.mozilla.org/docs/Mozilla/Tech/XPCOM/Guide/Internal_strings>`__ for
+See the :doc:`Mozilla internal string guide </xpcom/stringguide>` for
 usage of ``nsAString`` (our copy-on-write replacement for
 ``std::u16string``) and ``nsACString`` (our copy-on-write replacement
 for ``std::string``).
@@ -624,10 +623,6 @@ Miscellaneous
    * - ``mozilla::TimeStamp``
      - xpcom/ds/TimeStamp.h
      - ``std::chrono::time_point``
-     -
-   * -
-     - mozilla/TypeTraits.h
-     - ``<type_traits>``
      -
    * -
      - mozilla/PodOperations.h

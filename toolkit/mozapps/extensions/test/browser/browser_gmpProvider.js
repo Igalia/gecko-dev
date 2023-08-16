@@ -4,17 +4,11 @@
 
 "use strict";
 
-const { PromiseUtils } = ChromeUtils.import(
-  "resource://gre/modules/PromiseUtils.jsm"
+const { GMPInstallManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/GMPInstallManager.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
-const { GMPInstallManager } = ChromeUtils.import(
-  "resource://gre/modules/GMPInstallManager.jsm"
-);
-const { GMPPrefs, GMP_PLUGIN_IDS, WIDEVINE_ID } = ChromeUtils.import(
-  "resource://gre/modules/GMPUtils.jsm"
+const { GMPPrefs, GMP_PLUGIN_IDS, WIDEVINE_ID } = ChromeUtils.importESModule(
+  "resource://gre/modules/GMPUtils.sys.mjs"
 );
 
 const TEST_DATE = new Date(2013, 0, 1, 12);
@@ -64,7 +58,7 @@ add_task(async function initializeState() {
   gPrefs.setBoolPref(GMPPrefs.KEY_LOGGING_DUMP, true);
   gPrefs.setIntPref(GMPPrefs.KEY_LOGGING_LEVEL, 0);
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     for (let addon of gMockAddons) {
       gPrefs.clearUserPref(getKey(GMPPrefs.KEY_PLUGIN_ENABLED, addon.id));
       gPrefs.clearUserPref(getKey(GMPPrefs.KEY_PLUGIN_LAST_UPDATE, addon.id));

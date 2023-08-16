@@ -8,9 +8,11 @@
 #define DMABufSurface_h__
 
 #include <stdint.h>
-#include "mozilla/widget/nsWaylandDisplay.h"
 #include "mozilla/widget/va_drmcommon.h"
 #include "GLTypes.h"
+#include "nsISupportsImpl.h"
+#include "mozilla/gfx/Types.h"
+#include "mozilla/Mutex.h"
 
 typedef void* EGLImageKHR;
 typedef void* EGLSyncKHR;
@@ -53,6 +55,11 @@ typedef enum {
 
 class DMABufSurfaceRGBA;
 class DMABufSurfaceYUV;
+struct wl_buffer;
+
+namespace mozilla::widget {
+struct GbmFormat;
+}
 
 class DMABufSurface {
  public:
@@ -131,6 +138,7 @@ class DMABufSurface {
   // So without any additional GlobalRefAdd()/GlobalRefRelease() calls
   // the IsGlobalRefSet() returns true if any other process use the surface.
   void GlobalRefCountCreate();
+  void GlobalRefCountDelete();
 
   // If global reference counter was created by GlobalRefCountCreate()
   // returns true when there's an active surface reference.
@@ -152,13 +160,11 @@ class DMABufSurface {
  protected:
   virtual bool Create(const mozilla::layers::SurfaceDescriptor& aDesc) = 0;
 
-  // Import global ref count from IPC by file descriptor.
+  // Import global ref count object from IPC by file descriptor.
+  // This adds global ref count reference to the surface.
   void GlobalRefCountImport(int aFd);
-  // Export global ref count by file descriptor. This adds global ref count
-  // reference to the surface.
-  // It's used when dmabuf surface is shared with another process via. IPC.
+  // Export global ref count object by file descriptor.
   int GlobalRefCountExport();
-  void GlobalRefCountDelete();
 
   void ReleaseDMABuf();
 
@@ -245,9 +251,11 @@ class DMABufSurfaceRGBA : public DMABufSurface {
   GLuint GetTexture(int aPlane = 0) { return mTexture; };
   EGLImageKHR GetEGLImage(int aPlane = 0) { return mEGLImage; };
 
+#ifdef MOZ_WAYLAND
   bool CreateWlBuffer();
   void ReleaseWlBuffer();
   wl_buffer* GetWlBuffer() { return mWlBuffer; };
+#endif
 
   int GetTextureCount() { return 1; };
 
@@ -258,6 +266,8 @@ class DMABufSurfaceRGBA : public DMABufSurface {
   DMABufSurfaceRGBA();
 
  private:
+  DMABufSurfaceRGBA(const DMABufSurfaceRGBA&) = delete;
+  DMABufSurfaceRGBA& operator=(const DMABufSurfaceRGBA&) = delete;
   ~DMABufSurfaceRGBA();
 
   bool Create(int aWidth, int aHeight, int aDMABufSurfaceFlags);
@@ -282,7 +292,9 @@ class DMABufSurfaceRGBA : public DMABufSurface {
   EGLImageKHR mEGLImage;
   GLuint mTexture;
   uint32_t mGbmBufferFlags;
-  wl_buffer* mWlBuffer;
+#ifdef MOZ_WAYLAND
+  wl_buffer* mWlBuffer = nullptr;
+#endif
 };
 
 class DMABufSurfaceYUV : public DMABufSurface {
@@ -290,9 +302,12 @@ class DMABufSurfaceYUV : public DMABufSurface {
   static already_AddRefed<DMABufSurfaceYUV> CreateYUVSurface(
       int aWidth, int aHeight, void** aPixelData = nullptr,
       int* aLineSizes = nullptr);
-
   static already_AddRefed<DMABufSurfaceYUV> CreateYUVSurface(
       const VADRMPRIMESurfaceDescriptor& aDesc, int aWidth, int aHeight);
+  static already_AddRefed<DMABufSurfaceYUV> CopyYUVSurface(
+      const VADRMPRIMESurfaceDescriptor& aVaDesc, int aWidth, int aHeight);
+  static void ReleaseVADRMPRIMESurfaceDescriptor(
+      VADRMPRIMESurfaceDescriptor& aDesc);
 
   bool Serialize(mozilla::layers::SurfaceDescriptor& aOutDescriptor);
 
@@ -323,18 +338,28 @@ class DMABufSurfaceYUV : public DMABufSurface {
 
   bool UpdateYUVData(void** aPixelData, int* aLineSizes);
   bool UpdateYUVData(const VADRMPRIMESurfaceDescriptor& aDesc, int aWidth,
-                     int aHeight);
-
+                     int aHeight, bool aCopy);
   bool VerifyTextureCreation();
 
  private:
+  DMABufSurfaceYUV(const DMABufSurfaceYUV&) = delete;
+  DMABufSurfaceYUV& operator=(const DMABufSurfaceYUV&) = delete;
   ~DMABufSurfaceYUV();
 
   bool Create(const mozilla::layers::SurfaceDescriptor& aDesc);
   bool Create(int aWidth, int aHeight, void** aPixelData, int* aLineSizes);
-  bool CreateYUVPlane(int aPlane, int aWidth, int aHeight, int aDrmFormat);
+  bool CreateYUVPlane(int aPlane);
+  bool CreateLinearYUVPlane(int aPlane, int aWidth, int aHeight,
+                            int aDrmFormat);
   void UpdateYUVPlane(int aPlane, void* aPixelData, int aLineSize);
 
+  bool MoveYUVDataImpl(const VADRMPRIMESurfaceDescriptor& aDesc, int aWidth,
+                       int aHeight);
+  bool CopyYUVDataImpl(const VADRMPRIMESurfaceDescriptor& aDesc, int aWidth,
+                       int aHeight);
+
+  bool ImportPRIMESurfaceDescriptor(const VADRMPRIMESurfaceDescriptor& aDesc,
+                                    int aWidth, int aHeight);
   bool ImportSurfaceDescriptor(
       const mozilla::layers::SurfaceDescriptorDMABuf& aDesc);
 

@@ -16,7 +16,7 @@ const templatePrivate = "https://example.com/?query=";
 
 const searchPopup = document.getElementById("PopupSearchAutoComplete");
 
-add_setup(async function() {
+add_setup(async function () {
   await gCUITestUtils.addSearchBar();
 
   await SpecialPowers.pushPrefEnv({
@@ -47,12 +47,21 @@ add_setup(async function() {
   let originalPrivateEngine = await Services.search.getDefaultPrivate();
 
   let engineDefault = Services.search.getEngineByName("MozSearch1");
-  await Services.search.setDefault(engineDefault);
+  await Services.search.setDefault(
+    engineDefault,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     gCUITestUtils.removeSearchBar();
-    await Services.search.setDefault(originalEngine);
-    await Services.search.setDefaultPrivate(originalPrivateEngine);
+    await Services.search.setDefault(
+      originalEngine,
+      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+    );
+    await Services.search.setDefaultPrivate(
+      originalPrivateEngine,
+      Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+    );
   });
 });
 
@@ -108,7 +117,8 @@ add_task(async function test_default_search_private_no_separate() {
   });
 
   await Services.search.setDefaultPrivate(
-    Services.search.getEngineByName("MozSearch2")
+    Services.search.getEngineByName("MozSearch2"),
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
   );
 
   const win = await BrowserTestUtils.openNewBrowserWindow({ private: true });

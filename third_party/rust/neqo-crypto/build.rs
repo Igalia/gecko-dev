@@ -91,13 +91,18 @@ fn setup_clang() {
 
 fn nss_dir() -> PathBuf {
     let dir = if let Ok(dir) = env::var("NSS_DIR") {
-        PathBuf::from(dir.trim())
+        let path = PathBuf::from(dir.trim());
+        assert!(
+            !path.is_relative(),
+            "The NSS_DIR environment variable is expected to be an absolute path."
+        );
+        path
     } else {
         let out_dir = env::var("OUT_DIR").unwrap();
         let dir = Path::new(&out_dir).join("nss");
         if !dir.exists() {
             Command::new("hg")
-                .args(&[
+                .args([
                     "clone",
                     "https://hg.mozilla.org/projects/nss",
                     dir.to_str().unwrap(),
@@ -108,7 +113,7 @@ fn nss_dir() -> PathBuf {
         let nspr_dir = Path::new(&out_dir).join("nspr");
         if !nspr_dir.exists() {
             Command::new("hg")
-                .args(&[
+                .args([
                     "clone",
                     "https://hg.mozilla.org/projects/nspr",
                     nspr_dir.to_str().unwrap(),
@@ -256,16 +261,16 @@ fn build_bindings(base: &str, bindings: &Bindings, flags: &[String], gecko: bool
 
     // Apply the configuration.
     for v in &bindings.types {
-        builder = builder.whitelist_type(v);
+        builder = builder.allowlist_type(v);
     }
     for v in &bindings.functions {
-        builder = builder.whitelist_function(v);
+        builder = builder.allowlist_function(v);
     }
     for v in &bindings.variables {
-        builder = builder.whitelist_var(v);
+        builder = builder.allowlist_var(v);
     }
     for v in &bindings.exclude {
-        builder = builder.blacklist_item(v);
+        builder = builder.blocklist_item(v);
     }
     for v in &bindings.opaque {
         builder = builder.opaque_type(v);
@@ -319,8 +324,6 @@ fn setup_standalone() -> Vec<String> {
 fn setup_for_gecko() -> Vec<String> {
     use mozbuild::TOPOBJDIR;
 
-    let mut flags: Vec<String> = Vec::new();
-
     let fold_libs = mozbuild::config::MOZ_FOLD_LIBS;
     let libs = if fold_libs {
         vec!["nss3"]
@@ -366,11 +369,11 @@ fn setup_for_gecko() -> Vec<String> {
     let flags_path = TOPOBJDIR.join("netwerk/socket/neqo/extra-bindgen-flags");
 
     println!("cargo:rerun-if-changed={}", flags_path.to_str().unwrap());
-    flags = fs::read_to_string(flags_path)
+    let mut flags = fs::read_to_string(flags_path)
         .expect("Failed to read extra-bindgen-flags file")
         .split_whitespace()
-        .map(std::borrow::ToOwned::to_owned)
-        .collect();
+        .map(String::from)
+        .collect::<Vec<_>>();
 
     flags.push(String::from("-include"));
     flags.push(

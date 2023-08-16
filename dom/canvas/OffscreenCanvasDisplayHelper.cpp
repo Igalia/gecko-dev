@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "OffscreenCanvasDisplayHelper.h"
+#include "mozilla/dom/WorkerRef.h"
+#include "mozilla/dom/WorkerRunnable.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/CanvasManagerChild.h"
 #include "mozilla/gfx/Swizzle.h"
@@ -27,11 +29,17 @@ OffscreenCanvasDisplayHelper::OffscreenCanvasDisplayHelper(
 
 OffscreenCanvasDisplayHelper::~OffscreenCanvasDisplayHelper() = default;
 
-void OffscreenCanvasDisplayHelper::Destroy() {
+void OffscreenCanvasDisplayHelper::DestroyElement() {
   MOZ_ASSERT(NS_IsMainThread());
 
   MutexAutoLock lock(mMutex);
   mCanvasElement = nullptr;
+}
+
+void OffscreenCanvasDisplayHelper::DestroyCanvas() {
+  MutexAutoLock lock(mMutex);
+  mOffscreenCanvas = nullptr;
+  mWorkerRef = nullptr;
 }
 
 CanvasContextType OffscreenCanvasDisplayHelper::GetContextType() const {
@@ -45,23 +53,19 @@ RefPtr<layers::ImageContainer> OffscreenCanvasDisplayHelper::GetImageContainer()
   return mImageContainer;
 }
 
-layers::CompositableHandle OffscreenCanvasDisplayHelper::GetCompositableHandle()
-    const {
-  MutexAutoLock lock(mMutex);
-  return mData.mHandle;
-}
-
 void OffscreenCanvasDisplayHelper::UpdateContext(
+    OffscreenCanvas* aOffscreenCanvas, RefPtr<ThreadSafeWorkerRef>&& aWorkerRef,
     CanvasContextType aType, const Maybe<int32_t>& aChildId) {
+  RefPtr<layers::ImageContainer> imageContainer =
+      MakeRefPtr<layers::ImageContainer>(layers::ImageContainer::ASYNCHRONOUS);
+
   MutexAutoLock lock(mMutex);
 
-  if (aType != CanvasContextType::WebGPU) {
-    mImageContainer = MakeRefPtr<layers::ImageContainer>(
-        layers::ImageContainer::ASYNCHRONOUS);
-  }
-
+  mOffscreenCanvas = aOffscreenCanvas;
+  mWorkerRef = std::move(aWorkerRef);
   mType = aType;
   mContextChildId = aChildId;
+  mImageContainer = std::move(imageContainer);
 
   if (aChildId) {
     mContextManagerId = Some(gfx::CanvasManagerChild::Get()->Id());
@@ -70,6 +74,61 @@ void OffscreenCanvasDisplayHelper::UpdateContext(
   }
 
   MaybeQueueInvalidateElement();
+}
+
+void OffscreenCanvasDisplayHelper::FlushForDisplay() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  MutexAutoLock lock(mMutex);
+
+  // Without an OffscreenCanvas object bound to us, we either have not drawn
+  // using the canvas at all, or we have already destroyed it.
+  if (!mOffscreenCanvas) {
+    return;
+  }
+
+  // We assign/destroy the worker ref at the same time as the OffscreenCanvas
+  // ref, so we can only have the canvas without a worker ref if it exists on
+  // the main thread.
+  if (!mWorkerRef) {
+    // We queue to ensure that we have the same asynchronous update behaviour
+    // for a main thread and a worker based OffscreenCanvas.
+    mOffscreenCanvas->QueueCommitToCompositor();
+    return;
+  }
+
+  class FlushWorkerRunnable final : public WorkerRunnable {
+   public:
+    FlushWorkerRunnable(WorkerPrivate* aWorkerPrivate,
+                        OffscreenCanvasDisplayHelper* aDisplayHelper)
+        : WorkerRunnable(aWorkerPrivate), mDisplayHelper(aDisplayHelper) {}
+
+    bool WorkerRun(JSContext*, WorkerPrivate*) override {
+      // The OffscreenCanvas can only be freed on the worker thread, so we
+      // cannot be racing with an OffscreenCanvas::DestroyCanvas call and its
+      // destructor. We just need to make sure we don't call into
+      // OffscreenCanvas while holding the lock since it calls back into the
+      // OffscreenCanvasDisplayHelper.
+      RefPtr<OffscreenCanvas> canvas;
+      {
+        MutexAutoLock lock(mDisplayHelper->mMutex);
+        canvas = mDisplayHelper->mOffscreenCanvas;
+      }
+
+      if (canvas) {
+        canvas->CommitFrameToCompositor();
+      }
+      return true;
+    }
+
+   private:
+    RefPtr<OffscreenCanvasDisplayHelper> mDisplayHelper;
+  };
+
+  // Otherwise we are calling from the main thread during painting to a canvas
+  // on a worker thread.
+  auto task = MakeRefPtr<FlushWorkerRunnable>(mWorkerRef->Private(), this);
+  task->Dispatch();
 }
 
 bool OffscreenCanvasDisplayHelper::CommitFrameToCompositor(
@@ -92,7 +151,7 @@ bool OffscreenCanvasDisplayHelper::CommitFrameToCompositor(
     MaybeQueueInvalidateElement();
   }
 
-  if (mData.mHandle) {
+  if (mData.mOwnerId.isSome()) {
     // No need to update the ImageContainer as the presentation itself is
     // handled in the compositor process.
     return true;
@@ -125,15 +184,39 @@ bool OffscreenCanvasDisplayHelper::CommitFrameToCompositor(
     return false;
   }
 
-  if (mData.mDoPaintCallbacks) {
-    aContext->OnBeforePaintTransaction();
-  }
-
+  bool paintCallbacks = mData.mDoPaintCallbacks;
   RefPtr<layers::Image> image;
   RefPtr<gfx::SourceSurface> surface;
+  Maybe<layers::SurfaceDescriptor> desc;
 
-  Maybe<layers::SurfaceDescriptor> desc =
-      aContext->PresentFrontBuffer(nullptr, aTextureType);
+  {
+    MutexAutoUnlock unlock(mMutex);
+    if (paintCallbacks) {
+      aContext->OnBeforePaintTransaction();
+    }
+
+    desc = aContext->PresentFrontBuffer(nullptr, aTextureType);
+    if (!desc) {
+      surface =
+          aContext->GetFrontBufferSnapshot(/* requireAlphaPremult */ false);
+      if (surface && surface->GetType() == gfx::SurfaceType::WEBGL) {
+        // Ensure we can map in the surface. If we get a SourceSurfaceWebgl
+        // surface, then it may not be backed by raw pixels yet. We need to map
+        // it on the owning thread rather than the ImageBridge thread.
+        gfx::DataSourceSurface::ScopedMap map(
+            static_cast<gfx::DataSourceSurface*>(surface.get()),
+            gfx::DataSourceSurface::READ);
+        if (!map.IsMapped()) {
+          surface = nullptr;
+        }
+      }
+    }
+
+    if (paintCallbacks) {
+      aContext->OnDidPaintTransaction();
+    }
+  }
+
   if (desc) {
     if (desc->type() ==
         layers::SurfaceDescriptor::TSurfaceDescriptorRemoteTexture) {
@@ -150,30 +233,10 @@ bool OffscreenCanvasDisplayHelper::CommitFrameToCompositor(
             texture, gfx::IntRect(gfx::IntPoint(0, 0), mData.mSize));
       }
     }
-  } else {
-    surface = aContext->GetFrontBufferSnapshot(/* requireAlphaPremult */ false);
-    if (surface) {
-      bool usable = true;
-      if (surface->GetType() == gfx::SurfaceType::WEBGL) {
-        // Ensure we can map in the surface. If we get a SourceSurfaceWebgl
-        // surface, then it may not be backed by raw pixels yet. We need to map
-        // it on the owning thread rather than the ImageBridge thread.
-        gfx::DataSourceSurface::ScopedMap map(
-            static_cast<gfx::DataSourceSurface*>(surface.get()),
-            gfx::DataSourceSurface::READ);
-        usable = map.IsMapped();
-      }
-
-      if (usable) {
-        auto surfaceImage = MakeRefPtr<layers::SourceSurfaceImage>(surface);
-        surfaceImage->SetTextureFlags(flags);
-        image = surfaceImage;
-      }
-    }
-  }
-
-  if (mData.mDoPaintCallbacks) {
-    aContext->OnDidPaintTransaction();
+  } else if (surface) {
+    auto surfaceImage = MakeRefPtr<layers::SourceSurfaceImage>(surface);
+    surfaceImage->SetTextureFlags(flags);
+    image = surfaceImage;
   }
 
   if (image) {
@@ -195,8 +258,6 @@ bool OffscreenCanvasDisplayHelper::CommitFrameToCompositor(
 }
 
 void OffscreenCanvasDisplayHelper::MaybeQueueInvalidateElement() {
-  mMutex.AssertCurrentThreadOwns();
-
   if (!mPendingInvalidate) {
     mPendingInvalidate = true;
     NS_DispatchToMainThread(NS_NewRunnableFunction(
@@ -275,14 +336,14 @@ OffscreenCanvasDisplayHelper::GetSurfaceSnapshot() {
   Maybe<int32_t> childId;
   HTMLCanvasElement* canvasElement;
   RefPtr<gfx::SourceSurface> surface;
-  layers::CompositableHandle handle;
+  Maybe<layers::RemoteTextureOwnerId> ownerId;
 
   {
     MutexAutoLock lock(mMutex);
     hasAlpha = !mData.mIsOpaque;
     isAlphaPremult = mData.mIsAlphaPremult;
     originPos = mData.mOriginPos;
-    handle = mData.mHandle;
+    ownerId = mData.mOwnerId;
     managerId = mContextManagerId;
     childId = mContextChildId;
     canvasElement = mCanvasElement;
@@ -336,7 +397,7 @@ OffscreenCanvasDisplayHelper::GetSurfaceSnapshot() {
     // We don't have a usable surface, and the context lives in the compositor
     // process.
     return gfx::CanvasManagerChild::Get()->GetSnapshot(
-        managerId.value(), childId.value(), handle,
+        managerId.value(), childId.value(), ownerId,
         hasAlpha ? gfx::SurfaceFormat::R8G8B8A8 : gfx::SurfaceFormat::R8G8B8X8,
         hasAlpha && !isAlphaPremult, originPos == gl::OriginPos::BottomLeft);
   }

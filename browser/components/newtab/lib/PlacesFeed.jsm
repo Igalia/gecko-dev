@@ -3,54 +3,30 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
 const {
   actionCreators: ac,
   actionTypes: at,
   actionUtils: au,
-} = ChromeUtils.import("resource://activity-stream/common/Actions.jsm");
+} = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
+);
 const { shortURL } = ChromeUtils.import(
   "resource://activity-stream/lib/ShortURL.jsm"
 );
-const { AboutNewTab } = ChromeUtils.import(
-  "resource:///modules/AboutNewTab.jsm"
+const { AboutNewTab } = ChromeUtils.importESModule(
+  "resource:///modules/AboutNewTab.sys.mjs"
 );
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PartnerLinkAttribution",
-  "resource:///modules/PartnerLinkAttribution.jsm"
-);
 ChromeUtils.defineESModuleGetters(lazy, {
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PartnerLinkAttribution: "resource:///modules/PartnerLinkAttribution.sys.mjs",
+  pktApi: "chrome://pocket/content/pktApi.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-});
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "pktApi",
-  "chrome://pocket/content/pktApi.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "ExperimentAPI",
-  "resource://nimbus/ExperimentAPI.jsm"
-);
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
 });
 
 const LINK_BLOCKED_EVENT = "newtab-linkBlocked";
@@ -62,39 +38,12 @@ const PLACES_LINKS_CHANGED_DELAY_TIME = 1000; // time in ms to delay timer for p
 const TOP_SITES_BLOCKED_SPONSORS_PREF = "browser.topsites.blockedSponsors";
 
 /**
- * Observer - a wrapper around history/bookmark observers to add the QueryInterface.
- */
-class Observer {
-  constructor(dispatch, observerInterface) {
-    this.dispatch = dispatch;
-    this.QueryInterface = ChromeUtils.generateQI([
-      observerInterface,
-      "nsISupportsWeakReference",
-    ]);
-  }
-}
-
-/**
- * BookmarksObserver - observes events from PlacesUtils.bookmarks
- */
-class BookmarksObserver extends Observer {
-  constructor(dispatch) {
-    super(dispatch, Ci.nsINavBookmarkObserver);
-    this.skipTags = true;
-  }
-
-  // Empty functions to make xpconnect happy.
-  // Disabled due to performance cost, see Issue 3203 /
-  // https://bugzilla.mozilla.org/show_bug.cgi?id=1392267.
-  onItemChanged() {}
-}
-
-/**
  * PlacesObserver - observes events from PlacesUtils.observers
  */
-class PlacesObserver extends Observer {
+class PlacesObserver {
   constructor(dispatch) {
-    super(dispatch, Ci.nsINavBookmarkObserver);
+    this.dispatch = dispatch;
+    this.QueryInterface = ChromeUtils.generateQI(["nsISupportsWeakReference"]);
     this.handlePlacesEvent = this.handlePlacesEvent.bind(this);
   }
 
@@ -188,15 +137,10 @@ class PlacesFeed {
   constructor() {
     this.placesChangedTimer = null;
     this.customDispatch = this.customDispatch.bind(this);
-    this.bookmarksObserver = new BookmarksObserver(this.customDispatch);
     this.placesObserver = new PlacesObserver(this.customDispatch);
   }
 
   addObservers() {
-    // NB: Directly get services without importing the *BIG* PlacesUtils module
-    Cc["@mozilla.org/browser/nav-bookmarks-service;1"]
-      .getService(Ci.nsINavBookmarksService)
-      .addObserver(this.bookmarksObserver, true);
     lazy.PlacesUtils.observers.addListener(
       ["bookmark-added", "bookmark-removed", "history-cleared", "page-removed"],
       this.placesObserver.handlePlacesEvent
@@ -239,7 +183,6 @@ class PlacesFeed {
       this.placesChangedTimer.cancel();
       this.placesChangedTimer = null;
     }
-    lazy.PlacesUtils.bookmarks.removeObserver(this.bookmarksObserver);
     lazy.PlacesUtils.observers.removeListener(
       ["bookmark-added", "bookmark-removed", "history-cleared", "page-removed"],
       this.placesObserver.handlePlacesEvent
@@ -276,7 +219,7 @@ class PlacesFeed {
     const params = {
       private: isPrivate,
       targetBrowser: action._target.browser,
-      fromChrome: false, // This ensure we maintain user preference for how to open new tabs.
+      forceForeground: false, // This ensure we maintain user preference for how to open new tabs.
       globalHistoryOptions: {
         triggeringSponsoredURL: action.data.sponsored_tile_id
           ? action.data.url
@@ -311,7 +254,7 @@ class PlacesFeed {
         );
       }
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
       return;
     }
 
@@ -338,9 +281,8 @@ class PlacesFeed {
   }
 
   async saveToPocket(site, browser) {
-    const sendToPocket = lazy.NimbusFeatures.pocketNewtab.getVariable(
-      "sendToPocket"
-    );
+    const sendToPocket =
+      lazy.NimbusFeatures.pocketNewtab.getVariable("sendToPocket");
     // An experiment to send the user directly to Pocket's signup page.
     if (sendToPocket && !lazy.pktApi.isUserLoggedIn()) {
       const pocketNewtabExperiment = lazy.ExperimentAPI.getExperiment({
@@ -354,7 +296,7 @@ class PlacesFeed {
       let utmCampaign = pocketNewtabExperiment?.slug;
       let utmContent = pocketNewtabExperiment?.branch?.slug;
 
-      const url = new URL(`https://${pocketSiteHost}/ff_signup`);
+      const url = new URL(`https://${pocketSiteHost}/signup`);
       url.searchParams.append("utm_source", utmSource);
       if (utmCampaign && utmContent) {
         url.searchParams.append("utm_campaign", utmCampaign);
@@ -387,7 +329,7 @@ class PlacesFeed {
         );
       }
     } catch (err) {
-      Cu.reportError(err);
+      console.error(err);
     }
   }
 
@@ -401,7 +343,7 @@ class PlacesFeed {
       await lazy.NewTabUtils.activityStreamLinks.deletePocketEntry(itemID);
       this.store.dispatch({ type: at.POCKET_LINK_DELETED_OR_ARCHIVED });
     } catch (err) {
-      Cu.reportError(err);
+      console.error(err);
     }
   }
 
@@ -415,7 +357,7 @@ class PlacesFeed {
       await lazy.NewTabUtils.activityStreamLinks.archivePocketEntry(itemID);
       this.store.dispatch({ type: at.POCKET_LINK_DELETED_OR_ARCHIVED });
     } catch (err) {
-      Cu.reportError(err);
+      console.error(err);
     }
   }
 
@@ -619,7 +561,6 @@ class PlacesFeed {
 }
 
 // Exported for testing only
-PlacesFeed.BookmarksObserver = BookmarksObserver;
 PlacesFeed.PlacesObserver = PlacesObserver;
 
 const EXPORTED_SYMBOLS = ["PlacesFeed"];

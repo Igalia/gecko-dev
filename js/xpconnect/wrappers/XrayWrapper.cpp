@@ -91,6 +91,7 @@ static bool IsJSXraySupported(JSProtoKey key) {
     case JSProto_Object:
     case JSProto_Array:
     case JSProto_Function:
+    case JSProto_BoundFunction:
     case JSProto_TypedArray:
     case JSProto_SavedFrame:
     case JSProto_RegExp:
@@ -262,11 +263,8 @@ bool ReportWrapperDenial(JSContext* cx, HandleId id, WrapperDenialType type,
     MOZ_ASSERT(type == WrapperDenialForCOW);
     errorMessage.emplace(
         "Security wrapper denied access to property %s on privileged "
-        "Javascript object. Support for exposing privileged objects "
-        "to untrusted content via __exposedProps__ has been "
-        "removed - use WebIDL bindings or Components.utils.cloneInto "
-        "instead. Note that only the first denied property access from a "
-        "given global object will be reported.",
+        "Javascript object. Note that only the first denied property "
+        "access from a given global object will be reported.",
         NS_LossyConvertUTF16toASCII(propertyName).get());
   }
   nsString filenameStr(NS_ConvertASCIItoUTF16(filename.get()));
@@ -676,6 +674,30 @@ bool JSXrayTraits::resolveOwnProperty(
       if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_LASTINDEX)) {
         return getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc);
       }
+    } else if (key == JSProto_BoundFunction) {
+      // Bound functions have configurable .name and .length own data
+      // properties. Only support string values for .name and number values for
+      // .length.
+      if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_NAME)) {
+        if (!getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc)) {
+          return false;
+        }
+        if (desc.isSome() &&
+            (!desc->isDataDescriptor() || !desc->value().isString())) {
+          desc.reset();
+        }
+        return true;
+      }
+      if (id == GetJSIDByIndex(cx, XPCJSContext::IDX_LENGTH)) {
+        if (!getOwnPropertyFromWrapperIfSafe(cx, wrapper, id, desc)) {
+          return false;
+        }
+        if (desc.isSome() &&
+            (!desc->isDataDescriptor() || !desc->value().isNumber())) {
+          desc.reset();
+        }
+        return true;
+      }
     }
 
     // The rest of this function applies only to prototypes.
@@ -982,6 +1004,11 @@ bool JSXrayTraits::enumerateNames(JSContext* cx, HandleObject wrapper,
       if (!props.append(GetJSIDByIndex(cx, XPCJSContext::IDX_LASTINDEX))) {
         return false;
       }
+    } else if (key == JSProto_BoundFunction) {
+      if (!props.append(GetJSIDByIndex(cx, XPCJSContext::IDX_LENGTH)) ||
+          !props.append(GetJSIDByIndex(cx, XPCJSContext::IDX_NAME))) {
+        return false;
+      }
     }
 
     // The rest of this function applies only to prototypes.
@@ -1011,7 +1038,8 @@ bool JSXrayTraits::construct(JSContext* cx, HandleObject wrapper,
     return false;
   }
 
-  if (xpc::JSXrayTraits::getProtoKey(holder) == JSProto_Function) {
+  const JSProtoKey key = xpc::JSXrayTraits::getProtoKey(holder);
+  if (key == JSProto_Function) {
     JSProtoKey standardConstructor = constructorFor(holder);
     if (standardConstructor == JSProto_Null) {
       return baseInstance.construct(cx, wrapper, args);
@@ -1044,6 +1072,9 @@ bool JSXrayTraits::construct(JSContext* cx, HandleObject wrapper,
     AssertSameCompartment(cx, result);
     args.rval().setObject(*result);
     return true;
+  }
+  if (key == JSProto_BoundFunction) {
+    return baseInstance.construct(cx, wrapper, args);
   }
 
   JS::RootedValue v(cx, JS::ObjectValue(*wrapper));

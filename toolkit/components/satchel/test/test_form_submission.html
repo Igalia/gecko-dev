@@ -184,6 +184,12 @@
     <button type="submit">Submit</button>
   </form>
 
+  <form purpose="nothing stored for input autocomplete=one-time-code"
+        id="form27">
+    <input type="text" name="test1" autocomplete="one-time-code">
+    <button type="submit">Submit</button>
+  </form>
+
   <!-- ===== Things that should be saved ===== -->
 
   <!-- Form 100 is submitted into an iframe, not declared here. -->
@@ -202,7 +208,7 @@
 
   <form purpose="saved input with id and not name"
         id="form103">
-    <input type="text" id="test3">
+    <input type="text" name="test3">
     <button type="submit">Submit</button>
   </form>
 
@@ -257,8 +263,7 @@
   </form>
 
 </div>
-<pre id="test">
-<script class="testbody" type="text/javascript">
+<script>
 /* eslint-disable complexity */
 
 const ccNumbers = {
@@ -346,11 +351,7 @@ async function checkSubmitSaves(formNumber, inputName, interactiveValue, savedVa
   is(historyEntriesCount, 1, form.getAttribute("purpose"));
 }
 
-// This will prevent endless loop of tests
-for (const form of document.forms) {
-  /* eslint-disable-next-line mozilla/balanced-listeners */
-  form.addEventListener("submit", e => e.preventDefault());
-}
+preventSubmitOnForms();
 
 add_setup(async () => {
   await updateFormHistory([
@@ -397,7 +398,7 @@ add_task(async function form7_does_not_save() {
 
 add_task(async function form8_does_not_save() {
   // Form 8 has an input with no name or input attribute.
-  let input = SpecialPowers.wrap(document.getElementById("form8").elements[0]);
+  const input = SpecialPowers.wrap(document.getElementById("form8").elements[0]);
   is(input.type, "text", "checking we got unidentified input");
   input.setUserInput("dontSaveThis");
   await checkSubmitDoesNotSave(8);
@@ -437,7 +438,7 @@ add_task(async function form13_does_not_save() {
 });
 
 add_task(async function form14_does_not_save() {
-  let input = SpecialPowers.wrap(document.getElementById("form14").elements[0]);
+  const input = SpecialPowers.wrap(document.getElementById("form14").elements[0]);
   input.type  = "password";
   input.setUserInput("dontSaveThis");
   // Set it back to type=text to simulate a password visibility toggle.
@@ -511,6 +512,11 @@ add_task(async function form26_does_not_save() {
   setUserInput(26, "test1", "s3cr3t");
   document.querySelector("form[id=form26] input[name=test1]").value = "script changed me";
   await checkSubmitDoesNotSave(26);
+});
+
+add_task(async function form27_does_not_save() {
+  setUserInput(27, "test1", "123456");
+  await checkSubmitDoesNotSave(27);
 });
 
 add_task(async function form100_saves() {
@@ -588,6 +594,5 @@ add_task(async function form109_saves() {
 });
 
 </script>
-</pre>
 </body>
 </html>

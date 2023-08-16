@@ -36,8 +36,6 @@ enum class ReferrerPolicy : uint8_t;
 }  // namespace dom
 }  // namespace mozilla
 
-#define XSLT_MSGS_URL "chrome://global/locale/xslt/xslt.properties"
-
 /**
  * txMozillaXSLTProcessor is a front-end to the XSLT Processor.
  */
@@ -59,8 +57,8 @@ class txMozillaXSLTProcessor final : public nsIDocumentTransformer,
 
   // nsISupports interface
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_AMBIGUOUS(txMozillaXSLTProcessor,
-                                                         nsIDocumentTransformer)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS_AMBIGUOUS(txMozillaXSLTProcessor,
+                                                        nsIDocumentTransformer)
 
   // nsIDocumentTransformer interface
   NS_IMETHOD SetTransformObserver(nsITransformObserver* aObserver) override;

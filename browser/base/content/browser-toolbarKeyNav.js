@@ -63,18 +63,24 @@ ToolbarKeyboardNavigator = {
         return NodeFilter.FILTER_REJECT;
       }
 
-      // Skip invisible or disabled elements.
-      if (
-        aNode.hidden ||
-        aNode.disabled ||
-        aNode.style.visibility == "hidden"
-      ) {
+      // Skip disabled elements.
+      if (aNode.disabled) {
         return NodeFilter.FILTER_REJECT;
       }
-      // This width check excludes the overflow button when there's no overflow.
-      let bounds = window.windowUtils.getBoundsWithoutFlushing(aNode);
-      if (bounds.width == 0) {
+
+      // Skip invisible elements.
+      const visible = aNode.checkVisibility({
+        checkVisibilityCSS: true,
+        flush: false,
+      });
+      if (!visible) {
         return NodeFilter.FILTER_REJECT;
+      }
+
+      // This width check excludes the overflow button when there's no overflow.
+      const bounds = window.windowUtils.getBoundsWithoutFlushing(aNode);
+      if (bounds.width == 0) {
+        return NodeFilter.FILTER_SKIP;
       }
 
       if (this._isButton(aNode)) {
@@ -207,12 +213,9 @@ ToolbarKeyboardNavigator = {
         // Then work out if any of the earlier ones are in a visible
         // toolbar:
         while (earlierVisibleStopIndex >= 0) {
-          let stopToolbar = allStops[earlierVisibleStopIndex].closest(
-            "toolbar"
-          );
-          if (
-            window.windowUtils.getBoundsWithoutFlushing(stopToolbar).height > 0
-          ) {
+          let stopToolbar =
+            allStops[earlierVisibleStopIndex].closest("toolbar");
+          if (!stopToolbar.collapsed) {
             break;
           }
           earlierVisibleStopIndex--;
@@ -382,27 +385,32 @@ ToolbarKeyboardNavigator = {
 
     if (focus.getAttribute("type") == "menu") {
       focus.open = true;
-    } else {
-      // Several buttons specifically don't use command events; e.g. because
-      // they want to activate for middle click. Therefore, simulate a
-      // click event.
-      // If this button does handle command events, that won't trigger here.
-      // Command events have their own keyboard handling: keypress for enter
-      // and keyup for space. We rely on that behavior, since there's no way
-      // for us to reliably know what events a button handles.
-      focus.dispatchEvent(
-        new MouseEvent("click", {
-          bubbles: true,
-          ctrlKey: aEvent.ctrlKey,
-          altKey: aEvent.altKey,
-          shiftKey: aEvent.shiftKey,
-          metaKey: aEvent.metaKey,
-        })
-      );
+      return;
     }
-    // We deliberately don't call aEvent.preventDefault() here so that enter
-    // will trigger a command event handler if appropriate.
-    aEvent.stopPropagation();
+
+    // Several buttons specifically don't use command events; e.g. because
+    // they want to activate for middle click. Therefore, simulate a click
+    // event if we know they handle click explicitly and don't handle
+    // commands.
+    const usesClickInsteadOfCommand = (() => {
+      if (focus.tagName != "toolbarbutton") {
+        return true;
+      }
+      return !focus.hasAttribute("oncommand") && focus.hasAttribute("onclick");
+    })();
+
+    if (!usesClickInsteadOfCommand) {
+      return;
+    }
+    focus.dispatchEvent(
+      new MouseEvent("click", {
+        bubbles: true,
+        ctrlKey: aEvent.ctrlKey,
+        altKey: aEvent.altKey,
+        shiftKey: aEvent.shiftKey,
+        metaKey: aEvent.metaKey,
+      })
+    );
   },
 
   handleEvent(aEvent) {

@@ -35,6 +35,7 @@
 #include "mozilla/Telemetry.h"
 #include "nsNetworkLinkService.h"
 #include "../../base/IPv6Utils.h"
+#include "../LinkServiceCommon.h"
 #include "../NetworkLinkServiceDefines.h"
 
 #import <Cocoa/Cocoa.h>
@@ -232,30 +233,43 @@ static bool scanArp(char* ip, char* mac, size_t maclen) {
   mib[5] = RTF_LLINFO;
 
   size_t needed;
-  if (sysctl(mib, 6, nullptr, &needed, nullptr, 0) < 0) {
-    return false;
-  }
-  if (needed == 0) {
-    LOG(("scanArp: empty table"));
-    return false;
-  }
-
-  UniquePtr<char[]> buf(new char[needed]);
-
-  for (;;) {
-    st = sysctl(mib, 6, &buf[0], &needed, nullptr, 0);
-    if (st == 0 || errno != ENOMEM) {
-      break;
+  auto allocateBuf = [&]() -> UniquePtr<char[]> {
+    // calling sysctl with a null buffer to get the minimum buffer size
+    if (sysctl(mib, 6, nullptr, &needed, nullptr, 0) < 0) {
+      return nullptr;
     }
-    needed += needed / 8;
 
-    auto tmp = MakeUnique<char[]>(needed);
-    memcpy(&tmp[0], &buf[0], needed);
-    buf = std::move(tmp);
-  }
-  if (st == -1) {
+    if (needed == 0) {
+      LOG(("scanArp: empty table"));
+      return nullptr;
+    }
+
+    return MakeUnique<char[]>(needed);
+  };
+
+  UniquePtr<char[]> buf = allocateBuf();
+  if (!buf) {
     return false;
   }
+
+  st = sysctl(mib, 6, &buf[0], &needed, nullptr, 0);
+  // If errno is ENOMEM, try to allocate a new buffer and try again.
+  if (st != 0) {
+    if (errno != ENOMEM) {
+      return false;
+    }
+
+    buf = allocateBuf();
+    if (!buf) {
+      return false;
+    }
+
+    st = sysctl(mib, 6, &buf[0], &needed, nullptr, 0);
+    if (st == -1) {
+      return false;
+    }
+  }
+
   lim = &buf[needed];
 
   struct rt_msghdr* rtm;
@@ -597,11 +611,8 @@ void nsNetworkLinkService::calculateNetworkIdInternal(void) {
   bool found6 = IPv6NetworkId(&sha1);
 
   if (found4 || found6) {
-    // This 'addition' could potentially be a fixed number from the
-    // profile or something.
-    nsAutoCString addition("local-rubbish");
     nsAutoCString output;
-    sha1.update(addition.get(), addition.Length());
+    SeedNetworkId(sha1);
     uint8_t digest[SHA1Sum::kHashSize];
     sha1.finish(digest);
     nsAutoCString newString(reinterpret_cast<char*>(digest), SHA1Sum::kHashSize);

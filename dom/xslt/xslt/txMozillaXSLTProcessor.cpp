@@ -10,7 +10,6 @@
 #include "mozilla/dom/Document.h"
 #include "nsIStringBundle.h"
 #include "nsIURI.h"
-#include "nsMemory.h"
 #include "XPathResult.h"
 #include "txExecutionState.h"
 #include "txMozillaTextOutput.h"
@@ -18,12 +17,12 @@
 #include "txURIUtils.h"
 #include "txXMLUtils.h"
 #include "txUnknownHandler.h"
+#include "txXSLTMsgsURL.h"
 #include "txXSLTProcessor.h"
 #include "nsIPrincipal.h"
 #include "nsThreadUtils.h"
 #include "jsapi.h"
 #include "txExprParser.h"
-#include "nsErrorService.h"
 #include "nsJSUtils.h"
 #include "nsIXPConnect.h"
 #include "nsNameSpaceManager.h"
@@ -593,6 +592,19 @@ XSLTProcessRequest::GetStatus(nsresult* status) {
   return NS_OK;
 }
 
+NS_IMETHODIMP XSLTProcessRequest::SetCanceledReason(const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP XSLTProcessRequest::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP XSLTProcessRequest::CancelWithReason(nsresult aStatus,
+                                                   const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
+}
+
 NS_IMETHODIMP
 XSLTProcessRequest::Cancel(nsresult status) {
   mState->stopProcessing();
@@ -976,7 +988,7 @@ void txMozillaXSLTProcessor::notifyError() {
 
   IgnoredErrorResult rv;
   ElementCreationOptionsOrString options;
-  options.SetAsString();
+  Unused << options.SetAsString();
 
   nsCOMPtr<Element> element =
       document->CreateElementNS(ns, u"parsererror"_ns, options, rv);
@@ -998,7 +1010,7 @@ void txMozillaXSLTProcessor::notifyError() {
 
   if (!mSourceText.IsEmpty()) {
     ElementCreationOptionsOrString options;
-    options.SetAsString();
+    Unused << options.SetAsString();
 
     nsCOMPtr<Element> sourceElement =
         document->CreateElementNS(ns, u"sourcetext"_ns, options, rv);
@@ -1040,7 +1052,7 @@ nsresult txMozillaXSLTProcessor::ensureStylesheet() {
   return TX_CompileStylesheet(style, this, getter_AddRefs(mStylesheet));
 }
 
-void txMozillaXSLTProcessor::NodeWillBeDestroyed(const nsINode* aNode) {
+void txMozillaXSLTProcessor::NodeWillBeDestroyed(nsINode* aNode) {
   nsCOMPtr<nsIMutationObserver> kungFuDeathGrip(this);
   if (NS_FAILED(mCompileResult)) {
     return;
@@ -1101,24 +1113,11 @@ nsresult txMozillaXSLTProcessor::Startup() {
     return NS_ERROR_OUT_OF_MEMORY;
   }
 
-  nsCOMPtr<nsIErrorService> errorService = nsErrorService::GetOrCreate();
-  if (errorService) {
-    errorService->RegisterErrorStringBundle(NS_ERROR_MODULE_XSLT,
-                                            XSLT_MSGS_URL);
-  }
-
   return NS_OK;
 }
 
 /* static*/
-void txMozillaXSLTProcessor::Shutdown() {
-  txXSLTProcessor::shutdown();
-
-  nsCOMPtr<nsIErrorService> errorService = nsErrorService::GetOrCreate();
-  if (errorService) {
-    errorService->UnregisterErrorStringBundle(NS_ERROR_MODULE_XSLT);
-  }
-}
+void txMozillaXSLTProcessor::Shutdown() { txXSLTProcessor::shutdown(); }
 
 /* static */
 UniquePtr<txVariable::OwningXSLTParameterValue> txVariable::convertToOwning(

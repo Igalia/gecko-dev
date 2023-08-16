@@ -9,9 +9,9 @@
  * Also on ComponentUtils.jsm. Which is deprecated.
  */
 
-const {AppConstants} = ChromeUtils.import("resource://gre/modules/AppConstants.jsm");
-const {ComponentUtils} = ChromeUtils.import("resource://gre/modules/ComponentUtils.jsm");
-const {Preferences} = ChromeUtils.import("resource://gre/modules/Preferences.jsm");
+const {AppConstants} = ChromeUtils.importESModule("resource://gre/modules/AppConstants.sys.mjs");
+const {ComponentUtils} = ChromeUtils.importESModule("resource://gre/modules/ComponentUtils.sys.mjs");
+const {Preferences} = ChromeUtils.importESModule("resource://gre/modules/Preferences.sys.mjs");
 const {XPCOMUtils} = ChromeUtils.importESModule("resource://gre/modules/XPCOMUtils.sys.mjs");
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -156,9 +156,8 @@ add_test(function test_categoryRegistration()
   const XULAPPINFO_CID = Components.ID("{fc937916-656b-4fb3-a395-8c63569e27a8}");
 
   // Create a fake app entry for our category registration apps filter.
-  let tmp = {};
-  ChromeUtils.import("resource://testing-common/AppInfo.jsm", tmp);
-  let XULAppInfo = tmp.newAppInfo({
+  let { newAppInfo } = ChromeUtils.importESModule("resource://testing-common/AppInfo.sys.mjs");
+  let XULAppInfo = newAppInfo({
     name: "catRegTest",
     ID: "{adb42a9a-0d19-4849-bf4d-627614ca19be}",
     version: "1",

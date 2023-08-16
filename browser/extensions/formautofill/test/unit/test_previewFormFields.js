@@ -3,21 +3,17 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-const { FormAutofillHandler } = ChromeUtils.import(
-  "resource://autofill/FormAutofillHandler.jsm"
-);
-
 // Bug 1762063 - we need to fix this pattern of having to wrap destructuring calls in parentheses.
 // We can't do a standard destructuring call because FormAutofillUtils is already declared as a var in head.js
-({ FormAutofillUtils } = ChromeUtils.import(
-  "resource://autofill/FormAutofillUtils.jsm"
+({ FormAutofillUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/shared/FormAutofillUtils.sys.mjs"
 ));
 const { FIELD_STATES } = FormAutofillUtils;
 const PREVIEW = FIELD_STATES.PREVIEW;
 const NORMAL = FIELD_STATES.NORMAL;
 
-const { OSKeyStore } = ChromeUtils.import(
-  "resource://gre/modules/OSKeyStore.jsm"
+const { OSKeyStore } = ChromeUtils.importESModule(
+  "resource://gre/modules/OSKeyStore.sys.mjs"
 );
 
 const TESTCASES = [
@@ -143,7 +139,7 @@ const TESTCASES = [
 
 function run_tests(testcases) {
   for (let testcase of testcases) {
-    add_task(async function() {
+    add_task(async function () {
       info("Starting testcase: " + testcase.description);
       let doc = MockDocument.createTestDocument(
         "http://localhost:8080/test/",
@@ -185,7 +181,7 @@ function run_tests(testcases) {
       await handler.activeSection.previewFormFields(adaptedProfile);
 
       for (let field of handler.fieldDetails) {
-        let actual = field.state;
+        let actual = handler.getFilledStateByElement(field.element);
         let expected = testcase.expectedResultState[field.fieldName];
         info(`Checking ${field.fieldName} state`);
         Assert.equal(

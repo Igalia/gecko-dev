@@ -23,7 +23,7 @@ add_task(async function test_profile_single_frame_page_info() {
 
   info("Open a tab with single_frame.html in it.");
   const url = BASE_URL + "single_frame.html";
-  await BrowserTestUtils.withNewTab(url, async function(contentBrowser) {
+  await BrowserTestUtils.withNewTab(url, async function (contentBrowser) {
     const contentPid = await SpecialPowers.spawn(contentBrowser, [], () => {
       return Services.appinfo.processID;
     });
@@ -79,7 +79,7 @@ add_task(async function test_profile_private_browsing() {
   try {
     const url = BASE_URL_HTTPS + "single_frame.html";
     const contentBrowser = win.gBrowser.selectedBrowser;
-    BrowserTestUtils.loadURI(contentBrowser, url);
+    BrowserTestUtils.loadURIString(contentBrowser, url);
     await BrowserTestUtils.browserLoaded(contentBrowser, false, url);
 
     const contentPid = await SpecialPowers.spawn(contentBrowser, [], () => {
@@ -90,10 +90,8 @@ add_task(async function test_profile_private_browsing() {
     const activeTabID = contentBrowser.browsingContext.browserId;
 
     info("Capture the profile data.");
-    const {
-      contentProcess,
-      contentThread,
-    } = await stopProfilerNowAndGetThreads(contentPid);
+    const { contentProcess, contentThread } =
+      await stopProfilerNowAndGetThreads(contentPid);
 
     // This information is available with fission only.
     Assert.equal(

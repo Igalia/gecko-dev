@@ -116,7 +116,7 @@ async function promiseBrowserContentUnloaded(browser) {
   return { unloadPromise };
 }
 
-add_task(async function() {
+add_task(async function () {
   let win1 = await BrowserTestUtils.openNewBrowserWindow();
   let win2 = await BrowserTestUtils.openNewBrowserWindow();
 
@@ -127,6 +127,7 @@ add_task(async function() {
 
       browser_action: {
         default_popup: "page.html?popup",
+        default_area: "navbar",
       },
 
       sidebar_action: {
@@ -165,7 +166,7 @@ add_task(async function() {
     Management: {
       global: { windowTracker },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let winId1 = windowTracker.getId(win1);
   let winId2 = windowTracker.getId(win2);
@@ -234,7 +235,7 @@ add_task(async function() {
     await unloadPromise;
   }
 
-  await triggerPopup(win1, async function() {
+  await triggerPopup(win1, async function () {
     await checkViews("background", 2, 1, 0);
     await checkViews("sidebar", 2, 1, 3);
     await checkViews("popup", 2, 1, 1);
@@ -242,7 +243,7 @@ add_task(async function() {
     await checkViewsWithFilter({ type: "popup", tabId: -1 }, 1);
   });
 
-  await triggerPopup(win2, async function() {
+  await triggerPopup(win2, async function () {
     await checkViews("background", 2, 1, 0);
     await checkViews("sidebar", 2, 1, 3);
     await checkViews("popup", 2, 1, 1);
@@ -273,7 +274,7 @@ add_task(async function() {
 
   info("opening win1 popup");
 
-  await triggerPopup(win1, async function() {
+  await triggerPopup(win1, async function () {
     await checkViews("background", 1, 1, 0);
     await checkViews("sidebar", 1, 1, 3);
     await checkViews("tab", 1, 1, 1);
@@ -282,7 +283,7 @@ add_task(async function() {
 
   info("opening win2 popup");
 
-  await triggerPopup(win2, async function() {
+  await triggerPopup(win2, async function () {
     await checkViews("background", 1, 1, 0);
     await checkViews("sidebar", 1, 1, 3);
     await checkViews("tab", 1, 1, 1);
@@ -302,6 +303,7 @@ add_task(async function test_getViews_excludes_blocked_parsing_documents() {
     manifest: {
       browser_action: {
         default_popup: "popup.html",
+        default_area: "navbar",
       },
     },
     files: {
@@ -310,7 +312,7 @@ add_task(async function test_getViews_excludes_blocked_parsing_documents() {
         </script>
         <h1>ExtensionPopup</h1>
       `,
-      "popup.js": function() {
+      "popup.js": function () {
         browser.test.sendMessage(
           "browserActionPopup:loaded",
           window.location.href
@@ -343,7 +345,7 @@ add_task(async function test_getViews_excludes_blocked_parsing_documents() {
     Management: {
       global: { browserActionFor },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   let ext = WebExtensionPolicy.getByID(extension.id)?.extension;
   let browserAction = browserActionFor(ext);
@@ -370,7 +372,7 @@ add_task(async function test_getViews_excludes_blocked_parsing_documents() {
     // to prevent intermittent failures that where often triggered in macos
     // PGO builds when this was using EventUtils.synthesizeMouseAtCenter).
     let mouseOverEvent = new MouseEvent("mouseover");
-    widget.node.dispatchEvent(mouseOverEvent);
+    widget.node.firstElementChild.dispatchEvent(mouseOverEvent);
 
     await TestUtils.waitForCondition(
       () => browserAction.pendingPopup?.browser,

@@ -2,9 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { E10SUtils } = ChromeUtils.import(
-  "resource://gre/modules/E10SUtils.jsm"
-);
 const triggeringPrincipal_base64 = E10SUtils.SERIALIZED_SYSTEMPRINCIPAL;
 
 const TAB_STATE_NEEDS_RESTORE = 1;
@@ -20,17 +17,17 @@ const HTTPSROOT = ROOT.replace(
   "https://example.com/"
 );
 
-const { SessionSaver } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionSaver.jsm"
+const { SessionSaver } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionSaver.sys.mjs"
 );
-const { SessionFile } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionFile.jsm"
+const { SessionFile } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionFile.sys.mjs"
 );
-const { TabState } = ChromeUtils.import(
-  "resource:///modules/sessionstore/TabState.jsm"
+const { TabState } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/TabState.sys.mjs"
 );
-const { TabStateFlusher } = ChromeUtils.import(
-  "resource:///modules/sessionstore/TabStateFlusher.jsm"
+const { TabStateFlusher } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
 );
 const ss = SessionStore;
 
@@ -38,13 +35,13 @@ const ss = SessionStore;
 // the user to bring them to the foreground. We ensure this by resetting the
 // related preference (see the "firefox.js" defaults file for details).
 Services.prefs.setBoolPref("browser.sessionstore.restore_on_demand", false);
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   Services.prefs.clearUserPref("browser.sessionstore.restore_on_demand");
 });
 
 // Obtain access to internals
 Services.prefs.setBoolPref("browser.sessionstore.debug", true);
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   Services.prefs.clearUserPref("browser.sessionstore.debug");
 });
 
@@ -74,7 +71,7 @@ function provideWindow(aCallback, aURL, aFeatures) {
 
     aWin.gBrowser.selectedBrowser.addEventListener(
       "load",
-      function() {
+      function () {
         callbackSoon(aWin);
       },
       { capture: true, once: true }
@@ -108,8 +105,8 @@ function waitForBrowserState(aState, aSetStateCallback) {
     Services.prefs.getBoolPref("browser.sessionstore.restore_on_demand") &&
     Services.prefs.getBoolPref("browser.sessionstore.restore_tabs_lazily");
 
-  aState.windows.forEach(function(winState) {
-    winState.tabs.forEach(function(tabState) {
+  aState.windows.forEach(function (winState) {
+    winState.tabs.forEach(function (tabState) {
       if (!restoreTabsLazily && (restoreHiddenTabs || !tabState.hidden)) {
         expectedTabsRestored++;
       }
@@ -128,7 +125,7 @@ function waitForBrowserState(aState, aSetStateCallback) {
   function onSSTabRestored(aEvent) {
     if (++tabsRestored == expectedTabsRestored) {
       // Remove the event listener from each window
-      windows.forEach(function(win) {
+      windows.forEach(function (win) {
         win.gBrowser.tabContainer.removeEventListener(
           "SSTabRestored",
           onSSTabRestored,
@@ -148,7 +145,7 @@ function waitForBrowserState(aState, aSetStateCallback) {
       let newWindow = aSubject;
       newWindow.addEventListener(
         "load",
-        function() {
+        function () {
           if (++windowsOpen == expectedWindows) {
             Services.ww.unregisterNotification(windowObserver);
             windowObserving = false;
@@ -170,7 +167,7 @@ function waitForBrowserState(aState, aSetStateCallback) {
 
   // We only want to register the notification if we expect more than 1 window
   if (expectedWindows > 1) {
-    registerCleanupFunction(function() {
+    registerCleanupFunction(function () {
       if (windowObserving) {
         Services.ww.unregisterNotification(windowObserver);
       }
@@ -179,9 +176,9 @@ function waitForBrowserState(aState, aSetStateCallback) {
     Services.ww.registerNotification(windowObserver);
   }
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     if (listening) {
-      windows.forEach(function(win) {
+      windows.forEach(function (win) {
         win.gBrowser.tabContainer.removeEventListener(
           "SSTabRestored",
           onSSTabRestored,
@@ -255,7 +252,7 @@ function waitForTopic(aTopic, aTimeout, aCallback) {
     observing = false;
   }
 
-  let timeout = setTimeout(function() {
+  let timeout = setTimeout(function () {
     removeObserver();
     aCallback(false);
   }, aTimeout);
@@ -266,7 +263,7 @@ function waitForTopic(aTopic, aTimeout, aCallback) {
     executeSoon(() => aCallback(true));
   }
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     removeObserver();
     if (timeout) {
       clearTimeout(timeout);
@@ -307,14 +304,14 @@ function forceSaveState() {
 
 function promiseRecoveryFileContents() {
   let promise = forceSaveState();
-  return promise.then(function() {
+  return promise.then(function () {
     return IOUtils.readUTF8(SessionFile.Paths.recovery, {
       decompress: true,
     });
   });
 }
 
-var promiseForEachSessionRestoreFile = async function(cb) {
+var promiseForEachSessionRestoreFile = async function (cb) {
   for (let key of SessionFile.Paths.loadOrder) {
     let data = "";
     try {
@@ -342,7 +339,7 @@ function promiseBrowserLoaded(
 function whenWindowLoaded(aWindow, aCallback) {
   aWindow.addEventListener(
     "load",
-    function() {
+    function () {
       executeSoon(function executeWhenWindowLoaded() {
         aCallback(aWindow);
       });
@@ -395,7 +392,7 @@ var gWebProgressListener = {
   },
 };
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   gWebProgressListener.unsetCallback();
 });
 
@@ -447,7 +444,7 @@ var gProgressListener = {
   },
 };
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   gProgressListener.unsetCallback();
 });
 
@@ -467,6 +464,13 @@ function promiseAllButPrimaryWindowClosed() {
 function forgetClosedWindows() {
   while (ss.getClosedWindowCount() > 0) {
     ss.forgetClosedWindow(0);
+  }
+}
+
+// Forget all closed tabs for a window
+function forgetClosedTabs(win) {
+  while (ss.getClosedTabCountForWindow(win) > 0) {
+    ss.forgetClosedTab(win, 0);
   }
 }
 
@@ -503,7 +507,7 @@ function whenNewWindowLoaded(aOptions, aCallback) {
 
     win.addEventListener(
       "load",
-      function() {
+      function () {
         let browser = win.gBrowser.selectedBrowser;
         promiseBrowserLoaded(browser).then(resolve);
       },
@@ -560,7 +564,7 @@ function modifySessionStorage(browser, storageData, storageOptions = {}) {
   return SpecialPowers.spawn(
     browsingContext,
     [[storageData, storageOptions]],
-    async function([data, options]) {
+    async function ([data, options]) {
       let frame = content;
       let keys = new Set(Object.keys(data));
       let isClearing = !keys.size;
@@ -745,4 +749,58 @@ function addNonCoopTask(aFile, aTest, aUrlRoot) {
   }
   Object.defineProperty(taskToBeAdded, "name", { value: aTest.name });
   add_task(taskToBeAdded);
+}
+
+async function openAndCloseTab(window, url) {
+  let tab = BrowserTestUtils.addTab(window.gBrowser, url);
+  await promiseBrowserLoaded(tab.linkedBrowser, true, url);
+  await TabStateFlusher.flush(tab.linkedBrowser);
+  await promiseRemoveTabAndSessionState(tab);
+}
+
+/**
+ * This is regrettable, but when `promiseBrowserState` resolves, we're still
+ * midway through loading the tabs. To avoid race conditions in URLs for tabs
+ * being available, wait for all the loads to finish:
+ */
+function promiseSessionStoreLoads(numberOfLoads) {
+  let loadsSeen = 0;
+  return new Promise(resolve => {
+    Services.obs.addObserver(function obs(browser) {
+      loadsSeen++;
+      if (loadsSeen == numberOfLoads) {
+        resolve();
+      }
+      // The typeof check is here to avoid one test messing with everything else by
+      // keeping the observer indefinitely.
+      if (typeof info == "undefined" || loadsSeen >= numberOfLoads) {
+        Services.obs.removeObserver(obs, "sessionstore-debug-tab-restored");
+      }
+      info("Saw load for " + browser.currentURI.spec);
+    }, "sessionstore-debug-tab-restored");
+  });
+}
+
+function triggerClickOn(target, options) {
+  let promise = BrowserTestUtils.waitForEvent(target, "click");
+  if (AppConstants.platform == "macosx") {
+    options.metaKey = options.ctrlKey;
+    delete options.ctrlKey;
+  }
+  EventUtils.synthesizeMouseAtCenter(target, options);
+  return promise;
+}
+
+async function openTabMenuFor(tab) {
+  let tabMenu = tab.ownerDocument.getElementById("tabContextMenu");
+
+  let tabMenuShown = BrowserTestUtils.waitForEvent(tabMenu, "popupshown");
+  EventUtils.synthesizeMouseAtCenter(
+    tab,
+    { type: "contextmenu" },
+    tab.ownerGlobal
+  );
+  await tabMenuShown;
+
+  return tabMenu;
 }

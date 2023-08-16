@@ -14,11 +14,10 @@ using namespace mozilla::css;
 
 namespace mozilla::dom {
 
-CSSContainerRule::CSSContainerRule(RefPtr<RawServoContainerRule> aRawRule,
+CSSContainerRule::CSSContainerRule(RefPtr<StyleContainerRule> aRawRule,
                                    StyleSheet* aSheet, css::Rule* aParentRule,
                                    uint32_t aLine, uint32_t aColumn)
-    : css::ConditionRule(Servo_ContainerRule_GetRules(aRawRule).Consume(),
-                         aSheet, aParentRule, aLine, aColumn),
+    : css::ConditionRule(aSheet, aParentRule, aLine, aColumn),
       mRawRule(std::move(aRawRule)) {}
 
 CSSContainerRule::~CSSContainerRule() = default;
@@ -42,6 +41,10 @@ void CSSContainerRule::List(FILE* out, int32_t aIndent) const {
 }
 #endif
 
+already_AddRefed<StyleLockedCssRules> CSSContainerRule::GetOrCreateRawRules() {
+  return Servo_ContainerRule_GetRules(mRawRule).Consume();
+}
+
 StyleCssRuleType CSSContainerRule::Type() const {
   return StyleCssRuleType::Container;
 }
@@ -55,11 +58,22 @@ void CSSContainerRule::GetCssText(nsACString& aCssText) const {
   Servo_ContainerRule_GetCssText(mRawRule, &aCssText);
 }
 
-void CSSContainerRule::SetRawAfterClone(RefPtr<RawServoContainerRule> aRaw) {
-  mRawRule = std::move(aRaw);
+void CSSContainerRule::GetContainerName(nsACString& aName) const {
+  Servo_ContainerRule_GetContainerName(mRawRule, &aName);
+}
 
-  css::ConditionRule::SetRawAfterClone(
-      Servo_ContainerRule_GetRules(mRawRule).Consume());
+void CSSContainerRule::GetContainerQuery(nsACString& aQuery) const {
+  Servo_ContainerRule_GetContainerQuery(mRawRule, &aQuery);
+}
+
+Element* CSSContainerRule::QueryContainerFor(const Element& aElement) const {
+  return const_cast<Element*>(
+      Servo_ContainerRule_QueryContainerFor(mRawRule, &aElement));
+}
+
+void CSSContainerRule::SetRawAfterClone(RefPtr<StyleContainerRule> aRaw) {
+  mRawRule = std::move(aRaw);
+  css::ConditionRule::DidSetRawAfterClone();
 }
 
 /* virtual */

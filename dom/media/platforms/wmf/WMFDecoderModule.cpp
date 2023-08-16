@@ -55,11 +55,6 @@ static void MOZ_FORMAT_PRINTF(2, 3)
   LOG("%s", markerString.get());
 }
 
-static const GUID CLSID_CMSVPXDecMFT = {
-    0xe3aaf548,
-    0xc9a4,
-    0x4c6e,
-    {0x23, 0x4d, 0x5a, 0xda, 0x37, 0x4b, 0x00, 0x00}};
 static const GUID CLSID_CMSAACDecMFT = {
     0x32D186A7,
     0x218F,
@@ -193,7 +188,7 @@ HRESULT WMFDecoderModule::CreateMFTDecoder(const WMFStreamType& aType,
       return aDecoder->Create(CLSID_CMSH264DecoderMFT);
     case WMFStreamType::VP8:
       static const uint32_t VP8_USABLE_BUILD = 16287;
-      if (!IsWindowsBuildOrLater(VP8_USABLE_BUILD)) {
+      if (!IsWindows10BuildOrLater(VP8_USABLE_BUILD)) {
         WmfDecoderModuleMarkerAndLog("CreateMFTDecoder, VP8 Failure",
                                      "VP8 MFT requires Windows build %" PRId32
                                      " or later",
@@ -258,7 +253,8 @@ bool WMFDecoderModule::CanCreateMFTDecoder(const WMFStreamType& aType) {
     } else {
       nsCOMPtr<nsIRunnable> runnable =
           NS_NewRunnableFunction("WMFDecoderModule::Init", [&]() { Init(); });
-      SyncRunnable::DispatchToThread(GetMainThreadEventTarget(), runnable);
+      SyncRunnable::DispatchToThread(GetMainThreadSerialEventTarget(),
+                                     runnable);
     }
   }
 
@@ -315,6 +311,10 @@ bool WMFDecoderModule::SupportsColorDepth(
 media::DecodeSupportSet WMFDecoderModule::Supports(
     const SupportDecoderParams& aParams,
     DecoderDoctorDiagnostics* aDiagnostics) const {
+  // This should only be supported by MFMediaEngineDecoderModule.
+  if (aParams.mMediaEngineId) {
+    return media::DecodeSupport::Unsupported;
+  }
   // In GPU process, only support decoding if video. This only gives a hint of
   // what the GPU decoder *may* support. The actual check will occur in
   // CreateVideoDecoder.
@@ -367,7 +367,8 @@ already_AddRefed<MediaDataDecoder> WMFDecoderModule::CreateVideoDecoder(
 
   UniquePtr<WMFVideoMFTManager> manager(new WMFVideoMFTManager(
       aParams.VideoConfig(), aParams.mKnowsCompositor, aParams.mImageContainer,
-      aParams.mRate.mValue, aParams.mOptions, sDXVAEnabled));
+      aParams.mRate.mValue, aParams.mOptions, sDXVAEnabled,
+      aParams.mTrackingId));
 
   MediaResult result = manager->Init();
   if (NS_FAILED(result)) {

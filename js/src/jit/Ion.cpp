@@ -64,6 +64,7 @@
 #endif
 
 #include "gc/GC-inl.h"
+#include "gc/StableCellHasher-inl.h"
 #include "jit/InlineScriptTree-inl.h"
 #include "jit/MacroAssembler-inl.h"
 #include "jit/SafepointIndex-inl.h"
@@ -89,6 +90,12 @@ JitRuntime::~JitRuntime() {
   // By this point, the jitcode global table should be empty.
   MOZ_ASSERT_IF(jitcodeGlobalTable_, jitcodeGlobalTable_->empty());
   js_delete(jitcodeGlobalTable_.ref());
+
+  // interpreterEntryMap should be cleared out during finishRoots()
+  MOZ_ASSERT_IF(interpreterEntryMap_, interpreterEntryMap_->empty());
+  js_delete(interpreterEntryMap_.ref());
+
+  js_delete(jitHintsMap_.ref());
 }
 
 uint32_t JitRuntime::startTrampolineCode(MacroAssembler& masm) {
@@ -120,6 +127,20 @@ bool JitRuntime::initialize(JSContext* cx) {
     return false;
   }
 
+  if (!JitOptions.disableJitHints) {
+    jitHintsMap_ = cx->new_<JitHintsMap>();
+    if (!jitHintsMap_) {
+      return false;
+    }
+  }
+
+  if (JitOptions.emitInterpreterEntryTrampoline) {
+    interpreterEntryMap_ = cx->new_<EntryTrampolineMap>();
+    if (!interpreterEntryMap_) {
+      return false;
+    }
+  }
+
   if (!GenerateBaselineInterpreter(cx, baselineInterpreter_)) {
     return false;
   }
@@ -135,6 +156,7 @@ bool JitRuntime::initialize(JSContext* cx) {
 bool JitRuntime::generateTrampolines(JSContext* cx) {
   TempAllocator temp(&cx->tempLifoAlloc());
   StackMacroAssembler masm(cx, temp);
+  PerfSpewerRangeRecorder rangeRecorder(masm);
 
   Label bailoutTail;
   JitSpew(JitSpew_Codegen, "# Emitting bailout tail stub");
@@ -142,9 +164,11 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
 
   JitSpew(JitSpew_Codegen, "# Emitting bailout handler");
   generateBailoutHandler(masm, &bailoutTail);
+  rangeRecorder.recordOffset("Trampoline: Bailout");
 
   JitSpew(JitSpew_Codegen, "# Emitting invalidator");
   generateInvalidator(masm, &bailoutTail);
+  rangeRecorder.recordOffset("Trampoline: Invalidator");
 
   // The arguments rectifier has to use the same frame layout as the function
   // frames it rectifies.
@@ -157,48 +181,70 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
 
   JitSpew(JitSpew_Codegen, "# Emitting arguments rectifier");
   generateArgumentsRectifier(masm, ArgumentsRectifierKind::Normal);
+  rangeRecorder.recordOffset("Trampoline: Arguments Rectifier");
 
   JitSpew(JitSpew_Codegen, "# Emitting trial inlining arguments rectifier");
   generateArgumentsRectifier(masm, ArgumentsRectifierKind::TrialInlining);
+  rangeRecorder.recordOffset(
+      "Trampoline: Arguments Rectifier (Trial Inlining)");
 
   JitSpew(JitSpew_Codegen, "# Emitting EnterJIT sequence");
   generateEnterJIT(cx, masm);
+  rangeRecorder.recordOffset("Trampoline: EnterJIT");
 
   JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for Value");
   valuePreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::Value);
+  rangeRecorder.recordOffset("Trampoline: PreBarrier Value");
 
   JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for String");
   stringPreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::String);
+  rangeRecorder.recordOffset("Trampoline: PreBarrier String");
 
   JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for Object");
   objectPreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::Object);
+  rangeRecorder.recordOffset("Trampoline: PreBarrier Object");
 
   JitSpew(JitSpew_Codegen, "# Emitting Pre Barrier for Shape");
   shapePreBarrierOffset_ = generatePreBarrier(cx, masm, MIRType::Shape);
+  rangeRecorder.recordOffset("Trampoline: PreBarrier Shape");
 
   JitSpew(JitSpew_Codegen, "# Emitting free stub");
   generateFreeStub(masm);
+  rangeRecorder.recordOffset("Trampoline: FreeStub");
 
   JitSpew(JitSpew_Codegen, "# Emitting lazy link stub");
   generateLazyLinkStub(masm);
+  rangeRecorder.recordOffset("Trampoline: LazyLinkStub");
 
   JitSpew(JitSpew_Codegen, "# Emitting interpreter stub");
   generateInterpreterStub(masm);
+  rangeRecorder.recordOffset("Trampoline: Interpreter");
 
   JitSpew(JitSpew_Codegen, "# Emitting double-to-int32-value stub");
   generateDoubleToInt32ValueStub(masm);
+  rangeRecorder.recordOffset("Trampoline: DoubleToInt32ValueStub");
 
   JitSpew(JitSpew_Codegen, "# Emitting VM function wrappers");
-  if (!generateVMWrappers(cx, masm)) {
+  if (!generateVMWrappers(cx, masm, rangeRecorder)) {
     return false;
   }
 
   JitSpew(JitSpew_Codegen, "# Emitting profiler exit frame tail stub");
   Label profilerExitTail;
   generateProfilerExitFrameTailStub(masm, &profilerExitTail);
+  rangeRecorder.recordOffset("Trampoline: ProfilerExitFrameTailStub");
 
   JitSpew(JitSpew_Codegen, "# Emitting exception tail stub");
   generateExceptionTailStub(masm, &profilerExitTail, &bailoutTail);
+  rangeRecorder.recordOffset("Trampoline: ExceptionTailStub");
+
+  JitSpew(JitSpew_Codegen, "# Emitting Ion generic call stub");
+  generateIonGenericCallStub(masm, IonGenericCallKind::Call);
+  rangeRecorder.recordOffset("Trampoline: IonGenericCall");
+
+  JitSpew(JitSpew_Codegen, "# Emitting Ion generic construct stub");
+  generateIonGenericCallStub(masm, IonGenericCallKind::Construct);
+  rangeRecorder.recordOffset("Trampoline: IonGenericConstruct");
 
   Linker linker(masm);
   trampolineCode_ = linker.newCode(cx, CodeKind::Other);
@@ -206,9 +252,7 @@ bool JitRuntime::generateTrampolines(JSContext* cx) {
     return false;
   }
 
-#ifdef JS_ION_PERF
-  writePerfSpewerJitCodeProfile(trampolineCode_, "Trampolines");
-#endif
+  rangeRecorder.collectRangesForJitCode(trampolineCode_);
 #ifdef MOZ_VTUNE
   vtune::MarkStub(trampolineCode_, "Trampolines");
 #endif
@@ -267,19 +311,10 @@ uint8_t* JitRuntime::allocateIonOsrTempData(size_t size) {
 
 void JitRuntime::freeIonOsrTempData() { ionOsrTempData_.ref().reset(); }
 
-JitRealm::JitRealm()
-    : stubCodes_(nullptr), initialStringHeap(gc::TenuredHeap) {}
+JitRealm::JitRealm() : initialStringHeap(gc::Heap::Tenured) {}
 
-JitRealm::~JitRealm() { js_delete(stubCodes_); }
-
-bool JitRealm::initialize(JSContext* cx, bool zoneHasNurseryStrings) {
-  stubCodes_ = cx->new_<ICStubCodeMap>(cx->zone());
-  if (!stubCodes_) {
-    return false;
-  }
+void JitRealm::initialize(bool zoneHasNurseryStrings) {
   setStringsCanBeInNursery(zoneHasNurseryStrings);
-
-  return true;
 }
 
 template <typename T>
@@ -401,8 +436,6 @@ void JitRealm::traceWeak(JSTracer* trc, JS::Realm* realm) {
   // Any outstanding compilations should have been cancelled by the GC.
   MOZ_ASSERT(!HasOffThreadIonCompile(realm));
 
-  stubCodes_->traceWeak(trc);
-
   for (WeakHeapPtr<JitCode*>& stub : stubs_) {
     TraceWeakEdge(trc, &stub, "JitRealm::stubs_");
   }
@@ -496,17 +529,15 @@ bool RecompileInfo::traceWeak(JSTracer* trc) {
   return maybeIonScriptToInvalidate() != nullptr;
 }
 
-void JitZone::traceWeak(JSTracer* trc) {
+void JitZone::traceWeak(JSTracer* trc, Zone* zone) {
+  MOZ_ASSERT(this == zone->jitZone());
+
   baselineCacheIRStubCodes_.traceWeak(trc);
   inlinedCompilations_.traceWeak(trc);
 }
 
 size_t JitRealm::sizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf) const {
-  size_t n = mallocSizeOf(this);
-  if (stubCodes_) {
-    n += stubCodes_->shallowSizeOfIncludingThis(mallocSizeOf);
-  }
-  return n;
+  return mallocSizeOf(this);
 }
 
 void JitZone::addSizeOfIncludingThis(mozilla::MallocSizeOf mallocSizeOf,
@@ -534,14 +565,14 @@ template <AllowGC allowGC>
 JitCode* JitCode::New(JSContext* cx, uint8_t* code, uint32_t totalSize,
                       uint32_t headerSize, ExecutablePool* pool,
                       CodeKind kind) {
-  JitCode* codeObj = Allocate<JitCode, allowGC>(cx);
+  uint32_t bufferSize = totalSize - headerSize;
+  JitCode* codeObj =
+      cx->newCell<JitCode, allowGC>(code, bufferSize, headerSize, pool, kind);
   if (!codeObj) {
+    // The caller already allocated `totalSize` bytes of executable memory.
     pool->release(totalSize, kind);
     return nullptr;
   }
-
-  uint32_t bufferSize = totalSize - headerSize;
-  new (codeObj) JitCode(code, bufferSize, headerSize, pool, kind);
 
   cx->zone()->incJitMemory(totalSize);
 
@@ -617,6 +648,7 @@ void JitCode::finalize(JS::GCContext* gcx) {
   }
   setHeaderPtr(nullptr);
 
+#ifdef JS_ION_PERF
   // Code buffers are stored inside ExecutablePools. Pools are refcounted.
   // Releasing the pool may free it. Horrible hack: if we are using perf
   // integration, we don't want to reuse code addresses, so we just leak the
@@ -624,6 +656,9 @@ void JitCode::finalize(JS::GCContext* gcx) {
   if (!PerfEnabled()) {
     pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
   }
+#else
+  pool_->release(headerSize_ + bufferSize_, CodeKind(kind_));
+#endif
 
   zone()->decJitMemory(headerSize_ + bufferSize_);
 
@@ -754,6 +789,11 @@ void IonScript::trace(JSTracer* trc) {
   for (size_t i = 0; i < numICs(); i++) {
     getICFromIndex(i).trace(trc, this);
   }
+}
+
+void IonScript::traceWeak(JSTracer* trc) {
+  // IonICs do not currently contain weak pointers. If this is added then they
+  // should be traced here.
 }
 
 /* static */
@@ -931,9 +971,11 @@ bool OptimizeMIR(MIRGenerator* mir) {
   gs.spewPass("BuildSSA");
   AssertBasicGraphCoherency(graph);
 
-  JitSpewCont(JitSpew_MIRExpressions, "\n");
-  DumpMIRExpressions(graph, mir->outerInfo(),
-                     "BuildSSA (== input to OptimizeMIR)");
+  if (JitSpewEnabled(JitSpew_MIRExpressions)) {
+    JitSpewCont(JitSpew_MIRExpressions, "\n");
+    DumpMIRExpressions(JitSpewPrinter(), graph, mir->outerInfo(),
+                       "BuildSSA (== input to OptimizeMIR)");
+  }
 
   if (!JitOptions.disablePruning && !mir->compilingWasm()) {
     JitSpewCont(JitSpew_Prune, "\n");
@@ -1048,6 +1090,18 @@ bool OptimizeMIR(MIRGenerator* mir) {
     }
   }
 
+  if (!mir->compilingWasm() && !JitOptions.disableIteratorIndices) {
+    if (!OptimizeIteratorIndices(mir, graph)) {
+      return false;
+    }
+    gs.spewPass("Iterator Indices");
+    AssertGraphCoherency(graph);
+
+    if (mir->shouldCancel("Iterator Indices")) {
+      return false;
+    }
+  }
+
   if (!JitOptions.disableRecoverIns &&
       mir->optimizationInfo().scalarReplacementEnabled()) {
     JitSpewCont(JitSpew_Escape, "\n");
@@ -1143,8 +1197,7 @@ bool OptimizeMIR(MIRGenerator* mir) {
   // LICM can hoist instructions from conditional branches and
   // trigger bailouts. Disable it if bailing out of a hoisted
   // instruction has previously invalidated this script.
-  if (mir->optimizationInfo().licmEnabled() &&
-      !mir->outerInfo().hadLICMInvalidation()) {
+  if (mir->licmEnabled()) {
     JitSpewCont(JitSpew_LICM, "\n");
     if (!LICM(mir, graph)) {
       return false;
@@ -1388,6 +1441,17 @@ bool OptimizeMIR(MIRGenerator* mir) {
     AssertGraphCoherency(graph);
   }
 
+  // Run the GC Barrier Elimination pass after instruction reordering, to
+  // ensure we don't move instructions that can trigger GC between stores we
+  // optimize here.
+  if (mir->optimizationInfo().eliminateRedundantGCBarriersEnabled()) {
+    if (!EliminateRedundantGCBarriers(graph)) {
+      return false;
+    }
+    gs.spewPass("GC Barrier Elimination");
+    AssertGraphCoherency(graph);
+  }
+
   if (!mir->compilingWasm() && !mir->outerInfo().hadUnboxFoldingBailout()) {
     if (!FoldLoadsWithUnbox(mir, graph)) {
       return false;
@@ -1406,9 +1470,11 @@ bool OptimizeMIR(MIRGenerator* mir) {
 
   AssertGraphCoherency(graph, /* force = */ true);
 
-  JitSpewCont(JitSpew_MIRExpressions, "\n");
-  DumpMIRExpressions(graph, mir->outerInfo(),
-                     "BeforeLIR (== result of OptimizeMIR)");
+  if (JitSpewEnabled(JitSpew_MIRExpressions)) {
+    JitSpewCont(JitSpew_MIRExpressions, "\n");
+    DumpMIRExpressions(JitSpewPrinter(), graph, mir->outerInfo(),
+                       "BeforeLIR (== result of OptimizeMIR)");
+  }
 
   return true;
 }
@@ -1792,7 +1858,7 @@ static MethodStatus Compile(JSContext* cx, HandleScript script,
   }
 
   OptimizationLevel optimizationLevel =
-      IonOptimizations.levelForScript(script, osrPc);
+      IonOptimizations.levelForScript(cx, script, osrPc);
   if (optimizationLevel == OptimizationLevel::DontCompile) {
     return Method_Skipped;
   }
@@ -2253,6 +2319,11 @@ static void InvalidateActivation(JS::GCContext* gcx,
       }
       case FrameType::BaselineStub:
         JitSpew(JitSpew_IonInvalidate, "#%zu baseline stub frame @ %p", frameno,
+                frame.fp());
+        break;
+      case FrameType::BaselineInterpreterEntry:
+        JitSpew(JitSpew_IonInvalidate,
+                "#%zu baseline interpreter entry frame @ %p", frameno,
                 frame.fp());
         break;
       case FrameType::Rectifier:

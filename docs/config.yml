@@ -3,6 +3,9 @@
 # The order of the main categories are defined in index.rst
 # Sub categories orders are preserved
 categories:
+    overview_doc:
+        - glossary
+        - overview
     setup_doc:
         - setup
     contributing_doc:
@@ -29,6 +32,7 @@ categories:
         - services
         - uriloader
         - widget/cocoa
+        - widget/windows
         - accessible
         - code-quality
         - writing-rust-code
@@ -44,8 +48,12 @@ categories:
         - taskcluster
         - tools/moztreedocs
     testing_doc:
+        - testing/automated-testing
+        - testing/tests-for-new-config
+        - testing/intermittent
         - testing/testing-policy
         - testing/ci-configs
+        - testing/browser-chrome
         - testing/chrome-tests
         - testing/marionette
         - testing/geckodriver
@@ -60,6 +68,8 @@ categories:
         - testing/perfdocs
         - tools/code-coverage
         - testing-rust-code
+    release_doc:
+        - update-infrastructure
     l10n_doc:
         - intl
         - l10n
@@ -79,6 +89,7 @@ redirects:
     contributing/build/linux_build.html: setup/linux_build.html
     contributing/mercurial.html: contributing/vcs/mercurial.html
     contributing/mercurial_bundles.html: contributing/vcs/mercurial_bundles.html
+    contributing/vscode.html: contributing/editors/vscode.html
     dom/dom: dom
     layout/layout: layout
     gfx/gfx: gfx
@@ -102,4 +113,6 @@ redirects:
     xpcom/xpcom: xpcom
 
 fatal warnings:
-    - "WARNING: '([^']*)' reference target not found:"
+    - "WARNING: '([^']*)' reference target not found:((?!.rst).)*$"
+
+max_num_warnings: 861

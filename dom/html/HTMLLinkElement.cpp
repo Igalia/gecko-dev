@@ -18,6 +18,7 @@
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/HTMLLinkElementBinding.h"
 #include "mozilla/dom/HTMLDNSPrefetch.h"
+#include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/ScriptLoader.h"
 #include "nsContentUtils.h"
 #include "nsDOMTokenList.h"
@@ -177,14 +178,15 @@ void HTMLLinkElement::CreateAndDispatchEvent(Document* aDoc,
   // this should never actually happen and the performance hit is minimal,
   // doing the "right" thing costs virtually nothing here, even if it doesn't
   // make much sense.
-  static Element::AttrValuesArray strings[] = {nsGkAtoms::_empty,
-                                               nsGkAtoms::stylesheet, nullptr};
+  static AttrArray::AttrValuesArray strings[] = {
+      nsGkAtoms::_empty, nsGkAtoms::stylesheet, nullptr};
 
   if (!nsContentUtils::HasNonEmptyAttr(this, kNameSpaceID_None,
                                        nsGkAtoms::rev) &&
       FindAttrValueIn(kNameSpaceID_None, nsGkAtoms::rel, strings,
-                      eIgnoreCase) != ATTR_VALUE_NO_MATCH)
+                      eIgnoreCase) != AttrArray::ATTR_VALUE_NO_MATCH) {
     return;
+  }
 
   RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
       this, aEventName, CanBubble::eYes, ChromeOnlyDispatch::eYes);
@@ -193,9 +195,8 @@ void HTMLLinkElement::CreateAndDispatchEvent(Document* aDoc,
   asyncDispatcher->PostDOMEvent();
 }
 
-nsresult HTMLLinkElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                        const nsAttrValueOrString* aValue,
-                                        bool aNotify) {
+void HTMLLinkElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                    const nsAttrValue* aValue, bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None &&
       (aName == nsGkAtoms::href || aName == nsGkAtoms::rel)) {
     CancelDNSPrefetch(*this);
@@ -206,11 +207,11 @@ nsresult HTMLLinkElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                              aNotify);
 }
 
-nsresult HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                       const nsAttrValue* aValue,
-                                       const nsAttrValue* aOldValue,
-                                       nsIPrincipal* aSubjectPrincipal,
-                                       bool aNotify) {
+void HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                   const nsAttrValue* aValue,
+                                   const nsAttrValue* aOldValue,
+                                   nsIPrincipal* aSubjectPrincipal,
+                                   bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::href) {
     mCachedURI = nullptr;
     if (IsInUncomposedDoc()) {
@@ -310,43 +311,37 @@ nsresult HTMLLinkElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       aNameSpaceID, aName, aValue, aOldValue, aSubjectPrincipal, aNotify);
 }
 
-static const DOMTokenListSupportedToken sSupportedRelValues[] = {
-    // Keep this and the one below in sync with ToLinkMask in
-    // LinkStyle.cpp.
-    // "preload" must come first because it can be disabled.
-    "preload", "prefetch",      "dns-prefetch", "stylesheet",
-    "next",    "alternate",     "preconnect",   "icon",
-    "search",  "modulepreload", nullptr};
+// Keep this and the arrays below in sync with ToLinkMask in LinkStyle.cpp.
+#define SUPPORTED_REL_VALUES_BASE                                              \
+  "prefetch", "dns-prefetch", "stylesheet", "next", "alternate", "preconnect", \
+      "icon", "search", nullptr
 
-static const DOMTokenListSupportedToken sSupportedRelValuesWithManifest[] = {
-    // Keep this in sync with ToLinkMask in LinkStyle.cpp.
-    // "preload" and "manifest" must come first because they can be disabled.
-    "preload",   "manifest",   "prefetch", "dns-prefetch", "stylesheet", "next",
-    "alternate", "preconnect", "icon",     "search",       nullptr};
+static const DOMTokenListSupportedToken sSupportedRelValueCombinations[][12] = {
+    {SUPPORTED_REL_VALUES_BASE},
+    {"manifest", SUPPORTED_REL_VALUES_BASE},
+    {"preload", SUPPORTED_REL_VALUES_BASE},
+    {"preload", "manifest", SUPPORTED_REL_VALUES_BASE},
+    {"modulepreload", SUPPORTED_REL_VALUES_BASE},
+    {"modulepreload", "manifest", SUPPORTED_REL_VALUES_BASE},
+    {"modulepreload", "preload", SUPPORTED_REL_VALUES_BASE},
+    {"modulepreload", "preload", "manifest", SUPPORTED_REL_VALUES_BASE}};
+#undef SUPPORTED_REL_VALUES_BASE
 
 nsDOMTokenList* HTMLLinkElement::RelList() {
   if (!mRelList) {
-    auto preload = StaticPrefs::network_preload();
-    auto manifest = StaticPrefs::dom_manifest_enabled();
-    if (manifest && preload) {
-      mRelList = new nsDOMTokenList(this, nsGkAtoms::rel,
-                                    sSupportedRelValuesWithManifest);
-    } else if (manifest && !preload) {
-      mRelList = new nsDOMTokenList(this, nsGkAtoms::rel,
-                                    &sSupportedRelValuesWithManifest[1]);
-    } else if (!manifest && preload) {
-      mRelList = new nsDOMTokenList(this, nsGkAtoms::rel, sSupportedRelValues);
-    } else {  // both false...drop preload
-      mRelList =
-          new nsDOMTokenList(this, nsGkAtoms::rel, &sSupportedRelValues[1]);
-    }
+    int index = (StaticPrefs::dom_manifest_enabled() ? 1 : 0) |
+                (StaticPrefs::network_preload() ? 2 : 0) |
+                (StaticPrefs::network_modulepreload() ? 4 : 0);
+
+    mRelList = new nsDOMTokenList(this, nsGkAtoms::rel,
+                                  sSupportedRelValueCombinations[index]);
   }
   return mRelList;
 }
 
 Maybe<LinkStyle::SheetInfo> HTMLLinkElement::GetStyleSheetInfo() {
   nsAutoString rel;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::rel, rel);
+  GetAttr(nsGkAtoms::rel, rel);
   uint32_t linkTypes = ParseLinkTypes(rel);
   if (!(linkTypes & eSTYLESHEET)) {
     return Nothing();
@@ -424,16 +419,16 @@ void HTMLLinkElement::GetContentPolicyMimeTypeMedia(
     nsAttrValue& aAsAttr, nsContentPolicyType& aPolicyType, nsString& aMimeType,
     nsAString& aMedia) {
   nsAutoString as;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::as, as);
+  GetAttr(nsGkAtoms::as, as);
   net::ParseAsValue(as, aAsAttr);
   aPolicyType = net::AsValueToContentPolicy(aAsAttr);
 
   nsAutoString type;
-  GetAttr(kNameSpaceID_None, nsGkAtoms::type, type);
+  GetAttr(nsGkAtoms::type, type);
   nsAutoString notUsed;
   nsContentUtils::SplitMimeType(type, aMimeType, notUsed);
 
-  GetAttr(kNameSpaceID_None, nsGkAtoms::media, aMedia);
+  GetAttr(nsGkAtoms::media, aMedia);
 }
 
 void HTMLLinkElement::
@@ -489,10 +484,10 @@ void HTMLLinkElement::
   }
 
   if (linkTypes & eMODULE_PRELOAD) {
-    // https://wicg.github.io/import-maps/#wait-for-import-maps
-    // Step 1.2: Set document’s acquiring import maps to false.
-    // When fetch a modulepreload module script graph.
-    if (!OwnerDoc()->ScriptLoader()->GetModuleLoader()) {
+    ScriptLoader* scriptLoader = OwnerDoc()->ScriptLoader();
+    ModuleLoader* moduleLoader = scriptLoader->GetModuleLoader();
+
+    if (!moduleLoader) {
       // For the print preview documents, at this moment it doesn't have module
       // loader yet, as the (print preview) document is not attached to the
       // nsIContentViewer yet, so it doesn't have the GlobalObject.
@@ -502,8 +497,49 @@ void HTMLLinkElement::
       return;
     }
 
-    OwnerDoc()->ScriptLoader()->GetModuleLoader()->SetAcquiringImportMaps(
-        false);
+    if (!StaticPrefs::network_modulepreload()) {
+      // Keep behavior from https://phabricator.services.mozilla.com/D149371,
+      // prior to main implementation of modulepreload
+      moduleLoader->DisallowImportMaps();
+      return;
+    }
+
+    // https://html.spec.whatwg.org/multipage/semantics.html#processing-the-media-attribute
+    // TODO: apply this check for all linkTypes
+    nsAutoString media;
+    if (GetAttr(nsGkAtoms::media, media)) {
+      RefPtr<mozilla::dom::MediaList> mediaList =
+          mozilla::dom::MediaList::Create(NS_ConvertUTF16toUTF8(media));
+      if (!mediaList->Matches(*OwnerDoc())) {
+        return;
+      }
+    }
+
+    // TODO: per spec, apply this check for ePREFETCH as well
+    if (!HasNonEmptyAttr(nsGkAtoms::href)) {
+      return;
+    }
+
+    nsAutoString as;
+    GetAttr(nsGkAtoms::as, as);
+
+    if (!net::IsScriptLikeOrInvalid(as)) {
+      RefPtr<AsyncEventDispatcher> asyncDispatcher = new AsyncEventDispatcher(
+          this, u"error"_ns, CanBubble::eNo, ChromeOnlyDispatch::eNo);
+      asyncDispatcher->PostDOMEvent();
+      return;
+    }
+
+    nsCOMPtr<nsIURI> uri = GetURI();
+    if (!uri) {
+      return;
+    }
+
+    // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-a-modulepreload-module-script-graph
+    // Step 1. Disallow further import maps given settings object.
+    moduleLoader->DisallowImportMaps();
+
+    StartPreload(nsIContentPolicy::TYPE_SCRIPT);
     return;
   }
 
@@ -657,7 +693,7 @@ bool HTMLLinkElement::IsCSSMimeTypeAttributeForLinkElement(
   nsAutoString type;
   nsAutoString mimeType;
   nsAutoString notUsed;
-  aSelf.GetAttr(kNameSpaceID_None, nsGkAtoms::type, type);
+  aSelf.GetAttr(nsGkAtoms::type, type);
   nsContentUtils::SplitMimeType(type, mimeType, notUsed);
   return mimeType.IsEmpty() || mimeType.LowerCaseEqualsLiteral("text/css");
 }

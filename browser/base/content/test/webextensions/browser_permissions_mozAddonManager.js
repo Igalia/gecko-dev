@@ -3,13 +3,13 @@
 const INSTALL_PAGE = `${BASE}/file_install_extensions.html`;
 
 async function installMozAM(filename) {
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, INSTALL_PAGE);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, INSTALL_PAGE);
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   await SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [`${BASE}/${filename}`],
-    async function(url) {
+    async function (url) {
       await content.wrappedJSObject.installMozAM(url);
     }
   );

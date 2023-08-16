@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -17,14 +17,14 @@ class CustomCalendar extends Temporal.Calendar {
   dayOfWeek(...args) {
     ++calls;
     assert.compareArray(args, [pd], "dayOfWeek arguments");
-    return "7";
+    return 7;
   }
 }
 
 const calendar = new CustomCalendar();
 const pd = new Temporal.PlainDate(1830, 8, 25, calendar);
 const result = pd.dayOfWeek;
-assert.sameValue(result, "7", "result");
+assert.sameValue(result, 7, "result");
 assert.sameValue(calls, 1, "calls");
 
 reportCompare(0, 0);

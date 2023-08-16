@@ -5,9 +5,10 @@
 
 #include "SelectionState.h"
 
-#include "AutoRangeArray.h"   // for AutoRangeArray
-#include "EditorUtils.h"      // for EditorUtils, AutoRangeArray
-#include "HTMLEditHelpers.h"  // for JoinNodesDirection, SplitNodeDirection
+#include "AutoRangeArray.h"  // for AutoRangeArray
+#include "EditorUtils.h"     // for EditorUtils, AutoRangeArray
+#include "ErrorList.h"
+#include "JoinSplitNodeDirection.h"  // for JoinNodesDirection, SplitNodeDirection
 
 #include "mozilla/Assertions.h"    // for MOZ_ASSERT, etc.
 #include "mozilla/IntegerRange.h"  // for IntegerRange
@@ -311,18 +312,41 @@ nsresult RangeUpdater::SelAdjSplitNode(nsIContent& aOriginalContent,
   }
 
   EditorRawDOMPoint atNewNode(&aNewContent);
-  nsresult rv = SelAdjInsertNode(atNewNode);
-  if (NS_FAILED(rv)) {
-    NS_WARNING("RangeUpdater::SelAdjInsertNode() failed");
-    return rv;
+  if (NS_WARN_IF(!atNewNode.IsSetAndValid())) {
+    return NS_ERROR_EDITOR_UNEXPECTED_DOM_TREE;
   }
 
-  // If point is in the range which are moved from aOriginalContent to
-  // aNewContent, we need to change its container to aNewContent and may need to
-  // adjust the offset. If point is in the range which are not moved from
-  // aOriginalContent, we may need to adjust the offset.
   auto AdjustDOMPoint = [&](nsCOMPtr<nsINode>& aContainer,
                             uint32_t& aOffset) -> void {
+    if (aContainer == atNewNode.GetContainer()) {
+      if (aSplitNodeDirection == SplitNodeDirection::LeftNodeIsNewOne) {
+        // When we create a left node, we insert it before the right node.
+        // In this case,
+        // - `{}<right/>` should become `{}<left/><right/>` (0 -> 0)
+        // - `<right/>{}` should become `<left/><right/>{}` (1 -> 2)
+        // - `{<right/>}` should become `{<left/><right/>}` (0 -> 0, 1 -> 2}
+        // Therefore, we need to increate the offset only when the offset is
+        // larger than the offset at the left node.
+        if (aOffset > atNewNode.Offset()) {
+          aOffset++;
+        }
+      } else {
+        // When we create a right node, we insert it after the left node.
+        // In this case,
+        // - `{}<left/>` should become `{}<left/><right/>` (0 -> 0)
+        // - `<left/>{}` should become `<left/><right/>{}` (1 -> 2)
+        // - `{<left/>}` should become `{<left/><right/>}` (0 -> 0, 1 -> 2}
+        // Therefore, we need to increate the offset only when the offset equals
+        // or is larger than the offset at the right node.
+        if (aOffset >= atNewNode.Offset()) {
+          aOffset++;
+        }
+      }
+    }
+    // If point is in the range which are moved from aOriginalContent to
+    // aNewContent, we need to change its container to aNewContent and may need
+    // to adjust the offset. If point is in the range which are not moved from
+    // aOriginalContent, we may need to adjust the offset.
     if (aContainer != &aOriginalContent) {
       return;
     }
@@ -334,7 +358,7 @@ nsresult RangeUpdater::SelAdjSplitNode(nsIContent& aOriginalContent,
       }
     } else if (aOffset >= aSplitOffset) {
       aContainer = &aNewContent;
-      aOffset = aSplitOffset - aOffset;
+      aOffset -= aSplitOffset;
     }
   };
 
@@ -350,9 +374,12 @@ nsresult RangeUpdater::SelAdjSplitNode(nsIContent& aOriginalContent,
 
 nsresult RangeUpdater::SelAdjJoinNodes(
     const EditorRawDOMPoint& aStartOfRightContent,
-    const nsIContent& aRemovedContent, uint32_t aOffsetOfRemovedContent,
+    const nsIContent& aRemovedContent,
+    const EditorDOMPoint& aOldPointAtRightContent,
     JoinNodesDirection aJoinNodesDirection) {
   MOZ_ASSERT(aStartOfRightContent.IsSetAndValid());
+  MOZ_ASSERT(aOldPointAtRightContent.IsSet());  // Invalid point in most cases
+  MOZ_ASSERT(aOldPointAtRightContent.HasOffset());
 
   if (mLocked) {
     // lock set by Will/DidReplaceParent, etc...
@@ -365,15 +392,34 @@ nsresult RangeUpdater::SelAdjJoinNodes(
 
   auto AdjustDOMPoint = [&](nsCOMPtr<nsINode>& aContainer,
                             uint32_t& aOffset) -> void {
-    if (aContainer == aStartOfRightContent.GetContainerParent()) {
-      // If the point is in common parent of joined content nodes and the
-      // point is after the removed point, decrease the offset.
-      if (aOffset > aOffsetOfRemovedContent) {
+    // FYI: Typically, containers of aOldPointAtRightContent and
+    //      aStartOfRightContent are same.  They are different when one of the
+    //      node was moved to somewhere and they are joined by undoing splitting
+    //      a node.
+    if (aContainer == &aRemovedContent) {
+      // If the point is in the removed content, move the point to the new
+      // point in the joined node.  If left node content is moved into
+      // right node, the offset should be same.  Otherwise, we need to advance
+      // the offset to length of the removed content.
+      aContainer = aStartOfRightContent.GetContainer();
+      if (aJoinNodesDirection == JoinNodesDirection::RightNodeIntoLeftNode) {
+        aOffset += aStartOfRightContent.Offset();
+      }
+    }
+    // TODO: If aOldPointAtRightContent.GetContainer() was in aRemovedContent,
+    //       we fail to adjust container and offset here because we need to
+    //       make point to where aRemoveContent was.  However, collecting all
+    //       ancestors of the right content may be expensive.  What's the best
+    //       approach to fix this?
+    else if (aContainer == aOldPointAtRightContent.GetContainer()) {
+      // If the point is in common parent of joined content nodes and it
+      // pointed after the right content node, decrease the offset.
+      if (aOffset > aOldPointAtRightContent.Offset()) {
         aOffset--;
       }
-      // If it pointed the removed content node, move to start of right content
-      // which was moved from the removed content.
-      else if (aOffset == aOffsetOfRemovedContent) {
+      // If it pointed the right content node, adjust it to point ex-first
+      // content of the right node.
+      else if (aOffset == aOldPointAtRightContent.Offset()) {
         aContainer = aStartOfRightContent.GetContainer();
         aOffset = aStartOfRightContent.Offset();
       }
@@ -381,15 +427,6 @@ nsresult RangeUpdater::SelAdjJoinNodes(
       // If the point is in joined node, and removed content is moved to
       // start of the joined node, we need to adjust the offset.
       if (aJoinNodesDirection == JoinNodesDirection::LeftNodeIntoRightNode) {
-        aOffset += aStartOfRightContent.Offset();
-      }
-    } else if (aContainer == &aRemovedContent) {
-      // If the point is in the removed content, move the point to the new
-      // point in the joined node.  If left node content is moved into
-      // right node, the offset should be same.  Otherwise, we need to advance
-      // the offset to length of the removed content.
-      aContainer = aStartOfRightContent.GetContainer();
-      if (aJoinNodesDirection == JoinNodesDirection::RightNodeIntoLeftNode) {
         aOffset += aStartOfRightContent.Offset();
       }
     }
@@ -532,30 +569,30 @@ void RangeUpdater::DidMoveNode(const nsINode& aOldParent, uint32_t aOldOffset,
     // Do nothing if moving nodes is occurred while changing the container.
     return;
   }
+  auto AdjustDOMPoint = [&](nsCOMPtr<nsINode>& aNode, uint32_t& aOffset) {
+    if (aNode == &aOldParent) {
+      // If previously pointed the moved content, it should keep pointing it.
+      if (aOffset == aOldOffset) {
+        aNode = const_cast<nsINode*>(&aNewParent);
+        aOffset = aNewOffset;
+      } else if (aOffset > aOldOffset) {
+        aOffset--;
+      }
+      return;
+    }
+    if (aNode == &aNewParent) {
+      if (aOffset > aNewOffset) {
+        aOffset++;
+      }
+    }
+  };
   for (RefPtr<RangeItem>& rangeItem : mArray) {
     if (NS_WARN_IF(!rangeItem)) {
       return;
     }
 
-    // like a delete in aOldParent
-    if (rangeItem->mStartContainer == &aOldParent &&
-        rangeItem->mStartOffset > aOldOffset) {
-      rangeItem->mStartOffset--;
-    }
-    if (rangeItem->mEndContainer == &aOldParent &&
-        rangeItem->mEndOffset > aOldOffset) {
-      rangeItem->mEndOffset--;
-    }
-
-    // and like an insert in aNewParent
-    if (rangeItem->mStartContainer == &aNewParent &&
-        rangeItem->mStartOffset > aNewOffset) {
-      rangeItem->mStartOffset++;
-    }
-    if (rangeItem->mEndContainer == &aNewParent &&
-        rangeItem->mEndOffset > aNewOffset) {
-      rangeItem->mEndOffset++;
-    }
+    AdjustDOMPoint(rangeItem->mStartContainer, rangeItem->mStartOffset);
+    AdjustDOMPoint(rangeItem->mEndContainer, rangeItem->mEndOffset);
   }
 }
 
@@ -566,8 +603,6 @@ void RangeUpdater::DidMoveNode(const nsINode& aOldParent, uint32_t aOldOffset,
  ******************************************************************************/
 
 NS_IMPL_CYCLE_COLLECTION(RangeItem, mStartContainer, mEndContainer)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(RangeItem, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(RangeItem, Release)
 
 void RangeItem::StoreRange(const nsRange& aRange) {
   mStartContainer = aRange.GetStartContainer();

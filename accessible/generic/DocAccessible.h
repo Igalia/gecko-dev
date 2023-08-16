@@ -6,8 +6,6 @@
 #ifndef mozilla_a11y_DocAccessible_h__
 #define mozilla_a11y_DocAccessible_h__
 
-#include "nsIAccessiblePivot.h"
-
 #include "HyperTextAccessibleWrap.h"
 #include "AccEvent.h"
 
@@ -18,8 +16,6 @@
 #include "nsITimer.h"
 #include "nsTHashSet.h"
 #include "nsWeakReference.h"
-
-class nsAccessiblePivot;
 
 const uint32_t kDefaultCacheLength = 128;
 
@@ -41,14 +37,16 @@ class RelatedAccIterator;
 template <class Class, class... Args>
 class TNotification;
 
+/**
+ * An accessibility tree node that originated in a content process and
+ * represents a document. Tabs, in-process iframes, and out-of-process iframes
+ * all use this class to represent the doc they contain.
+ */
 class DocAccessible : public HyperTextAccessibleWrap,
                       public nsIDocumentObserver,
-                      public nsSupportsWeakReference,
-                      public nsIAccessiblePivotObserver {
+                      public nsSupportsWeakReference {
   NS_DECL_ISUPPORTS_INHERITED
   NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(DocAccessible, LocalAccessible)
-
-  NS_DECL_NSIACCESSIBLEPIVOTOBSERVER
 
  protected:
   typedef mozilla::dom::Document Document;
@@ -68,7 +66,7 @@ class DocAccessible : public HyperTextAccessibleWrap,
 
   virtual mozilla::a11y::ENameValueFlag Name(nsString& aName) const override;
   virtual void Description(nsString& aDescription) const override;
-  virtual LocalAccessible* FocusedChild() override;
+  virtual Accessible* FocusedChild() override;
   virtual mozilla::a11y::role NativeRole() const override;
   virtual uint64_t NativeState() const override;
   virtual uint64_t NativeInteractiveState() const override;
@@ -123,9 +121,12 @@ class DocAccessible : public HyperTextAccessibleWrap,
   void QueueCacheUpdate(LocalAccessible* aAcc, uint64_t aNewDomain);
 
   /**
-   * Return virtual cursor associated with the document.
+   * Walks the mDependentIDsHashes list for the given accessible and
+   * queues a CacheDomain::Relations cache update fore each related acc.
+   * We call this when we observe an ID mutation or when an acc is bound
+   * to its document.
    */
-  nsIAccessiblePivot* VirtualCursor();
+  void QueueCacheUpdateForDependentRelations(LocalAccessible* aAcc);
 
   /**
    * Returns true if the instance has shutdown.
@@ -152,7 +153,6 @@ class DocAccessible : public HyperTextAccessibleWrap,
 
   bool IsHidden() const;
 
-  bool IsViewportCacheDirty() { return mViewportCacheDirty; }
   void SetViewportCacheDirty(bool aDirty) { mViewportCacheDirty = aDirty; }
 
   /**
@@ -403,6 +403,13 @@ class DocAccessible : public HyperTextAccessibleWrap,
    */
   std::pair<nsPoint, nsRect> ComputeScrollData(LocalAccessible* aAcc);
 
+  /**
+   * Only works in content process documents.
+   */
+  bool IsAccessibleBeingMoved(LocalAccessible* aAcc) {
+    return mMovedAccessibles.Contains(aAcc);
+  }
+
  protected:
   virtual ~DocAccessible();
 
@@ -524,13 +531,6 @@ class DocAccessible : public HyperTextAccessibleWrap,
   void ProcessQueuedCacheUpdates();
 
   /**
-   * Only works in content process documents.
-   */
-  bool IsAccessibleBeingMoved(LocalAccessible* aAcc) {
-    return mMovedAccessibles.Contains(aAcc);
-  }
-
-  /**
    * Called from NotificationController before mutation events are processed to
    * notify the parent process which Accessibles are being moved (if any).
    */
@@ -601,7 +601,7 @@ class DocAccessible : public HyperTextAccessibleWrap,
    */
   void SetIPCDoc(DocAccessibleChild* aIPCDoc);
 
-  friend class DocAccessibleChildBase;
+  friend class DocAccessibleChild;
 
   /**
    * Used to fire scrolling end event after page scroll.
@@ -693,11 +693,6 @@ class DocAccessible : public HyperTextAccessibleWrap,
   uint64_t mPrevStateBits;
 
   nsTArray<RefPtr<DocAccessible>> mChildDocuments;
-
-  /**
-   * The virtual cursor of the document.
-   */
-  RefPtr<nsAccessiblePivot> mVirtualCursor;
 
   /**
    * A storage class for pairing content with one of its relation attributes.

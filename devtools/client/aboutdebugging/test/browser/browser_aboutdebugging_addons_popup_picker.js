@@ -7,8 +7,8 @@ Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-addons.js", this);
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
@@ -54,7 +54,7 @@ add_task(async function testNodePickerInExtensionPopup() {
     document
   );
 
-  const { devtoolsTab, devtoolsWindow } = await openAboutDevtoolsToolbox(
+  const { devtoolsWindow } = await openAboutDevtoolsToolbox(
     document,
     tab,
     window,
@@ -93,7 +93,7 @@ add_task(async function testNodePickerInExtensionPopup() {
   const nodeFront = await onNewNodeFront;
   is(nodeFront.id, "pick-me", "The expected node front was selected");
 
-  await closeAboutDevtoolsToolbox(document, devtoolsTab, window);
+  await closeWebExtAboutDevtoolsToolbox(devtoolsWindow, window);
   await removeTemporaryExtension(ADDON_NAME, document);
   await removeTab(tab);
 });

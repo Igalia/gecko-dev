@@ -4,61 +4,83 @@
 
 "use strict";
 
-const { lax_request_count_checking } = ChromeUtils.import(
-  "resource://testing-common/early_hint_preload_test_helper.jsm"
+Services.prefs.setBoolPref("network.early-hints.enabled", true);
+
+const { test_preload_hint_and_request } = ChromeUtils.importESModule(
+  "resource://testing-common/early_hint_preload_test_helper.sys.mjs"
 );
 
-// csp header with "img-src: 'none'" only on main html response, don't show the image on the page
-add_task(async function test_preload_csp_imgsrc_none() {
-  // reset the count
-  let headers = new Headers();
-  headers.append("X-Early-Hint-Count-Start", "");
-  await fetch(
-    "https://example.com/browser/netwerk/test/browser/early_hint_pixel_count.sjs",
-    { headers }
-  );
-
-  let requestUrl =
-    "https://example.com/browser/netwerk/test/browser/103_preload_csp_imgsrc_none.html";
-
-  await BrowserTestUtils.withNewTab(
+add_task(async function test_preload_images_csp_in_early_hints_response() {
+  let tests = [
     {
-      gBrowser,
-      url: requestUrl,
-      waitForLoad: true,
+      input: {
+        test_name: "image - no csp",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "",
+        host: "",
+        hinted: true,
+      },
+      expected: { hinted: 1, normal: 0 },
     },
-    async function(browser) {
-      let noImgLoaded = await SpecialPowers.spawn(browser, [], function() {
-        let loadInfo = content.performance.getEntriesByName(
-          "https://example.com/browser/netwerk/test/browser/early_hint_pixel.sjs?1ac2a5e1-90c7-4171-b0f0-676f7d899af3"
-        );
-        return loadInfo.every(entry => entry.decodedBodySize === 0);
-      });
-      await Assert.ok(
-        noImgLoaded,
-        "test_preload_csp_imgsrc_none: Image dislpayed unexpectedly"
-      );
-    }
-  );
+    {
+      input: {
+        test_name: "image img-src 'self';",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "img-src 'self';",
+        host: "",
+        hinted: true,
+      },
+      expected: { hinted: 1, normal: 0 },
+    },
+    {
+      input: {
+        test_name: "image img-src 'self'; same host provided",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "img-src 'self';",
+        host: "https://example.com/browser/netwerk/test/browser/",
+        hinted: true,
+      },
+      expected: { hinted: 1, normal: 0 },
+    },
+    {
+      input: {
+        test_name: "image img-src 'self'; other host provided",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "img-src 'self';",
+        host: "https://example.org/browser/netwerk/test/browser/",
+        hinted: true,
+      },
+      expected: { hinted: 0, normal: 1 },
+    },
+    {
+      input: {
+        test_name: "image img-src 'none';",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "img-src 'none';",
+        host: "",
+        hinted: true,
+      },
+      expected: { hinted: 0, normal: 1 },
+    },
+    {
+      input: {
+        test_name: "image img-src 'none'; same host provided",
+        resource_type: "image",
+        csp: "",
+        csp_in_early_hint: "img-src 'none';",
+        host: "https://example.com/browser/netwerk/test/browser/",
+        hinted: true,
+      },
+      expected: { hinted: 0, normal: 1 },
+    },
+  ];
 
-  let gotRequestCount = await fetch(
-    "https://example.com/browser/netwerk/test/browser/early_hint_pixel_count.sjs"
-  ).then(response => response.json());
-  let expectedRequestCount = { hinted: 1, normal: 0 };
-
-  // TODO: Switch to stricter counting method after fixing https://bugzilla.mozilla.org/show_bug.cgi?id=1753730#c11
-  await lax_request_count_checking(
-    "test_preload_csp_imgsrc_none",
-    gotRequestCount,
-    expectedRequestCount
-  );
-  /* stricter counting method:
-    await Assert.deepEqual(
-      gotRequestCount,
-      { hinted: 1, normal: 0 },
-      "test_preload_csp_imgsrc_none: Unexpected amount of requests made"
-    );
-    */
-
-  Services.cache2.clear();
+  for (let test of tests) {
+    await test_preload_hint_and_request(test.input, test.expected);
+  }
 });

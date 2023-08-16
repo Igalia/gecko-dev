@@ -29,9 +29,7 @@
 #include "js/Result.h"
 #include "js/WaitCallbacks.h"
 #include "vm/GlobalObject.h"
-#include "vm/Time.h"
 #include "vm/TypedArrayObject.h"
-#include "wasm/WasmInstance.h"
 
 #include "vm/Compartment-inl.h"
 #include "vm/JSObject-inl.h"
@@ -635,10 +633,10 @@ static bool DoAtomicsWait(JSContext* cx,
     }
 
     // Step 7.
-    if (!mozilla::IsNaN(timeout_ms)) {
+    if (!std::isnan(timeout_ms)) {
       if (timeout_ms < 0) {
         timeout = mozilla::Some(mozilla::TimeDuration::FromSeconds(0.0));
-      } else if (!mozilla::IsInfinite(timeout_ms)) {
+      } else if (!std::isinf(timeout_ms)) {
         timeout =
             mozilla::Some(mozilla::TimeDuration::FromMilliseconds(timeout_ms));
       }
@@ -1068,11 +1066,7 @@ static const JSPropertySpec AtomicsProperties[] = {
     JS_STRING_SYM_PS(toStringTag, "Atomics", JSPROP_READONLY), JS_PS_END};
 
 static JSObject* CreateAtomicsObject(JSContext* cx, JSProtoKey key) {
-  Handle<GlobalObject*> global = cx->global();
-  RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &cx->global()->getObjectPrototype());
   return NewTenuredObjectWithGivenProto(cx, &AtomicsObject::class_, proto);
 }
 

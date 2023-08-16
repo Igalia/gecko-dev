@@ -12,27 +12,28 @@ typedef AnchorMatrix Mark2Array;        /* mark2-major--
                                          * mark1-minor--
                                          * ordered by class--zero-based. */
 
-struct MarkMarkPosFormat1
+template <typename Types>
+struct MarkMarkPosFormat1_2
 {
   protected:
   HBUINT16      format;                 /* Format identifier--format = 1 */
-  Offset16To<Coverage>
+  typename Types::template OffsetTo<Coverage>
                 mark1Coverage;          /* Offset to Combining Mark1 Coverage
                                          * table--from beginning of MarkMarkPos
                                          * subtable */
-  Offset16To<Coverage>
+  typename Types::template OffsetTo<Coverage>
                 mark2Coverage;          /* Offset to Combining Mark2 Coverage
                                          * table--from beginning of MarkMarkPos
                                          * subtable */
   HBUINT16      classCount;             /* Number of defined mark classes */
-  Offset16To<MarkArray>
+  typename Types::template OffsetTo<MarkArray>
                 mark1Array;             /* Offset to Mark1Array table--from
                                          * beginning of MarkMarkPos subtable */
-  Offset16To<Mark2Array>
+  typename Types::template OffsetTo<Mark2Array>
                 mark2Array;             /* Offset to Mark2Array table--from
                                          * beginning of MarkMarkPos subtable */
   public:
-  DEFINE_SIZE_STATIC (12);
+  DEFINE_SIZE_STATIC (4 + 4 * Types::size);
 
   bool sanitize (hb_sanitize_context_t *c) const
   {
@@ -99,16 +100,16 @@ struct MarkMarkPosFormat1
 
     /* now we search backwards for a suitable mark glyph until a non-mark glyph */
     hb_ot_apply_context_t::skipping_iterator_t &skippy_iter = c->iter_input;
-    skippy_iter.reset (buffer->idx, 1);
-    skippy_iter.set_lookup_props (c->lookup_props & ~LookupFlag::IgnoreFlags);
+    skippy_iter.reset_fast (buffer->idx, 1);
+    skippy_iter.set_lookup_props (c->lookup_props & ~(uint32_t)LookupFlag::IgnoreFlags);
     unsigned unsafe_from;
-    if (!skippy_iter.prev (&unsafe_from))
+    if (unlikely (!skippy_iter.prev (&unsafe_from)))
     {
       buffer->unsafe_to_concat_from_outbuffer (unsafe_from, buffer->idx + 1);
       return_trace (false);
     }
 
-    if (!_hb_glyph_info_is_mark (&buffer->info[skippy_iter.idx]))
+    if (likely (!_hb_glyph_info_is_mark (&buffer->info[skippy_iter.idx])))
     {
       buffer->unsafe_to_concat_from_outbuffer (skippy_iter.idx, buffer->idx + 1);
       return_trace (false);

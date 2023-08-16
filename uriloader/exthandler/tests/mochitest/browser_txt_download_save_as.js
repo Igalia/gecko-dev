@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { DownloadIntegration } = ChromeUtils.import(
-  "resource://gre/modules/DownloadIntegration.jsm"
+const { DownloadIntegration } = ChromeUtils.importESModule(
+  "resource://gre/modules/DownloadIntegration.sys.mjs"
 );
 const HandlerService = Cc[
   "@mozilla.org/uriloader/handler-service;1"
@@ -27,7 +27,6 @@ const testDir = createTemporarySaveDirectory();
 const MockFilePicker = SpecialPowers.MockFilePicker;
 MockFilePicker.init(window);
 
-/* import-globals-from ../../../../toolkit/content/tests/browser/common/mockTransfer.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/toolkit/content/tests/browser/common/mockTransfer.js",
   this
@@ -86,7 +85,7 @@ async function setupFilePicker() {
   });
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.download.always_ask_before_handling_new_types", false],

@@ -5,18 +5,21 @@
 //! Style resolution for a given element or pseudo-element.
 
 use crate::applicable_declarations::ApplicableDeclarationList;
+use crate::computed_value_flags::ComputedValueFlags;
 use crate::context::{CascadeInputs, ElementCascadeInputs, StyleContext};
 use crate::data::{EagerPseudoStyles, ElementStyles};
 use crate::dom::TElement;
 use crate::matching::MatchMethods;
 use crate::properties::longhands::display::computed_value::T as Display;
-use crate::properties::ComputedValues;
+use crate::properties::{ComputedValues, FirstLineReparenting};
 use crate::rule_tree::StrongRuleNode;
 use crate::selector_parser::{PseudoElement, SelectorImpl};
 use crate::stylist::RuleInclusion;
 use log::Level::Trace;
-use selectors::matching::{NeedsSelectorFlags, MatchingContext};
-use selectors::matching::{MatchingMode, VisitedHandlingMode};
+use selectors::matching::{
+    IgnoreNthChildForInvalidation, MatchingContext, MatchingMode, NeedsSelectorFlags,
+    RelativeSelectorMatchingState, VisitedHandlingMode,
+};
 use servo_arc::Arc;
 
 /// Whether pseudo-elements should be resolved or not.
@@ -44,6 +47,7 @@ where
 
 struct MatchingResults {
     rule_node: StrongRuleNode,
+    flags: ComputedValueFlags,
 }
 
 /// A style returned from the resolver machinery.
@@ -133,8 +137,6 @@ fn eager_pseudo_is_definitely_not_generated(
     pseudo: &PseudoElement,
     style: &ComputedValues,
 ) -> bool {
-    use crate::computed_value_flags::ComputedValueFlags;
-
     if !pseudo.is_before_or_after() {
         return false;
     }
@@ -204,6 +206,7 @@ where
             CascadeInputs {
                 rules: Some(primary_results.rule_node),
                 visited_rules,
+                flags: primary_results.flags,
             },
             parent_style,
             layout_parent_style,
@@ -218,7 +221,7 @@ where
     ) -> PrimaryStyle {
         // Before doing the cascade, check the sharing cache and see if we can
         // reuse the style via rule node identity.
-        let may_reuse = !self.element.is_in_native_anonymous_subtree() &&
+        let may_reuse = self.element.matches_user_and_content_rules() &&
             parent_style.is_some() &&
             inputs.rules.is_some();
 
@@ -348,10 +351,10 @@ where
             pseudo,
             inputs,
             &self.context.shared.guards,
-            parent_style,
+            pseudo.and(parent_style),
             parent_style,
             layout_parent_style,
-            &self.context.thread_local.font_metrics_provider,
+            FirstLineReparenting::No,
             Some(&self.context.thread_local.rule_cache),
             &mut conditions,
         );
@@ -419,25 +422,34 @@ where
         originating_element_style: &PrimaryStyle,
         layout_parent_style: Option<&ComputedValues>,
     ) -> Option<ResolvedStyle> {
-        let rules = self.match_pseudo(
-            originating_element_style.style(),
+        let MatchingResults {
+            rule_node,
+            mut flags,
+        } = self.match_pseudo(
+            &originating_element_style.style.0,
             pseudo,
             VisitedHandlingMode::AllLinksUnvisited,
         )?;
 
         let mut visited_rules = None;
         if originating_element_style.style().visited_style().is_some() {
-            visited_rules = self.match_pseudo(
-                originating_element_style.style(),
-                pseudo,
-                VisitedHandlingMode::RelevantLinkVisited,
-            );
+            visited_rules = self
+                .match_pseudo(
+                    &originating_element_style.style.0,
+                    pseudo,
+                    VisitedHandlingMode::RelevantLinkVisited,
+                )
+                .map(|results| {
+                    flags |= results.flags;
+                    results.rule_node
+                });
         }
 
         Some(self.cascade_style_and_visited(
             CascadeInputs {
-                rules: Some(rules),
+                rules: Some(rule_node),
                 visited_rules,
+                flags,
             },
             Some(originating_element_style.style()),
             layout_parent_style,
@@ -453,14 +465,15 @@ where
         let mut applicable_declarations = ApplicableDeclarationList::new();
 
         let bloom_filter = self.context.thread_local.bloom_filter.filter();
-        let nth_index_cache = &mut self.context.thread_local.nth_index_cache;
+        let selector_caches = &mut self.context.thread_local.selector_caches;
         let mut matching_context = MatchingContext::new_for_visited(
             MatchingMode::Normal,
             Some(bloom_filter),
-            Some(nth_index_cache),
+            selector_caches,
             visited_handling,
             self.context.shared.quirks_mode(),
             NeedsSelectorFlags::Yes,
+            IgnoreNthChildForInvalidation::No,
         );
 
         let stylist = &self.context.shared.stylist;
@@ -493,8 +506,29 @@ where
                 }
             }
         }
+        // This is a bit awkward - ideally, the flag is set directly where `considered_relative_selector`
+        // is; however, in that context, the implementation detail of `extra_data` is not visible, so
+        // it's done here. A trait for manipulating the flags is an option, but not worth it for a single flag.
+        match matching_context.considered_relative_selector {
+            RelativeSelectorMatchingState::None => (),
+            RelativeSelectorMatchingState::Considered => {
+                matching_context
+                    .extra_data
+                    .cascade_input_flags
+                    .insert(ComputedValueFlags::CONSIDERED_RELATIVE_SELECTOR);
+            },
+            RelativeSelectorMatchingState::ConsideredAnchor => {
+                matching_context.extra_data.cascade_input_flags.insert(
+                    ComputedValueFlags::ANCHORS_RELATIVE_SELECTOR |
+                        ComputedValueFlags::CONSIDERED_RELATIVE_SELECTOR,
+                );
+            },
+        };
 
-        MatchingResults { rule_node }
+        MatchingResults {
+            rule_node,
+            flags: matching_context.extra_data.cascade_input_flags,
+        }
     }
 
     fn match_pseudo(
@@ -502,7 +536,7 @@ where
         originating_element_style: &ComputedValues,
         pseudo_element: &PseudoElement,
         visited_handling: VisitedHandlingMode,
-    ) -> Option<StrongRuleNode> {
+    ) -> Option<MatchingResults> {
         debug!(
             "Match pseudo {:?} for {:?}, visited: {:?}",
             self.element, pseudo_element, visited_handling
@@ -525,16 +559,18 @@ where
         }
 
         let bloom_filter = self.context.thread_local.bloom_filter.filter();
-        let nth_index_cache = &mut self.context.thread_local.nth_index_cache;
+        let selector_caches = &mut self.context.thread_local.selector_caches;
 
-        let mut matching_context = MatchingContext::new_for_visited(
+        let mut matching_context = MatchingContext::<'_, E::Impl>::new_for_visited(
             MatchingMode::ForStatelessPseudoElement,
             Some(bloom_filter),
-            Some(nth_index_cache),
+            selector_caches,
             visited_handling,
             self.context.shared.quirks_mode(),
             NeedsSelectorFlags::Yes,
+            IgnoreNthChildForInvalidation::No,
         );
+        matching_context.extra_data.originating_element_style = Some(originating_element_style);
 
         // NB: We handle animation rules for ::before and ::after when
         // traversing them.
@@ -557,6 +593,9 @@ where
             .rule_tree()
             .compute_rule_node(&mut applicable_declarations, &self.context.shared.guards);
 
-        Some(rule_node)
+        Some(MatchingResults {
+            rule_node,
+            flags: matching_context.extra_data.cascade_input_flags,
+        })
     }
 }

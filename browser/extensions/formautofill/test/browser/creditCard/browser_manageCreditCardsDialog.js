@@ -12,7 +12,7 @@ const DIALOG_SIZE = "width=600,height=400";
 add_task(async function test_manageCreditCardsInitialState() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: MANAGE_CREDIT_CARDS_DIALOG_URL },
-    async function(browser) {
+    async function (browser) {
       await SpecialPowers.spawn(browser, [TEST_SELECTORS], args => {
         let selRecords = content.document.querySelector(args.selRecords);
         let btnRemove = content.document.querySelector(args.btnRemove);
@@ -189,10 +189,7 @@ add_task(async function test_showCreditCardIcons() {
     set: [["privacy.reduceTimerPrecision", false]],
   });
   await setStorage(TEST_CREDIT_CARD_1);
-  let unknownCard = Object.assign({}, TEST_CREDIT_CARD_3, {
-    "cc-type": "gringotts",
-  });
-  await setStorage(unknownCard);
+  await setStorage(TEST_CREDIT_CARD_3);
 
   let win = window.openDialog(
     MANAGE_CREDIT_CARDS_DIALOG_URL,
@@ -216,7 +213,7 @@ add_task(async function test_showCreditCardIcons() {
 
   is(
     option0.getAttribute("cc-type"),
-    "gringotts",
+    "mastercard",
     "Option has the expected cc-type"
   );
   is(

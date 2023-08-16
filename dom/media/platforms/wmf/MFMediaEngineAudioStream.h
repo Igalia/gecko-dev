@@ -23,9 +23,13 @@ class MFMediaEngineAudioStream final : public MFMediaEngineStream {
     return "media engine audio stream"_ns;
   }
 
+  nsCString GetCodecName() const override;
+
   TrackInfo::TrackType TrackType() override {
     return TrackInfo::TrackType::kAudioTrack;
   }
+
+  bool IsEncrypted() const override;
 
  private:
   HRESULT CreateMediaType(const TrackInfo& aInfo,
@@ -33,8 +37,13 @@ class MFMediaEngineAudioStream final : public MFMediaEngineStream {
 
   bool HasEnoughRawData() const override;
 
+  already_AddRefed<MediaData> OutputDataInternal() override;
+
   // For MF_MT_USER_DATA. Currently only used for AAC.
   nsTArray<BYTE> mAACUserData;
+
+  // Set when `CreateMediaType()` is called.
+  AudioInfo mAudioInfo;
 };
 
 }  // namespace mozilla

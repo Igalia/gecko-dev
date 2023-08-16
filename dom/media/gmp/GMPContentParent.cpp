@@ -28,6 +28,7 @@ GMPContentParent::GMPContentParent(GMPParent* aParent)
   if (mParent) {
     SetDisplayName(mParent->GetDisplayName());
     SetPluginId(mParent->GetPluginId());
+    SetPluginType(mParent->GetPluginType());
   }
 }
 
@@ -142,7 +143,7 @@ nsCOMPtr<nsISerialEventTarget> GMPContentParent::GMPEventTarget() {
     mps->GetThread(getter_AddRefs(gmpThread));
     MOZ_ASSERT(gmpThread);
 
-    mGMPEventTarget = gmpThread->SerialEventTarget();
+    mGMPEventTarget = gmpThread;
   }
 
   return mGMPEventTarget;

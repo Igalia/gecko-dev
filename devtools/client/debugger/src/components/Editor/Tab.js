@@ -6,169 +6,47 @@ import React, { PureComponent } from "react";
 import PropTypes from "prop-types";
 import { connect } from "../../utils/connect";
 
-import { showMenu, buildMenu } from "../../context-menu/menu";
-
 import SourceIcon from "../shared/SourceIcon";
 import { CloseButton } from "../shared/Button";
-import { copyToTheClipboard } from "../../utils/clipboard";
 
 import actions from "../../actions";
 
 import {
   getDisplayPath,
   getFileURL,
-  getRawSourceURL,
   getSourceQueryString,
   getTruncatedFileName,
   isPretty,
-  shouldBlackbox,
 } from "../../utils/source";
-import { getTabMenuItems } from "../../utils/tabs";
+import { createLocation } from "../../utils/location";
 
 import {
-  getSelectedSource,
-  getActiveSearch,
+  getSelectedLocation,
   getSourcesForTabs,
   isSourceBlackBoxed,
-  getContext,
 } from "../../selectors";
 
-import classnames from "classnames";
+const classnames = require("devtools/client/shared/classnames.js");
 
 class Tab extends PureComponent {
   static get propTypes() {
     return {
-      activeSearch: PropTypes.string,
       closeTab: PropTypes.func.isRequired,
-      closeTabs: PropTypes.func.isRequired,
-      copyToClipboard: PropTypes.func.isRequired,
-      cx: PropTypes.object.isRequired,
       onDragEnd: PropTypes.func.isRequired,
       onDragOver: PropTypes.func.isRequired,
       onDragStart: PropTypes.func.isRequired,
       selectSource: PropTypes.func.isRequired,
-      selectedSource: PropTypes.object,
-      showSource: PropTypes.func.isRequired,
       source: PropTypes.object.isRequired,
+      sourceActor: PropTypes.object.isRequired,
       tabSources: PropTypes.array.isRequired,
-      toggleBlackBox: PropTypes.func.isRequired,
-      togglePrettyPrint: PropTypes.func.isRequired,
+      isBlackBoxed: PropTypes.bool.isRequired,
     };
   }
 
-  onTabContextMenu = (event, tab) => {
+  onContextMenu = event => {
     event.preventDefault();
-    this.showContextMenu(event, tab);
+    this.props.showTabContextMenu(event, this.props.source);
   };
-
-  showContextMenu(e, tab) {
-    const {
-      cx,
-      closeTab,
-      closeTabs,
-      copyToClipboard,
-      tabSources,
-      showSource,
-      toggleBlackBox,
-      togglePrettyPrint,
-      selectedSource,
-      source,
-      isBlackBoxed,
-    } = this.props;
-
-    const tabCount = tabSources.length;
-    const otherTabs = tabSources.filter(t => t.id !== tab);
-    const sourceTab = tabSources.find(t => t.id == tab);
-    const tabURLs = tabSources.map(t => t.url);
-    const otherTabURLs = otherTabs.map(t => t.url);
-
-    if (!sourceTab || !selectedSource) {
-      return;
-    }
-
-    const tabMenuItems = getTabMenuItems();
-    const items = [
-      {
-        item: {
-          ...tabMenuItems.closeTab,
-          click: () => closeTab(cx, sourceTab),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.closeOtherTabs,
-          click: () => closeTabs(cx, otherTabURLs),
-          disabled: otherTabURLs.length === 0,
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.closeTabsToEnd,
-          click: () => {
-            const tabIndex = tabSources.findIndex(t => t.id == tab);
-            closeTabs(
-              cx,
-              tabURLs.filter((t, i) => i > tabIndex)
-            );
-          },
-          disabled:
-            tabCount === 1 ||
-            tabSources.some((t, i) => t === tab && tabCount - 1 === i),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.closeAllTabs,
-          click: () => closeTabs(cx, tabURLs),
-        },
-      },
-      { item: { type: "separator" } },
-      {
-        item: {
-          ...tabMenuItems.copySource,
-          disabled: selectedSource.id !== tab,
-          click: () => copyToClipboard(sourceTab),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.copySourceUri2,
-          disabled: !selectedSource.url,
-          click: () => copyToTheClipboard(getRawSourceURL(sourceTab.url)),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.showSource,
-          disabled: !selectedSource.url,
-          click: () => showSource(cx, tab),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.toggleBlackBox,
-          label: isBlackBoxed
-            ? L10N.getStr("ignoreContextItem.unignore")
-            : L10N.getStr("ignoreContextItem.ignore"),
-          disabled: !shouldBlackbox(source),
-          click: () => toggleBlackBox(cx, source),
-        },
-      },
-      {
-        item: {
-          ...tabMenuItems.prettyPrint,
-          click: () => togglePrettyPrint(cx, tab),
-          disabled: isPretty(sourceTab),
-        },
-      },
-    ];
-
-    showMenu(e, buildMenu(items));
-  }
-
-  isProjectSearchEnabled() {
-    return this.props.activeSearch === "project";
-  }
 
   isSourceSearchEnabled() {
     return this.props.activeSearch === "source";
@@ -176,38 +54,35 @@ class Tab extends PureComponent {
 
   render() {
     const {
-      cx,
-      selectedSource,
       selectSource,
       closeTab,
       source,
+      sourceActor,
       tabSources,
       onDragOver,
       onDragStart,
       onDragEnd,
+      index,
+      isActive,
     } = this.props;
     const sourceId = source.id;
-    const active =
-      selectedSource &&
-      sourceId == selectedSource.id &&
-      !this.isProjectSearchEnabled() &&
-      !this.isSourceSearchEnabled();
     const isPrettyCode = isPretty(source);
 
     function onClickClose(e) {
       e.stopPropagation();
-      closeTab(cx, source);
+      closeTab(source);
     }
 
     function handleTabClick(e) {
       e.preventDefault();
       e.stopPropagation();
-      return selectSource(cx, sourceId);
+      return selectSource(source, sourceActor);
     }
 
     const className = classnames("source-tab", {
-      active,
+      active: isActive,
       pretty: isPrettyCode,
+      blackboxed: this.props.isBlackBoxed,
     });
 
     const path = getDisplayPath(source, tabSources);
@@ -220,15 +95,17 @@ class Tab extends PureComponent {
         onDragStart={onDragStart}
         onDragEnd={onDragEnd}
         className={className}
-        key={sourceId}
+        data-index={index}
+        data-source-id={sourceId}
         onClick={handleTabClick}
         // Accommodate middle click to close tab
-        onMouseUp={e => e.button === 1 && closeTab(cx, source)}
-        onContextMenu={e => this.onTabContextMenu(e, sourceId)}
+        onMouseUp={e => e.button === 1 && closeTab(source)}
+        onContextMenu={this.onContextMenu}
         title={getFileURL(source, false)}
       >
         <SourceIcon
-          source={source}
+          location={createLocation({ source, sourceActor })}
+          forTab={true}
           modifier={icon =>
             ["file", "javascript"].includes(icon) ? null : icon
           }
@@ -247,14 +124,10 @@ class Tab extends PureComponent {
 }
 
 const mapStateToProps = (state, { source }) => {
-  const selectedSource = getSelectedSource(state);
-
   return {
-    cx: getContext(state),
     tabSources: getSourcesForTabs(state),
-    selectedSource,
     isBlackBoxed: isSourceBlackBoxed(state, source),
-    activeSearch: getActiveSearch(state),
+    isActive: source.id === getSelectedLocation(state)?.source.id,
   };
 };
 
@@ -262,12 +135,8 @@ export default connect(
   mapStateToProps,
   {
     selectSource: actions.selectSource,
-    copyToClipboard: actions.copyToClipboard,
     closeTab: actions.closeTab,
-    closeTabs: actions.closeTabs,
-    togglePrettyPrint: actions.togglePrettyPrint,
-    showSource: actions.showSource,
-    toggleBlackBox: actions.toggleBlackBox,
+    showTabContextMenu: actions.showTabContextMenu,
   },
   null,
   {

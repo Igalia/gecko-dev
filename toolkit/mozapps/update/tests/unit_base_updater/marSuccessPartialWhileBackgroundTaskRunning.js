@@ -5,18 +5,20 @@
 
 /* General Partial MAR File Patch Apply Test */
 
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 
-const { BackgroundTasksTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BackgroundTasksTestUtils.jsm"
+const { BackgroundTasksTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BackgroundTasksTestUtils.sys.mjs"
 );
 BackgroundTasksTestUtils.init(this);
 const do_backgroundtask = BackgroundTasksTestUtils.do_backgroundtask.bind(
   BackgroundTasksTestUtils
 );
 
-const { PromiseUtils } = ChromeUtils.import(
-  "resource://gre/modules/PromiseUtils.jsm"
+const { PromiseUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/PromiseUtils.sys.mjs"
 );
 
 async function run_test() {

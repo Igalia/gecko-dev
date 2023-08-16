@@ -3,15 +3,17 @@
 
 "use strict";
 
+const asyncStorage = require("resource://devtools/shared/async-storage.js");
+
 /**
  * Test to check the sync between URL parameters and the parameters section
  */
 
-add_task(async function() {
+add_task(async function () {
   // Turn on the pref
   await pushPref("devtools.netmonitor.features.newEditAndResend", true);
-  // Resetting the pref
-  await pushPref("devtools.netmonitor.customRequest", "");
+  // Reset the storage for the persisted custom request
+  await asyncStorage.removeItem("devtools.netmonitor.customRequest");
 
   const { tab, monitor } = await initNetMonitor(HTTPS_CUSTOM_GET_URL, {
     requestCount: 1,
@@ -40,7 +42,7 @@ add_task(async function() {
     document,
     ".monitor-panel .network-action-bar"
   );
-  getContextMenuItem(monitor, "request-list-context-resend").click();
+  await selectContextMenuItem(monitor, "request-list-context-edit-resend");
   await waitForPanels;
 
   const queryScenarios = [

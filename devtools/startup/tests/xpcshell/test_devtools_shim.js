@@ -3,8 +3,8 @@
 
 "use strict";
 
-const { DevToolsShim } = ChromeUtils.import(
-  "chrome://devtools-startup/content/DevToolsShim.jsm"
+const { DevToolsShim } = ChromeUtils.importESModule(
+  "chrome://devtools-startup/content/DevToolsShim.sys.mjs"
 );
 
 // Test the DevToolsShim
@@ -28,7 +28,7 @@ function createMockDevTools() {
 
   for (const method of methods) {
     // Create a stub for method, that only pushes its arguments in the inner callLog
-    mock[method] = function(...args) {
+    mock[method] = function (...args) {
       mock.callLog[method].push(args);
     };
     mock.callLog[method] = [];

@@ -28,8 +28,8 @@ async function test_autocomplete(data) {
   gURLBar.blur();
 }
 
-add_task(async function() {
-  registerCleanupFunction(async function() {
+add_task(async function () {
+  registerCleanupFunction(async function () {
     Services.prefs.clearUserPref("browser.urlbar.autoFill");
     gURLBar.handleRevert();
     await PlacesUtils.history.clear();
@@ -43,7 +43,7 @@ add_task(async function() {
   });
 
   await test_autocomplete({
-    desc: "CTRL+ENTER on the autofilled part should use autofill",
+    desc: "ENTER on the autofilled part should use autofill",
     typed: "exam",
     autofilled: "example.com/",
     modified: "example.com",

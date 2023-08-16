@@ -12,7 +12,7 @@ experimental-features-css-masonry-description = Enables support for the experime
 # by various online articles and is technical in nature.
 experimental-features-web-gpu2 =
     .label = Web API: WebGPU
-experimental-features-web-gpu-description2 = This new API provides low-level support for performing computation and graphics rendering using the <a data-l10n-name="wikipedia">Graphics Processing Unit (GPU)</a> of the user’s device or computer. The <a data-l10n-name="spec">specification</a> is still a work-in-progress. See <a data-l10n-name="bugzilla">bug 1602129</a> for more details.
+experimental-features-web-gpu-description3 = The <a data-l10n-name="wikipedia-webgpu">WebGPU API</a> provides low-level support for performing computation and graphics rendering using the <a data-l10n-name="wikipedia-gpu">Graphics Processing Unit (GPU)</a> of the user’s device or computer. The first version of the <a data-l10n-name="spec">specification</a> is nearing finalization. See <a data-l10n-name="bugzilla">bug 1616739</a> for more details.
 
 # The title of the experiment should be kept in English as it may be referenced
 # by various online articles and is technical in nature.
@@ -24,21 +24,11 @@ experimental-features-devtools-compatibility-panel =
     .label = Developer Tools: Compatibility Panel
 experimental-features-devtools-compatibility-panel-description = A side panel for the Page Inspector that shows you information detailing your app’s cross-browser compatibility status. See <a data-l10n-name="bugzilla">bug 1584464</a> for more details.
 
-# Do not translate 'SameSite', 'Lax' and 'None'.
-experimental-features-cookie-samesite-lax-by-default2 =
-    .label = Cookies: SameSite=Lax by default
-experimental-features-cookie-samesite-lax-by-default2-description = Treat cookies as “SameSite=Lax” by default if no “SameSite” attribute is specified. Developers must opt-in to the current status quo of unrestricted use by explicitly asserting “SameSite=None”.
 
 # Do not translate 'SameSite', 'Lax' and 'None'.
 experimental-features-cookie-samesite-none-requires-secure2 =
     .label = Cookies: SameSite=None requires secure attribute
 experimental-features-cookie-samesite-none-requires-secure2-description = Cookies with “SameSite=None” attribute require the secure attribute. This feature requires “Cookies: SameSite=Lax by default”.
-
-# about:home should be kept in English, as it refers to the the URI for
-# the internal default home page.
-experimental-features-abouthome-startup-cache =
-    .label = about:home startup cache
-experimental-features-abouthome-startup-cache-description = A cache for the initial about:home document that is loaded by default at startup. The purpose of the cache is to improve startup performance.
 
 # "Service Worker" is an API name and is usually not translated.
 experimental-features-devtools-serviceworker-debugger-support =
@@ -60,8 +50,3 @@ experimental-features-js-warp-description = Enable Warp, a project to improve Ja
 experimental-features-ime-search =
     .label = Address Bar: show results during IME composition
 experimental-features-ime-search-description = An IME (Input Method Editor) is a tool that allows you to enter complex symbols, such as those used in East Asian or Indic written languages, using a standard keyboard. Enabling this experiment will keep the address bar panel open, showing search results and suggestions, while using IME to input text. Note that the IME might display a panel that covers the address bar results, therefore this preference is only suggested for IME not using this type of panel.
-
-# Text recognition for images
-experimental-features-text-recognition =
-    .label = Text Recognition
-experimental-features-text-recognition-description = Enable features to recognize text in images.

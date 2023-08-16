@@ -9,6 +9,9 @@
 #include "gfxPoint.h"
 #include "nsISupports.h"
 #include "mozilla/StaticPrefs_print.h"
+#include "mozilla/gfx/Point.h"
+#include "mozilla/gfx/PrintPromise.h"
+#include "mozilla/MoveOnlyFunction.h"
 
 class nsIWidget;
 class nsIPrintSettings;
@@ -30,6 +33,7 @@ class PrintTarget;
 class nsIDeviceContextSpec : public nsISupports {
  public:
   typedef mozilla::gfx::PrintTarget PrintTarget;
+  using IntSize = mozilla::gfx::IntSize;
 
   NS_DECLARE_STATIC_IID_ACCESSOR(NS_IDEVICE_CONTEXT_SPEC_IID)
 
@@ -76,12 +80,23 @@ class nsIDeviceContextSpec : public nsISupports {
                            const nsAString& aPrintToFileName,
                            int32_t aStartPage, int32_t aEndPage) = 0;
 
-  NS_IMETHOD EndDocument() = 0;
-  NS_IMETHOD AbortDocument() { return EndDocument(); }
-  NS_IMETHOD BeginPage() = 0;
+  virtual RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocument() = 0;
+  /**
+   * Note: not all print devices implement mixed page sizing. Internally,
+   * aSizeInPoints gets handed off to a PrintTarget, and most PrintTarget
+   * subclasses will ignore `aSizeInPoints`.
+   */
+  NS_IMETHOD BeginPage(const IntSize& aSizeInPoints) = 0;
   NS_IMETHOD EndPage() = 0;
 
  protected:
+  using AsyncEndDocumentFunction = mozilla::MoveOnlyFunction<nsresult()>;
+  static RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocumentAsync(
+      const char* aCallSite, AsyncEndDocumentFunction aFunction);
+
+  static RefPtr<mozilla::gfx::PrintEndDocumentPromise>
+  EndDocumentPromiseFromResult(nsresult aResult, const char* aSite);
+
   nsCOMPtr<nsIPrintSettings> mPrintSettings;
 
 #ifdef MOZ_ENABLE_SKIA_PDF

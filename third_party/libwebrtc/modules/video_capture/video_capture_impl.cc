@@ -18,10 +18,9 @@
 #include "common_video/libyuv/include/webrtc_libyuv.h"
 #include "modules/video_capture/video_capture_config.h"
 #include "rtc_base/logging.h"
-#include "rtc_base/ref_counted_object.h"
 #include "rtc_base/time_utils.h"
 #include "rtc_base/trace_event.h"
-#include "libyuv/include/libyuv.h"
+#include "third_party/libyuv/include/libyuv.h"
 
 namespace webrtc {
 namespace videocapturemodule {
@@ -77,6 +76,7 @@ VideoCaptureImpl::VideoCaptureImpl()
       _requestedCapability(),
       _lastProcessTimeNanos(rtc::TimeNanos()),
       _lastFrameRateCallbackTimeNanos(rtc::TimeNanos()),
+      _rawDataCallBack(NULL),
       _lastProcessFrameTimeNanos(rtc::TimeNanos()),
       _rotateFrame(kVideoRotation_0),
       apply_rotation_(false) {
@@ -95,7 +95,15 @@ VideoCaptureImpl::~VideoCaptureImpl() {
 void VideoCaptureImpl::RegisterCaptureDataCallback(
     rtc::VideoSinkInterface<VideoFrame>* dataCallBack) {
   MutexLock lock(&api_lock_);
+  RTC_DCHECK(!_rawDataCallBack);
   _dataCallBacks.insert(dataCallBack);
+}
+
+void VideoCaptureImpl::RegisterCaptureDataCallback(
+    RawVideoSinkInterface* dataCallBack) {
+  MutexLock lock(&api_lock_);
+  RTC_DCHECK(_dataCallBacks.empty());
+  _rawDataCallBack = dataCallBack;
 }
 
 void VideoCaptureImpl::DeRegisterCaptureDataCallback(
@@ -105,6 +113,7 @@ void VideoCaptureImpl::DeRegisterCaptureDataCallback(
   if (it != _dataCallBacks.end()) {
     _dataCallBacks.erase(it);
   }
+  _rawDataCallBack = NULL;
 }
 
 int32_t VideoCaptureImpl::StopCaptureIfAllClientsClose() {
@@ -125,6 +134,15 @@ int32_t VideoCaptureImpl::DeliverCapturedFrame(VideoFrame& captureFrame) {
   return 0;
 }
 
+void VideoCaptureImpl::DeliverRawFrame(uint8_t* videoFrame,
+                                       size_t videoFrameLength,
+                                       const VideoCaptureCapability& frameInfo,
+                                       int64_t captureTime) {
+  UpdateFrameCount();
+  _rawDataCallBack->OnRawFrame(videoFrame, videoFrameLength, frameInfo,
+                               _rotateFrame, captureTime);
+}
+
 int32_t VideoCaptureImpl::IncomingFrame(uint8_t* videoFrame,
                                         size_t videoFrameLength,
                                         const VideoCaptureCapability& frameInfo,
@@ -136,12 +154,23 @@ int32_t VideoCaptureImpl::IncomingFrame(uint8_t* videoFrame,
 
   TRACE_EVENT1("webrtc", "VC::IncomingFrame", "capture_time", captureTime);
 
+  if (_rawDataCallBack) {
+    DeliverRawFrame(videoFrame, videoFrameLength, frameInfo, captureTime);
+    return 0;
+  }
+
   // Not encoded, convert to I420.
-  if (frameInfo.videoType != VideoType::kMJPEG &&
-      CalcBufferSize(frameInfo.videoType, width, abs(height)) !=
-          videoFrameLength) {
-    RTC_LOG(LS_ERROR) << "Wrong incoming frame length.";
-    return -1;
+  if (frameInfo.videoType != VideoType::kMJPEG) {
+    // Allow buffers larger than expected. On linux gstreamer allocates buffers
+    // page-aligned and v4l2loopback passes us the buffer size verbatim which
+    // for most cases is larger than expected.
+    // See https://github.com/umlaeute/v4l2loopback/issues/190.
+    if (auto size = CalcBufferSize(frameInfo.videoType, width, abs(height));
+        videoFrameLength < size) {
+      RTC_LOG(LS_ERROR) << "Wrong incoming frame length. Expected " << size
+                        << ", Got " << videoFrameLength << ".";
+      return -1;
+    }
   }
 
   int target_width = width;
@@ -150,11 +179,13 @@ int32_t VideoCaptureImpl::IncomingFrame(uint8_t* videoFrame,
   // SetApplyRotation doesn't take any lock. Make a local copy here.
   bool apply_rotation = apply_rotation_;
 
-  if (apply_rotation &&
-      (_rotateFrame == kVideoRotation_90 ||
-       _rotateFrame == kVideoRotation_270)) {
-    target_width = abs(height);
-    target_height = width;
+  if (apply_rotation) {
+    // Rotating resolution when for 90/270 degree rotations.
+    if (_rotateFrame == kVideoRotation_90 ||
+        _rotateFrame == kVideoRotation_270) {
+      target_width = abs(height);
+      target_height = width;
+    }
   }
 
   int stride_y = target_width;
@@ -163,8 +194,6 @@ int32_t VideoCaptureImpl::IncomingFrame(uint8_t* videoFrame,
   // Setting absolute height (in case it was negative).
   // In Windows, the image starts bottom left, instead of top left.
   // Setting a negative source height, inverts the image (within LibYuv).
-
-  // TODO(nisse): Use a pool?
   rtc::scoped_refptr<I420Buffer> buffer = I420Buffer::Create(
       target_width, target_height, stride_y, stride_uv, stride_uv);
 

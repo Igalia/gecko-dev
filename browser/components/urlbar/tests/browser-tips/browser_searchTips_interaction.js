@@ -10,15 +10,13 @@
 "use strict";
 
 ChromeUtils.defineESModuleGetters(this, {
+  AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.sys.mjs",
+  HttpServer: "resource://testing-common/httpd.sys.mjs",
+  ProfileAge: "resource://gre/modules/ProfileAge.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderSearchTips:
     "resource:///modules/UrlbarProviderSearchTips.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.jsm",
-  HttpServer: "resource://testing-common/httpd.js",
-  ProfileAge: "resource://gre/modules/ProfileAge.jsm",
+  UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -41,7 +39,16 @@ const GOOGLE_DOMAINS = [
   "www.google.co.nz",
 ];
 
-add_task(async function init() {
+// In order for the persist tip to appear, the scheme of the
+// search engine has to be the same as the scheme of the SERP url.
+// withDNSRedirect() loads an http: url while the searchform
+// of the default engine uses https. To enable the search term
+// to be shown, we use the Example engine because it doesn't require
+// a redirect.
+const SEARCH_TERM = "chocolate";
+const SEARCH_SERP_URL = `https://example.com/?q=${SEARCH_TERM}`;
+
+add_setup(async function () {
   await PlacesUtils.history.clear();
   await PlacesUtils.bookmarks.eraseEverything();
 
@@ -49,6 +56,10 @@ add_task(async function init() {
     set: [
       [
         `browser.urlbar.tipShownCount.${UrlbarProviderSearchTips.TIP_TYPE.ONBOARD}`,
+        0,
+      ],
+      [
+        `browser.urlbar.tipShownCount.${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}`,
         0,
       ],
       [
@@ -82,6 +93,9 @@ add_task(async function init() {
   let defaultEngineName = defaultEngine.name;
   Assert.equal(defaultEngineName, "Google", "Default engine should be Google.");
 
+  // Add a mock engine so we don't hit the network loading the SERP.
+  await SearchTestUtils.installSearchExtension();
+
   registerCleanupFunction(async () => {
     let age2 = await ProfileAge();
     age2._times = originalTimes;
@@ -109,7 +123,7 @@ add_task(async function pickButton_onboard() {
 
   // Click the tip button.
   let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-  let button = result.element.row._elements.get("tipButton");
+  let button = result.element.row._buttons.get("0");
   await UrlbarTestUtils.promisePopupClose(window, () => {
     EventUtils.synthesizeMouseAtCenter(button, {});
   });
@@ -161,13 +175,13 @@ add_task(async function pickButton_redirect() {
   await setDefaultEngine("Google");
   await BrowserTestUtils.withNewTab("about:blank", async () => {
     await withDNSRedirect("www.google.com", "/", async url => {
-      BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
       await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
       await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.REDIRECT, false);
 
       // Click the tip button.
       let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-      let button = result.element.row._elements.get("tipButton");
+      let button = result.element.row._buttons.get("0");
       await UrlbarTestUtils.promisePopupClose(window, () => {
         EventUtils.synthesizeMouseAtCenter(button, {});
       });
@@ -207,6 +221,78 @@ add_task(async function pickButton_redirect() {
   await SpecialPowers.popPrefEnv();
 });
 
+// Picking the tip's button should cause the Urlbar to keep its current
+// value and the tip to be not to be shown again in any session.
+// Telemetry should be updated.
+add_task(async function pickButton_persist() {
+  UrlbarProviderSearchTips.disableTipsForCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.eventTelemetry.enabled", true],
+      ["browser.urlbar.showSearchTerms.featureGate", true],
+    ],
+  });
+  Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Example");
+
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    let browserLoadedPromise = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      SEARCH_SERP_URL
+    );
+    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, SEARCH_SERP_URL);
+    await browserLoadedPromise;
+    await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.PERSIST, false);
+
+    let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
+    let button = result.element.row._buttons.get("0");
+
+    await UrlbarTestUtils.promisePopupClose(window, () => {
+      EventUtils.synthesizeMouseAtCenter(button, {});
+    });
+    gURLBar.blur();
+
+    Assert.equal(
+      gURLBar.value,
+      SEARCH_TERM,
+      "The Urlbar should keep its existing value."
+    );
+  });
+
+  // Check telemetry.
+  const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
+  TelemetryTestUtils.assertKeyedScalar(
+    scalars,
+    "urlbar.tips",
+    `${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}-picked`,
+    1
+  );
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get(
+      `tipShownCount.${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}`
+    ),
+    MAX_SHOWN_COUNT,
+    "Persist tips are disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetSearchTipsProvider();
+  await SpecialPowers.popPrefEnv();
+});
+
 // Clicking in the input while the onboard tip is showing should have the same
 // effect as picking the tip.
 add_task(async function clickInInput_onboard() {
@@ -214,8 +300,9 @@ add_task(async function clickInInput_onboard() {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.urlbar.eventTelemetry.enabled", true]],
   });
-
   Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Google");
   let tab = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
     url: "about:newtab",
@@ -270,8 +357,9 @@ add_task(async function openLocation_onboard() {
   await SpecialPowers.pushPrefEnv({
     set: [["browser.urlbar.eventTelemetry.enabled", true]],
   });
-
   Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Google");
   let tab = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
     url: "about:newtab",
@@ -331,7 +419,7 @@ add_task(async function clickInInput_redirect() {
   await setDefaultEngine("Google");
   await BrowserTestUtils.withNewTab("about:blank", async () => {
     await withDNSRedirect("www.google.com", "/", async url => {
-      BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
       await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
       await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.REDIRECT, false);
 
@@ -375,6 +463,73 @@ add_task(async function clickInInput_redirect() {
   await SpecialPowers.popPrefEnv();
 });
 
+// Clicking in the input while the persist tip is showing should have the same
+// effect as picking the tip.
+add_task(async function clickInInput_persist() {
+  UrlbarProviderSearchTips.disableTipsForCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.eventTelemetry.enabled", true],
+      ["browser.urlbar.showSearchTerms.featureGate", true],
+    ],
+  });
+  Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Example");
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    let browserLoadedPromise = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      SEARCH_SERP_URL
+    );
+    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, SEARCH_SERP_URL);
+    await browserLoadedPromise;
+    await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.PERSIST, false);
+
+    // Click in the input.
+    await UrlbarTestUtils.promisePopupClose(window, () => {
+      EventUtils.synthesizeMouseAtCenter(gURLBar.textbox.parentNode, {});
+    });
+    gURLBar.blur();
+    Assert.equal(
+      gURLBar.value,
+      SEARCH_TERM,
+      "The Urlbar should keep its existing value."
+    );
+  });
+
+  // Check telemetry.
+  const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
+  TelemetryTestUtils.assertKeyedScalar(
+    scalars,
+    "urlbar.tips",
+    `${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}-picked`,
+    1
+  );
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "click",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get(
+      `tipShownCount.${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}`
+    ),
+    MAX_SHOWN_COUNT,
+    "Persist tips are disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetSearchTipsProvider();
+  await SpecialPowers.popPrefEnv();
+});
+
 // Pressing Ctrl+L (the open location command) while the redirect tip is showing
 // should have the same effect as picking the tip.
 add_task(async function openLocation_redirect() {
@@ -387,7 +542,7 @@ add_task(async function openLocation_redirect() {
   await setDefaultEngine("Google");
   await BrowserTestUtils.withNewTab("about:blank", async () => {
     await withDNSRedirect("www.google.com", "/", async url => {
-      BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
       await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
       await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.REDIRECT, false);
 
@@ -431,8 +586,76 @@ add_task(async function openLocation_redirect() {
   await SpecialPowers.popPrefEnv();
 });
 
+// Pressing Ctrl+L (the open location command) while the persist tip is showing
+// should have the same effect as picking the tip.
+add_task(async function openLocation_persist() {
+  UrlbarProviderSearchTips.disableTipsForCurrentSession = false;
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.urlbar.eventTelemetry.enabled", true],
+      ["browser.urlbar.showSearchTerms.featureGate", true],
+    ],
+  });
+  Services.telemetry.clearEvents();
+
+  await setDefaultEngine("Example");
+  await BrowserTestUtils.withNewTab("about:blank", async () => {
+    let browserLoadedPromise = BrowserTestUtils.browserLoaded(
+      gBrowser.selectedBrowser,
+      false,
+      SEARCH_SERP_URL
+    );
+    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, SEARCH_SERP_URL);
+    await browserLoadedPromise;
+    await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.PERSIST, false);
+
+    // Trigger the open location command.
+    await UrlbarTestUtils.promisePopupClose(window, () => {
+      document.getElementById("Browser:OpenLocation").doCommand();
+    });
+    gURLBar.blur();
+    Assert.equal(
+      gURLBar.value,
+      SEARCH_TERM,
+      "The Urlbar should keep its existing value."
+    );
+  });
+
+  // Check telemetry.
+  const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
+  TelemetryTestUtils.assertKeyedScalar(
+    scalars,
+    "urlbar.tips",
+    `${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}-picked`,
+    1
+  );
+  TelemetryTestUtils.assertEvents(
+    [
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+      },
+    ],
+    { category: "urlbar" }
+  );
+
+  Assert.equal(
+    UrlbarPrefs.get(
+      `tipShownCount.${UrlbarProviderSearchTips.TIP_TYPE.PERSIST}`
+    ),
+    MAX_SHOWN_COUNT,
+    "Persist tips are disabled after tip button is picked."
+  );
+  Assert.equal(gURLBar.value, "", "The Urlbar should be empty.");
+  resetSearchTipsProvider();
+  await SpecialPowers.popPrefEnv();
+});
+
 add_task(async function pickingTipDoesNotDisableOtherKinds() {
   UrlbarProviderSearchTips.disableTipsForCurrentSession = false;
+  await setDefaultEngine("Google");
   let tab = await BrowserTestUtils.openNewForegroundTab({
     gBrowser,
     url: "about:newtab",
@@ -442,7 +665,7 @@ add_task(async function pickingTipDoesNotDisableOtherKinds() {
 
   // Click the tip button.
   let result = await UrlbarTestUtils.getDetailsOfResultAt(window, 0);
-  let button = result.element.row._elements.get("tipButton");
+  let button = result.element.row._buttons.get("0");
   await UrlbarTestUtils.promisePopupClose(window, () => {
     EventUtils.synthesizeMouseAtCenter(button, {});
   });
@@ -489,7 +712,7 @@ add_task(async function notification() {
     // Give it a big persistence so it doesn't go away on page load.
     note.persistence = 100;
     await withDNSRedirect("www.google.com", "/", async url => {
-      BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
       await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
       await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.NONE);
       box.removeNotification(note, true);
@@ -515,7 +738,7 @@ add_task(async function ignoreEndsEngagement() {
   await setDefaultEngine("Google");
   await BrowserTestUtils.withNewTab("about:blank", async () => {
     await withDNSRedirect("www.google.com", "/", async url => {
-      BrowserTestUtils.loadURI(gBrowser.selectedBrowser, url);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, url);
       await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
       await checkTip(window, UrlbarProviderSearchTips.TIP_TYPE.REDIRECT, false);
       // We're just looking for any target outside the Urlbar.
@@ -540,19 +763,12 @@ add_task(async function pasteAndGo_url() {
 });
 
 add_task(async function pasteAndGo_nonURL() {
-  // Add a mock engine so we don't hit the network loading the SERP.
-  await SearchTestUtils.installSearchExtension();
-
-  let engine = Services.search.getEngineByName("Example");
-  let oldDefaultEngine = await Services.search.getDefault();
-  Services.search.setDefault(engine);
-
+  await setDefaultEngine("Example");
   await doPasteAndGoTest(
     "pasteAndGo_nonURL",
     "https://example.com/?q=pasteAndGo_nonURL"
   );
-
-  Services.search.setDefault(oldDefaultEngine);
+  await setDefaultEngine("Google");
 });
 
 async function doPasteAndGoTest(searchString, expectedURL) {

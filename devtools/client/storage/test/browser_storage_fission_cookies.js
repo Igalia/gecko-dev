@@ -2,11 +2,9 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from head.js */
-
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   await SpecialPowers.pushPrefEnv({
     // Bug 1617611: Fix all the tests broken by "cookies SameSite=lax by default"
     set: [
@@ -45,7 +43,7 @@ add_task(async function() {
 
   info("Add more cookies");
   const onUpdated = gUI.once("store-objects-edit");
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
     content.window.document.cookie = "foo2=bar2";
 
     const iframe = content.document.querySelector("iframe");

@@ -90,23 +90,30 @@
 #endif
 #ifdef XP_MACOSX
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@.app/
+@BINPATH@/@MOZ_EME_PROCESS_NAME@.app/
 #else
 @BINPATH@/@MOZ_CHILD_PROCESS_NAME@
 #endif
 #ifdef XP_WIN
 #if MOZ_PACKAGE_MSVC_DLLS
 @BINPATH@/@MSVC_C_RUNTIME_DLL@
-@BINPATH@/@MSVC_CXX_RUNTIME_DLL@
+#ifdef MSVC_C_RUNTIME_1_DLL
+@BINPATH@/@MSVC_C_RUNTIME_1_DLL@
 #endif
-#if MOZ_PACKAGE_WIN_UCRT_DLLS
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
+@BINPATH@/@MSVC_CXX_RUNTIME_DLL@
 #endif
 #endif
 #ifdef MOZ_GTK
+@BINPATH@/glxtest
 @BINPATH@/@DLL_PREFIX@mozgtk@DLL_SUFFIX@
 #ifdef MOZ_WAYLAND
 @BINPATH@/@DLL_PREFIX@mozwayland@DLL_SUFFIX@
+#ifdef MOZ_ENABLE_V4L2
+@BINPATH@/v4l2test
+#endif
+#ifdef MOZ_ENABLE_VAAPI
+@BINPATH@/vaapitest
+#endif
 #endif
 #endif
 
@@ -114,13 +121,10 @@
 ; build because we haven't run the relevant parts of configure, so we guess
 ; here and trust what came from our source build.
 #if defined(MOZ_ARTIFACT_BUILDS) && defined(XP_WIN)
-@BINPATH@/api-ms-win-*.dll
-@BINPATH@/ucrtbase.dll
 @BINPATH@/vcruntime*.dll
 @BINPATH@/msvcp*.dll
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
-@BINPATH@/d3dcompiler_47.dll
 #endif
 
 [browser]
@@ -162,16 +166,12 @@
 ; [Components]
 #ifdef ACCESSIBILITY
 #ifdef XP_WIN
-@BINPATH@/Accessible.tlb
-@BINPATH@/AccessibleHandler.dll
 @BINPATH@/AccessibleMarshal.dll
-@BINPATH@/IA2Marshal.dll
 #endif
 #endif
 
 ; JavaScript components
 @RESPATH@/browser/components/BrowserComponents.manifest
-@RESPATH@/components/toolkitsearch.manifest
 @RESPATH@/components/extensions.manifest
 #ifdef MOZ_UPDATER
 @RESPATH@/components/nsUpdateService.manifest
@@ -210,10 +210,6 @@
 #ifdef MOZ_ANGLE_RENDERER
 @BINPATH@/libEGL.dll
 @BINPATH@/libGLESv2.dll
-
-#ifdef MOZ_D3DCOMPILER_VISTA_DLL
-@BINPATH@/@MOZ_D3DCOMPILER_VISTA_DLL@
-#endif
 #endif # MOZ_ANGLE_RENDERER
 
 ; [Browser Chrome Files]
@@ -421,7 +417,7 @@ bin/libfreebl_64int_3.so
 
 ; [ Notification COM Server ]
 ;
-#if defined(XP_WIN)
+#if defined(MOZ_NOTIFICATION_SERVER)
 @BINPATH@/@DLL_PREFIX@notificationserver@DLL_SUFFIX@
 #endif
 
@@ -462,9 +458,15 @@ i686/mozglue.dll
 i686/lgpllibs.dll
 i686/msvcp140.dll
 i686/vcruntime140.dll
+i686/vcruntime140_1.dll
 i686/gmp-clearkey/0.1/clearkey.dll
 [eme destdir="i686"]
 ; We assume the file we generate locally is the same as what was in the win32
 ; build, which, practically speaking, is the case.
 @BINPATH@/gmp-clearkey/0.1/manifest.json
+#endif
+
+#ifdef MOZ_ARTIFACT_BUILDS
+; Test workers unpack artifact build packages and need `jogfile.json`
+@BINPATH@/jogfile.json
 #endif

@@ -66,9 +66,6 @@ class LinkableAccessible : public AccessibleWrap {
   // ActionAccessible helpers
   const LocalAccessible* ActionWalk(bool* aIsLink = nullptr,
                                     bool* aIsOnclick = nullptr) const;
-  // HyperLinkAccessible
-  virtual already_AddRefed<nsIURI> AnchorURIAt(
-      uint32_t aAnchorIndex) const override;
 
  protected:
   virtual ~LinkableAccessible() {}
@@ -92,6 +89,22 @@ class EnumRoleAccessible : public AccessibleWrap {
 
  protected:
   virtual ~EnumRoleAccessible() {}
+};
+
+/**
+ * Like EnumRoleAccessible, but with text support.
+ */
+template <a11y::role R>
+class EnumRoleHyperTextAccessible : public HyperTextAccessibleWrap {
+ public:
+  EnumRoleHyperTextAccessible(nsIContent* aContent, DocAccessible* aDoc)
+      : HyperTextAccessibleWrap(aContent, aDoc) {}
+
+  // LocalAccessible
+  virtual a11y::role NativeRole() const override { return R; }
+
+ protected:
+  virtual ~EnumRoleHyperTextAccessible() {}
 };
 
 /**

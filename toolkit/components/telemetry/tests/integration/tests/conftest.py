@@ -2,14 +2,14 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 import contextlib
-import mozinstall
 import os
-import pytest
 import re
 import sys
 import textwrap
 import time
 
+import mozinstall
+import pytest
 from marionette_driver import By, keys
 from marionette_driver.addons import Addons
 from marionette_driver.errors import MarionetteException
@@ -222,7 +222,7 @@ class Browser(object):
 
             return new_tab
 
-    def quit(self, in_app=False):
+    def quit(self, in_app=True):
         self.marionette.quit(in_app=in_app)
 
     def restart(self):

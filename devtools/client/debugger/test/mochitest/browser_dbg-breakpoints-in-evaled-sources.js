@@ -27,7 +27,7 @@ const EVALED_SOURCE_TEXT = `setTimeout(function() {
  * This test will follow those STRs while also performing a few additional
  * checks (eg verify breakpoints can be hit at various stages of the test).
  */
-add_task(async function() {
+add_task(async function () {
   info("Open the debugger and set a breakpoint on a regular script");
   const dbg = await initDebugger("doc-scripts.html");
   await selectSource(dbg, "doc-scripts.html");
@@ -77,7 +77,7 @@ add_task(async function() {
   await waitFor(() => findElement(dbg2, "codeMirror"));
 
   info("Reload to check if we hit the breakpoint added in doc-scripts.html");
-  reload(dbg2);
+  const onReloaded = reload(dbg2);
 
   await waitForDispatch(dbg2.store, "NAVIGATE");
   await waitForSelectedSource(dbg2, "doc-scripts.html");
@@ -86,4 +86,7 @@ add_task(async function() {
   const scriptSource = dbg2.selectors.getSelectedSource();
   assertPausedAtSourceAndLine(dbg2, scriptSource.id, 21);
   await resume(dbg2);
+
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 });

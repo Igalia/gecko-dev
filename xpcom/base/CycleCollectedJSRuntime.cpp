@@ -161,7 +161,7 @@ struct NoteWeakMapChildrenTracer : public JS::CallbackTracer {
         mMap(nullptr),
         mKey(nullptr),
         mKeyDelegate(nullptr) {}
-  void onChild(JS::GCCellPtr aThing) override;
+  void onChild(JS::GCCellPtr aThing, const char* name) override;
   nsCycleCollectionNoteRootCallback& mCb;
   bool mTracedAny;
   JSObject* mMap;
@@ -169,7 +169,8 @@ struct NoteWeakMapChildrenTracer : public JS::CallbackTracer {
   JSObject* mKeyDelegate;
 };
 
-void NoteWeakMapChildrenTracer::onChild(JS::GCCellPtr aThing) {
+void NoteWeakMapChildrenTracer::onChild(JS::GCCellPtr aThing,
+                                        const char* name) {
   if (aThing.is<JSString>()) {
     return;
   }
@@ -399,11 +400,11 @@ struct TraversalTracer : public JS::CallbackTracer {
                            JS::TraceOptions(JS::WeakMapTraceAction::Skip,
                                             JS::WeakEdgeTraceAction::Trace)),
         mCb(aCb) {}
-  void onChild(JS::GCCellPtr aThing) override;
+  void onChild(JS::GCCellPtr aThing, const char* name) override;
   nsCycleCollectionTraversalCallback& mCb;
 };
 
-void TraversalTracer::onChild(JS::GCCellPtr aThing) {
+void TraversalTracer::onChild(JS::GCCellPtr aThing, const char* name) {
   // Checking strings and symbols for being gray is rather slow, and we don't
   // need either of them for the cycle collector.
   if (aThing.is<JSString>() || aThing.is<JS::Symbol>()) {
@@ -425,7 +426,7 @@ void TraversalTracer::onChild(JS::GCCellPtr aThing) {
   if (JS::IsCCTraceKind(aThing.kind())) {
     if (MOZ_UNLIKELY(mCb.WantDebugInfo())) {
       char buffer[200];
-      context().getEdgeName(buffer, sizeof(buffer));
+      context().getEdgeName(name, buffer, sizeof(buffer));
       mCb.NoteNextEdgeName(buffer);
     }
     mCb.NoteJSChild(aThing);
@@ -610,7 +611,7 @@ void JSHolderMap::Put(void* aHolder, nsScriptObjectTracer* aTracer,
   MOZ_ASSERT(aTracer);
 
   // Don't associate multi-zone holders with a zone, even if one is supplied.
-  if (aTracer->IsMultiZoneJSHolder()) {
+  if (!aTracer->IsSingleZoneJSHolder()) {
     aZone = nullptr;
   }
 
@@ -677,7 +678,6 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)
       mJSRuntime(JS_GetRuntime(aCx)),
       mHasPendingIdleGCTask(false),
       mPrevGCSliceCallback(nullptr),
-      mPrevGCNurseryCollectionCallback(nullptr),
       mOutOfMemoryState(OOMState::OK),
       mLargeAllocationFailureState(OOMState::OK)
 #ifdef DEBUG
@@ -710,8 +710,8 @@ CycleCollectedJSRuntime::CycleCollectedJSRuntime(JSContext* aCx)
     // currently possible. For now, add global markers only when we are on the
     // main thread, since the UI for this tracing data only displays data
     // relevant to the main-thread.
-    mPrevGCNurseryCollectionCallback =
-        JS::SetGCNurseryCollectionCallback(aCx, GCNurseryCollectionCallback);
+    JS::AddGCNurseryCollectionCallback(aCx, GCNurseryCollectionCallback,
+                                       nullptr);
   }
 
   JS_SetObjectsTenuredCallback(aCx, JSObjectsTenuredCb, this);
@@ -746,7 +746,7 @@ class JSLeakTracer : public JS::CallbackTracer {
                            JS::WeakMapTraceAction::TraceKeysAndValues) {}
 
  private:
-  void onChild(JS::GCCellPtr thing) override {
+  void onChild(JS::GCCellPtr thing, const char* name) override {
     const char* kindName = JS::GCTraceKindToAscii(thing.kind());
     size_t size = JS::GCTraceKindSize(thing.kind());
     MOZ_LOG_CTOR(thing.asCell(), kindName, size);
@@ -754,7 +754,7 @@ class JSLeakTracer : public JS::CallbackTracer {
 };
 #endif
 
-void CycleCollectedJSRuntime::Shutdown(JSContext* cx) {
+void CycleCollectedJSRuntime::Shutdown(JSContext* aCx) {
 #ifdef MOZ_JS_DEV_ERROR_INTERCEPTOR
   mErrorInterceptor.Shutdown(mJSRuntime);
 #endif  // MOZ_JS_DEV_ERROR_INTERCEPTOR
@@ -771,7 +771,11 @@ void CycleCollectedJSRuntime::Shutdown(JSContext* cx) {
   mShutdownCalled = true;
 #endif
 
-  JS_SetDestroyZoneCallback(cx, nullptr);
+  JS_SetDestroyZoneCallback(aCx, nullptr);
+
+  if (NS_IsMainThread()) {
+    JS::RemoveGCNurseryCollectionCallback(aCx, GCNurseryCollectionCallback);
+  }
 }
 
 CycleCollectedJSRuntime::~CycleCollectedJSRuntime() {
@@ -1170,8 +1174,8 @@ class MinorGCMarker : public TimelineMarker {
 
 /* static */
 void CycleCollectedJSRuntime::GCNurseryCollectionCallback(
-    JSContext* aContext, JS::GCNurseryProgress aProgress,
-    JS::GCReason aReason) {
+    JSContext* aContext, JS::GCNurseryProgress aProgress, JS::GCReason aReason,
+    void* data) {
   CycleCollectedJSRuntime* self = CycleCollectedJSRuntime::Get();
   MOZ_ASSERT(CycleCollectedJSContext::Get()->Context() == aContext);
   MOZ_ASSERT(NS_IsMainThread());
@@ -1226,10 +1230,6 @@ void CycleCollectedJSRuntime::GCNurseryCollectionCallback(
         GCMinorMarker{},
         ProfilerString8View::WrapNullTerminatedString(
             JS::MinorGcToJSON(aContext).get()));
-  }
-
-  if (self->mPrevGCNurseryCollectionCallback) {
-    self->mPrevGCNurseryCollectionCallback(aContext, aProgress, aReason);
   }
 }
 
@@ -1338,14 +1338,8 @@ struct CheckZoneTracer : public TraceCallbacks {
     // Additionally, pointers from any holder into the atoms zone are allowed
     // since all holders are traced when we collect the atoms zone.
     //
-    // If you added a holder that has pointers into multiple zones please try to
-    // remedy this. Some options are:
-    //
-    //  - wrap all JS GC things into the same compartment
-    //  - split GC thing pointers between separate cycle collected objects
-    //
-    // If all else fails, flag the class as containing pointers into multiple
-    // zones by using NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS.
+    // If you added a holder that has pointers into multiple zones do not
+    // use NS_IMPL_CYCLE_COLLECTION_SINGLE_ZONE_SCRIPT_HOLDER_CLASS.
     MOZ_CRASH_UNSAFE_PRINTF(
         "JS holder %s contains pointers to GC things in more than one zone ("
         "found in %s)\n",
@@ -1474,7 +1468,7 @@ bool CycleCollectedJSRuntime::TraceJSHolders(JSTracer* aTracer,
     nsScriptObjectTracer* tracer = aIter->mTracer;
 
 #ifdef CHECK_SINGLE_ZONE_JS_HOLDERS
-    if (checkSingleZoneHolders && !tracer->IsMultiZoneJSHolder()) {
+    if (checkSingleZoneHolders && tracer->IsSingleZoneJSHolder()) {
       CheckHolderIsSingleZone(holder, tracer, aIter.Zone());
     }
 #else
@@ -1824,6 +1818,10 @@ const char* CycleCollectedJSRuntime::OOMStateToString(
       MOZ_ASSERT_UNREACHABLE("OOMState holds an invalid value");
       return "Unknown";
   }
+}
+
+bool CycleCollectedJSRuntime::OOMReported() {
+  return mOutOfMemoryState == OOMState::Reported;
 }
 
 void CycleCollectedJSRuntime::AnnotateAndSetOutOfMemory(OOMState* aStatePtr,

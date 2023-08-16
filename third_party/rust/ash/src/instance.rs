@@ -1,3 +1,5 @@
+#[cfg(doc)]
+use super::Entry;
 use crate::device::Device;
 use crate::prelude::*;
 use crate::vk;
@@ -33,6 +35,7 @@ impl Instance {
         }
     }
 
+    #[inline]
     pub fn handle(&self) -> vk::Instance {
         self.handle
     }
@@ -41,11 +44,13 @@ impl Instance {
 /// Vulkan core 1.3
 #[allow(non_camel_case_types)]
 impl Instance {
+    #[inline]
     pub fn fp_v1_3(&self) -> &vk::InstanceFnV1_3 {
         &self.instance_fn_1_3
     }
 
     /// Retrieve the number of elements to pass to [`get_physical_device_tool_properties()`][Self::get_physical_device_tool_properties()]
+    #[inline]
     pub unsafe fn get_physical_device_tool_properties_len(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -63,6 +68,7 @@ impl Instance {
     ///
     /// Call [`get_physical_device_tool_properties_len()`][Self::get_physical_device_tool_properties_len()] to query the number of elements to pass to `out`.
     /// Be sure to [`Default::default()`]-initialize these elements and optionally set their `p_next` pointer.
+    #[inline]
     pub unsafe fn get_physical_device_tool_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -83,6 +89,7 @@ impl Instance {
 /// Vulkan core 1.2
 #[allow(non_camel_case_types)]
 impl Instance {
+    #[inline]
     pub fn fp_v1_2(&self) -> &vk::InstanceFnV1_2 {
         &self.instance_fn_1_2
     }
@@ -91,11 +98,13 @@ impl Instance {
 /// Vulkan core 1.1
 #[allow(non_camel_case_types)]
 impl Instance {
+    #[inline]
     pub fn fp_v1_1(&self) -> &vk::InstanceFnV1_1 {
         &self.instance_fn_1_1
     }
 
     /// Retrieve the number of elements to pass to [`enumerate_physical_device_groups()`][Self::enumerate_physical_device_groups()]
+    #[inline]
     pub unsafe fn enumerate_physical_device_groups_len(&self) -> VkResult<usize> {
         let mut group_count = 0;
         (self.instance_fn_1_1.enumerate_physical_device_groups)(
@@ -110,6 +119,7 @@ impl Instance {
     ///
     /// Call [`enumerate_physical_device_groups_len()`][Self::enumerate_physical_device_groups_len()] to query the number of elements to pass to `out`.
     /// Be sure to [`Default::default()`]-initialize these elements and optionally set their `p_next` pointer.
+    #[inline]
     pub unsafe fn enumerate_physical_device_groups(
         &self,
         out: &mut [vk::PhysicalDeviceGroupProperties],
@@ -126,6 +136,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceFeatures2.html>
+    #[inline]
     pub unsafe fn get_physical_device_features2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -135,6 +146,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceProperties2.html>
+    #[inline]
     pub unsafe fn get_physical_device_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -144,6 +156,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceFormatProperties2.html>
+    #[inline]
     pub unsafe fn get_physical_device_format_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -154,6 +167,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceImageFormatProperties2.html>
+    #[inline]
     pub unsafe fn get_physical_device_image_format_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -171,6 +185,7 @@ impl Instance {
     }
 
     /// Retrieve the number of elements to pass to [`get_physical_device_queue_family_properties2()`][Self::get_physical_device_queue_family_properties2()]
+    #[inline]
     pub unsafe fn get_physical_device_queue_family_properties2_len(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -190,6 +205,7 @@ impl Instance {
     ///
     /// Call [`get_physical_device_queue_family_properties2_len()`][Self::get_physical_device_queue_family_properties2_len()] to query the number of elements to pass to `out`.
     /// Be sure to [`Default::default()`]-initialize these elements and optionally set their `p_next` pointer.
+    #[inline]
     pub unsafe fn get_physical_device_queue_family_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -207,6 +223,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceMemoryProperties2.html>
+    #[inline]
     pub unsafe fn get_physical_device_memory_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -216,6 +233,7 @@ impl Instance {
     }
 
     /// Retrieve the number of elements to pass to [`get_physical_device_sparse_image_format_properties2()`][Self::get_physical_device_sparse_image_format_properties2()]
+    #[inline]
     pub unsafe fn get_physical_device_sparse_image_format_properties2_len(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -237,6 +255,7 @@ impl Instance {
     ///
     /// Call [`get_physical_device_sparse_image_format_properties2_len()`][Self::get_physical_device_sparse_image_format_properties2_len()] to query the number of elements to pass to `out`.
     /// Be sure to [`Default::default()`]-initialize these elements and optionally set their `p_next` pointer.
+    #[inline]
     pub unsafe fn get_physical_device_sparse_image_format_properties2(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -256,6 +275,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceExternalBufferProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_external_buffer_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -272,6 +292,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceExternalFenceProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_external_fence_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -288,6 +309,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceExternalSemaphoreProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_external_semaphore_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -307,6 +329,7 @@ impl Instance {
 /// Vulkan core 1.0
 #[allow(non_camel_case_types)]
 impl Instance {
+    #[inline]
     pub fn fp_v1_0(&self) -> &vk::InstanceFnV1_0 {
         &self.instance_fn_1_0
     }
@@ -314,9 +337,18 @@ impl Instance {
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkCreateDevice.html>
     ///
     /// # Safety
-    /// In order for the created [`Device`] to be valid for the duration of its
-    /// usage, the [`Instance`] this was called on must be dropped later than the
-    /// resulting [`Device`].
+    ///
+    /// There is a [parent/child relation] between [`Instance`] and the resulting [`Device`].  The
+    /// application must not [destroy][Instance::destroy_instance()] the parent [`Instance`] object
+    /// before first [destroying][Device::destroy_device()] the returned [`Device`] child object.
+    /// [`Device`] does _not_ implement [drop][drop()] semantics and can only be destroyed via
+    /// [`destroy_device()`][Device::destroy_device()].
+    ///
+    /// See the [`Entry::create_instance()`] documentation for more destruction ordering rules on
+    /// [`Instance`].
+    ///
+    /// [parent/child relation]: https://registry.khronos.org/vulkan/specs/1.3-extensions/html/vkspec.html#fundamentals-objectmodel-lifetime
+    #[inline]
     pub unsafe fn create_device(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -335,6 +367,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetDeviceProcAddr.html>
+    #[inline]
     pub unsafe fn get_device_proc_addr(
         &self,
         device: vk::Device,
@@ -344,11 +377,13 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkDestroyInstance.html>
+    #[inline]
     pub unsafe fn destroy_instance(&self, allocation_callbacks: Option<&vk::AllocationCallbacks>) {
         (self.instance_fn_1_0.destroy_instance)(self.handle(), allocation_callbacks.as_raw_ptr());
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceFormatProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_format_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -364,6 +399,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceImageFormatProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_image_format_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -389,6 +425,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceMemoryProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_memory_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -402,6 +439,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -412,6 +450,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceQueueFamilyProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_queue_family_properties(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -429,6 +468,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceFeatures.html>
+    #[inline]
     pub unsafe fn get_physical_device_features(
         &self,
         physical_device: vk::PhysicalDevice,
@@ -439,6 +479,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkEnumeratePhysicalDevices.html>
+    #[inline]
     pub unsafe fn enumerate_physical_devices(&self) -> VkResult<Vec<vk::PhysicalDevice>> {
         read_into_uninitialized_vector(|count, data| {
             (self.instance_fn_1_0.enumerate_physical_devices)(self.handle(), count, data)
@@ -446,6 +487,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkEnumerateDeviceExtensionProperties.html>
+    #[inline]
     pub unsafe fn enumerate_device_extension_properties(
         &self,
         device: vk::PhysicalDevice,
@@ -461,6 +503,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkEnumerateDeviceLayerProperties.html>
+    #[inline]
     pub unsafe fn enumerate_device_layer_properties(
         &self,
         device: vk::PhysicalDevice,
@@ -471,6 +514,7 @@ impl Instance {
     }
 
     /// <https://www.khronos.org/registry/vulkan/specs/1.3-extensions/man/html/vkGetPhysicalDeviceSparseImageFormatProperties.html>
+    #[inline]
     pub unsafe fn get_physical_device_sparse_image_format_properties(
         &self,
         physical_device: vk::PhysicalDevice,

@@ -3,8 +3,8 @@ $header-font-size: 17;
 $header-line-height: 24;
 $excerpt-font-size: 14;
 $excerpt-line-height: 20;
-$ds-card-image-gradient-fade: rgba(0, 0, 0, 0);
-$ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
+$ds-card-image-gradient-fade: rgba(0, 0, 0, 0%);
+$ds-card-image-gradient-solid: rgba(0, 0, 0, 100%);
 
 .ds-card {
   display: flex;
@@ -34,16 +34,14 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
     padding-top: 50%;
     pointer-events: none;
     background: $black-40;
-    border-radius: 8px;
+    border-radius: 8px 8px 0 0;
 
     .card-stp-button-position-wrapper {
       position: absolute;
-      margin-top: -16px;
-      left: 0;
-      right: 0;
-      top: 50%;
+      inset-inline-end: 10px;
+      top: 10px;
       display: flex;
-      justify-content: center;
+      justify-content: end;
       align-items: center;
     }
 
@@ -53,15 +51,13 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
       height: 15px;
       width: 15px;
       background-size: 15px;
-    }
-
-    .icon-pocket {
-      fill: $pocket-icon-fill;
+      fill: $white;
     }
 
     .context-menu-button {
       position: static;
       transition: none;
+      border-radius: 3px;
     }
 
     .context-menu-position-container {
@@ -77,21 +73,16 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
 
     .card-stp-button {
       display: flex;
-      margin-inline-end: 12px;
+      margin-inline-end: 7px;
       font-weight: 400;
       font-size: 13px;
       line-height: 16px;
-      background-color: var(--newtab-background-color-secondary);
+      background-color: $pocket-icon-fill;
       border: 0;
       border-radius: 4px;
-      padding: 8px;
+      padding: 6px;
       white-space: nowrap;
-
-      &:hover {
-        .icon-pocket-save {
-          fill: $pocket-icon-fill;
-        }
-      }
+      color: $white;
     }
 
     button,
@@ -113,12 +104,19 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
     }
   }
 
-  &:hover,
-  &.active {
+  // The active class is added when the context menu is open.
+  &.active,
+  &:focus-within,
+  &:hover {
     .card-stp-button-hover-background {
       display: block;
       opacity: 1;
       transition-duration: 0.3s;
+
+      .context-menu-button {
+        opacity: 1;
+        transform: scale(1);
+      }
     }
   }
 
@@ -136,6 +134,7 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
     height: 100%;
     display: flex;
     flex-direction: column;
+    text-decoration: none;
 
     &:hover {
       header {
@@ -173,6 +172,7 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
     .title {
       // show only 3 lines of copy
       @include limit-visible-lines(3, $header-line-height, $header-font-size);
+
       font-weight: 600;
     }
 
@@ -190,6 +190,10 @@ $ds-card-image-gradient-solid: rgba(0, 0, 0, 1);
       margin-bottom: 2px;
       font-size: 13px;
       color: var(--newtab-text-secondary-color);
+
+      span {
+        display: inline-block;
+      }
     }
 
     .new-sponsored-label {

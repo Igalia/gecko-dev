@@ -40,6 +40,7 @@
 #include "debugger/Script.h"              // for DebuggerScript
 #include "debugger/Source.h"              // for DebuggerSource
 #include "frontend/CompilationStencil.h"  // for CompilationStencil
+#include "frontend/FrontendContext.h"     // for AutoReportFrontendContext
 #include "frontend/Parser.h"              // for Parser
 #include "gc/GC.h"                        // for IterateScripts
 #include "gc/GCContext.h"                 // for JS::GCContext
@@ -56,6 +57,7 @@
 #include "jit/BaselineJIT.h"           // for FinishDiscardBaselineScript
 #include "jit/Invalidation.h"         // for RecompileInfoVector
 #include "jit/JitContext.h"           // for JitContext
+#include "jit/JitOptions.h"           // for fuzzingSafe
 #include "jit/JitScript.h"            // for JitScript
 #include "jit/JSJitFrameIter.h"       // for InlineFrameIterator
 #include "jit/RematerializedFrame.h"  // for RematerializedFrame
@@ -64,6 +66,7 @@
 #include "js/Debug.h"                 // for Builder::Object, Builder
 #include "js/friend/ErrorMessages.h"  // for GetErrorMessage, JSMSG_*
 #include "js/GCAPI.h"                 // for GarbageCollectionEvent
+#include "js/GCVariant.h"             // for GCVariant
 #include "js/HeapAPI.h"               // for ExposeObjectToActiveJS
 #include "js/Promise.h"               // for AutoDebuggerJobQueueInterruption
 #include "js/PropertyAndElement.h"    // for JS_GetProperty
@@ -72,8 +75,8 @@
 #include "js/StableStringChars.h"     // for AutoStableStringChars
 #include "js/UbiNode.h"               // for Node, RootList, Edge
 #include "js/UbiNodeBreadthFirst.h"   // for BreadthFirst
-#include "js/Warnings.h"              // for AutoSuppressWarningReporter
 #include "js/Wrapper.h"               // for CheckedUnwrapStatic
+#include "util/Identifier.h"          // for IsIdentifier
 #include "util/Text.h"                // for DuplicateString, js_strlen
 #include "vm/ArrayObject.h"           // for ArrayObject
 #include "vm/AsyncFunction.h"         // for AsyncFunctionGeneratorObject
@@ -86,38 +89,40 @@
 #include "vm/GlobalObject.h"          // for GlobalObject
 #include "vm/Interpreter.h"           // for Call, ReportIsNotFunction
 #include "vm/Iteration.h"             // for CreateIterResultObject
-#include "vm/JSAtom.h"                // for Atomize, ClassName
-#include "vm/JSContext.h"             // for JSContext
-#include "vm/JSFunction.h"            // for JSFunction
-#include "vm/JSObject.h"              // for JSObject, RequireObject,
-#include "vm/ObjectOperations.h"      // for DefineDataProperty
-#include "vm/PlainObject.h"           // for js::PlainObject
-#include "vm/PromiseObject.h"         // for js::PromiseObject
-#include "vm/ProxyObject.h"           // for ProxyObject, JSObject::is
-#include "vm/Realm.h"                 // for AutoRealm, Realm
-#include "vm/Runtime.h"               // for ReportOutOfMemory, JSRuntime
-#include "vm/SavedFrame.h"            // for SavedFrame
-#include "vm/SavedStacks.h"           // for SavedStacks
-#include "vm/Scope.h"                 // for Scope
-#include "vm/StringType.h"            // for JSString, PropertyName
-#include "vm/WrapperObject.h"         // for CrossCompartmentWrapperObject
-#include "wasm/WasmDebug.h"           // for DebugState
-#include "wasm/WasmInstance.h"        // for Instance
-#include "wasm/WasmJS.h"              // for WasmInstanceObject
-#include "wasm/WasmRealm.h"           // for Realm
-#include "wasm/WasmTypeDecls.h"       // for WasmInstanceObjectVector
+#include "vm/JSAtomUtils.h"  // for Atomize, AtomizeUTF8Chars, AtomIsMarked, AtomToId, ClassName
+#include "vm/JSContext.h"         // for JSContext
+#include "vm/JSFunction.h"        // for JSFunction
+#include "vm/JSObject.h"          // for JSObject, RequireObject,
+#include "vm/JSScript.h"          // for BaseScript, ScriptSourceObject
+#include "vm/ObjectOperations.h"  // for DefineDataProperty
+#include "vm/PlainObject.h"       // for js::PlainObject
+#include "vm/PromiseObject.h"     // for js::PromiseObject
+#include "vm/ProxyObject.h"       // for ProxyObject, JSObject::is
+#include "vm/Realm.h"             // for AutoRealm, Realm
+#include "vm/Runtime.h"           // for ReportOutOfMemory, JSRuntime
+#include "vm/SavedFrame.h"        // for SavedFrame
+#include "vm/SavedStacks.h"       // for SavedStacks
+#include "vm/Scope.h"             // for Scope
+#include "vm/StringType.h"        // for JSString, PropertyName
+#include "vm/WrapperObject.h"     // for CrossCompartmentWrapperObject
+#include "wasm/WasmDebug.h"       // for DebugState
+#include "wasm/WasmInstance.h"    // for Instance
+#include "wasm/WasmJS.h"          // for WasmInstanceObject
+#include "wasm/WasmRealm.h"       // for Realm
+#include "wasm/WasmTypeDecls.h"   // for WasmInstanceObjectVector
 
 #include "debugger/DebugAPI-inl.h"
 #include "debugger/Environment-inl.h"  // for DebuggerEnvironment::owner
 #include "debugger/Frame-inl.h"        // for DebuggerFrame::hasGeneratorInfo
-#include "debugger/Object-inl.h"   // for DebuggerObject::owner and isInstance.
-#include "debugger/Script-inl.h"   // for DebuggerScript::getReferent
-#include "gc/GC-inl.h"             // for ZoneCellIter
-#include "gc/Marking-inl.h"        // for MaybeForwarded
+#include "debugger/Object-inl.h"  // for DebuggerObject::owner and isInstance.
+#include "debugger/Script-inl.h"  // for DebuggerScript::getReferent
+#include "gc/GC-inl.h"            // for ZoneCellIter
+#include "gc/Marking-inl.h"       // for MaybeForwarded
+#include "gc/StableCellHasher-inl.h"
 #include "gc/WeakMap-inl.h"        // for DebuggerWeakMap::trace
 #include "vm/Compartment-inl.h"    // for Compartment::wrap
 #include "vm/GeckoProfiler-inl.h"  // for AutoSuppressProfilerSampling
-#include "vm/JSAtom-inl.h"         // for AtomToId, ValueToId
+#include "vm/JSAtomUtils-inl.h"    // for AtomToId, ValueToId
 #include "vm/JSContext-inl.h"      // for JSContext::check
 #include "vm/JSObject-inl.h"  // for JSObject::isCallable, NewTenuredObjectWithGivenProto
 #include "vm/JSScript-inl.h"      // for JSScript::isDebuggee, JSScript
@@ -150,7 +155,6 @@ using JS::SourceOwnership;
 using JS::SourceText;
 using JS::dbg::AutoEntryMonitor;
 using JS::dbg::Builder;
-using js::frontend::IsIdentifier;
 using mozilla::AsVariant;
 using mozilla::DebugOnly;
 using mozilla::MakeScopeExit;
@@ -365,7 +369,7 @@ bool js::ParseEvalOptions(JSContext* cx, HandleValue value,
     if (!url_str) {
       return false;
     }
-    UniqueChars url_bytes = JS_EncodeStringToLatin1(cx, url_str);
+    UniqueChars url_bytes = JS_EncodeStringToUTF8(cx, url_str);
     if (!url_bytes) {
       return false;
     }
@@ -735,7 +739,7 @@ static bool DebuggerExists(
   // explicitly.
   JS::AutoSuppressGCAnalysis nogc;
 
-  for (Realm::DebuggerVectorEntry& entry : global->getDebuggers()) {
+  for (Realm::DebuggerVectorEntry& entry : global->getDebuggers(nogc)) {
     // Callbacks should not create new references to the debugger, so don't
     // use a barrier. This allows this method to be called during GC.
     if (predicate(entry.dbg.unbarrieredGet())) {
@@ -791,7 +795,8 @@ bool DebuggerList<HookIsEnabledFun>::init(JSContext* cx) {
   // Make a copy of the list, since the original is mutable and we will be
   // calling into arbitrary JS.
   Handle<GlobalObject*> global = cx->global();
-  for (Realm::DebuggerVectorEntry& entry : global->getDebuggers()) {
+  JS::AutoAssertNoGC nogc;
+  for (Realm::DebuggerVectorEntry& entry : global->getDebuggers(nogc)) {
     Debugger* dbg = entry.dbg;
     if (dbg->isHookCallAllowed(cx) && hookIsEnabled(dbg)) {
       if (!debuggers.append(ObjectValue(*dbg->toJSObject()))) {
@@ -915,18 +920,22 @@ bool DebugAPI::slowPathOnResumeFrame(JSContext* cx, AbstractFramePtr frame) {
   // frame is observable.
   FrameIter iter(cx);
   MOZ_ASSERT(iter.abstractFramePtr() == frame);
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
-    Debugger* dbg = entry.dbg;
-    if (Debugger::GeneratorWeakMap::Ptr generatorEntry =
-            dbg->generatorFrames.lookup(genObj)) {
-      DebuggerFrame* frameObj = generatorEntry->value();
-      MOZ_ASSERT(&frameObj->unwrappedGenerator() == genObj);
-      if (!dbg->frames.putNew(frame, frameObj)) {
-        ReportOutOfMemory(cx);
-        return false;
-      }
-      if (!frameObj->resume(iter)) {
-        return false;
+  {
+    JS::AutoAssertNoGC nogc;
+    for (Realm::DebuggerVectorEntry& entry :
+         frame.global()->getDebuggers(nogc)) {
+      Debugger* dbg = entry.dbg;
+      if (Debugger::GeneratorWeakMap::Ptr generatorEntry =
+              dbg->generatorFrames.lookup(genObj)) {
+        DebuggerFrame* frameObj = generatorEntry->value();
+        MOZ_ASSERT(&frameObj->unwrappedGenerator() == genObj);
+        if (!dbg->frames.putNew(frame, frameObj)) {
+          ReportOutOfMemory(cx);
+          return false;
+        }
+        if (!frameObj->resume(iter)) {
+          return false;
+        }
       }
     }
   }
@@ -941,7 +950,8 @@ NativeResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx,
                                                 const CallArgs& args,
                                                 CallReason reason) {
   // "onNativeCall" only works consistently in the context of an explicit eval
-  // that has set the "insideDebuggerEvaluationWithOnNativeCallHook" state
+  // (or a function call via DebuggerObject.call/apply) that has set the
+  // "insideDebuggerEvaluationWithOnNativeCallHook" state
   // on the JSContext, so we fast-path this hook to bail right away if that is
   // not currently set. If this flag is set to a _different_ debugger, the
   // standard "isHookCallAllowed" debugger logic will apply and only hooks on
@@ -965,19 +975,22 @@ NativeResumeMode DebugAPI::slowPathOnNativeCall(JSContext* cx,
   // The onNativeCall hook is fired when self hosted functions are called,
   // and any other self hosted function or C++ native that is directly called
   // by the self hosted function is considered to be part of the same
-  // native call, except for the following 2 cases:
+  // native call, except for the following 4 cases:
   //
   //  * callContentFunction and constructContentFunction,
   //    which uses CallReason::CallContent
   //  * Function.prototype.call and Function.prototype.apply,
   //    which uses CallReason::FunCall
+  //  * Getter call which uses CallReason::Getter
+  //  * Setter call which uses CallReason::Setter
   //
   // We check this only after checking that debuggerList has items in order
   // to avoid unnecessary calls to cx->currentScript(), which can be expensive
   // when the top frame is in jitcode.
   JSScript* script = cx->currentScript();
   if (script && script->selfHosted() && reason != CallReason::CallContent &&
-      reason != CallReason::FunCall) {
+      reason != CallReason::FunCall && reason != CallReason::Getter &&
+      reason != CallReason::Setter) {
     return NativeResumeMode::Continue;
   }
 
@@ -1250,8 +1263,9 @@ bool DebugAPI::slowPathOnNewGenerator(JSContext* cx, AbstractFramePtr frame,
       MakeScopeExit([&] { Debugger::terminateDebuggerFrames(cx, frame); });
 
   bool ok = true;
+  gc::AutoSuppressGC nogc(cx);
   Debugger::forEachOnStackDebuggerFrame(
-      frame, [&](Debugger* dbg, DebuggerFrame* frameObjPtr) {
+      frame, nogc, [&](Debugger* dbg, DebuggerFrame* frameObjPtr) {
         if (!ok) {
           return;
         }
@@ -1502,15 +1516,7 @@ static DebuggerObject* ToNativeDebuggerObject(JSContext* cx,
     return nullptr;
   }
 
-  DebuggerObject* ndobj = &obj->as<DebuggerObject>();
-
-  if (!ndobj->isInstance()) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr, JSMSG_DEBUG_PROTO,
-                              "Debugger.Object", "Debugger.Object");
-    return nullptr;
-  }
-
-  return ndobj;
+  return &obj->as<DebuggerObject>();
 }
 
 bool Debugger::unwrapDebuggeeObject(JSContext* cx, MutableHandleObject obj) {
@@ -2432,7 +2438,8 @@ static bool RememberSourceURL(JSContext* cx, HandleScript script) {
     return true;
   }
 
-  RootedString filenameString(cx, JS_AtomizeString(cx, filename));
+  RootedString filenameString(cx,
+                              AtomizeUTF8Chars(cx, filename, strlen(filename)));
   if (!filenameString) {
     return false;
   }
@@ -2623,7 +2630,8 @@ bool DebugAPI::onSingleStep(JSContext* cx) {
     uint32_t liveStepperCount = 0;
     uint32_t suspendedStepperCount = 0;
     JSScript* trappingScript = iter.script();
-    for (Realm::DebuggerVectorEntry& entry : cx->global()->getDebuggers()) {
+    JS::AutoAssertNoGC nogc;
+    for (Realm::DebuggerVectorEntry& entry : cx->global()->getDebuggers(nogc)) {
       Debugger* dbg = entry.dbg;
       for (Debugger::FrameMap::Range r = dbg->frames.all(); !r.empty();
            r.popFront()) {
@@ -2806,7 +2814,8 @@ void DebugAPI::slowPathOnNewGlobalObject(JSContext* cx,
 
 /* static */
 void DebugAPI::slowPathNotifyParticipatesInGC(uint64_t majorGCNumber,
-                                              Realm::DebuggerVector& dbgs) {
+                                              Realm::DebuggerVector& dbgs,
+                                              const JS::AutoRequireNoGC& nogc) {
   for (Realm::DebuggerVector::Range r = dbgs.all(); !r.empty(); r.popFront()) {
     if (!r.front().dbg.unbarrieredGet()->debuggeeIsBeingCollected(
             majorGCNumber)) {
@@ -2823,7 +2832,8 @@ void DebugAPI::slowPathNotifyParticipatesInGC(uint64_t majorGCNumber,
 
 /* static */
 Maybe<double> DebugAPI::allocationSamplingProbability(GlobalObject* global) {
-  Realm::DebuggerVector& dbgs = global->getDebuggers();
+  JS::AutoAssertNoGC nogc;
+  Realm::DebuggerVector& dbgs = global->getDebuggers(nogc);
   if (dbgs.empty()) {
     return Nothing();
   }
@@ -2853,23 +2863,13 @@ Maybe<double> DebugAPI::allocationSamplingProbability(GlobalObject* global) {
 bool DebugAPI::slowPathOnLogAllocationSite(JSContext* cx, HandleObject obj,
                                            Handle<SavedFrame*> frame,
                                            mozilla::TimeStamp when,
-                                           Realm::DebuggerVector& dbgs) {
+                                           Realm::DebuggerVector& dbgs,
+                                           const gc::AutoSuppressGC& nogc) {
   MOZ_ASSERT(!dbgs.empty());
   mozilla::DebugOnly<Realm::DebuggerVectorEntry*> begin = dbgs.begin();
 
-  // Root all the Debuggers while we're iterating over them;
-  // appendAllocationSite calls Compartment::wrap, and thus can GC.
-  //
-  // SpiderMonkey protocol is generally for the caller to prove that it has
-  // rooted the stuff it's asking you to operate on (i.e. by passing a
-  // Handle), but in this case, we're iterating over a global's list of
-  // Debuggers, and globals only hold their Debuggers weakly.
-  Rooted<GCVector<JSObject*>> activeDebuggers(cx, GCVector<JSObject*>(cx));
-  for (auto p = dbgs.begin(); p < dbgs.end(); p++) {
-    if (!activeDebuggers.append(p->dbg->object)) {
-      return false;
-    }
-  }
+  // GC is suppressed so we can iterate over the debuggers; appendAllocationSite
+  // calls Compartment::wrap, and thus could GC.
 
   for (auto p = dbgs.begin(); p < dbgs.end(); p++) {
     // The set of debuggers had better not change while we're iterating,
@@ -3279,8 +3279,10 @@ bool Debugger::updateExecutionObservabilityOfScripts(
 
 template <typename FrameFn>
 /* static */
-void Debugger::forEachOnStackDebuggerFrame(AbstractFramePtr frame, FrameFn fn) {
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
+void Debugger::forEachOnStackDebuggerFrame(AbstractFramePtr frame,
+                                           const JS::AutoRequireNoGC& nogc,
+                                           FrameFn fn) {
+  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers(nogc)) {
     Debugger* dbg = entry.dbg;
     if (FrameMap::Ptr frameEntry = dbg->frames.lookup(frame)) {
       fn(dbg, frameEntry->value());
@@ -3290,14 +3292,14 @@ void Debugger::forEachOnStackDebuggerFrame(AbstractFramePtr frame, FrameFn fn) {
 
 template <typename FrameFn>
 /* static */
-void Debugger::forEachOnStackOrSuspendedDebuggerFrame(JSContext* cx,
-                                                      AbstractFramePtr frame,
-                                                      FrameFn fn) {
+void Debugger::forEachOnStackOrSuspendedDebuggerFrame(
+    JSContext* cx, AbstractFramePtr frame, const JS::AutoRequireNoGC& nogc,
+    FrameFn fn) {
   Rooted<AbstractGeneratorObject*> genObj(
       cx, frame.isGeneratorFrame() ? GetGeneratorObjectForFrame(cx, frame)
                                    : nullptr);
 
-  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers()) {
+  for (Realm::DebuggerVectorEntry& entry : frame.global()->getDebuggers(nogc)) {
     Debugger* dbg = entry.dbg;
 
     DebuggerFrame* frameObj = nullptr;
@@ -3318,11 +3320,13 @@ void Debugger::forEachOnStackOrSuspendedDebuggerFrame(JSContext* cx,
 bool Debugger::getDebuggerFrames(AbstractFramePtr frame,
                                  MutableHandle<DebuggerFrameVector> frames) {
   bool hadOOM = false;
-  forEachOnStackDebuggerFrame(frame, [&](Debugger*, DebuggerFrame* frameobj) {
-    if (!hadOOM && !frames.append(frameobj)) {
-      hadOOM = true;
-    }
-  });
+  JS::AutoAssertNoGC nogc;
+  forEachOnStackDebuggerFrame(frame, nogc,
+                              [&](Debugger*, DebuggerFrame* frameobj) {
+                                if (!hadOOM && !frames.append(frameobj)) {
+                                  hadOOM = true;
+                                }
+                              });
   return !hadOOM;
 }
 
@@ -3549,7 +3553,8 @@ bool Debugger::cannotTrackAllocations(const GlobalObject& global) {
 /* static */
 bool DebugAPI::isObservedByDebuggerTrackingAllocations(
     const GlobalObject& debuggee) {
-  for (Realm::DebuggerVectorEntry& entry : debuggee.getDebuggers()) {
+  JS::AutoAssertNoGC nogc;
+  for (Realm::DebuggerVectorEntry& entry : debuggee.getDebuggers(nogc)) {
     // Use unbarrieredGet() to prevent triggering read barrier while
     // collecting, this is safe as long as dbg does not escape.
     Debugger* dbg = entry.dbg.unbarrieredGet();
@@ -3818,7 +3823,7 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
   // generator objects as having an owning edge to their Debugger.Frame objects,
   // a helper thread trying to update a generator object will end up calling
   // this function. However, it is verboten to do weak map lookups (e.g., in
-  // Debugger::generatorFrames) off the main thread, since MovableCellHasher
+  // Debugger::generatorFrames) off the main thread, since StableCellHasher
   // must consult the Zone to find the key's unique id.
   //
   // Fortunately, it's not necessary for compacting GC to worry about that edge
@@ -3845,11 +3850,20 @@ void DebugAPI::slowPathTraceGeneratorFrame(JSTracer* tracer,
   // precisely, but they're both generic tracers, so we just show them all the
   // door. This means the generator -> Debugger.Frame edge is going to be
   // invisible to some traversals. We'll cope with that when it's a problem.
-  if (tracer->isGenericTracer()) {
+  if (!tracer->isMarkingTracer()) {
     return;
   }
 
-  for (Realm::DebuggerVectorEntry& entry : generator->realm()->getDebuggers()) {
+  mozilla::Maybe<AutoLockGC> lock;
+  GCMarker* marker = GCMarker::fromTracer(tracer);
+  if (marker->isParallelMarking()) {
+    // Synchronise access to generatorFrames.
+    lock.emplace(marker->runtime());
+  }
+
+  JS::AutoAssertNoGC nogc;
+  for (Realm::DebuggerVectorEntry& entry :
+       generator->realm()->getDebuggers(nogc)) {
     Debugger* dbg = entry.dbg.unbarrieredGet();
 
     if (Debugger::GeneratorWeakMap::Ptr entry =
@@ -3919,7 +3933,8 @@ void Debugger::trace(JSTracer* trc) {
 
 /* static */
 void DebugAPI::traceFromRealm(JSTracer* trc, Realm* realm) {
-  for (Realm::DebuggerVectorEntry& entry : realm->getDebuggers()) {
+  JS::AutoAssertNoGC nogc;
+  for (Realm::DebuggerVectorEntry& entry : realm->getDebuggers(nogc)) {
     TraceEdge(trc, &entry.debuggerLink, "realm debugger");
   }
 }
@@ -4050,6 +4065,13 @@ const JSClass DebuggerInstanceObject::class_ = {
     "Debugger", JSCLASS_HAS_RESERVED_SLOTS(Debugger::JSSLOT_DEBUG_COUNT),
     &classOps_};
 
+static_assert(Debugger::JSSLOT_DEBUG_PROTO_START == 0,
+              "DebuggerPrototypeObject only needs slots for the proto objects");
+
+const JSClass DebuggerPrototypeObject::class_ = {
+    "DebuggerPrototype",
+    JSCLASS_HAS_RESERVED_SLOTS(Debugger::JSSLOT_DEBUG_PROTO_STOP)};
+
 static Debugger* Debugger_fromThisValue(JSContext* cx, const CallArgs& args,
                                         const char* fnname) {
   JSObject* thisobj = RequireObject(cx, args.thisv());
@@ -4063,15 +4085,8 @@ static Debugger* Debugger_fromThisValue(JSContext* cx, const CallArgs& args,
     return nullptr;
   }
 
-  // Forbid Debugger.prototype, which is of the Debugger JSClass but isn't
-  // really a Debugger object. The prototype object is distinguished by
-  // having a nullptr private value.
   Debugger* dbg = Debugger::fromJSObject(thisobj);
-  if (!dbg) {
-    JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                              JSMSG_INCOMPATIBLE_PROTO, "Debugger", fnname,
-                              "prototype object");
-  }
+  MOZ_ASSERT(dbg);
   return dbg;
 }
 
@@ -4128,6 +4143,8 @@ struct MOZ_STACK_CLASS Debugger::CallData {
   bool adoptSource();
   bool enableAsyncStack();
   bool disableAsyncStack();
+  bool enableUnlimitedStacksCapturing();
+  bool disableUnlimitedStacksCapturing();
 
   using Method = bool (CallData::*)();
 
@@ -4519,7 +4536,7 @@ bool Debugger::CallData::removeDebuggee() {
     // Only update the realm if there are no Debuggers left, as it's
     // expensive to check if no other Debugger has a live script or frame
     // hook on any of the current on-stack debuggee frames.
-    if (global->getDebuggers().empty() && !obs.add(global->realm())) {
+    if (!global->hasDebuggers() && !obs.add(global->realm())) {
       return false;
     }
     if (!updateExecutionObservability(cx, obs, NotObserving)) {
@@ -4539,7 +4556,7 @@ bool Debugger::CallData::removeAllDebuggees() {
     dbg->removeDebuggeeGlobal(cx->gcContext(), global, &e, FromSweep::No);
 
     // See note about adding to the observable set in removeDebuggee.
-    if (global->getDebuggers().empty() && !obs.add(global->realm())) {
+    if (!global->hasDebuggers() && !obs.add(global->realm())) {
       return false;
     }
   }
@@ -4657,7 +4674,7 @@ bool Debugger::construct(JSContext* cx, unsigned argc, Value* vp) {
     return false;
   }
   Rooted<NativeObject*> proto(cx, &v.toObject().as<NativeObject>());
-  MOZ_ASSERT(proto->is<DebuggerInstanceObject>());
+  MOZ_ASSERT(proto->is<DebuggerPrototypeObject>());
 
   // Make the new Debugger object. Each one has a reference to
   // Debugger.{Frame,Object,Script,Memory}.prototype in reserved slots. The
@@ -4748,7 +4765,8 @@ bool Debugger::addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> global) {
     // Find all realms containing debuggers debugging realm's global object.
     // Add those realms to visited.
     if (realm->isDebuggee()) {
-      for (Realm::DebuggerVectorEntry& entry : realm->getDebuggers()) {
+      JS::AutoAssertNoGC nogc;
+      for (Realm::DebuggerVectorEntry& entry : realm->getDebuggers(nogc)) {
         Realm* next = entry.dbg->object->realm();
         if (std::find(visited.begin(), visited.end(), next) == visited.end()) {
           if (!visited.append(next)) {
@@ -4779,7 +4797,8 @@ bool Debugger::addDebuggeeGlobal(JSContext* cx, Handle<GlobalObject*> global) {
   }
 
   // (1)
-  auto& globalDebuggers = global->getDebuggers();
+  JS::AutoAssertNoGC nogc;
+  auto& globalDebuggers = global->getDebuggers(nogc);
   if (!globalDebuggers.append(Realm::DebuggerVectorEntry(this, debuggeeLink))) {
     ReportOutOfMemory(cx);
     return false;
@@ -4898,7 +4917,8 @@ void Debugger::removeDebuggeeGlobal(JS::GCContext* gcx, GlobalObject* global,
     }
   }
 
-  auto& globalDebuggersVector = global->getDebuggers();
+  JS::AutoAssertNoGC nogc;
+  auto& globalDebuggersVector = global->getDebuggers(nogc);
 
   // The relation must be removed from up to three places:
   // globalDebuggersVector and debuggees for sure, and possibly the
@@ -4937,7 +4957,7 @@ void Debugger::removeDebuggeeGlobal(JS::GCContext* gcx, GlobalObject* global,
     Debugger::removeAllocationsTracking(*global);
   }
 
-  if (global->realm()->getDebuggers().empty()) {
+  if (!global->realm()->hasDebuggers()) {
     global->realm()->unsetIsDebuggee();
   } else {
     global->realm()->updateDebuggerObservesAllExecution();
@@ -5074,16 +5094,6 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
 
       DebuggerSource& debuggerSourceObj =
           debuggerSource.toObject().as<DebuggerSource>();
-
-      // The given source must have an owner. Otherwise, it's a
-      // Debugger.Source.prototype, which would match no scripts, and is
-      // probably a mistake.
-      if (!debuggerSourceObj.isInstance()) {
-        JS_ReportErrorNumberASCII(cx, GetErrorMessage, nullptr,
-                                  JSMSG_DEBUG_PROTO, "Debugger.Source",
-                                  "Debugger.Source");
-        return false;
-      }
 
       // If it does have an owner, it should match the Debugger we're
       // calling findScripts on. It would work fine even if it didn't,
@@ -5414,7 +5424,8 @@ class MOZ_STACK_CLASS Debugger::ScriptQuery : public Debugger::QueryBase {
     // Compute urlCString and displayURLChars, if a url or displayURL was
     // given respectively.
     if (url.isString()) {
-      urlCString = JS_EncodeStringToLatin1(cx, url.toString());
+      Rooted<JSString*> str(cx, url.toString());
+      urlCString = JS_EncodeStringToUTF8(cx, str);
       if (!urlCString) {
         return false;
       }
@@ -5638,7 +5649,7 @@ bool Debugger::CallData::findScripts() {
  */
 class MOZ_STACK_CLASS Debugger::SourceQuery : public Debugger::QueryBase {
  public:
-  using SourceSet = JS::GCHashSet<JSObject*, js::MovableCellHasher<JSObject*>,
+  using SourceSet = JS::GCHashSet<JSObject*, js::StableCellHasher<JSObject*>,
                                   ZoneAllocPolicy>;
 
   SourceQuery(JSContext* cx, Debugger* dbg)
@@ -5954,6 +5965,13 @@ bool Debugger::CallData::findObjects() {
     return false;
   }
 
+  // Returning internal objects (such as self-hosting intrinsics) to JS is not
+  // fuzzing-safe. We still want to call parseQuery/findObjects when fuzzing so
+  // just clear the Vector here.
+  if (fuzzingSafe) {
+    query.objects.clear();
+  }
+
   size_t length = query.objects.length();
   Rooted<ArrayObject*> result(cx, NewDenseFullyAllocatedArray(cx, length));
   if (!result) {
@@ -5987,7 +6005,7 @@ bool Debugger::CallData::findAllGlobals() {
         continue;
       }
 
-      if (!r->hasLiveGlobal()) {
+      if (!r->hasInitializedGlobal()) {
         continue;
       }
 
@@ -6105,30 +6123,30 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
 
   bool result = true;
 
+  AutoReportFrontendContext fc(cx,
+                               AutoReportFrontendContext::Warning::Suppress);
   CompileOptions options(cx);
   Rooted<frontend::CompilationInput> input(cx,
                                            frontend::CompilationInput(options));
-  if (!input.get().initForGlobal(cx)) {
+  if (!input.get().initForGlobal(&fc)) {
     return false;
   }
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  frontend::CompilationState compilationState(cx, allocScope, input.get());
-  if (!compilationState.init(cx)) {
+  frontend::NoScopeBindingCache scopeCache;
+  frontend::CompilationState compilationState(&fc, allocScope, input.get());
+  if (!compilationState.init(&fc, &scopeCache)) {
     return false;
   }
 
-  MainThreadErrorContext ec(cx);
-  JS::AutoSuppressWarningReporter suppressWarnings(cx);
   frontend::Parser<frontend::FullParseHandler, char16_t> parser(
-      cx, &ec, cx->stackLimitForCurrentPrincipal(), options,
-      chars.twoByteChars(), length,
+      &fc, options, chars.twoByteChars(), length,
       /* foldConstants = */ true, compilationState,
       /* syntaxParser = */ nullptr);
   if (!parser.checkOptions() || !parser.parse()) {
     // We ran into an error. If it was because we ran out of memory we report
     // it in the usual way.
-    if (cx->isThrowingOutOfMemory()) {
+    if (fc.hadOutOfMemory()) {
       return false;
     }
 
@@ -6138,7 +6156,7 @@ bool Debugger::isCompilableUnit(JSContext* cx, unsigned argc, Value* vp) {
       result = false;
     }
 
-    cx->clearPendingException();
+    fc.clearAutoReport();
   }
 
   args.rval().setBoolean(result);
@@ -6314,6 +6332,36 @@ bool Debugger::CallData::disableAsyncStack() {
   return true;
 }
 
+bool Debugger::CallData::enableUnlimitedStacksCapturing() {
+  if (!args.requireAtLeast(cx, "Debugger.enableUnlimitedStacksCapturing", 1)) {
+    return false;
+  }
+  Rooted<GlobalObject*> global(cx, dbg->unwrapDebuggeeArgument(cx, args[0]));
+  if (!global) {
+    return false;
+  }
+
+  global->realm()->isUnlimitedStacksCapturingEnabled = true;
+
+  args.rval().setUndefined();
+  return true;
+}
+
+bool Debugger::CallData::disableUnlimitedStacksCapturing() {
+  if (!args.requireAtLeast(cx, "Debugger.disableUnlimitedStacksCapturing", 1)) {
+    return false;
+  }
+  Rooted<GlobalObject*> global(cx, dbg->unwrapDebuggeeArgument(cx, args[0]));
+  if (!global) {
+    return false;
+  }
+
+  global->realm()->isUnlimitedStacksCapturingEnabled = false;
+
+  args.rval().setUndefined();
+  return true;
+}
+
 const JSPropertySpec Debugger::properties[] = {
     JS_DEBUG_PSGS("onDebuggerStatement", getOnDebuggerStatement,
                   setOnDebuggerStatement),
@@ -6358,6 +6406,10 @@ const JSFunctionSpec Debugger::methods[] = {
     JS_DEBUG_FN("adoptSource", adoptSource, 1),
     JS_DEBUG_FN("enableAsyncStack", enableAsyncStack, 1),
     JS_DEBUG_FN("disableAsyncStack", disableAsyncStack, 1),
+    JS_DEBUG_FN("enableUnlimitedStacksCapturing",
+                enableUnlimitedStacksCapturing, 1),
+    JS_DEBUG_FN("disableUnlimitedStacksCapturing",
+                disableUnlimitedStacksCapturing, 1),
     JS_FS_END};
 
 const JSFunctionSpec Debugger::static_methods[]{
@@ -6562,8 +6614,10 @@ bool Debugger::replaceFrameGuts(JSContext* cx, AbstractFramePtr from,
 /* static */
 bool DebugAPI::inFrameMaps(AbstractFramePtr frame) {
   bool foundAny = false;
+  JS::AutoAssertNoGC nogc;
   Debugger::forEachOnStackDebuggerFrame(
-      frame, [&](Debugger*, DebuggerFrame* frameobj) { foundAny = true; });
+      frame, nogc,
+      [&](Debugger*, DebuggerFrame* frameobj) { foundAny = true; });
   return foundAny;
 }
 
@@ -6571,8 +6625,9 @@ bool DebugAPI::inFrameMaps(AbstractFramePtr frame) {
 void Debugger::suspendGeneratorDebuggerFrames(JSContext* cx,
                                               AbstractFramePtr frame) {
   JS::GCContext* gcx = cx->gcContext();
+  JS::AutoAssertNoGC nogc;
   forEachOnStackDebuggerFrame(
-      frame, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
+      frame, nogc, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
         dbg->frames.remove(frame);
 
 #if DEBUG
@@ -6591,8 +6646,9 @@ void Debugger::suspendGeneratorDebuggerFrames(JSContext* cx,
 void Debugger::terminateDebuggerFrames(JSContext* cx, AbstractFramePtr frame) {
   JS::GCContext* gcx = cx->gcContext();
 
+  JS::AutoAssertNoGC nogc;
   forEachOnStackOrSuspendedDebuggerFrame(
-      cx, frame, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
+      cx, frame, nogc, [&](Debugger* dbg, DebuggerFrame* dbgFrame) {
         Debugger::terminateDebuggerFrame(gcx, dbg, dbgFrame, frame);
       });
 
@@ -6773,10 +6829,10 @@ extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
   RootedValue debuggeeWouldRunCtor(cx);
   Handle<GlobalObject*> global = obj.as<GlobalObject>();
 
-  debugProto =
-      InitClass(cx, global, nullptr, &DebuggerInstanceObject::class_,
-                Debugger::construct, 1, Debugger::properties, Debugger::methods,
-                nullptr, Debugger::static_methods, debugCtor.address());
+  debugProto = InitClass(cx, global, &DebuggerPrototypeObject::class_, nullptr,
+                         "Debugger", Debugger::construct, 1,
+                         Debugger::properties, Debugger::methods, nullptr,
+                         Debugger::static_methods, debugCtor.address());
   if (!debugProto) {
     return false;
   }
@@ -6806,10 +6862,9 @@ extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
     return false;
   }
 
-  memoryProto =
-      InitClass(cx, debugCtor, nullptr, &DebuggerMemory::class_,
-                DebuggerMemory::construct, 0, DebuggerMemory::properties,
-                DebuggerMemory::methods, nullptr, nullptr);
+  memoryProto = InitClass(
+      cx, debugCtor, nullptr, nullptr, "Memory", DebuggerMemory::construct, 0,
+      DebuggerMemory::properties, DebuggerMemory::methods, nullptr, nullptr);
   if (!memoryProto) {
     return false;
   }
@@ -6846,8 +6901,11 @@ extern JS_PUBLIC_API bool JS_DefineDebuggerObject(JSContext* cx,
 JS_PUBLIC_API bool JS::dbg::IsDebugger(JSObject& obj) {
   /* We only care about debugger objects, so CheckedUnwrapStatic is OK. */
   JSObject* unwrapped = CheckedUnwrapStatic(&obj);
-  return unwrapped && unwrapped->is<DebuggerInstanceObject>() &&
-         js::Debugger::fromJSObject(unwrapped) != nullptr;
+  if (!unwrapped || !unwrapped->is<DebuggerInstanceObject>()) {
+    return false;
+  }
+  MOZ_ASSERT(js::Debugger::fromJSObject(unwrapped));
+  return true;
 }
 
 JS_PUBLIC_API bool JS::dbg::GetDebuggeeGlobals(

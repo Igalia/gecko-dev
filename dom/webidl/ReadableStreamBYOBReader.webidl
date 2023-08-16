@@ -7,7 +7,7 @@
  * https://streams.spec.whatwg.org/#byob-reader-class-definition
  */
 
-[Exposed=*, Pref="dom.streams.byte_streams.enabled"]
+[Exposed=*]
 interface ReadableStreamBYOBReader {
   [Throws]
   constructor(ReadableStream stream);
@@ -16,6 +16,6 @@ interface ReadableStreamBYOBReader {
   Promise<ReadableStreamReadResult> read(ArrayBufferView view);
 
   [Throws]
-  void releaseLock();
+  undefined releaseLock();
 };
 ReadableStreamBYOBReader includes ReadableStreamGenericReader;

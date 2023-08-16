@@ -5,11 +5,15 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/WebAuthnTransactionParent.h"
+#include "mozilla/dom/WebAuthnController.h"
 #include "mozilla/dom/U2FTokenManager.h"
 #include "mozilla/ipc/PBackgroundParent.h"
 #include "mozilla/ipc/BackgroundParent.h"
+#include "mozilla/StaticPrefs_security.h"
 
-#ifdef OS_WIN
+#include "nsThreadUtils.h"
+
+#ifdef XP_WIN
 #  include "WinWebAuthnManager.h"
 #endif
 
@@ -20,18 +24,24 @@ mozilla::ipc::IPCResult WebAuthnTransactionParent::RecvRequestRegister(
     const WebAuthnMakeCredentialInfo& aTransactionInfo) {
   ::mozilla::ipc::AssertIsOnBackgroundThread();
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   if (WinWebAuthnManager::AreWebAuthNApisAvailable()) {
     WinWebAuthnManager* mgr = WinWebAuthnManager::Get();
     mgr->Register(this, aTransactionId, aTransactionInfo);
+    return IPC_OK();
+  }
+#endif
+
+  bool androidFido2 =
+      StaticPrefs::security_webauth_webauthn_enable_android_fido2();
+
+  if (!androidFido2) {
+    WebAuthnController* ctrl = WebAuthnController::Get();
+    ctrl->Register(this, aTransactionId, aTransactionInfo);
   } else {
     U2FTokenManager* mgr = U2FTokenManager::Get();
     mgr->Register(this, aTransactionId, aTransactionInfo);
   }
-#else
-  U2FTokenManager* mgr = U2FTokenManager::Get();
-  mgr->Register(this, aTransactionId, aTransactionInfo);
-#endif
 
   return IPC_OK();
 }
@@ -41,18 +51,24 @@ mozilla::ipc::IPCResult WebAuthnTransactionParent::RecvRequestSign(
     const WebAuthnGetAssertionInfo& aTransactionInfo) {
   ::mozilla::ipc::AssertIsOnBackgroundThread();
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   if (WinWebAuthnManager::AreWebAuthNApisAvailable()) {
     WinWebAuthnManager* mgr = WinWebAuthnManager::Get();
     mgr->Sign(this, aTransactionId, aTransactionInfo);
+    return IPC_OK();
+  }
+#endif
+
+  bool androidFido2 =
+      StaticPrefs::security_webauth_webauthn_enable_android_fido2();
+
+  if (!androidFido2) {
+    WebAuthnController* ctrl = WebAuthnController::Get();
+    ctrl->Sign(this, aTransactionId, aTransactionInfo);
   } else {
     U2FTokenManager* mgr = U2FTokenManager::Get();
     mgr->Sign(this, aTransactionId, aTransactionInfo);
   }
-#else
-  U2FTokenManager* mgr = U2FTokenManager::Get();
-  mgr->Sign(this, aTransactionId, aTransactionInfo);
-#endif
 
   return IPC_OK();
 }
@@ -61,18 +77,25 @@ mozilla::ipc::IPCResult WebAuthnTransactionParent::RecvRequestCancel(
     const Tainted<uint64_t>& aTransactionId) {
   ::mozilla::ipc::AssertIsOnBackgroundThread();
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   if (WinWebAuthnManager::AreWebAuthNApisAvailable()) {
     WinWebAuthnManager* mgr = WinWebAuthnManager::Get();
     mgr->Cancel(this, aTransactionId);
-  } else {
-    U2FTokenManager* mgr = U2FTokenManager::Get();
+    return IPC_OK();
+  }
+#endif
+
+  // We don't know whether WebAuthnController or U2FTokenManager was used, so
+  // try cancelling both.
+  WebAuthnController* ctrl = WebAuthnController::Get();
+  if (ctrl) {
+    ctrl->Cancel(this, aTransactionId);
+  }
+
+  U2FTokenManager* mgr = U2FTokenManager::Get();
+  if (mgr) {
     mgr->Cancel(this, aTransactionId);
   }
-#else
-  U2FTokenManager* mgr = U2FTokenManager::Get();
-  mgr->Cancel(this, aTransactionId);
-#endif
 
   return IPC_OK();
 }
@@ -101,24 +124,25 @@ void WebAuthnTransactionParent::ActorDestroy(ActorDestroyReason aWhy) {
   // Called either by Send__delete__() in RecvDestroyMe() above, or when
   // the channel disconnects. Ensure the token manager forgets about us.
 
-#ifdef OS_WIN
+#ifdef XP_WIN
   if (WinWebAuthnManager::AreWebAuthNApisAvailable()) {
     WinWebAuthnManager* mgr = WinWebAuthnManager::Get();
     if (mgr) {
       mgr->MaybeClearTransaction(this);
     }
-  } else {
-    U2FTokenManager* mgr = U2FTokenManager::Get();
-    if (mgr) {
-      mgr->MaybeClearTransaction(this);
-    }
+    return;
   }
-#else
+#endif
+
+  WebAuthnController* ctrl = WebAuthnController::Get();
+  if (ctrl) {
+    ctrl->MaybeClearTransaction(this);
+  }
+
   U2FTokenManager* mgr = U2FTokenManager::Get();
   if (mgr) {
     mgr->MaybeClearTransaction(this);
   }
-#endif
 }
 
 }  // namespace mozilla::dom

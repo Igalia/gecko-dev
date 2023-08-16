@@ -18,7 +18,7 @@ try {
   var chromeGlobal = this;
 
   // Encapsulate in its own scope to allows loading this frame script more than once.
-  (function() {
+  (function () {
     // In most cases, we are debugging a tab in content process, without chrome
     // privileges. But in some tests, we are attaching to privileged document.
     // Because the debugger can't be running in the same compartment than its debuggee,
@@ -27,21 +27,23 @@ try {
     let loader,
       customLoader = false;
     if (content.document.nodePrincipal.isSystemPrincipal) {
-      const { useDistinctSystemPrincipalLoader } = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+      const { useDistinctSystemPrincipalLoader } = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs"
       );
       loader = useDistinctSystemPrincipalLoader(chromeGlobal);
       customLoader = true;
     } else {
       // Otherwise, use the shared loader.
-      loader = ChromeUtils.import(
-        "resource://devtools/shared/loader/Loader.jsm"
+      loader = ChromeUtils.importESModule(
+        "resource://devtools/shared/loader/Loader.sys.mjs"
       );
     }
     const { require } = loader;
 
-    const DevToolsUtils = require("devtools/shared/DevToolsUtils");
-    const { DevToolsServer } = require("devtools/server/devtools-server");
+    const DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
+    const {
+      DevToolsServer,
+    } = require("resource://devtools/server/devtools-server.js");
 
     DevToolsServer.init();
     // We want a special server without any root actor and only target-scoped actors.
@@ -51,7 +53,7 @@ try {
 
     const connections = new Map();
 
-    const onConnect = DevToolsUtils.makeInfallible(function(msg) {
+    const onConnect = DevToolsUtils.makeInfallible(function (msg) {
       const mm = msg.target;
       const prefix = msg.data.prefix;
       const addonId = msg.data.addonId;
@@ -69,7 +71,6 @@ try {
       removeMessageListener("debug:connect", onConnect);
 
       const conn = DevToolsServer.connectToParent(prefix, mm);
-      conn.parentMessageManager = mm;
       connections.set(prefix, conn);
 
       let actor;
@@ -77,10 +78,10 @@ try {
       if (addonId) {
         const {
           WebExtensionTargetActor,
-        } = require("devtools/server/actors/targets/webextension");
+        } = require("resource://devtools/server/actors/targets/webextension.js");
         const {
           createWebExtensionSessionContext,
-        } = require("devtools/server/actors/watcher/session-context");
+        } = require("resource://devtools/server/actors/watcher/session-context.js");
         const { browsingContext } = docShell;
         actor = new WebExtensionTargetActor(conn, {
           addonId,
@@ -103,10 +104,10 @@ try {
       } else {
         const {
           WindowGlobalTargetActor,
-        } = require("devtools/server/actors/targets/window-global");
+        } = require("resource://devtools/server/actors/targets/window-global.js");
         const {
           createBrowserElementSessionContext,
-        } = require("devtools/server/actors/watcher/session-context");
+        } = require("resource://devtools/server/actors/watcher/session-context.js");
 
         const { docShell } = chromeGlobal;
         // For a script loaded via loadFrameScript, the global is the content
@@ -137,7 +138,7 @@ try {
 
     addMessageListener("debug:connect", onConnect);
 
-    const onDisconnect = DevToolsUtils.makeInfallible(function(msg) {
+    const onDisconnect = DevToolsUtils.makeInfallible(function (msg) {
       const prefix = msg.data.prefix;
       const conn = connections.get(prefix);
       if (!conn) {
@@ -178,9 +179,10 @@ try {
 
       // When debugging chrome pages, we initialized a dedicated loader, also destroy it
       if (customLoader) {
-        const { releaseDistinctSystemPrincipalLoader } = ChromeUtils.import(
-          "resource://devtools/shared/loader/Loader.jsm"
-        );
+        const { releaseDistinctSystemPrincipalLoader } =
+          ChromeUtils.importESModule(
+            "resource://devtools/shared/loader/DistinctSystemPrincipalLoader.sys.mjs"
+          );
         releaseDistinctSystemPrincipalLoader(chromeGlobal);
       }
     }

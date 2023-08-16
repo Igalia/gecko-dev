@@ -35,7 +35,6 @@ class GfxInfo : public GfxInfoBase {
   NS_IMETHOD GetHasBattery(bool* aHasBattery) override;
   NS_IMETHOD GetCleartypeParameters(nsAString& aCleartypeParams) override;
   NS_IMETHOD GetWindowProtocol(nsAString& aWindowProtocol) override;
-  NS_IMETHOD GetDesktopEnvironment(nsAString& aDesktopEnvironment) override;
   NS_IMETHOD GetTestType(nsAString& aTestType) override;
   NS_IMETHOD GetAdapterDescription(nsAString& aAdapterDescription) override;
   NS_IMETHOD GetAdapterDriver(nsAString& aAdapterDriver) override;
@@ -76,6 +75,9 @@ class GfxInfo : public GfxInfoBase {
   virtual uint32_t OperatingSystemVersion() override;
 
  protected:
+  OperatingSystem GetOperatingSystem() override {
+    return OperatingSystem::Android;
+  }
   virtual nsresult GetFeatureStatusImpl(
       int32_t aFeature, int32_t* aStatus, nsAString& aSuggestedDriverVersion,
       const nsTArray<GfxDriverInfo>& aDriverInfo, nsACString& aFailureId,

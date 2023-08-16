@@ -1,5 +1,5 @@
 /**
- * @fileoverview Require use of Services.* rather than getService.
+ * @fileoverview Ensures that Services uses have valid property names.
  *
  * This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
@@ -12,9 +12,9 @@ const helpers = require("../helpers");
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/use-services.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/valid-services.html",
     },
+    schema: [],
     type: "problem",
   },
 
@@ -51,7 +51,10 @@ module.exports = {
         }
 
         if (!serviceAliases.has(alias)) {
-          context.report(node, `Unknown Services member property ${alias}`);
+          context.report({
+            node,
+            message: `Unknown Services member property ${alias}`,
+          });
         }
       },
     };

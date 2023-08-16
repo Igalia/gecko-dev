@@ -32,6 +32,7 @@
 #include "nsGlobalWindowInner.h"
 #include "nsIPrincipal.h"
 #include "mozilla/LoadInfo.h"
+#include "mozilla/Maybe.h"
 
 using JS::SourceText;
 using namespace JS::loader;
@@ -107,18 +108,19 @@ nsresult ModuleLoader::StartFetch(ModuleLoadRequest* aRequest) {
   securityFlags |= nsILoadInfo::SEC_ALLOW_CHROME;
 
   // Delegate Shared Behavior to base ScriptLoader
-  nsresult rv = GetScriptLoader()->StartLoadInternal(aRequest, securityFlags);
+  //
+  // aCharsetForPreload is passed as Nothing() because this is not a preload
+  // and `StartLoadInternal` is able to find the charset by using `aRequest`
+  // for this case.
+  nsresult rv = GetScriptLoader()->StartLoadInternal(
+      aRequest, securityFlags, Nothing() /* aCharsetForPreload */);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  // https://wicg.github.io/import-maps/#document-acquiring-import-maps
-  //
-  // An import map is accepted if and only if it is added (i.e., its
-  // corresponding script element is added) before the first module load is
-  // started, even if the loading of the import map file doesn’t finish before
-  // the first module load is started.
+  // https://html.spec.whatwg.org/multipage/webappapis.html#fetch-an-import()-module-script-graph
+  // Step 1. Disallow further import maps given settings object.
   if (!aRequest->GetScriptLoadContext()->IsPreload()) {
-    LOG(("ScriptLoadRequest (%p): SetAcquiringImportMaps false", aRequest));
-    SetAcquiringImportMaps(false);
+    LOG(("ScriptLoadRequest (%p): Disallow further import maps.", aRequest));
+    DisallowImportMaps();
   }
 
   LOG(("ScriptLoadRequest (%p): Start fetching module", aRequest));
@@ -130,10 +132,9 @@ void ModuleLoader::OnModuleLoadComplete(ModuleLoadRequest* aRequest) {
   MOZ_ASSERT(aRequest->IsReadyToRun());
 
   if (aRequest->IsTopLevel()) {
-    if (aRequest->IsDynamicImport() ||
-        (aRequest->GetScriptLoadContext()->mIsInline &&
-         aRequest->GetScriptLoadContext()->GetParserCreated() ==
-             NOT_FROM_PARSER)) {
+    if (aRequest->GetScriptLoadContext()->mIsInline &&
+        aRequest->GetScriptLoadContext()->GetParserCreated() ==
+            NOT_FROM_PARSER) {
       GetScriptLoader()->RunScriptWhenSafe(aRequest);
     } else {
       GetScriptLoader()->MaybeMoveToLoadedList(aRequest);
@@ -148,19 +149,9 @@ nsresult ModuleLoader::CompileFetchedModule(
     JSContext* aCx, JS::Handle<JSObject*> aGlobal, JS::CompileOptions& aOptions,
     ModuleLoadRequest* aRequest, JS::MutableHandle<JSObject*> aModuleOut) {
   if (aRequest->GetScriptLoadContext()->mWasCompiledOMT) {
-    JS::Rooted<JS::InstantiationStorage> storage(aCx);
-
-    RefPtr<JS::Stencil> stencil;
-    if (aRequest->IsTextSource()) {
-      stencil = JS::FinishCompileModuleToStencilOffThread(
-          aCx, aRequest->GetScriptLoadContext()->mOffThreadToken,
-          storage.address());
-    } else {
-      MOZ_ASSERT(aRequest->IsBytecode());
-      stencil = JS::FinishDecodeStencilOffThread(
-          aCx, aRequest->GetScriptLoadContext()->mOffThreadToken,
-          storage.address());
-    }
+    JS::InstantiationStorage storage;
+    RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(
+        aCx, aRequest->GetScriptLoadContext()->mOffThreadToken, &storage);
 
     aRequest->GetScriptLoadContext()->mOffThreadToken = nullptr;
 
@@ -170,7 +161,7 @@ nsresult ModuleLoader::CompileFetchedModule(
 
     JS::InstantiateOptions instantiateOptions(aOptions);
     aModuleOut.set(JS::InstantiateModuleStencil(aCx, instantiateOptions,
-                                                stencil, storage.address()));
+                                                stencil, &storage));
     if (!aModuleOut) {
       return NS_ERROR_FAILURE;
     }
@@ -186,7 +177,7 @@ nsresult ModuleLoader::CompileFetchedModule(
   }
 
   if (!nsJSUtils::IsScriptable(aGlobal)) {
-    return NS_OK;
+    return NS_ERROR_FAILURE;
   }
 
   RefPtr<JS::Stencil> stencil;
@@ -280,6 +271,9 @@ already_AddRefed<ModuleLoadRequest> ModuleLoader::CreateDynamicImport(
   RefPtr<ScriptLoadContext> context = new ScriptLoadContext();
 
   if (aMaybeActiveScript) {
+    // https://html.spec.whatwg.org/multipage/webappapis.html#hostloadimportedmodule
+    // Step 6.3. Set fetchOptions to the new descendant script fetch options for
+    // referencingScript's fetch options.
     options = aMaybeActiveScript->GetFetchOptions();
     baseURL = aMaybeActiveScript->BaseURL();
   } else {
@@ -294,8 +288,19 @@ already_AddRefed<ModuleLoadRequest> ModuleLoader::CreateDynamicImport(
                   BasePrincipal::Cast(principal)->ContentScriptAddonPolicy());
     MOZ_ASSERT_IF(GetKind() == Normal, principal == document->NodePrincipal());
 
+    // https://html.spec.whatwg.org/multipage/webappapis.html#hostloadimportedmodule
+    // Step 4. Let fetchOptions be the default classic script fetch options.
+    //
+    // https://html.spec.whatwg.org/multipage/webappapis.html#default-classic-script-fetch-options
+    // The default classic script fetch options are a script fetch options whose
+    // cryptographic nonce is the empty string, integrity metadata is the empty
+    // string, parser metadata is "not-parser-inserted", credentials mode is
+    // "same-origin", referrer policy is the empty string, and fetch priority is
+    // "auto".
     options = new ScriptFetchOptions(
-        mozilla::CORS_NONE, document->GetReferrerPolicy(), principal, nullptr);
+        mozilla::CORS_NONE, document->GetReferrerPolicy(),
+        /* aNonce = */ u""_ns, ParserMetadata::NotParserInserted, principal,
+        nullptr);
     baseURL = document->GetDocBaseURI();
   }
 

@@ -9,6 +9,9 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/gfx/PGPUParent.h"
 #include "mozilla/ipc/AsyncBlockers.h"
+#if defined(MOZ_SANDBOX) && defined(MOZ_DEBUG) && defined(ENABLE_TESTS)
+#  include "mozilla/PSandboxTestingChild.h"
+#endif
 
 namespace mozilla {
 
@@ -21,8 +24,9 @@ class VsyncBridgeParent;
 
 class GPUParent final : public PGPUParent {
  public:
+  NS_INLINE_DECL_REFCOUNTING(GPUParent, final)
+
   GPUParent();
-  ~GPUParent();
 
   static GPUParent* GetSingleton();
 
@@ -36,10 +40,11 @@ class GPUParent final : public PGPUParent {
   // Check for memory pressure and notify the parent process if necessary.
   static bool MaybeFlushMemory();
 
-  bool Init(base::ProcessId aParentPid, const char* aParentBuildID,
-            mozilla::ipc::ScopedPort aPort);
+  bool Init(mozilla::ipc::UntypedEndpoint&& aEndpoint,
+            const char* aParentBuildID);
   void NotifyDeviceReset();
   void NotifyOverlayInfo(layers::OverlayInfo aInfo);
+  void NotifySwapChainInfo(layers::SwapChainInfo aInfo);
 
   mozilla::ipc::IPCResult RecvInit(nsTArray<GfxVarUpdate>&& vars,
                                    const DevicePrefs& devicePrefs,
@@ -53,7 +58,8 @@ class GPUParent final : public PGPUParent {
   mozilla::ipc::IPCResult RecvInitImageBridge(
       Endpoint<PImageBridgeParent>&& aEndpoint);
   mozilla::ipc::IPCResult RecvInitVideoBridge(
-      Endpoint<PVideoBridgeParent>&& aEndpoint);
+      Endpoint<PVideoBridgeParent>&& aEndpoint,
+      const layers::VideoBridgeSource& aSource);
   mozilla::ipc::IPCResult RecvInitVRManager(
       Endpoint<PVRManagerParent>&& aEndpoint);
   mozilla::ipc::IPCResult RecvInitVR(Endpoint<PVRGPUChild>&& aVRGPUChild);
@@ -109,6 +115,8 @@ class GPUParent final : public PGPUParent {
   void ActorDestroy(ActorDestroyReason aWhy) override;
 
  private:
+  ~GPUParent();
+
   const TimeStamp mLaunchTime;
   RefPtr<VsyncBridgeParent> mVsyncBridge;
   RefPtr<ChildProfilerController> mProfilerController;

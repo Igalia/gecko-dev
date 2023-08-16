@@ -5,6 +5,7 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "StorageManager.h"
+#include "fs/FileSystemRequestHandler.h"
 
 #include <cstdint>
 #include <cstdlib>
@@ -24,6 +25,7 @@
 #include "mozilla/TelemetryScalarEnums.h"
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/FileSystemManager.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseWorkerProxy.h"
 #include "mozilla/dom/StorageManagerBinding.h"
@@ -728,7 +730,52 @@ StorageManager::StorageManager(nsIGlobalObject* aGlobal) : mOwner(aGlobal) {
   MOZ_ASSERT(aGlobal);
 }
 
-StorageManager::~StorageManager() = default;
+StorageManager::~StorageManager() { Shutdown(); }
+
+NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(StorageManager)
+  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
+  NS_INTERFACE_MAP_ENTRY(nsISupports)
+NS_INTERFACE_MAP_END
+
+NS_IMPL_CYCLE_COLLECTING_ADDREF(StorageManager)
+NS_IMPL_CYCLE_COLLECTING_RELEASE(StorageManager)
+
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(StorageManager)
+NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(StorageManager)
+  tmp->Shutdown();
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mOwner)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
+NS_IMPL_CYCLE_COLLECTION_UNLINK_END
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(StorageManager)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mOwner)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mFileSystemManager)
+NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
+
+void StorageManager::Shutdown() {
+  if (mFileSystemManager) {
+    mFileSystemManager->Shutdown();
+    mFileSystemManager = nullptr;
+  }
+}
+
+already_AddRefed<FileSystemManager> StorageManager::GetFileSystemManager() {
+  if (!mFileSystemManager) {
+    MOZ_ASSERT(mOwner);
+
+    mFileSystemManager = MakeRefPtr<FileSystemManager>(mOwner, this);
+  }
+
+  return do_AddRef(mFileSystemManager);
+}
+
+// WebIDL Boilerplate
+
+JSObject* StorageManager::WrapObject(JSContext* aCx,
+                                     JS::Handle<JSObject*> aGivenProto) {
+  return StorageManager_Binding::Wrap(aCx, this, aGivenProto);
+}
+
+// WebIDL Interface
 
 already_AddRefed<Promise> StorageManager::Persisted(ErrorResult& aRv) {
   MOZ_ASSERT(mOwner);
@@ -755,32 +802,7 @@ already_AddRefed<Promise> StorageManager::Estimate(ErrorResult& aRv) {
 }
 
 already_AddRefed<Promise> StorageManager::GetDirectory(ErrorResult& aRv) {
-  MOZ_ASSERT(mOwner);
-
-  RefPtr<Promise> promise = Promise::Create(mOwner, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return nullptr;
-  }
-
-  MOZ_ASSERT(promise);
-
-  fs::FileSystemRequestHandler{}.GetRoot(promise);
-  return promise.forget();
-}
-
-NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(StorageManager, mOwner)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(StorageManager)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(StorageManager)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(StorageManager)
-  NS_WRAPPERCACHE_INTERFACE_MAP_ENTRY
-  NS_INTERFACE_MAP_ENTRY(nsISupports)
-NS_INTERFACE_MAP_END
-
-JSObject* StorageManager::WrapObject(JSContext* aCx,
-                                     JS::Handle<JSObject*> aGivenProto) {
-  return StorageManager_Binding::Wrap(aCx, this, aGivenProto);
+  return RefPtr(GetFileSystemManager())->GetDirectory(aRv);
 }
 
 }  // namespace mozilla::dom

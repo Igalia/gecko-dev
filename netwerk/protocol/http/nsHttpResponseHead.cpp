@@ -609,15 +609,16 @@ nsresult nsHttpResponseHead::ParseHeaderLine_locked(
 
   // handle some special case headers...
   if (hdr == nsHttp::Content_Length) {
-    int64_t len;
-    const char* ignored;
-    // permit only a single value here.
-    if (nsHttp::ParseInt64(val.get(), &ignored, &len)) {
-      mContentLength = len;
-    } else {
-      // If this is a negative content length then just ignore it
-      LOG(("invalid content-length! %s\n", val.get()));
+    rv = ParseResponseContentLength(val);
+    if (rv == NS_ERROR_ILLEGAL_VALUE) {
+      LOG(("illegal content-length! %s\n", val.get()));
+      return rv;
     }
+
+    if (rv == NS_ERROR_NOT_AVAILABLE) {
+      LOG(("content-length value ignored! %s\n", val.get()));
+    }
+
   } else if (hdr == nsHttp::Content_Type) {
     LOG(("ParseContentType [type=%s]\n", val.get()));
     bool dummy;
@@ -1213,6 +1214,57 @@ void nsHttpResponseHead::ParsePragma(const char* val) {
   mPragmaNoCache = nsHttp::FindToken(val, "no-cache", HTTP_HEADER_VALUE_SEPS);
 }
 
+nsresult nsHttpResponseHead::ParseResponseContentLength(
+    const nsACString& aHeaderStr) {
+  int64_t contentLength = 0;
+  // Ref: https://fetch.spec.whatwg.org/#content-length-header
+  // Step 1. Let values be the result of getting, decoding, and splitting
+  // `Content - Length` from headers.
+  //  Step 1 is done by the caller
+  //  Step 2. If values is null, then return null.
+  if (aHeaderStr.IsEmpty()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  // Step 3 Let candidateValue be null.
+  Maybe<nsAutoCString> candidateValue;
+  // Step 4 For each value of values
+  for (const nsACString& token :
+       nsCCharSeparatedTokenizerTemplate<
+           NS_IsAsciiWhitespace, nsTokenizerFlags::IncludeEmptyTokenAtEnd>(
+           aHeaderStr, ',')
+           .ToRange()) {
+    // Step 4.1 If candidateValue is null, then set candidateValue to value.
+    if (candidateValue.isNothing()) {
+      candidateValue.emplace(token);
+    }
+    // Step 4.2 Otherwise, if value is not candidateValue, return failure.
+    if (candidateValue.value() != token) {
+      return NS_ERROR_ILLEGAL_VALUE;
+    }
+  }
+  // Step 5 If candidateValue is the empty string or has a code point that is
+  // not an ASCII digit, then return null.
+  if (candidateValue.isNothing()) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  // Step 6 Return candidateValue, interpreted as decimal number contentLength
+  const char* end = nullptr;
+  if (!net::nsHttp::ParseInt64(candidateValue->get(), &end, &contentLength)) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  if (*end != '\0') {
+    // a number was parsed by ParseInt64 but candidateValue contains non-numeric
+    // characters
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  mContentLength = contentLength;
+  return NS_OK;
+}
+
 nsresult nsHttpResponseHead::VisitHeaders(
     nsIHttpHeaderVisitor* visitor, nsHttpHeaderArray::VisitorFilter filter) {
   RecursiveMutexAutoLock monitor(mRecursiveMutex);
@@ -1221,6 +1273,38 @@ nsresult nsHttpResponseHead::VisitHeaders(
   mInVisitHeaders = false;
   return rv;
 }
+
+namespace {
+class ContentTypeOptionsVisitor final : public nsIHttpHeaderVisitor {
+ public:
+  NS_DECL_ISUPPORTS
+
+  ContentTypeOptionsVisitor() = default;
+
+  NS_IMETHOD
+  VisitHeader(const nsACString& aHeader, const nsACString& aValue) override {
+    if (!mHeaderPresent) {
+      mHeaderPresent = true;
+    } else {
+      // multiple XCTO headers in response, merge them
+      mContentTypeOptionsHeader.Append(", "_ns);
+    }
+    mContentTypeOptionsHeader.Append(aValue);
+    return NS_OK;
+  }
+
+  void GetMergedHeader(nsACString& aValue) {
+    aValue = mContentTypeOptionsHeader;
+  }
+
+ private:
+  ~ContentTypeOptionsVisitor() = default;
+  bool mHeaderPresent{false};
+  nsAutoCString mContentTypeOptionsHeader;
+};
+
+NS_IMPL_ISUPPORTS(ContentTypeOptionsVisitor, nsIHttpHeaderVisitor)
+}  // namespace
 
 nsresult nsHttpResponseHead::GetOriginalHeader(const nsHttpAtom& aHeader,
                                                nsIHttpHeaderVisitor* aVisitor) {
@@ -1241,12 +1325,15 @@ bool nsHttpResponseHead::HasContentCharset() {
   return !mContentCharset.IsEmpty();
 }
 
-bool nsHttpResponseHead::GetContentTypeOptionsHeader(
-    nsACString& aOutput) const {
+bool nsHttpResponseHead::GetContentTypeOptionsHeader(nsACString& aOutput) {
   aOutput.Truncate();
 
   nsAutoCString contentTypeOptionsHeader;
-  Unused << GetHeader(nsHttp::X_Content_Type_Options, contentTypeOptionsHeader);
+  // We need to fetch original headers and manually merge them because empty
+  // header values are not retrieved with GetHeader. Ref - Bug 1819642
+  RefPtr<ContentTypeOptionsVisitor> visitor = new ContentTypeOptionsVisitor();
+  Unused << GetOriginalHeader(nsHttp::X_Content_Type_Options, visitor);
+  visitor->GetMergedHeader(contentTypeOptionsHeader);
   if (contentTypeOptionsHeader.IsEmpty()) {
     // if there is no XCTO header, then there is nothing to do.
     return false;
@@ -1256,7 +1343,7 @@ bool nsHttpResponseHead::GetContentTypeOptionsHeader(
   // a) let's skip all subsequent values
   //     e.g. "   NoSniFF   , foo " will be "   NoSniFF   "
   int32_t idx = contentTypeOptionsHeader.Find(",");
-  if (idx > 0) {
+  if (idx >= 0) {
     contentTypeOptionsHeader = Substring(contentTypeOptionsHeader, 0, idx);
   }
   // b) let's trim all surrounding whitespace

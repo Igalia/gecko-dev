@@ -1,10 +1,15 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { HistoryEngine } = ChromeUtils.import(
-  "resource://services-sync/engines/history.js"
+const { HistoryEngine } = ChromeUtils.importESModule(
+  "resource://services-sync/engines/history.sys.mjs"
 );
-const { Service } = ChromeUtils.import("resource://services-sync/service.js");
+const { Service } = ChromeUtils.importESModule(
+  "resource://services-sync/service.sys.mjs"
+);
+const { SyncedRecordsTelemetry } = ChromeUtils.importESModule(
+  "resource://services-sync/telemetry.sys.mjs"
+);
 
 const TIMESTAMP1 = (Date.now() - 103406528) * 1000;
 const TIMESTAMP2 = (Date.now() - 6592903) * 1000;
@@ -29,7 +34,11 @@ function isDateApproximately(actual, expected, skewMillis = 1000) {
 let engine, store, fxuri, fxguid, tburi, tbguid;
 
 async function applyEnsureNoFailures(records) {
-  Assert.equal((await store.applyIncomingBatch(records)).length, 0);
+  let countTelemetry = new SyncedRecordsTelemetry();
+  Assert.equal(
+    (await store.applyIncomingBatch(records, countTelemetry)).length,
+    0
+  );
 }
 
 add_task(async function setup() {
@@ -164,46 +173,56 @@ add_task(async function test_null_title() {
 
 add_task(async function test_invalid_records() {
   _("Make sure we handle invalid URLs in places databases gracefully.");
-  await PlacesUtils.withConnectionWrapper("test_invalid_record", async function(
-    db
-  ) {
-    await db.execute(
-      "INSERT INTO moz_places " +
-        "(url, url_hash, title, rev_host, visit_count, last_visit_date) " +
-        "VALUES ('invalid-uri', hash('invalid-uri'), 'Invalid URI', '.', 1, " +
-        TIMESTAMP3 +
-        ")"
-    );
-    // Trigger the update to the moz_origin tables by deleting the added rows
-    // from moz_updateoriginsinsert_temp
-    await db.executeCached("DELETE FROM moz_updateoriginsinsert_temp");
-    // Add the corresponding visit to retain database coherence.
-    await db.execute(
-      "INSERT INTO moz_historyvisits " +
-        "(place_id, visit_date, visit_type, session) " +
-        "VALUES ((SELECT id FROM moz_places WHERE url_hash = hash('invalid-uri') AND url = 'invalid-uri'), " +
-        TIMESTAMP3 +
-        ", " +
-        Ci.nsINavHistoryService.TRANSITION_TYPED +
-        ", 1)"
-    );
-  });
+  await PlacesUtils.withConnectionWrapper(
+    "test_invalid_record",
+    async function (db) {
+      await db.execute(
+        "INSERT INTO moz_places " +
+          "(url, url_hash, title, rev_host, visit_count, last_visit_date) " +
+          "VALUES ('invalid-uri', hash('invalid-uri'), 'Invalid URI', '.', 1, " +
+          TIMESTAMP3 +
+          ")"
+      );
+      // Trigger the update to the moz_origin tables by deleting the added rows
+      // from moz_updateoriginsinsert_temp
+      await db.executeCached("DELETE FROM moz_updateoriginsinsert_temp");
+      // Add the corresponding visit to retain database coherence.
+      await db.execute(
+        "INSERT INTO moz_historyvisits " +
+          "(place_id, visit_date, visit_type, session) " +
+          "VALUES ((SELECT id FROM moz_places WHERE url_hash = hash('invalid-uri') AND url = 'invalid-uri'), " +
+          TIMESTAMP3 +
+          ", " +
+          Ci.nsINavHistoryService.TRANSITION_TYPED +
+          ", 1)"
+      );
+    }
+  );
   do_check_attribute_count(await store.getAllIDs(), 1);
 
   _("Make sure we report records with invalid URIs.");
   let invalid_uri_guid = Utils.makeGUID();
-  let failed = await store.applyIncomingBatch([
-    {
-      id: invalid_uri_guid,
-      histUri: ":::::::::::::::",
-      title: "Doesn't have a valid URI",
-      visits: [
-        { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
-      ],
-    },
-  ]);
+  let countTelemetry = new SyncedRecordsTelemetry();
+  let failed = await store.applyIncomingBatch(
+    [
+      {
+        id: invalid_uri_guid,
+        histUri: ":::::::::::::::",
+        title: "Doesn't have a valid URI",
+        visits: [
+          { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
+        ],
+      },
+    ],
+    countTelemetry
+  );
   Assert.equal(failed.length, 1);
   Assert.equal(failed[0], invalid_uri_guid);
+  Assert.equal(
+    countTelemetry.incomingCounts.failedReasons[0].name,
+    "<URL> is not a valid URL."
+  );
+  Assert.equal(countTelemetry.incomingCounts.failedReasons[0].count, 1);
 
   _("Make sure we handle records with invalid GUIDs gracefully (ignore).");
   await applyEnsureNoFailures([
@@ -224,56 +243,74 @@ add_task(async function test_invalid_records() {
   let no_type_visit_guid = Utils.makeGUID();
   let invalid_type_visit_guid = Utils.makeGUID();
   let non_integer_visit_guid = Utils.makeGUID();
-  failed = await store.applyIncomingBatch([
-    {
-      id: no_date_visit_guid,
-      histUri: "http://no.date.visit/",
-      title: "Visit has no date",
-      visits: [{ type: Ci.nsINavHistoryService.TRANSITION_EMBED }],
-    },
-    {
-      id: no_type_visit_guid,
-      histUri: "http://no.type.visit/",
-      title: "Visit has no type",
-      visits: [{ date: TIMESTAMP3 }],
-    },
-    {
-      id: invalid_type_visit_guid,
-      histUri: "http://invalid.type.visit/",
-      title: "Visit has invalid type",
-      visits: [
-        { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_LINK - 1 },
-      ],
-    },
-    {
-      id: non_integer_visit_guid,
-      histUri: "http://non.integer.visit/",
-      title: "Visit has non-integer date",
-      visits: [
-        { date: 1234.567, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
-      ],
-    },
-  ]);
+  countTelemetry = new SyncedRecordsTelemetry();
+  failed = await store.applyIncomingBatch(
+    [
+      {
+        id: no_date_visit_guid,
+        histUri: "http://no.date.visit/",
+        title: "Visit has no date",
+        visits: [{ type: Ci.nsINavHistoryService.TRANSITION_EMBED }],
+      },
+      {
+        id: no_type_visit_guid,
+        histUri: "http://no.type.visit/",
+        title: "Visit has no type",
+        visits: [{ date: TIMESTAMP3 }],
+      },
+      {
+        id: invalid_type_visit_guid,
+        histUri: "http://invalid.type.visit/",
+        title: "Visit has invalid type",
+        visits: [
+          {
+            date: TIMESTAMP3,
+            type: Ci.nsINavHistoryService.TRANSITION_LINK - 1,
+          },
+        ],
+      },
+      {
+        id: non_integer_visit_guid,
+        histUri: "http://non.integer.visit/",
+        title: "Visit has non-integer date",
+        visits: [
+          { date: 1234.567, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
+        ],
+      },
+    ],
+    countTelemetry
+  );
   Assert.equal(failed.length, 0);
 
   // Make sure we can apply tombstones (both valid and invalid)
-  failed = await store.applyIncomingBatch([
-    { id: no_date_visit_guid, deleted: true },
-    { id: "not-a-valid-guid", deleted: true },
-  ]);
+  countTelemetry = new SyncedRecordsTelemetry();
+  failed = await store.applyIncomingBatch(
+    [
+      { id: no_date_visit_guid, deleted: true },
+      { id: "not-a-valid-guid", deleted: true },
+    ],
+    countTelemetry
+  );
   Assert.deepEqual(failed, ["not-a-valid-guid"]);
+  Assert.equal(
+    countTelemetry.incomingCounts.failedReasons[0].name,
+    "<URL> is not a valid URL."
+  );
 
   _("Make sure we handle records with javascript: URLs gracefully.");
-  await applyEnsureNoFailures([
-    {
-      id: Utils.makeGUID(),
-      histUri: "javascript:''",
-      title: "javascript:''",
-      visits: [
-        { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
-      ],
-    },
-  ]);
+  await applyEnsureNoFailures(
+    [
+      {
+        id: Utils.makeGUID(),
+        histUri: "javascript:''",
+        title: "javascript:''",
+        visits: [
+          { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
+        ],
+      },
+    ],
+    countTelemetry
+  );
 
   _("Make sure we handle records without any visits gracefully.");
   await applyEnsureNoFailures([
@@ -293,16 +330,23 @@ add_task(async function test_unknowingly_invalid_records() {
   try {
     _("Make sure that when places rejects this record we record it as failed");
     let guid = Utils.makeGUID();
-    let result = await store.applyIncomingBatch([
-      {
-        id: guid,
-        histUri: "javascript:''",
-        title: "javascript:''",
-        visits: [
-          { date: TIMESTAMP3, type: Ci.nsINavHistoryService.TRANSITION_EMBED },
-        ],
-      },
-    ]);
+    let countTelemetry = new SyncedRecordsTelemetry();
+    let result = await store.applyIncomingBatch(
+      [
+        {
+          id: guid,
+          histUri: "javascript:''",
+          title: "javascript:''",
+          visits: [
+            {
+              date: TIMESTAMP3,
+              type: Ci.nsINavHistoryService.TRANSITION_EMBED,
+            },
+          ],
+        },
+      ],
+      countTelemetry
+    );
     deepEqual(result, [guid]);
   } finally {
     store._canAddURI = oldCAU;
@@ -445,7 +489,7 @@ add_task(async function test_remove() {
 add_task(async function test_chunking() {
   let mvpi = store.MAX_VISITS_PER_INSERT;
   store.MAX_VISITS_PER_INSERT = 3;
-  let checkChunks = function(input, expected) {
+  let checkChunks = function (input, expected) {
     let chunks = Array.from(store._generateChunks(input));
     deepEqual(chunks, expected);
   };

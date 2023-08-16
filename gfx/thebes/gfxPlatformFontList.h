@@ -165,6 +165,7 @@ class gfxPlatformFontList : public gfxFontInfoLoader {
   typedef mozilla::intl::Script Script;
 
   using AutoLock = mozilla::RecursiveMutexAutoLock;
+  using AutoUnlock = mozilla::RecursiveMutexAutoUnlock;
 
   // Class used to hold cached copies of the font-name prefs, so that they can
   // be accessed from non-main-thread callers who are not allowed to touch the
@@ -635,6 +636,9 @@ class gfxPlatformFontList : public gfxFontInfoLoader {
     return PR_GetCurrentThread() == sInitFontListThread;
   }
 
+  bool IsKnownIconFontFamily(const nsAtom* aFamilyName) const;
+  void LoadIconFontOverrideList();
+
   void Lock() MOZ_CAPABILITY_ACQUIRE(mLock) { mLock.Lock(); }
   void Unlock() MOZ_CAPABILITY_RELEASE(mLock) { mLock.Unlock(); }
 
@@ -865,6 +869,11 @@ class gfxPlatformFontList : public gfxFontInfoLoader {
   bool LoadFontInfo() override;
   void CleanupLoader() override;
 
+  void ForceGlobalReflowLocked(
+      gfxPlatform::NeedsReframe aNeedsReframe,
+      gfxPlatform::BroadcastToChildren aBroadcastToChildren =
+          gfxPlatform::BroadcastToChildren::Yes) MOZ_REQUIRES(mLock);
+
   // read the loader initialization prefs, and start it
   void GetPrefsAndStartLoader();
 
@@ -1026,6 +1035,7 @@ class gfxPlatformFontList : public gfxFontInfoLoader {
       MOZ_GUARDED_BY(mLock);
 
   nsTArray<nsCString> mEnabledFontsList;
+  nsTHashSet<nsCString> mIconFontsSet;
 
   mozilla::UniquePtr<mozilla::fontlist::FontList> mSharedFontList;
 

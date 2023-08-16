@@ -4,18 +4,18 @@
 
 "use strict";
 
-const { Ci } = require("chrome");
-const Services = require("Services");
 const {
   HarCollector,
-} = require("devtools/client/netmonitor/src/har/har-collector");
+} = require("resource://devtools/client/netmonitor/src/har/har-collector.js");
 const {
   HarExporter,
-} = require("devtools/client/netmonitor/src/har/har-exporter");
-const { HarUtils } = require("devtools/client/netmonitor/src/har/har-utils");
+} = require("resource://devtools/client/netmonitor/src/har/har-exporter.js");
+const {
+  HarUtils,
+} = require("resource://devtools/client/netmonitor/src/har/har-utils.js");
 const {
   getLongStringFullText,
-} = require("devtools/client/shared/string-utils");
+} = require("resource://devtools/client/shared/string-utils.js");
 
 const prefDomain = "devtools.netmonitor.har.";
 
@@ -235,8 +235,7 @@ function getDefaultTargetFile(options) {
     Services.prefs.getCharPref("devtools.netmonitor.har.defaultLogDir");
   const folder = HarUtils.getLocalDirectory(path);
 
-  const tabTarget = options.connector.getTabTarget();
-  const host = new URL(tabTarget.url);
+  const host = new URL(options.connector.currentTarget.url);
   const fileName = HarUtils.getHarFileName(
     options.defaultFileName,
     options.jsonp,

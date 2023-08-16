@@ -28,6 +28,7 @@
 #include "nsLocalFile.h"
 #include "nsNetUtil.h"
 #include "nsString.h"
+#include "nsURLHelper.h"
 #include "xpcpublic.h"
 
 namespace mozilla::dom {
@@ -182,29 +183,36 @@ void PathUtils::Parent(const GlobalObject&, const nsAString& aPath,
 
 void PathUtils::Join(const GlobalObject&, const Sequence<nsString>& aComponents,
                      nsString& aResult, ErrorResult& aErr) {
-  if (aComponents.IsEmpty()) {
+  nsCOMPtr<nsIFile> path = Join(Span(aComponents), aErr);
+  if (aErr.Failed()) {
     return;
   }
-  if (aComponents[0].IsEmpty()) {
+
+  MOZ_ALWAYS_SUCCEEDS(path->GetPath(aResult));
+}
+
+already_AddRefed<nsIFile> PathUtils::Join(
+    const Span<const nsString>& aComponents, ErrorResult& aErr) {
+  if (aComponents.IsEmpty() || aComponents[0].IsEmpty()) {
     aErr.ThrowNotAllowedError(ERROR_EMPTY_PATH);
-    return;
+    return nullptr;
   }
 
   nsCOMPtr<nsIFile> path = new nsLocalFile();
   if (nsresult rv = InitFileWithPath(path, aComponents[0]); NS_FAILED(rv)) {
     ThrowError(aErr, rv, ERROR_INITIALIZE_PATH);
-    return;
+    return nullptr;
   }
 
   const auto components = Span<const nsString>(aComponents).Subspan(1);
   for (const auto& component : components) {
     if (nsresult rv = path->Append(component); NS_FAILED(rv)) {
       ThrowError(aErr, rv, ERROR_JOIN);
-      return;
+      return nullptr;
     }
   }
 
-  MOZ_ALWAYS_SUCCEEDS(path->GetPath(aResult));
+  return path.forget();
 }
 
 void PathUtils::JoinRelative(const GlobalObject&, const nsAString& aBasePath,
@@ -319,6 +327,64 @@ void PathUtils::Split(const GlobalObject&, const nsAString& aPath,
   aResult.Reverse();
 }
 
+void PathUtils::SplitRelative(const GlobalObject& aGlobal,
+                              const nsAString& aPath,
+                              const SplitRelativeOptions& aOptions,
+                              nsTArray<nsString>& aResult, ErrorResult& aErr) {
+  if (aPath.IsEmpty()) {
+    aErr.ThrowNotAllowedError(ERROR_EMPTY_PATH);
+    return;
+  }
+
+  if (DoWindowsPathCheck()) {
+    MOZ_RELEASE_ASSERT(!aPath.Contains(u'/'),
+                       "Windows paths cannot include forward slashes");
+  }
+
+  if (IsAbsolute(aGlobal, aPath)) {
+    aErr.ThrowNotAllowedError(
+        "PathUtils.splitRelative requires a relative path"_ns);
+    return;
+  }
+
+#ifdef XP_WIN
+  constexpr auto SEPARATOR = u'\\';
+#else
+  constexpr auto SEPARATOR = u'/';
+#endif
+
+  constexpr auto PARENT = u".."_ns;
+  constexpr auto CURRENT = u"."_ns;
+
+  for (const nsAString& pathComponent :
+       nsCharSeparatedTokenizerTemplate<NS_TokenizerIgnoreNothing>{aPath,
+                                                                   SEPARATOR}
+           .ToRange()) {
+    if (!aOptions.mAllowEmpty && pathComponent.IsEmpty()) {
+      aErr.ThrowNotAllowedError(
+          "PathUtils.splitRelative: Empty directory components (\"\") not "
+          "allowed by options");
+      return;
+    }
+
+    if (!aOptions.mAllowParentDir && pathComponent == PARENT) {
+      aErr.ThrowNotAllowedError(
+          "PathUtils.splitRelative: Parent directory components (\"..\") not "
+          "allowed by options");
+      return;
+    }
+
+    if (!aOptions.mAllowCurrentDir && pathComponent == CURRENT) {
+      aErr.ThrowNotAllowedError(
+          "PathUtils.splitRelative: Current directory components (\".\") not "
+          "allowed by options");
+      return;
+    }
+
+    aResult.AppendElement(pathComponent);
+  }
+}
+
 void PathUtils::ToFileURI(const GlobalObject&, const nsAString& aPath,
                           nsCString& aResult, ErrorResult& aErr) {
   if (aPath.IsEmpty()) {
@@ -332,13 +398,8 @@ void PathUtils::ToFileURI(const GlobalObject&, const nsAString& aPath,
     return;
   }
 
-  nsCOMPtr<nsIURI> uri;
-  if (nsresult rv = NS_NewFileURI(getter_AddRefs(uri), path); NS_FAILED(rv)) {
-    ThrowError(aErr, rv, "Could not initialize File URI"_ns);
-    return;
-  }
-
-  if (nsresult rv = uri->GetSpec(aResult); NS_FAILED(rv)) {
+  if (nsresult rv = net_GetURLSpecFromActualFile(path, aResult);
+      NS_FAILED(rv)) {
     ThrowError(aErr, rv, "Could not retrieve URI spec"_ns);
     return;
   }
@@ -375,13 +436,13 @@ void PathUtils::GetTempDirSync(const GlobalObject&, nsString& aResult,
       .GetDirectorySync(aResult, aErr, DirectoryCache::Directory::Temp);
 }
 
-void PathUtils::GetOSTempDirSync(const GlobalObject&, nsString& aResult,
-                                 ErrorResult& aErr) {
+void PathUtils::GetXulLibraryPathSync(const GlobalObject&, nsString& aResult,
+                                      ErrorResult& aErr) {
   MOZ_ASSERT(NS_IsMainThread());
 
   auto guard = sDirCache.Lock();
   DirectoryCache::Ensure(guard.ref())
-      .GetDirectorySync(aResult, aErr, DirectoryCache::Directory::OSTemp);
+      .GetDirectorySync(aResult, aErr, DirectoryCache::Directory::XulLibrary);
 }
 
 already_AddRefed<Promise> PathUtils::GetProfileDirAsync(
@@ -412,13 +473,13 @@ already_AddRefed<Promise> PathUtils::GetTempDirAsync(
       .GetDirectoryAsync(aGlobal, aErr, DirectoryCache::Directory::Temp);
 }
 
-already_AddRefed<Promise> PathUtils::GetOSTempDirAsync(
+already_AddRefed<Promise> PathUtils::GetXulLibraryPathAsync(
     const GlobalObject& aGlobal, ErrorResult& aErr) {
   MOZ_ASSERT(!NS_IsMainThread());
 
   auto guard = sDirCache.Lock();
   return DirectoryCache::Ensure(guard.ref())
-      .GetDirectoryAsync(aGlobal, aErr, DirectoryCache::Directory::OSTemp);
+      .GetDirectoryAsync(aGlobal, aErr, DirectoryCache::Directory::XulLibrary);
 }
 
 PathUtils::DirectoryCache::DirectoryCache() {

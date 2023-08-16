@@ -21,7 +21,9 @@ CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH:-}
 CMAKE_C_COMPILER_LAUNCHER=${CMAKE_C_COMPILER_LAUNCHER:-}
 CMAKE_CXX_COMPILER_LAUNCHER=${CMAKE_CXX_COMPILER_LAUNCHER:-}
 CMAKE_MAKE_PROGRAM=${CMAKE_MAKE_PROGRAM:-}
+SKIP_BUILD="${SKIP_BUILD:-0}"
 SKIP_TEST="${SKIP_TEST:-0}"
+TARGETS="${TARGETS:-all doc}"
 TEST_SELECTOR="${TEST_SELECTOR:-}"
 BUILD_TARGET="${BUILD_TARGET:-}"
 ENABLE_WASM_SIMD="${ENABLE_WASM_SIMD:-0}"
@@ -67,6 +69,11 @@ if [[ "${ENABLE_WASM_SIMD}" -ne "0" ]]; then
   CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -msimd128"
   CMAKE_C_FLAGS="${CMAKE_C_FLAGS} -msimd128"
   CMAKE_EXE_LINKER_FLAGS="${CMAKE_EXE_LINKER_FLAGS} -msimd128"
+fi
+
+if [[ "${ENABLE_WASM_SIMD}" -eq "2" ]]; then
+  CMAKE_CXX_FLAGS="${CMAKE_CXX_FLAGS} -DHWY_WANT_WASM2"
+  CMAKE_C_FLAGS="${CMAKE_C_FLAGS} -DHWY_WANT_WASM2"
 fi
 
 if [[ ! -z "${HWY_BASELINE_TARGETS}" ]]; then
@@ -139,6 +146,7 @@ detect_clang_version() {
   fi
   local clang_version=$("${CC:-clang}" --version | head -n1)
   clang_version=${clang_version#"Debian "}
+  clang_version=${clang_version#"Ubuntu "}
   local llvm_tag
   case "${clang_version}" in
     "clang version 6."*)
@@ -452,9 +460,12 @@ cmake_configure() {
 }
 
 cmake_build_and_test() {
+  if [[ "${SKIP_BUILD}" -eq "1" ]]; then
+      return 0
+  fi
   # gtest_discover_tests() runs the test binaries to discover the list of tests
   # at build time, which fails under qemu.
-  ASAN_OPTIONS=detect_leaks=0 cmake --build "${BUILD_DIR}" -- all doc
+  ASAN_OPTIONS=detect_leaks=0 cmake --build "${BUILD_DIR}" -- $TARGETS
   # Pack test binaries if requested.
   if [[ "${PACK_TEST:-}" == "1" ]]; then
     (cd "${BUILD_DIR}"
@@ -547,6 +558,7 @@ cmd_coverage_report() {
     # Only print coverage information for the libjxl directories. The rest
     # is not part of the code under test.
     --filter '.*jxl/.*'
+    --exclude '.*_gbench.cc'
     --exclude '.*_test.cc'
     --exclude '.*_testonly..*'
     --exclude '.*_debug.*'
@@ -576,7 +588,7 @@ cmd_test() {
   (cd "${BUILD_DIR}"
    export UBSAN_OPTIONS=print_stacktrace=1
    [[ "${TEST_STACK_LIMIT}" == "none" ]] || ulimit -s "${TEST_STACK_LIMIT}"
-   ctest -j $(nproc --all || echo 1) --output-on-failure "$@")
+   ctest -j $(nproc --all || echo 1) ${TEST_SELECTOR} --output-on-failure "$@")
 }
 
 cmd_gbench() {
@@ -703,7 +715,7 @@ cmd_msan_install() {
   export CXX="${CXX:-clang++}"
   detect_clang_version
   # Allow overriding the LLVM checkout.
-  local llvm_root="${LLVM_ROOT}"
+  local llvm_root="${LLVM_ROOT:-}"
   if [ -z "${llvm_root}" ]; then
     local llvm_tag="llvmorg-${CLANG_VERSION}.0.0"
     case "${CLANG_VERSION}" in
@@ -788,7 +800,7 @@ _cmd_ossfuzz() {
     -e MSAN_LIBS_PATH="/work/msan" \
     -e JPEGXL_EXTRA_ARGS="${jpegxl_extra_args}" \
     -v "${MYDIR}":/src/libjxl \
-    -v "${MYDIR}/tools/ossfuzz-build.sh":/src/build.sh \
+    -v "${MYDIR}/tools/scripts/ossfuzz-build.sh":/src/build.sh \
     -v "${real_build_dir}":/work \
     gcr.io/oss-fuzz/libjxl
 }
@@ -902,7 +914,7 @@ run_benchmark() {
     --input "${src_img_dir}/*.png"
     --codec=jpeg:yuv420:q85,webp:q80,jxl:d1:6,jxl:d1:6:downsampling=8,jxl:d5:6,jxl:d5:6:downsampling=8,jxl:m:d0:2,jxl:m:d0:3,jxl:m:d2:2
     --output_dir "${output_dir}"
-    --noprofiler --show_progress
+    --show_progress
     --num_threads="${num_threads}"
   )
   if [[ "${STORE_IMAGES}" == "1" ]]; then
@@ -1184,22 +1196,38 @@ cmd_fuzz() {
   )
 }
 
-# Runs the linter (clang-format) on the pending CLs.
+# Runs the linters (clang-format, build_cleaner, buildirier) on the pending CLs.
 cmd_lint() {
   merge_request_commits
   { set +x; } 2>/dev/null
-  local versions=(${1:-6.0 7 8 9 10 11})
+  local versions=(${1:-16 15 14 13 12 11 10 9 8 7 6.0})
   local clang_format_bins=("${versions[@]/#/clang-format-}" clang-format)
   local tmpdir=$(mktemp -d)
   CLEANUP_FILES+=("${tmpdir}")
 
   local ret=0
   local build_patch="${tmpdir}/build_cleaner.patch"
-  if ! "${MYDIR}/tools/build_cleaner.py" >"${build_patch}"; then
+  if ! "${MYDIR}/tools/scripts/build_cleaner.py" >"${build_patch}"; then
     ret=1
     echo "build_cleaner.py findings:" >&2
     "${COLORDIFF_BIN}" <"${build_patch}"
-    echo "Run \`tools/build_cleaner.py --update\` to apply them" >&2
+    echo "Run \`tools/scripts/build_cleaner.py --update\` to apply them" >&2
+  fi
+
+  # It is ok, if buildifier is not installed.
+  if which buildifier >/dev/null; then
+    local buildifier_patch="${tmpdir}/buildifier.patch"
+    local bazel_files=`git -C ${MYDIR} ls-files | grep -E "/BUILD$|WORKSPACE|.bzl$"`
+    set -x
+    buildifier -d ${bazel_files} >"${buildifier_patch}"|| true
+    { set +x; } 2>/dev/null
+    if [ -s "${buildifier_patch}" ]; then
+      ret=1
+      echo 'buildifier have found some problems in Bazel build files:' >&2
+      "${COLORDIFF_BIN}" <"${buildifier_patch}"
+      echo 'To fix them run (from the base directory):' >&2
+      echo '  buildifier `git ls-files | grep -E "/BUILD$|WORKSPACE|.bzl$"`' >&2
+    fi
   fi
 
   local installed=()
@@ -1218,7 +1246,7 @@ cmd_lint() {
     git -C "${MYDIR}" "${clang_format}" --binary "${clang_format}" \
       --style=file --diff "${MR_ANCESTOR_SHA}" -- >"${tmppatch}" || true
     { set +x; } 2>/dev/null
-    if grep -E '^--- ' "${tmppatch}">/dev/null; then
+    if grep -E '^--- ' "${tmppatch}" | grep -v 'a/third_party' >/dev/null; then
       if [[ -n "${LINT_OUTPUT:-}" ]]; then
         cp "${tmppatch}" "${LINT_OUTPUT}"
       fi
@@ -1374,7 +1402,7 @@ cmd_bump_version() {
   local newver="${1:-}"
 
   if ! which dch >/dev/null; then
-    echo "Run:\n  sudo apt install debhelper"
+    echo "Missing dch\nTo install it run:\n  sudo apt install devscripts"
     exit 1
   fi
 
@@ -1394,19 +1422,21 @@ cmd_bump_version() {
     fi
   fi
 
-  newver="${major}.${minor}"
-  if [[ "${patch}" != "0" ]]; then
-    newver="${newver}.${patch}"
-  fi
+  newver="${major}.${minor}.${patch}"
+
   echo "Bumping version to ${newver} (${major}.${minor}.${patch})"
   sed -E \
     -e "s/(set\\(JPEGXL_MAJOR_VERSION) [0-9]+\\)/\\1 ${major})/" \
     -e "s/(set\\(JPEGXL_MINOR_VERSION) [0-9]+\\)/\\1 ${minor})/" \
     -e "s/(set\\(JPEGXL_PATCH_VERSION) [0-9]+\\)/\\1 ${patch})/" \
     -i lib/CMakeLists.txt
+  sed -E \
+    -e "s/(LIBJXL_VERSION: )[0-9\\.]+/\\1 ${major}.${minor}.${patch}/" \
+    -e "s/(LIBJXL_ABI_VERSION: )[0-9\\.]+/\\1 ${major}.${minor}/" \
+    -i .github/workflows/conformance.yml
 
   # Update lib.gni
-  tools/build_cleaner.py --update
+  tools/scripts/build_cleaner.py --update
 
   # Mark the previous version as "unstable".
   DEBCHANGE_RELEASE_HEURISTIC=log dch -M --distribution unstable --release ''
@@ -1420,11 +1450,11 @@ cmd_authors() {
   merge_request_commits
   local emails
   local names
-  readarray -t emails < <(git log --format='%ae' "${MR_HEAD_SHA}...${MR_ANCESTOR_SHA}")
-  readarray -t names < <(git log --format='%an' "${MR_HEAD_SHA}...${MR_ANCESTOR_SHA}")
+  readarray -t emails < <(git log --format='%ae' "${MR_ANCESTOR_SHA}..${MR_HEAD_SHA}")
+  readarray -t names < <(git log --format='%an' "${MR_ANCESTOR_SHA}..${MR_HEAD_SHA}")
   for i in "${!names[@]}"; do
     echo "Checking name '${names[$i]}' with email '${emails[$i]}' ..."
-    "${MYDIR}"/tools/check_author.py "${emails[$i]}" "${names[$i]}"
+    "${MYDIR}"/tools/scripts/check_author.py "${emails[$i]}" "${names[$i]}"
   done
 }
 
@@ -1452,7 +1482,7 @@ Where cmd is one of:
  benchmark Run the benchmark over the default corpus.
  fast_benchmark Run the benchmark over the small corpus.
 
- coverage  Buils and run tests with coverage support. Runs coverage_report as
+ coverage  Build and run tests with coverage support. Runs coverage_report as
            well.
  coverage_report Generate HTML, XML and text coverage report after a coverage
            run.
@@ -1485,6 +1515,7 @@ You can pass some optional environment variables as well:
  - FUZZER_MAX_TIME: "fuzz" command fuzzer running timeout in seconds.
  - LINT_OUTPUT: Path to the output patch from the "lint" command.
  - SKIP_CPUSET=1: Skip modifying the cpuset in the arm_benchmark.
+ - SKIP_BUILD=1: Skip the build stage, cmake configure only.
  - SKIP_TEST=1: Skip the test stage.
  - STORE_IMAGES=0: Makes the benchmark discard the computed images.
  - TEST_STACK_LIMIT: Stack size limit (ulimit -s) during tests, in KiB.

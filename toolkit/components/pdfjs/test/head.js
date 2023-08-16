@@ -7,9 +7,7 @@ async function waitForPdfJS(browser, url) {
     null,
     true
   );
-  await SpecialPowers.spawn(browser, [url], contentUrl => {
-    content.location = contentUrl;
-  });
+  BrowserTestUtils.loadURIString(browser, url);
   return loadPromise;
 }
 
@@ -21,10 +19,57 @@ async function waitForPdfJSAnnotationLayer(browser, url) {
     null,
     true
   );
-  await SpecialPowers.spawn(browser, [url], contentUrl => {
-    content.location = contentUrl;
-  });
+  BrowserTestUtils.loadURIString(browser, url);
   return loadPromise;
+}
+
+async function waitForPdfJSAllLayers(browser, url, layers) {
+  let loadPromise = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "textlayerrendered",
+    false,
+    null,
+    true
+  );
+  let annotationPromise = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "annotationlayerrendered",
+    false,
+    null,
+    true
+  );
+  let annotationEditorPromise = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "annotationeditorlayerrendered",
+    false,
+    null,
+    true
+  );
+
+  BrowserTestUtils.loadURIString(browser, url);
+  await Promise.all([loadPromise, annotationPromise, annotationEditorPromise]);
+
+  await SpecialPowers.spawn(browser, [layers], async function (layers) {
+    const { ContentTaskUtils } = ChromeUtils.importESModule(
+      "resource://testing-common/ContentTaskUtils.sys.mjs"
+    );
+    const { document } = content;
+
+    for (let i = 0; i < layers.length; i++) {
+      await ContentTaskUtils.waitForCondition(
+        () =>
+          layers[i].every(
+            name =>
+              !!document.querySelector(
+                `.page[data-page-number='${i + 1}'] .${name}`
+              )
+          ),
+        `All the layers must be displayed on page ${i}`
+      );
+    }
+  });
+
+  await TestUtils.waitForTick();
 }
 
 async function waitForPdfJSCanvas(browser, url) {
@@ -35,9 +80,7 @@ async function waitForPdfJSCanvas(browser, url) {
     null,
     true
   );
-  await SpecialPowers.spawn(browser, [url], contentUrl => {
-    content.location = contentUrl;
-  });
+  BrowserTestUtils.loadURIString(browser, url);
   return loadPromise;
 }
 
@@ -65,11 +108,19 @@ async function enableEditor(browser, name) {
     null,
     true
   );
+  const editingStatePromise = BrowserTestUtils.waitForContentEvent(
+    browser,
+    "annotationeditorstateschanged",
+    false,
+    null,
+    true
+  );
   await SpecialPowers.spawn(browser, [name], async name => {
     const button = content.document.querySelector(`#editor${name}`);
     button.click();
   });
   await editingModePromise;
+  await editingStatePromise;
   await TestUtils.waitForTick();
 }
 
@@ -80,9 +131,9 @@ async function enableEditor(browser, name) {
  * @returns {Object} the bbox of the span containing the text.
  */
 async function getSpanBox(browser, text) {
-  return SpecialPowers.spawn(browser, [text], async function(text) {
-    const { ContentTaskUtils } = ChromeUtils.import(
-      "resource://testing-common/ContentTaskUtils.jsm"
+  return SpecialPowers.spawn(browser, [text], async function (text) {
+    const { ContentTaskUtils } = ChromeUtils.importESModule(
+      "resource://testing-common/ContentTaskUtils.sys.mjs"
     );
     const { document } = content;
 
@@ -115,11 +166,10 @@ async function getSpanBox(browser, text) {
  * @returns
  */
 async function countElements(browser, selector) {
-  return SpecialPowers.spawn(browser, [selector], async function(selector) {
-    const { document } = content;
+  return SpecialPowers.spawn(browser, [selector], async function (selector) {
     return new Promise(resolve => {
       content.setTimeout(() => {
-        resolve(document.querySelectorAll(selector).length);
+        resolve(content.document.querySelectorAll(selector).length);
       }, 0);
     });
   });
@@ -132,7 +182,7 @@ async function countElements(browser, selector) {
  * @param {number} y
  */
 async function clickAt(browser, x, y) {
-  BrowserTestUtils.synthesizeMouseAtPoint(
+  await BrowserTestUtils.synthesizeMouseAtPoint(
     x,
     y,
     {
@@ -141,7 +191,7 @@ async function clickAt(browser, x, y) {
     },
     browser
   );
-  BrowserTestUtils.synthesizeMouseAtPoint(
+  await BrowserTestUtils.synthesizeMouseAtPoint(
     x,
     y,
     {
@@ -150,6 +200,7 @@ async function clickAt(browser, x, y) {
     },
     browser
   );
+  await TestUtils.waitForTick();
 }
 
 /**
@@ -170,35 +221,54 @@ async function clickOn(browser, selector) {
   await clickAt(browser, x, y);
 }
 
+async function focusEditorLayer(browser) {
+  return SpecialPowers.spawn(browser, [], async function () {
+    const layer = content.document.querySelector(".annotationEditorLayer");
+    if (layer === content.document.activeElement) {
+      return Promise.resolve();
+    }
+    const promise = new Promise(resolve => {
+      const listener = () => {
+        layer.removeEventListener("focus", listener);
+        resolve();
+      };
+      layer.addEventListener("focus", listener);
+    });
+    layer.focus();
+    return promise;
+  });
+}
+
+/**
+ * Hit a key.
+ */
+async function hitKey(browser, char) {
+  await SpecialPowers.spawn(browser, [char], async function (char) {
+    const { ContentTaskUtils } = ChromeUtils.importESModule(
+      "resource://testing-common/ContentTaskUtils.sys.mjs"
+    );
+    const EventUtils = ContentTaskUtils.getEventUtils(content);
+    await EventUtils.synthesizeKey(char, {}, content);
+  });
+  await TestUtils.waitForTick();
+}
+
 /**
  * Write some text using the keyboard.
  * @param {Object} browser
  * @param {string} text
  */
 async function write(browser, text) {
-  await SpecialPowers.spawn(browser, [text], async function(text) {
-    const { ContentTaskUtils } = ChromeUtils.import(
-      "resource://testing-common/ContentTaskUtils.jsm"
-    );
-    const EventUtils = ContentTaskUtils.getEventUtils(content);
-
-    for (const char of text.split("")) {
-      await EventUtils.synthesizeKey(char, {}, content);
-    }
-  });
+  for (const char of text.split("")) {
+    hitKey(browser, char);
+  }
 }
 
 /**
  * Hit escape key.
  */
 async function escape(browser) {
-  await SpecialPowers.spawn(browser, [], async function() {
-    const { ContentTaskUtils } = ChromeUtils.import(
-      "resource://testing-common/ContentTaskUtils.jsm"
-    );
-    const EventUtils = ContentTaskUtils.getEventUtils(content);
-    await EventUtils.synthesizeKey("KEY_Escape", {}, content);
-  });
+  await hitKey(browser, "KEY_Escape");
 }
 
 /**
@@ -209,10 +279,15 @@ async function escape(browser) {
  */
 async function addFreeText(browser, text, box) {
   const { x, y, width, height } = box;
+  const count = await countElements(browser, ".freeTextEditor");
+  await focusEditorLayer(browser);
   await clickAt(browser, x + 0.1 * width, y + 0.5 * height);
+  await BrowserTestUtils.waitForCondition(
+    async () => (await countElements(browser, ".freeTextEditor")) === count + 1
+  );
+
   await write(browser, text);
   await escape(browser);
-  await TestUtils.waitForTick();
 }
 
 function changeMimeHandler(preferredAction, alwaysAskBeforeHandling) {

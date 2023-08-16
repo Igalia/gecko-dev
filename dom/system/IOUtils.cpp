@@ -30,10 +30,12 @@
 #include "mozilla/TextUtils.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Utf8.h"
+#include "mozilla/dom/BindingUtils.h"
 #include "mozilla/dom/IOUtilsBinding.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/dom/WorkerRef.h"
+#include "mozilla/ipc/LaunchError.h"
 #include "PathUtils.h"
 #include "nsCOMPtr.h"
 #include "nsError.h"
@@ -153,11 +155,12 @@ static nsCString FormatErrorMessage(nsresult aError,
   info.mPath.Construct(aInternalFileInfo.mPath);
   info.mType.Construct(aInternalFileInfo.mType);
   info.mSize.Construct(aInternalFileInfo.mSize);
-  info.mLastModified.Construct(aInternalFileInfo.mLastModified);
 
   if (aInternalFileInfo.mCreationTime.isSome()) {
     info.mCreationTime.Construct(aInternalFileInfo.mCreationTime.ref());
   }
+  info.mLastAccessed.Construct(aInternalFileInfo.mLastAccessed);
+  info.mLastModified.Construct(aInternalFileInfo.mLastModified);
 
   info.mPermissions.Construct(aInternalFileInfo.mPermissions);
 
@@ -402,7 +405,7 @@ RefPtr<SyncReadFile> IOUtils::OpenFileForSyncReading(GlobalObject& aGlobal,
     return nullptr;
   }
 
-  RefPtr<nsFileStream> stream = new nsFileStream();
+  RefPtr<nsFileRandomAccessStream> stream = new nsFileRandomAccessStream();
   if (nsresult rv =
           stream->Init(file, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
       NS_FAILED(rv)) {
@@ -592,7 +595,8 @@ already_AddRefed<Promise> IOUtils::WriteJSON(GlobalObject& aGlobal,
           return;
         }
 
-        if (opts.inspect().mMode == WriteMode::Append) {
+        if (opts.inspect().mMode == WriteMode::Append ||
+            opts.inspect().mMode == WriteMode::AppendOrCreate) {
           promise->MaybeRejectWithNotSupportedError(
               "IOUtils.writeJSON does not support appending to files."_ns);
           return;
@@ -662,8 +666,9 @@ already_AddRefed<Promise> IOUtils::Remove(GlobalObject& aGlobal,
         DispatchAndResolve<Ok>(
             state->mEventQueue, promise,
             [file = std::move(file), ignoreAbsent = aOptions.mIgnoreAbsent,
-             recursive = aOptions.mRecursive]() {
-              return RemoveSync(file, ignoreAbsent, recursive);
+             recursive = aOptions.mRecursive,
+             retryReadonly = aOptions.mRetryReadonly]() {
+              return RemoveSync(file, ignoreAbsent, recursive, retryReadonly);
             });
       });
 }
@@ -728,21 +733,38 @@ already_AddRefed<Promise> IOUtils::Copy(GlobalObject& aGlobal,
 }
 
 /* static */
+already_AddRefed<Promise> IOUtils::SetAccessTime(
+    GlobalObject& aGlobal, const nsAString& aPath,
+    const Optional<int64_t>& aAccess, ErrorResult& aError) {
+  return SetTime(aGlobal, aPath, aAccess, &nsIFile::SetLastAccessedTime,
+                 aError);
+}
+
+/* static */
 already_AddRefed<Promise> IOUtils::SetModificationTime(
     GlobalObject& aGlobal, const nsAString& aPath,
     const Optional<int64_t>& aModification, ErrorResult& aError) {
+  return SetTime(aGlobal, aPath, aModification, &nsIFile::SetLastModifiedTime,
+                 aError);
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::SetTime(GlobalObject& aGlobal,
+                                           const nsAString& aPath,
+                                           const Optional<int64_t>& aNewTime,
+                                           IOUtils::SetTimeFn aSetTimeFn,
+                                           ErrorResult& aError) {
   return WithPromiseAndState(
       aGlobal, aError, [&](Promise* promise, auto& state) {
         nsCOMPtr<nsIFile> file = new nsLocalFile();
         REJECT_IF_INIT_PATH_FAILED(file, aPath, promise);
 
-        Maybe<int64_t> newTime = Nothing();
-        if (aModification.WasPassed()) {
-          newTime = Some(aModification.Value());
-        }
+        int64_t newTime = aNewTime.WasPassed() ? aNewTime.Value()
+                                               : PR_Now() / PR_USEC_PER_MSEC;
         DispatchAndResolve<int64_t>(
-            state->mEventQueue, promise, [file = std::move(file), newTime]() {
-              return SetModificationTimeSync(file, newTime);
+            state->mEventQueue, promise,
+            [file = std::move(file), aSetTimeFn, newTime]() {
+              return SetTimeSync(file, aSetTimeFn, newTime);
             });
       });
 }
@@ -1051,6 +1073,72 @@ already_AddRefed<Promise> IOUtils::DelMacXAttr(GlobalObject& aGlobal,
 #endif
 
 /* static */
+already_AddRefed<Promise> IOUtils::GetFile(
+    GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+    ErrorResult& aError) {
+  return WithPromiseAndState(
+      aGlobal, aError, [&](Promise* promise, auto& state) {
+        ErrorResult joinErr;
+        nsCOMPtr<nsIFile> file = PathUtils::Join(aComponents, joinErr);
+        if (joinErr.Failed()) {
+          promise->MaybeReject(std::move(joinErr));
+          return;
+        }
+
+        nsCOMPtr<nsIFile> parent;
+        if (nsresult rv = file->GetParent(getter_AddRefs(parent));
+            NS_FAILED(rv)) {
+          RejectJSPromise(promise, IOError(rv).WithMessage(
+                                       "Could not get parent directory"));
+          return;
+        }
+
+        state->mEventQueue
+            ->template Dispatch<Ok>([parent = std::move(parent)]() {
+              return MakeDirectorySync(parent, /* aCreateAncestors = */ true,
+                                       /* aIgnoreExisting = */ true, 0755);
+            })
+            ->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [file = std::move(file), promise = RefPtr(promise)](const Ok&) {
+                  promise->MaybeResolve(file);
+                },
+                [promise = RefPtr(promise)](const IOError& err) {
+                  RejectJSPromise(promise, err);
+                });
+      });
+}
+
+/* static */
+already_AddRefed<Promise> IOUtils::GetDirectory(
+    GlobalObject& aGlobal, const Sequence<nsString>& aComponents,
+    ErrorResult& aError) {
+  return WithPromiseAndState(
+      aGlobal, aError, [&](Promise* promise, auto& state) {
+        ErrorResult joinErr;
+        nsCOMPtr<nsIFile> dir = PathUtils::Join(aComponents, joinErr);
+        if (joinErr.Failed()) {
+          promise->MaybeReject(std::move(joinErr));
+          return;
+        }
+
+        state->mEventQueue
+            ->template Dispatch<Ok>([dir]() {
+              return MakeDirectorySync(dir, /* aCreateAncestors = */ true,
+                                       /* aIgnoreExisting = */ true, 0755);
+            })
+            ->Then(
+                GetCurrentSerialEventTarget(), __func__,
+                [dir, promise = RefPtr(promise)](const Ok&) {
+                  promise->MaybeResolve(dir);
+                },
+                [promise = RefPtr(promise)](const IOError& err) {
+                  RejectJSPromise(promise, err);
+                });
+      });
+}
+
+/* static */
 already_AddRefed<Promise> IOUtils::CreateJSPromise(GlobalObject& aGlobal,
                                                    ErrorResult& aError) {
   nsCOMPtr<nsIGlobalObject> global = do_QueryInterface(aGlobal.GetAsSupports());
@@ -1084,7 +1172,7 @@ Result<IOUtils::JsBuffer, IOUtils::IOError> IOUtils::ReadSync(
 
   const int64_t offset = static_cast<int64_t>(aOffset);
 
-  RefPtr<nsFileStream> stream = new nsFileStream();
+  RefPtr<nsFileRandomAccessStream> stream = new nsFileRandomAccessStream();
   if (nsresult rv =
           stream->Init(aFile, PR_RDONLY | nsIFile::OS_READAHEAD, 0666, 0);
       NS_FAILED(rv)) {
@@ -1210,7 +1298,7 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
   MOZ_TRY(aFile->Exists(&exists));
 
   if (exists && aOptions.mMode == WriteMode::Create) {
-    return Err(IOError(NS_ERROR_DOM_TYPE_MISMATCH_ERR)
+    return Err(IOError(NS_ERROR_FILE_ALREADY_EXISTS)
                    .WithMessage("Refusing to overwrite the file at %s\n"
                                 "Specify `mode: \"overwrite\"` to allow "
                                 "overwriting the destination",
@@ -1259,6 +1347,10 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
       flags |= PR_APPEND;
       break;
 
+    case WriteMode::AppendOrCreate:
+      flags |= PR_APPEND | PR_CREATE_FILE;
+      break;
+
     case WriteMode::Create:
       flags |= PR_CREATE_FILE | PR_EXCL;
       break;
@@ -1303,8 +1395,8 @@ Result<uint32_t, IOUtils::IOError> IOUtils::WriteSync(
                                   writeFile->HumanReadablePath().get()));
     }
 
-    // nsFileStream::Write uses PR_Write under the hood, which accepts a
-    // *int32_t* for the chunk size.
+    // nsFileRandomAccessStream::Write uses PR_Write under the hood, which
+    // accepts a *int32_t* for the chunk size.
     uint32_t chunkSize = INT32_MAX;
     Span<const char> pendingBytes = bytes;
 
@@ -1523,8 +1615,12 @@ Result<Ok, IOUtils::IOError> IOUtils::CopyOrMoveSync(CopyOrMoveFn aMethod,
 /* static */
 Result<Ok, IOUtils::IOError> IOUtils::RemoveSync(nsIFile* aFile,
                                                  bool aIgnoreAbsent,
-                                                 bool aRecursive) {
+                                                 bool aRecursive,
+                                                 bool aRetryReadonly) {
   MOZ_ASSERT(!NS_IsMainThread());
+
+  // Prevent an unused variable warning.
+  (void)aRetryReadonly;
 
   nsresult rv = aFile->Remove(aRecursive);
   if (aIgnoreAbsent && IsFileNotFound(rv)) {
@@ -1544,6 +1640,17 @@ Result<Ok, IOUtils::IOError> IOUtils::RemoveSync(nsIFile* aFile,
           "Specify the `recursive: true` option to mitigate this error",
           aFile->HumanReadablePath().get()));
     }
+
+#ifdef XP_WIN
+
+    if (rv == NS_ERROR_FILE_ACCESS_DENIED && aRetryReadonly) {
+      MOZ_TRY(SetWindowsAttributesSync(aFile, 0, FILE_ATTRIBUTE_READONLY));
+      return RemoveSync(aFile, aIgnoreAbsent, aRecursive,
+                        /* aRetryReadonly = */ false);
+    }
+
+#endif
+
     return Err(err.WithMessage("Could not remove the file at %s",
                                aFile->HumanReadablePath().get()));
   }
@@ -1648,9 +1755,6 @@ Result<IOUtils::InternalFileInfo, IOUtils::IOError> IOUtils::StatSync(
     MOZ_TRY(aFile->GetFileSize(&size));
   }
   info.mSize = size;
-  PRTime lastModified = 0;
-  MOZ_TRY(aFile->GetLastModifiedTime(&lastModified));
-  info.mLastModified = static_cast<int64_t>(lastModified);
 
   PRTime creationTime = 0;
   if (nsresult rv = aFile->GetCreationTime(&creationTime); NS_SUCCEEDED(rv)) {
@@ -1660,25 +1764,23 @@ Result<IOUtils::InternalFileInfo, IOUtils::IOError> IOUtils::StatSync(
     return Err(IOError(rv));
   }
 
+  PRTime lastAccessed = 0;
+  MOZ_TRY(aFile->GetLastAccessedTime(&lastAccessed));
+  info.mLastAccessed = static_cast<int64_t>(lastAccessed);
+
+  PRTime lastModified = 0;
+  MOZ_TRY(aFile->GetLastModifiedTime(&lastModified));
+  info.mLastModified = static_cast<int64_t>(lastModified);
+
   MOZ_TRY(aFile->GetPermissions(&info.mPermissions));
 
   return info;
 }
 
 /* static */
-Result<int64_t, IOUtils::IOError> IOUtils::SetModificationTimeSync(
-    nsIFile* aFile, const Maybe<int64_t>& aNewModTime) {
+Result<int64_t, IOUtils::IOError> IOUtils::SetTimeSync(
+    nsIFile* aFile, IOUtils::SetTimeFn aSetTimeFn, int64_t aNewTime) {
   MOZ_ASSERT(!NS_IsMainThread());
-
-  int64_t now = aNewModTime.valueOrFrom([]() {
-    // NB: PR_Now reports time in microseconds since the Unix epoch
-    //     (1970-01-01T00:00:00Z). Both nsLocalFile's lastModifiedTime and
-    //     JavaScript's Date primitive values are to be expressed in
-    //     milliseconds since Epoch.
-    int64_t nowMicros = PR_Now();
-    int64_t nowMillis = nowMicros / PR_USEC_PER_MSEC;
-    return nowMillis;
-  });
 
   // nsIFile::SetLastModifiedTime will *not* do what is expected when passed 0
   // as an argument. Rather than setting the time to 0, it will recalculate the
@@ -1687,7 +1789,7 @@ Result<int64_t, IOUtils::IOError> IOUtils::SetModificationTimeSync(
   //
   // If it ever becomes possible to set a file time to 0, this check should be
   // removed, though this use case seems rare.
-  if (now == 0) {
+  if (aNewTime == 0) {
     return Err(
         IOError(NS_ERROR_ILLEGAL_VALUE)
             .WithMessage(
@@ -1697,7 +1799,7 @@ Result<int64_t, IOUtils::IOError> IOUtils::SetModificationTimeSync(
                 aFile->HumanReadablePath().get()));
   }
 
-  nsresult rv = aFile->SetLastModifiedTime(now);
+  nsresult rv = (aFile->*aSetTimeFn)(aNewTime);
 
   if (NS_FAILED(rv)) {
     IOError err(rv);
@@ -1709,7 +1811,7 @@ Result<int64_t, IOUtils::IOError> IOUtils::SetModificationTimeSync(
     }
     return Err(err);
   }
-  return now;
+  return aNewTime;
 }
 
 /* static */
@@ -1999,8 +2101,35 @@ Result<Ok, IOUtils::IOError> IOUtils::DelMacXAttrSync(nsIFile* aFile,
 void IOUtils::GetProfileBeforeChange(GlobalObject& aGlobal,
                                      JS::MutableHandle<JS::Value> aClient,
                                      ErrorResult& aRv) {
+  return GetShutdownClient(aGlobal, aClient, aRv,
+                           ShutdownPhase::ProfileBeforeChange);
+}
+
+/* static */
+void IOUtils::GetSendTelemetry(GlobalObject& aGlobal,
+                               JS::MutableHandle<JS::Value> aClient,
+                               ErrorResult& aRv) {
+  return GetShutdownClient(aGlobal, aClient, aRv, ShutdownPhase::SendTelemetry);
+}
+
+/**
+ * Assert that the given phase has a shutdown client exposed by IOUtils
+ *
+ * There is no shutdown client exposed for XpcomWillShutdown.
+ */
+static void AssertHasShutdownClient(const IOUtils::ShutdownPhase aPhase) {
+  MOZ_RELEASE_ASSERT(aPhase >= IOUtils::ShutdownPhase::ProfileBeforeChange &&
+                     aPhase < IOUtils::ShutdownPhase::XpcomWillShutdown);
+}
+
+/* static */
+void IOUtils::GetShutdownClient(GlobalObject& aGlobal,
+                                JS::MutableHandle<JS::Value> aClient,
+                                ErrorResult& aRv,
+                                const IOUtils::ShutdownPhase aPhase) {
   MOZ_RELEASE_ASSERT(XRE_IsParentProcess());
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
+  AssertHasShutdownClient(aPhase);
 
   if (auto state = GetState()) {
     MOZ_RELEASE_ASSERT(state.ref()->mBlockerStatus !=
@@ -2013,7 +2142,7 @@ void IOUtils::GetProfileBeforeChange(GlobalObject& aGlobal,
 
     MOZ_RELEASE_ASSERT(state.ref()->mBlockerStatus ==
                        ShutdownBlockerStatus::Initialized);
-    auto result = state.ref()->mEventQueue->GetProfileBeforeChangeClient();
+    auto result = state.ref()->mEventQueue->GetShutdownClient(aPhase);
     if (result.isErr()) {
       aRv.ThrowAbortError("IOUtils: could not get shutdown client");
       return;
@@ -2081,36 +2210,122 @@ void IOUtils::State::SetShutdownHooks() {
 nsresult IOUtils::EventQueue::SetShutdownHooks() {
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
+  constexpr static auto STACK = u"IOUtils::EventQueue::SetShutdownHooks"_ns;
+  constexpr static auto FILE = NS_LITERAL_STRING_FROM_CSTRING(__FILE__);
+
   nsCOMPtr<nsIAsyncShutdownService> svc = services::GetAsyncShutdownService();
   if (!svc) {
     return NS_ERROR_NOT_AVAILABLE;
   }
 
-  nsCOMPtr<nsIAsyncShutdownBlocker> blocker = new IOUtilsShutdownBlocker(
-      IOUtilsShutdownBlocker::Phase::ProfileBeforeChange);
+  nsCOMPtr<nsIAsyncShutdownBlocker> profileBeforeChangeBlocker;
 
-  nsCOMPtr<nsIAsyncShutdownClient> profileBeforeChange;
-  MOZ_TRY(svc->GetProfileBeforeChange(getter_AddRefs(profileBeforeChange)));
-  MOZ_RELEASE_ASSERT(profileBeforeChange);
+  // Create a shutdown blocker for the profile-before-change phase.
+  {
+    profileBeforeChangeBlocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::ProfileBeforeChange);
 
-  MOZ_TRY(profileBeforeChange->AddBlocker(
-      blocker, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-      u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetProfileBeforeChange(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
 
-  nsCOMPtr<nsIAsyncShutdownClient> xpcomWillShutdown;
-  MOZ_TRY(svc->GetXpcomWillShutdown(getter_AddRefs(xpcomWillShutdown)));
-  MOZ_RELEASE_ASSERT(xpcomWillShutdown);
+    MOZ_TRY(globalClient->AddBlocker(profileBeforeChangeBlocker, FILE, __LINE__,
+                                     STACK));
+  }
 
-  blocker = new IOUtilsShutdownBlocker(
-      IOUtilsShutdownBlocker::Phase::XpcomWillShutdown);
-  MOZ_TRY(xpcomWillShutdown->AddBlocker(
-      blocker, NS_LITERAL_STRING_FROM_CSTRING(__FILE__), __LINE__,
-      u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+  // Create the shutdown barrier for profile-before-change so that consumers can
+  // register shutdown blockers.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
 
-  MOZ_TRY(svc->MakeBarrier(
-      u"IOUtils: waiting for profileBeforeChange IO to complete"_ns,
-      getter_AddRefs(mProfileBeforeChangeBarrier)));
-  MOZ_RELEASE_ASSERT(mProfileBeforeChangeBarrier);
+    // It is okay for this to fail. The created shutdown blocker won't await
+    // anything and shutdown will proceed.
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for profileBeforeChange IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    mBarriers[ShutdownPhase::ProfileBeforeChange] = std::move(barrier);
+  }
+
+  // Create a shutdown blocker for the profile-before-change-telemetry phase.
+  nsCOMPtr<nsIAsyncShutdownBlocker> sendTelemetryBlocker;
+  {
+    sendTelemetryBlocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::SendTelemetry);
+
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetSendTelemetry(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
+
+    MOZ_TRY(
+        globalClient->AddBlocker(sendTelemetryBlocker, FILE, __LINE__, STACK));
+  }
+
+  // Create the shutdown barrier for profile-before-change-telemetry so that
+  // consumers can register shutdown blockers.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
+
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for sendTelemetry IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    // Add a blocker on the previous shutdown phase.
+    nsCOMPtr<nsIAsyncShutdownClient> client;
+    MOZ_TRY(barrier->GetClient(getter_AddRefs(client)));
+
+    MOZ_TRY(
+        client->AddBlocker(profileBeforeChangeBlocker, FILE, __LINE__, STACK));
+
+    mBarriers[ShutdownPhase::SendTelemetry] = std::move(barrier);
+  }
+
+  // Create a shutdown blocker for the xpcom-will-shutdown phase.
+  {
+    nsCOMPtr<nsIAsyncShutdownClient> globalClient;
+    MOZ_TRY(svc->GetXpcomWillShutdown(getter_AddRefs(globalClient)));
+    MOZ_RELEASE_ASSERT(globalClient);
+
+    nsCOMPtr<nsIAsyncShutdownBlocker> blocker =
+        new IOUtilsShutdownBlocker(ShutdownPhase::XpcomWillShutdown);
+    MOZ_TRY(globalClient->AddBlocker(
+        blocker, FILE, __LINE__, u"IOUtils::EventQueue::SetShutdownHooks"_ns));
+  }
+
+  // Create a shutdown barrier for the xpcom-will-shutdown phase.
+  //
+  // The blocker we just created will wait for all clients registered on this
+  // barrier to finish.
+  //
+  // The only client registered on this barrier should be a blocker for the
+  // previous phase. This is to ensure that all shutdown IO happens when
+  // shutdown phases do not happen (e.g., in xpcshell tests where
+  // profile-before-change does not occur).
+  {
+    nsCOMPtr<nsIAsyncShutdownBarrier> barrier;
+
+    MOZ_TRY(svc->MakeBarrier(
+        u"IOUtils: waiting for xpcomWillShutdown IO to complete"_ns,
+        getter_AddRefs(barrier)));
+    MOZ_RELEASE_ASSERT(barrier);
+
+    // Add a blocker on the previous shutdown phase.
+    nsCOMPtr<nsIAsyncShutdownClient> client;
+    MOZ_TRY(barrier->GetClient(getter_AddRefs(client)));
+
+    client->AddBlocker(sendTelemetryBlocker, FILE, __LINE__,
+                       u"IOUtils::EventQueue::SetShutdownHooks"_ns);
+
+    mBarriers[ShutdownPhase::XpcomWillShutdown] = std::move(barrier);
+  }
 
   return NS_OK;
 }
@@ -2135,25 +2350,27 @@ RefPtr<IOUtils::IOPromise<OkT>> IOUtils::EventQueue::Dispatch(Fn aFunc) {
   return promise;
 };
 
-Result<already_AddRefed<nsIAsyncShutdownClient>, nsresult>
-IOUtils::EventQueue::GetProfileBeforeChangeClient() {
-  if (!mProfileBeforeChangeBarrier) {
+Result<already_AddRefed<nsIAsyncShutdownBarrier>, nsresult>
+IOUtils::EventQueue::GetShutdownBarrier(const IOUtils::ShutdownPhase aPhase) {
+  if (!mBarriers[aPhase]) {
     return Err(NS_ERROR_NOT_AVAILABLE);
   }
 
-  nsCOMPtr<nsIAsyncShutdownClient> profileBeforeChange;
-  MOZ_TRY(mProfileBeforeChangeBarrier->GetClient(
-      getter_AddRefs(profileBeforeChange)));
-  return profileBeforeChange.forget();
+  return do_AddRef(mBarriers[aPhase]);
 }
 
-Result<already_AddRefed<nsIAsyncShutdownBarrier>, nsresult>
-IOUtils::EventQueue::GetProfileBeforeChangeBarrier() {
-  if (!mProfileBeforeChangeBarrier) {
+Result<already_AddRefed<nsIAsyncShutdownClient>, nsresult>
+IOUtils::EventQueue::GetShutdownClient(const IOUtils::ShutdownPhase aPhase) {
+  AssertHasShutdownClient(aPhase);
+
+  if (!mBarriers[aPhase]) {
     return Err(NS_ERROR_NOT_AVAILABLE);
   }
 
-  return do_AddRef(mProfileBeforeChangeBarrier);
+  nsCOMPtr<nsIAsyncShutdownClient> client;
+  MOZ_TRY(mBarriers[aPhase]->GetClient(getter_AddRefs(client)));
+
+  return do_AddRef(client);
 }
 
 /* static */
@@ -2247,27 +2464,16 @@ NS_IMPL_ISUPPORTS(IOUtilsShutdownBlocker, nsIAsyncShutdownBlocker,
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::GetName(nsAString& aName) {
   aName = u"IOUtils Blocker ("_ns;
-
-  switch (mPhase) {
-    case Phase::ProfileBeforeChange:
-      aName.Append(u"profile-before-change"_ns);
-      break;
-
-    case Phase::XpcomWillShutdown:
-      aName.Append(u"xpcom-will-shutdown"_ns);
-      break;
-
-    default:
-      MOZ_CRASH("Unknown shutdown phase");
-  }
-
+  aName.Append(PHASE_NAMES[mPhase]);
   aName.Append(')');
+
   return NS_OK;
 }
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
     nsIAsyncShutdownClient* aBarrierClient) {
   using EventQueueStatus = IOUtils::EventQueueStatus;
+  using ShutdownPhase = IOUtils::ShutdownPhase;
 
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
@@ -2276,10 +2482,10 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
   {
     auto state = IOUtils::sState.Lock();
     if (state->mQueueStatus == EventQueueStatus::Shutdown) {
-      // If the blocker for profile-before-change has already run, then the
-      // event queue is already torn down and we have nothing to do.
+      // If the previous blockers have already run, then the event queue is
+      // already torn down and we have nothing to do.
 
-      MOZ_RELEASE_ASSERT(mPhase == Phase::XpcomWillShutdown);
+      MOZ_RELEASE_ASSERT(mPhase == ShutdownPhase::XpcomWillShutdown);
       MOZ_RELEASE_ASSERT(!state->mEventQueue);
 
       Unused << NS_WARN_IF(NS_FAILED(aBarrierClient->RemoveBlocker(this)));
@@ -2292,8 +2498,7 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
 
     mParentClient = aBarrierClient;
 
-    barrier =
-        state->mEventQueue->GetProfileBeforeChangeBarrier().unwrapOr(nullptr);
+    barrier = state->mEventQueue->GetShutdownBarrier(mPhase).unwrapOr(nullptr);
   }
 
   // We cannot barrier->Wait() while holding the mutex because it will lead to
@@ -2312,32 +2517,61 @@ NS_IMETHODIMP IOUtilsShutdownBlocker::BlockShutdown(
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::Done() {
   using EventQueueStatus = IOUtils::EventQueueStatus;
+  using ShutdownPhase = IOUtils::ShutdownPhase;
 
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
-  auto state = IOUtils::sState.Lock();
-  MOZ_RELEASE_ASSERT(state->mEventQueue);
+  bool didFlush = false;
 
-  // This method is called once we have served all shutdown clients. Now we
-  // flush the remaining IO queue and forbid additional IO requests.
-  state->mEventQueue->Dispatch<Ok>([]() { return Ok{}; })
-      ->Then(GetMainThreadSerialEventTarget(), __func__,
-             [self = RefPtr(this)]() {
-               if (self->mParentClient) {
-                 Unused << NS_WARN_IF(
-                     NS_FAILED(self->mParentClient->RemoveBlocker(self)));
-                 self->mParentClient = nullptr;
+  {
+    auto state = IOUtils::sState.Lock();
 
-                 auto state = IOUtils::sState.Lock();
-                 MOZ_RELEASE_ASSERT(state->mEventQueue);
-                 state->mEventQueue = nullptr;
-               }
-             });
+    if (state->mEventQueue) {
+      MOZ_RELEASE_ASSERT(state->mQueueStatus == EventQueueStatus::Initialized);
 
-  MOZ_RELEASE_ASSERT(state->mQueueStatus == EventQueueStatus::Initialized);
-  state->mQueueStatus = EventQueueStatus::Shutdown;
+      // This method is called once we have served all shutdown clients. Now we
+      // flush the remaining IO queue. This ensures any straggling IO that was
+      // not part of the shutdown blocker finishes before we move to the next
+      // phase.
+      state->mEventQueue->Dispatch<Ok>([]() { return Ok{}; })
+          ->Then(GetMainThreadSerialEventTarget(), __func__,
+                 [self = RefPtr(this)]() { self->OnFlush(); });
+
+      // And if we're the last shutdown phase to allow IO, disable the event
+      // queue to disallow further IO requests.
+      if (mPhase >= LAST_IO_PHASE) {
+        state->mQueueStatus = EventQueueStatus::Shutdown;
+      }
+
+      didFlush = true;
+    }
+  }
+
+  // If we have already shut down the event loop, then call OnFlush to stop
+  // blocking our parent shutdown client.
+  if (!didFlush) {
+    MOZ_RELEASE_ASSERT(mPhase == ShutdownPhase::XpcomWillShutdown);
+    OnFlush();
+  }
 
   return NS_OK;
+}
+
+void IOUtilsShutdownBlocker::OnFlush() {
+  if (mParentClient) {
+    (void)NS_WARN_IF(NS_FAILED(mParentClient->RemoveBlocker(this)));
+    mParentClient = nullptr;
+
+    // If we are past the last shutdown phase that allows IO,
+    // we can shutdown the event queue here because no additional IO requests
+    // will be allowed (see |Done()|).
+    if (mPhase >= LAST_IO_PHASE) {
+      auto state = IOUtils::sState.Lock();
+      if (state->mEventQueue) {
+        state->mEventQueue = nullptr;
+      }
+    }
+  }
 }
 
 NS_IMETHODIMP IOUtilsShutdownBlocker::GetState(nsIPropertyBag** aState) {
@@ -2448,14 +2682,22 @@ JSString* IOUtils::JsBuffer::IntoString(JSContext* aCx, JsBuffer aBuffer) {
     return JS_NewLatin1String(aCx, std::move(asLatin1), aBuffer.mLength);
   }
 
+  const char* ptr = aBuffer.mBuffer.get();
+  size_t length = aBuffer.mLength;
+
+  // Strip off a leading UTF-8 byte order marker (BOM) if found.
+  if (length >= 3 && Substring(ptr, 3) == "\xEF\xBB\xBF"_ns) {
+    ptr += 3;
+    length -= 3;
+  }
+
   // If the string is encodable as Latin1, we need to deflate the string to a
-  // Latin1 string to accoutn for UTF-8 characters that are encoded as more than
+  // Latin1 string to account for UTF-8 characters that are encoded as more than
   // a single byte.
   //
   // Otherwise, the string contains characters outside Latin1 so we have to
   // inflate to UTF-16.
-  return JS_NewStringCopyUTF8N(
-      aCx, JS::UTF8Chars(aBuffer.mBuffer.get(), aBuffer.mLength));
+  return JS_NewStringCopyUTF8N(aCx, JS::UTF8Chars(ptr, length));
 }
 
 /* static */
@@ -2466,20 +2708,15 @@ JSObject* IOUtils::JsBuffer::IntoUint8Array(JSContext* aCx, JsBuffer aBuffer) {
     return JS_NewUint8Array(aCx, 0);
   }
 
-  char* rawBuffer = aBuffer.mBuffer.release();
-  MOZ_RELEASE_ASSERT(rawBuffer);
+  MOZ_RELEASE_ASSERT(aBuffer.mBuffer);
   JS::Rooted<JSObject*> arrayBuffer(
       aCx, JS::NewArrayBufferWithContents(aCx, aBuffer.mLength,
-                                          reinterpret_cast<void*>(rawBuffer)));
+                                          std::move(aBuffer.mBuffer)));
 
   if (!arrayBuffer) {
-    // The array buffer does not take ownership of the data pointer unless
-    // creation succeeds. We are still on the hook to free it.
-    //
     // aBuffer will be destructed at end of scope, but its destructor does not
     // take into account |mCapacity| or |mLength|, so it is OK for them to be
     // non-zero here with a null |mBuffer|.
-    js_free(rawBuffer);
     return nullptr;
   }
 
@@ -2519,7 +2756,8 @@ NS_INTERFACE_MAP_END
 
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(SyncReadFile, mParent)
 
-SyncReadFile::SyncReadFile(nsISupports* aParent, RefPtr<nsFileStream>&& aStream,
+SyncReadFile::SyncReadFile(nsISupports* aParent,
+                           RefPtr<nsFileRandomAccessStream>&& aStream,
                            int64_t aSize)
     : mParent(aParent), mStream(std::move(aStream)), mSize(aSize) {
   MOZ_RELEASE_ASSERT(mSize >= 0);
@@ -2650,8 +2888,9 @@ uint32_t IOUtils::LaunchProcess(GlobalObject& aGlobal,
   base::ProcessHandle pid;
   static_assert(sizeof(pid) <= sizeof(uint32_t),
                 "WebIDL long should be large enough for a pid");
-  bool ok = base::LaunchApp(argv, options, &pid);
-  if (!ok) {
+  Result<Ok, mozilla::ipc::LaunchError> err =
+      base::LaunchApp(argv, options, &pid);
+  if (err.isErr()) {
     aRv.Throw(NS_ERROR_FAILURE);
     return 0;
   }

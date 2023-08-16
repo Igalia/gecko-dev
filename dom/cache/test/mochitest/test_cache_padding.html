@@ -85,8 +85,7 @@ function fetchOpaqueResponse(url) {
 
 SimpleTest.waitForExplicitFinish();
 SpecialPowers.pushPrefEnv({
-  "set": [["dom.caches.enabled", true],
-          ["dom.caches.testing.enabled", true],
+  "set": [["dom.caches.testing.enabled", true],
           ["dom.quotaManager.testing", true],
           ["privacy.partition.always_partition_third_party_non_cookie_storage", false]],
 }, async function() {
@@ -109,7 +108,7 @@ SpecialPowers.pushPrefEnv({
 
   const name = "cachePadding";
   const other_name = "cachePaddingOther";
-  const cors_base = "https://example.com/test/dom/cache/test/mochitest/";
+  const cors_base = "https://example.com/tests/dom/cache/test/mochitest/";
   const url = "test_cache_add.js";
 
   await setupTestIframe();

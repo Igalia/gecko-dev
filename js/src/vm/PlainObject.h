@@ -9,7 +9,6 @@
 
 #include "gc/AllocKind.h"     // js::gc::AllocKind
 #include "js/Class.h"         // JSClass
-#include "js/Result.h"        // JS::OOM, JS::Result
 #include "js/RootingAPI.h"    // JS::Handle
 #include "vm/JSObject.h"      // js::NewObjectKind
 #include "vm/NativeObject.h"  // js::NativeObject
@@ -35,12 +34,12 @@ class PlainObject : public NativeObject {
 
  public:
   static inline js::PlainObject* createWithShape(JSContext* cx,
-                                                 JS::Handle<Shape*> shape,
+                                                 JS::Handle<SharedShape*> shape,
                                                  gc::AllocKind kind,
                                                  NewObjectKind newKind);
 
   static inline js::PlainObject* createWithShape(
-      JSContext* cx, JS::Handle<Shape*> shape,
+      JSContext* cx, JS::Handle<SharedShape*> shape,
       NewObjectKind newKind = GenericObject);
 
   static inline PlainObject* createWithTemplate(
@@ -72,9 +71,9 @@ extern bool CopyDataPropertiesNative(JSContext* cx,
 
 // Specialized call to get the shape to use when creating |this| for a known
 // function callee.
-extern Shape* ThisShapeForFunction(JSContext* cx,
-                                   JS::Handle<JSFunction*> callee,
-                                   JS::Handle<JSObject*> newTarget);
+extern SharedShape* ThisShapeForFunction(JSContext* cx,
+                                         JS::Handle<JSFunction*> callee,
+                                         JS::Handle<JSObject*> newTarget);
 
 // Create a new PlainObject with %Object.prototype% as prototype.
 extern PlainObject* NewPlainObject(JSContext* cx,

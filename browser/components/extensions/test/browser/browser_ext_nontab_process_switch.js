@@ -20,6 +20,7 @@ add_task(async function process_switch_in_sidebars_popups() {
       },
       browser_action: {
         default_popup: "page.html?popup",
+        default_area: "navbar",
       },
       web_accessible_resources: ["page.html"],
     },
@@ -90,13 +91,14 @@ add_task(
       manifest: {
         browser_action: {
           default_popup: "popup-1.html",
+          default_area: "navbar",
         },
       },
       files: {
         "popup-1.html": `<!DOCTYPE html><meta charset=utf-8><script src=popup-1.js></script><h1>Popup 1</h1>`,
         "popup-2.html": `<!DOCTYPE html><meta charset=utf-8><script src=popup-2.js></script><h1>Popup 2</h1>`,
 
-        "popup-1.js": function() {
+        "popup-1.js": function () {
           browser.test.onMessage.addListener(msg => {
             if (msg !== "navigate-popup") {
               browser.test.fail(`Unexpected test message "${msg}"`);
@@ -107,7 +109,7 @@ add_task(
           window.onload = () => browser.test.sendMessage("popup-page-1");
         },
 
-        "popup-2.js": function() {
+        "popup-2.js": function () {
           window.onload = () => browser.test.sendMessage("popup-page-2");
         },
       },

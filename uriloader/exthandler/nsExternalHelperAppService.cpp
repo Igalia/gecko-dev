@@ -38,7 +38,6 @@
 #include "nsString.h"
 #include "nsUnicharUtils.h"
 #include "nsIStringEnumerator.h"
-#include "nsMemory.h"
 #include "nsIStreamListener.h"
 #include "nsIMIMEService.h"
 #include "nsILoadGroup.h"
@@ -120,7 +119,7 @@ using namespace mozilla;
 using namespace mozilla::ipc;
 using namespace mozilla::dom;
 
-#define kDefaultMaxFileNameLength 255
+#define kDefaultMaxFileNameLength 254
 
 // Download Folder location constants
 #define NS_PREF_DOWNLOAD_DIR "browser.download.dir"
@@ -192,7 +191,7 @@ static nsresult UnescapeFragment(const nsACString& aFragment, nsIURI* aURI,
  * Obtains the directory to use.  This tends to vary per platform, and
  * needs to be consistent throughout our codepaths. For platforms where
  * helper apps use the downloads directory, this should be kept in
- * sync with DownloadIntegration.jsm.
+ * sync with DownloadIntegration.sys.mjs.
  *
  * Optionally skip availability of the directory and storage.
  */
@@ -256,7 +255,7 @@ static nsresult GetDownloadDirectory(nsIFile** _directory,
               "chrome://mozapps/locale/downloads/downloads.properties",
               getter_AddRefs(downloadBundle));
           if (NS_SUCCEEDED(rv)) {
-            rv = downloadBundle->GetStringFromName("DownloadsFolder",
+            rv = downloadBundle->GetStringFromName("downloadsFolder",
                                                    downloadLocalized);
           }
           if (NS_FAILED(rv)) {
@@ -545,16 +544,15 @@ static const nsExtraMimeTypeEntry extraMimeEntries[] = {
     {TEXT_CSS, "css", "Style Sheet"},
     {TEXT_VCARD, "vcf,vcard", "Contact Information"},
     {TEXT_CALENDAR, "ics,ical,ifb,icalendar", "iCalendar"},
-    {VIDEO_OGG, "ogv", "Ogg Video"},
-    {VIDEO_OGG, "ogg", "Ogg Video"},
+    {VIDEO_OGG, "ogv,ogg", "Ogg Video"},
     {APPLICATION_OGG, "ogg", "Ogg Video"},
     {AUDIO_OGG, "oga", "Ogg Audio"},
     {AUDIO_OGG, "opus", "Opus Audio"},
     {VIDEO_WEBM, "webm", "Web Media Video"},
     {AUDIO_WEBM, "webm", "Web Media Audio"},
-    {AUDIO_MP3, "mp3", "MPEG Audio"},
-    {VIDEO_MP4, "mp4", "MPEG-4 Video"},
-    {AUDIO_MP4, "m4a", "MPEG-4 Audio"},
+    {AUDIO_MP3, "mp3,mpega,mp2", "MPEG Audio"},
+    {VIDEO_MP4, "mp4,m4a,m4b", "MPEG-4 Video"},
+    {AUDIO_MP4, "m4a,m4b", "MPEG-4 Audio"},
     {VIDEO_RAW, "yuv", "Raw YUV Video"},
     {AUDIO_WAV, "wav", "Waveform Audio"},
     {VIDEO_3GPP, "3gpp,3gp", "3GPP Video"},
@@ -1567,7 +1565,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
 
   if (!mForceSave && StaticPrefs::browser_download_enable_spam_prevention() &&
       IsDownloadSpam(aChannel)) {
-    RecordDownloadTelemetry(aChannel, "spam");
     return NS_OK;
   }
 
@@ -1579,7 +1576,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
     // cancel the request so no ui knows about this.
     mCanceled = true;
     request->Cancel(NS_ERROR_ABORT);
-    RecordDownloadTelemetry(aChannel, "forbidden");
     return NS_OK;
   }
 
@@ -1656,8 +1652,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
     if (mTempFile) mTempFile->GetPath(path);
 
     SendStatusChange(kWriteError, transferError, request, path);
-
-    RecordDownloadTelemetry(aChannel, "savefailed");
 
     return NS_OK;
   }
@@ -1739,10 +1733,7 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   int32_t action = nsIMIMEInfo::saveToDisk;
   mMimeInfo->GetPreferredAction(&action);
 
-  bool forcePrompt =
-      mReason == nsIHelperAppLauncherDialog::REASON_TYPESNIFFED ||
-      (mReason == nsIHelperAppLauncherDialog::REASON_SERVERREQUEST &&
-       !StaticPrefs::browser_download_improvements_to_download_panel());
+  bool forcePrompt = mReason == nsIHelperAppLauncherDialog::REASON_TYPESNIFFED;
 
   // OK, now check why we're here
   if (!alwaysAsk && forcePrompt) {
@@ -1752,8 +1743,7 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   }
 
   bool shouldAutomaticallyHandleInternally =
-      action == nsIMIMEInfo::handleInternally &&
-      StaticPrefs::browser_download_improvements_to_download_panel();
+      action == nsIMIMEInfo::handleInternally;
 
   // If we're not asking, check we actually know what to do:
   if (!alwaysAsk) {
@@ -1838,20 +1828,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   }
 #endif
 
-  nsAutoCString actionTelem;
-  if (alwaysAsk) {
-    actionTelem.AssignLiteral("ask");
-  } else if (shouldAutomaticallyHandleInternally) {
-    actionTelem.AssignLiteral("internal");
-  } else if (action == nsIMIMEInfo::useHelperApp ||
-             action == nsIMIMEInfo::useSystemDefault) {
-    actionTelem.AssignLiteral("external");
-  } else {
-    actionTelem.AssignLiteral("save");
-  }
-
-  RecordDownloadTelemetry(aChannel, actionTelem.get());
-
   if (alwaysAsk) {
     // Display the dialog
     mDialog = do_CreateInstance(NS_HELPERAPPLAUNCHERDLG_CONTRACTID, &rv);
@@ -1884,50 +1860,6 @@ NS_IMETHODIMP nsExternalAppHandler::OnStartRequest(nsIRequest* request) {
   return NS_OK;
 }
 
-void nsExternalAppHandler::RecordDownloadTelemetry(nsIChannel* aChannel,
-                                                   const char* aAction) {
-  // Telemetry for helper app dialog
-
-  if (XRE_IsContentProcess()) {
-    return;
-  }
-
-  nsAutoCString reason;
-  switch (mReason) {
-    case nsIHelperAppLauncherDialog::REASON_SERVERREQUEST:
-      reason.AssignLiteral("attachment");
-      break;
-    case nsIHelperAppLauncherDialog::REASON_TYPESNIFFED:
-      reason.AssignLiteral("sniffed");
-      break;
-    case nsIHelperAppLauncherDialog::REASON_CANTHANDLE:
-    default:
-      reason.AssignLiteral("other");
-      break;
-  }
-
-  nsAutoCString contentTypeTelem;
-  nsAutoCString contentType;
-  aChannel->GetContentType(contentType);
-  if (contentType.EqualsIgnoreCase(APPLICATION_PDF)) {
-    contentTypeTelem.AssignLiteral("pdf");
-  } else if (contentType.EqualsIgnoreCase(APPLICATION_OCTET_STREAM) ||
-             contentType.EqualsIgnoreCase(BINARY_OCTET_STREAM)) {
-    contentTypeTelem.AssignLiteral("octetstream");
-  } else {
-    contentTypeTelem.AssignLiteral("other");
-  }
-
-  CopyableTArray<mozilla::Telemetry::EventExtraEntry> extra(1);
-  extra.AppendElement(
-      mozilla::Telemetry::EventExtraEntry{"type"_ns, contentTypeTelem});
-  extra.AppendElement(mozilla::Telemetry::EventExtraEntry{"reason"_ns, reason});
-
-  mozilla::Telemetry::RecordEvent(
-      mozilla::Telemetry::EventID::Downloads_Helpertype_Unknowntype,
-      mozilla::Some(aAction), mozilla::Some(extra));
-}
-
 bool nsExternalAppHandler::IsDownloadSpam(nsIChannel* aChannel) {
   nsCOMPtr<nsILoadInfo> loadInfo = aChannel->LoadInfo();
   nsCOMPtr<nsIPermissionManager> permissionManager =
@@ -1956,11 +1888,13 @@ bool nsExternalAppHandler::IsDownloadSpam(nsIChannel* aChannel) {
     if (capability == nsIPermissionManager::PROMPT_ACTION) {
       nsCOMPtr<nsIObserverService> observerService =
           mozilla::services::GetObserverService();
+      RefPtr<BrowsingContext> browsingContext;
+      loadInfo->GetBrowsingContext(getter_AddRefs(browsingContext));
 
       nsAutoCString cStringURI;
       loadInfo->TriggeringPrincipal()->GetPrePath(cStringURI);
       observerService->NotifyObservers(
-          nullptr, "blocked-automatic-download",
+          browsingContext, "blocked-automatic-download",
           NS_ConvertASCIItoUTF16(cStringURI.get()).get());
       // FIXME: In order to escape memory leaks, currently we cancel blocked
       // downloads. This is temporary solution, because download data should be
@@ -2520,8 +2454,7 @@ void nsExternalAppHandler::RequestSaveDestination(
 NS_IMETHODIMP nsExternalAppHandler::PromptForSaveDestination() {
   if (mCanceled) return NS_OK;
 
-  if (!StaticPrefs::browser_download_improvements_to_download_panel() ||
-      mForceSave) {
+  if (mForceSave) {
     mMimeInfo->SetPreferredAction(nsIMIMEInfo::saveToDisk);
   }
 
@@ -2549,9 +2482,7 @@ nsresult nsExternalAppHandler::ContinueSave(nsIFile* aNewFileLocation) {
 
   int32_t action = nsIMIMEInfo::saveToDisk;
   mMimeInfo->GetPreferredAction(&action);
-  mHandleInternally =
-      action == nsIMIMEInfo::handleInternally &&
-      StaticPrefs::browser_download_improvements_to_download_panel();
+  mHandleInternally = action == nsIMIMEInfo::handleInternally;
 
   nsresult rv = NS_OK;
   nsCOMPtr<nsIFile> fileToUse = aNewFileLocation;
@@ -2649,8 +2580,7 @@ NS_IMETHODIMP nsExternalAppHandler::SetDownloadToLaunch(
   // directory as originally downloaded so the download can be renamed in place
   // later.
   nsCOMPtr<nsIFile> fileToUse;
-  if (aNewFileLocation &&
-      StaticPrefs::browser_download_improvements_to_download_panel()) {
+  if (aNewFileLocation) {
     fileToUse = aNewFileLocation;
   } else {
     (void)GetDownloadDirectory(getter_AddRefs(fileToUse));
@@ -2963,6 +2893,18 @@ NS_IMETHODIMP nsExternalHelperAppService::GetFromTypeAndExtension(
   return NS_OK;
 }
 
+bool nsExternalHelperAppService::GetMIMETypeFromDefaultForExtension(
+    const nsACString& aExtension, nsACString& aMIMEType) {
+  // First of all, check our default entries
+  for (auto& entry : defaultMimeEntries) {
+    if (aExtension.LowerCaseEqualsASCII(entry.mFileExtension)) {
+      aMIMEType = entry.mMimeType;
+      return true;
+    }
+  }
+  return false;
+}
+
 NS_IMETHODIMP
 nsExternalHelperAppService::GetTypeFromExtension(const nsACString& aFileExt,
                                                  nsACString& aContentType) {
@@ -2982,11 +2924,8 @@ nsExternalHelperAppService::GetTypeFromExtension(const nsACString& aFileExt,
   }
 
   // First of all, check our default entries
-  for (auto& entry : defaultMimeEntries) {
-    if (aFileExt.LowerCaseEqualsASCII(entry.mFileExtension)) {
-      aContentType = entry.mMimeType;
-      return NS_OK;
-    }
+  if (GetMIMETypeFromDefaultForExtension(aFileExt, aContentType)) {
+    return NS_OK;
   }
 
   // Ask OS.
@@ -3032,6 +2971,35 @@ NS_IMETHODIMP nsExternalHelperAppService::GetPrimaryExtension(
 
   return mi->GetPrimaryExtension(_retval);
 }
+
+NS_IMETHODIMP nsExternalHelperAppService::GetDefaultTypeFromURI(
+    nsIURI* aURI, nsACString& aContentType) {
+  NS_ENSURE_ARG_POINTER(aURI);
+  nsresult rv = NS_ERROR_NOT_AVAILABLE;
+  aContentType.Truncate();
+
+  // Now try to get an nsIURL so we don't have to do our own parsing
+  nsCOMPtr<nsIURL> url = do_QueryInterface(aURI);
+  if (!url) {
+    return NS_ERROR_NOT_AVAILABLE;
+  }
+
+  nsAutoCString ext;
+  rv = url->GetFileExtension(ext);
+  if (NS_FAILED(rv)) {
+    return rv;
+  }
+
+  if (!ext.IsEmpty()) {
+    UnescapeFragment(ext, url, ext);
+
+    if (GetMIMETypeFromDefaultForExtension(ext, aContentType)) {
+      return NS_OK;
+    }
+  }
+
+  return NS_ERROR_NOT_AVAILABLE;
+};
 
 NS_IMETHODIMP nsExternalHelperAppService::GetTypeFromURI(
     nsIURI* aURI, nsACString& aContentType) {
@@ -3224,6 +3192,11 @@ nsresult nsExternalHelperAppService::GetMIMEInfoFromOS(
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
+nsresult nsExternalHelperAppService::UpdateDefaultAppInfo(
+    nsIMIMEInfo* aMIMEInfo) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
 bool nsExternalHelperAppService::GetFileNameFromChannel(nsIChannel* aChannel,
                                                         nsAString& aFileName,
                                                         nsIURI** aURI) {
@@ -3305,6 +3278,15 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
                       aMimeType.EqualsLiteral(BINARY_OCTET_STREAM) ||
                       aMimeType.EqualsLiteral("application/x-msdownload");
 
+  // We don't want to save hidden files starting with a dot, so remove any
+  // leading periods. This is done first, so that the remainder will be
+  // treated as the filename, and not an extension.
+  // Also, Windows ignores terminating dots. So we have to as well, so
+  // that our security checks do "the right thing"
+  fileName.Trim(".");
+
+  bool urlIsFile = !!aURI && aURI->SchemeIs("file");
+
   // We get the mime service here even though we're the default implementation
   // of it, so it's possible to override only the mime service and not need to
   // reimplement the whole external helper app service itself.
@@ -3318,15 +3300,16 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
         nsAutoCString leafName;
         url->GetFileName(leafName);
         if (!leafName.IsEmpty()) {
-          if (NS_SUCCEEDED(UnescapeFragment(leafName, url, fileName))) {
-            CopyUTF8toUTF16(leafName, aFileName);  // use escaped name
+          if (NS_FAILED(UnescapeFragment(leafName, url, fileName))) {
+            CopyUTF8toUTF16(leafName, fileName);  // use escaped name instead
+            fileName.Trim(".");
           }
         }
 
         // Only get the extension from the URL if allowed, or if this
         // is a binary type in which case the type might not be valid
         // anyway.
-        if (aAllowURLExtension || isBinaryType) {
+        if (aAllowURLExtension || isBinaryType || urlIsFile) {
           url->GetFileExtension(extension);
         }
       }
@@ -3359,11 +3342,14 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
       // If this is a binary type, include the extension as a hint to get
       // the mime info. For other types, the mime type itself should be
       // sufficient.
+      // Unfortunately, on Windows, the mimetype is usually insufficient.
+      // Compensate at least on `file` URLs by trusting the extension -
+      // that's likely what we used to get the mimetype in the first place.
       // The special case for application/ogg is because that type could
       // actually be used for a video which can better be determined by the
       // extension. This is tested by browser_save_video.js.
       bool useExtension =
-          isBinaryType || aMimeType.EqualsLiteral(APPLICATION_OGG);
+          isBinaryType || urlIsFile || aMimeType.EqualsLiteral(APPLICATION_OGG);
       mimeService->GetFromTypeAndExtension(
           aMimeType, useExtension ? extension : EmptyCString(),
           getter_AddRefs(mimeInfo));
@@ -3379,10 +3365,6 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
       }
     }
   }
-
-  // Windows ignores terminating dots. So we have to as well, so
-  // that our security checks do "the right thing"
-  fileName.Trim(".", false);
 
   // If an empty filename is allowed, then return early. It will be saved
   // using the filename of the temporary file that was created for the download.
@@ -3435,8 +3417,9 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
         // If an suitable extension was found, we will append to or replace the
         // existing extension.
         if (!extension.IsEmpty()) {
-          ModifyExtensionType modify =
-              ShouldModifyExtension(mimeInfo, originalExtension);
+          ModifyExtensionType modify = ShouldModifyExtension(
+              mimeInfo, aFlags & VALIDATE_FORCE_APPEND_EXTENSION,
+              originalExtension);
           if (modify == ModifyExtension_Replace) {
             int32_t dotidx = fileName.RFind(u".");
             if (dotidx != -1) {
@@ -3457,21 +3440,20 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
     }
   }
 
-#ifdef XP_WIN
-  nsLocalFile::CheckForReservedFileName(fileName);
-#endif
+  CheckDefaultFileName(fileName, aFlags);
 
-  // If the extension is .lnk or .local, replace it with .download, as these
-  // types of files can have signifance on Windows. This happens for any file,
-  // not just those with the shortcut mime type.
-  if (StringEndsWith(fileName, u".lnk"_ns) ||
-      StringEndsWith(fileName, u".local"_ns)) {
-    fileName.AppendLiteral(".download");
-  }
+  // Make the filename safe for the filesystem.
+  SanitizeFileName(fileName, aFlags);
 
+  aFileName = fileName;
+  return mimeInfo.forget();
+}
+
+void nsExternalHelperAppService::CheckDefaultFileName(nsAString& aFileName,
+                                                      uint32_t aFlags) {
   // If no filename is present, use a default filename.
   if (!(aFlags & VALIDATE_NO_DEFAULT_FILENAME) &&
-      (fileName.Length() == 0 || fileName.RFind(u".") == 0)) {
+      (aFileName.Length() == 0 || aFileName.RFind(u".") == 0)) {
     nsCOMPtr<nsIStringBundleService> stringService =
         mozilla::components::StringBundle::Service();
     if (stringService) {
@@ -3480,23 +3462,17 @@ nsExternalHelperAppService::ValidateFileNameForSaving(
               "chrome://global/locale/contentAreaCommands.properties",
               getter_AddRefs(bundle)))) {
         nsAutoString defaultFileName;
-        bundle->GetStringFromName("DefaultSaveFileName", defaultFileName);
+        bundle->GetStringFromName("UntitledSaveFileName", defaultFileName);
         // Append any existing extension to the default filename.
-        fileName = defaultFileName + fileName;
+        aFileName = defaultFileName + aFileName;
       }
     }
 
-    // Use 'index' as a last resort.
-    if (!fileName.Length()) {
-      fileName.AssignLiteral("index");
+    // Use 'Untitled' as a last resort.
+    if (!aFileName.Length()) {
+      aFileName.AssignLiteral("Untitled");
     }
   }
-
-  // Make the filename safe for the filesystem.
-  SanitizeFileName(fileName, aFlags);
-
-  aFileName = fileName;
-  return mimeInfo.forget();
 }
 
 void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
@@ -3542,8 +3518,8 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
   // The number of bytes that the string would occupy if encoded in UTF-8.
   uint32_t bytesLength = 0;
 
-  // The length of the extension.
-  int32_t extensionBytesLength = 0;
+  // The length of the extension in bytes.
+  uint32_t extensionBytesLength = 0;
 
   // This algorithm iterates over each character in the string and appends it
   // or a replacement character if needed to outFileName.
@@ -3555,9 +3531,8 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
       break;
     }
 
-    if (nextChar == char16_t(0)) {
-      continue;
-    }
+    // nulls are already stripped out above.
+    MOZ_ASSERT(nextChar != char16_t(0));
 
     auto unicodeCategory = unicode::GetGeneralCategory(nextChar);
     if (unicodeCategory == HB_UNICODE_GENERAL_CATEGORY_CONTROL ||
@@ -3600,17 +3575,21 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
           nextChar = '_';
         }
 
-        lastNonTrimmable = int32_t(outFileName.Length()) + 1;
+        // Don't truncate surrogate pairs in the middle.
+        lastNonTrimmable =
+            int32_t(outFileName.Length()) +
+            (NS_IS_HIGH_SURROGATE(H_SURROGATE(nextChar)) ? 2 : 1);
       }
     }
 
     if (maxBytes) {
       // UTF16CharEnumerator already converts surrogate pairs, so we can use
       // a simple computation of byte length here.
-      bytesLength += nextChar < 0x80      ? 1
-                     : nextChar < 0x800   ? 2
-                     : nextChar < 0x10000 ? 3
-                                          : 4;
+      uint32_t charBytesLength = nextChar < 0x80      ? 1
+                                 : nextChar < 0x800   ? 2
+                                 : nextChar < 0x10000 ? 3
+                                                      : 4;
+      bytesLength += charBytesLength;
       if (bytesLength > maxBytes) {
         if (longFileNameEnd == -1) {
           longFileNameEnd = int32_t(outFileName.Length());
@@ -3618,11 +3597,12 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
       }
 
       // If we encounter a period, it could be the start of an extension, so
-      // start counting the number of bytes in the extension.
+      // start counting the number of bytes in the extension. If another period
+      // is found, start again since we want to use the last extension found.
       if (nextChar == u'.') {
         extensionBytesLength = 1;  // 1 byte for the period.
       } else if (extensionBytesLength) {
-        extensionBytesLength++;
+        extensionBytesLength += charBytesLength;
       }
     }
 
@@ -3634,10 +3614,10 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
   // on the filename.
   if (bytesLength > maxBytes && !outFileName.IsEmpty()) {
     // Get the sanitized extension from the filename without the dot.
-    nsAutoCString extension;
+    nsAutoString extension;
     int32_t dotidx = outFileName.RFind(u".");
     if (dotidx != -1) {
-      extension = NS_ConvertUTF16toUTF8(Substring(outFileName, dotidx + 1));
+      extension = Substring(outFileName, dotidx + 1);
     }
 
     // There are two ways in which the filename should be truncated:
@@ -3657,20 +3637,24 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
       longFileNameEnd -= extensionBytesLength;
       if (longFileNameEnd <= 0) {
         // This is extremely unlikely, but if the extension is larger than the
-        // maximum size, just get rid of it.
-        outFileName.Truncate(maxBytes);
+        // maximum size, just get rid of it. In this case, the extension
+        // wouldn't have been an ordinary one we would want to preserve (such
+        // as .html or .png) so just truncate off the file wherever the first
+        // period appears.
+        int32_t dotidx = outFileName.Find(u".");
+        outFileName.Truncate(dotidx > 0 ? dotidx : 1);
       } else {
         outFileName.Truncate(std::min(longFileNameEnd, lastNonTrimmable));
-      }
 
-      // Now that the filename has been truncated, re-append the extension
-      // again.
-      if (!extension.IsEmpty()) {
-        if (outFileName.Last() != '.') {
-          outFileName.AppendLiteral(".");
+        // Now that the filename has been truncated, re-append the extension
+        // again.
+        if (!extension.IsEmpty()) {
+          if (outFileName.Last() != '.') {
+            outFileName.AppendLiteral(".");
+          }
+
+          outFileName.Append(extension);
         }
-
-        outFileName.Append(NS_ConvertUTF8toUTF16(extension));
       }
     }
   } else if (lastNonTrimmable >= 0) {
@@ -3679,11 +3663,38 @@ void nsExternalHelperAppService::SanitizeFileName(nsAString& aFileName,
     outFileName.Truncate(lastNonTrimmable);
   }
 
+#ifdef XP_WIN
+  if (nsLocalFile::CheckForReservedFileName(outFileName)) {
+    outFileName.Truncate();
+    CheckDefaultFileName(outFileName, aFlags);
+  }
+
+#endif
+
+  if (!(aFlags & VALIDATE_ALLOW_INVALID_FILENAMES)) {
+    // If the extension is one these types, replace it with .download, as these
+    // types of files can have significance on Windows or Linux.
+    // This happens for any file, not just those with the shortcut mime type.
+    if (StringEndsWith(outFileName, u".lnk"_ns,
+                       nsCaseInsensitiveStringComparator) ||
+        StringEndsWith(outFileName, u".local"_ns,
+                       nsCaseInsensitiveStringComparator) ||
+        StringEndsWith(outFileName, u".url"_ns,
+                       nsCaseInsensitiveStringComparator) ||
+        StringEndsWith(outFileName, u".scf"_ns,
+                       nsCaseInsensitiveStringComparator) ||
+        StringEndsWith(outFileName, u".desktop"_ns,
+                       nsCaseInsensitiveStringComparator)) {
+      outFileName.AppendLiteral(".download");
+    }
+  }
+
   aFileName = outFileName;
 }
 
 nsExternalHelperAppService::ModifyExtensionType
 nsExternalHelperAppService::ShouldModifyExtension(nsIMIMEInfo* aMimeInfo,
+                                                  bool aForceAppend,
                                                   const nsCString& aFileExt) {
   nsAutoCString MIMEType;
   if (!aMimeInfo || NS_FAILED(aMimeInfo->GetMIMEType(MIMEType))) {
@@ -3708,7 +3719,7 @@ nsExternalHelperAppService::ShouldModifyExtension(nsIMIMEInfo* aMimeInfo,
     }
 
     if (!canForce) {
-      return ModifyExtension_Ignore;
+      return aForceAppend ? ModifyExtension_Append : ModifyExtension_Ignore;
     }
   }
 

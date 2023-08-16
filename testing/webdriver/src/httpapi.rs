@@ -10,7 +10,7 @@ use crate::error::WebDriverResult;
 use crate::Parameters;
 
 pub fn standard_routes<U: WebDriverExtensionRoute>() -> Vec<(Method, &'static str, Route<U>)> {
-    return vec![
+    vec![
         (Method::POST, "/session", Route::NewSession),
         (Method::DELETE, "/session/{sessionId}", Route::DeleteSession),
         (Method::POST, "/session/{sessionId}/url", Route::Get),
@@ -119,18 +119,28 @@ pub fn standard_routes<U: WebDriverExtensionRoute>() -> Vec<(Method, &'static st
         ),
         (
             Method::POST,
-            "/session/{sessionId}/elements",
-            Route::FindElements,
-        ),
-        (
-            Method::POST,
             "/session/{sessionId}/element/{elementId}/element",
             Route::FindElementElement,
         ),
         (
             Method::POST,
+            "/session/{sessionId}/elements",
+            Route::FindElements,
+        ),
+        (
+            Method::POST,
             "/session/{sessionId}/element/{elementId}/elements",
             Route::FindElementElements,
+        ),
+        (
+            Method::POST,
+            "/session/{sessionId}/shadow/{shadowId}/element",
+            Route::FindShadowRootElement,
+        ),
+        (
+            Method::POST,
+            "/session/{sessionId}/shadow/{shadowId}/elements",
+            Route::FindShadowRootElements,
         ),
         (
             Method::GET,
@@ -171,6 +181,16 @@ pub fn standard_routes<U: WebDriverExtensionRoute>() -> Vec<(Method, &'static st
             Method::GET,
             "/session/{sessionId}/element/{elementId}/text",
             Route::GetElementText,
+        ),
+        (
+            Method::GET,
+            "/session/{sessionId}/element/{elementId}/computedlabel",
+            Route::GetComputedLabel,
+        ),
+        (
+            Method::GET,
+            "/session/{sessionId}/element/{elementId}/computedrole",
+            Route::GetComputedRole,
         ),
         (
             Method::GET,
@@ -289,7 +309,7 @@ pub fn standard_routes<U: WebDriverExtensionRoute>() -> Vec<(Method, &'static st
         ),
         (Method::POST, "/session/{sessionId}/print", Route::Print),
         (Method::GET, "/status", Route::Status),
-    ];
+    ]
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -323,6 +343,8 @@ pub enum Route<U: WebDriverExtensionRoute> {
     FindElements,
     FindElementElement,
     FindElementElements,
+    FindShadowRootElement,
+    FindShadowRootElements,
     GetActiveElement,
     GetShadowRoot,
     IsDisplayed,
@@ -331,6 +353,8 @@ pub enum Route<U: WebDriverExtensionRoute> {
     GetElementProperty,
     GetCSSValue,
     GetElementText,
+    GetComputedLabel,
+    GetComputedRole,
     GetElementTagName,
     GetElementRect,
     IsEnabled,

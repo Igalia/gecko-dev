@@ -5,22 +5,28 @@
 
 // Test whether a visit information is annotated correctly when searching on searchbar.
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
 });
 
 const FRECENCY = {
-  TYPED: 100,
+  SEARCHED: 100,
   BOOKMARKED: 175,
 };
 
 const { VISIT_SOURCE_BOOKMARKED, VISIT_SOURCE_SEARCHED } = PlacesUtils.history;
 
 async function assertDatabase({ targetURL, expected }) {
-  const frecency = await PlacesTestUtils.fieldInDB(targetURL, "frecency");
+  const frecency = await PlacesTestUtils.getDatabaseValue(
+    "moz_places",
+    "frecency",
+    { url: targetURL }
+  );
   Assert.equal(frecency, expected.frecency, "Frecency is correct");
 
-  const placesId = await PlacesTestUtils.fieldInDB(targetURL, "id");
+  const placesId = await PlacesTestUtils.getDatabaseValue("moz_places", "id", {
+    url: targetURL,
+  });
   const db = await PlacesUtils.promiseDBConnection();
   const rows = await db.execute(
     "SELECT source, triggeringPlaceId FROM moz_historyvisits WHERE place_id = :place_id AND source = :source",
@@ -37,21 +43,20 @@ async function assertDatabase({ targetURL, expected }) {
   );
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await PlacesUtils.history.clear();
   await PlacesUtils.bookmarks.eraseEverything();
 
   await gCUITestUtils.addSearchBar();
-  await SearchTestUtils.installSearchExtension({
-    name: "Example",
-    keyword: "@test",
-  });
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "Example",
+      keyword: "@test",
+    },
+    { setAsDefault: true }
+  );
 
-  const defaultEngine = Services.search.defaultEngine;
-  Services.search.defaultEngine = Services.search.getEngineByName("Example");
-
-  registerCleanupFunction(async function() {
-    Services.search.defaultEngine = defaultEngine;
+  registerCleanupFunction(async function () {
     gCUITestUtils.removeSearchBar();
   });
 });
@@ -64,7 +69,7 @@ add_task(async function basic() {
       resultURL: "https://example.com/?q=abc",
       expected: {
         source: VISIT_SOURCE_SEARCHED,
-        frecency: FRECENCY.TYPED,
+        frecency: FRECENCY.SEARCHED,
       },
     },
     {
@@ -104,9 +109,13 @@ add_task(async function basic() {
       resultURL
     );
     await searchInSearchbar(input);
+    let promiseVisited = PlacesTestUtils.waitForNotification(
+      "page-visited",
+      events => events.some(e => e.url == resultURL)
+    );
     EventUtils.synthesizeKey("KEY_Enter");
     await onLoad;
-
+    await promiseVisited;
     await assertDatabase({ targetURL: resultURL, expected });
 
     await PlacesUtils.history.clear();
@@ -144,15 +153,18 @@ add_task(async function contextmenu() {
       const openLinkMenuItem = contextMenu.querySelector(
         "#context-searchselect"
       );
-      openLinkMenuItem.click();
-      contextMenu.hidePopup();
+      let promiseVisited = PlacesTestUtils.waitForNotification(
+        "page-visited",
+        events => events.some(e => e.url == targetURL)
+      );
+      contextMenu.activateItem(openLinkMenuItem);
       const tab = await onLoad;
-
+      await promiseVisited;
       await assertDatabase({
         targetURL,
         expected: {
           source: VISIT_SOURCE_SEARCHED,
-          frecency: FRECENCY.TYPED,
+          frecency: FRECENCY.SEARCHED,
         },
       });
 

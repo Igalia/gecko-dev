@@ -8,9 +8,21 @@
 #include "WorkerPrivate.h"
 #include "WorkerRunnable.h"
 
+#include "mozilla/Logging.h"
 #include "mozilla/dom/ReferrerInfo.h"
 
 namespace mozilla::dom {
+
+static mozilla::LazyLogModule sWorkerEventTargetLog("WorkerEventTarget");
+
+#ifdef LOG
+#  undef LOG
+#endif
+#ifdef LOGV
+#  undef LOGV
+#endif
+#define LOG(args) MOZ_LOG(sWorkerEventTargetLog, LogLevel::Debug, args);
+#define LOGV(args) MOZ_LOG(sWorkerEventTargetLog, LogLevel::Verbose, args);
 
 namespace {
 
@@ -46,16 +58,14 @@ class WrappedControlRunnable final : public WorkerControlRunnable {
     // If the inner runnable is not cancellable, then just do the normal
     // WorkerControlRunnable thing.  This will end up calling Run().
     if (!cr) {
-      WorkerControlRunnable::Cancel();
-      return NS_OK;
+      return Run();
     }
 
     // Otherwise call the inner runnable's Cancel() and treat this like
     // a WorkerRunnable cancel.  We can't call WorkerControlRunnable::Cancel()
     // in this case since that would result in both Run() and the inner
     // Cancel() being called.
-    Unused << cr->Cancel();
-    return WorkerRunnable::Cancel();
+    return cr->Cancel();
   }
 };
 
@@ -68,10 +78,14 @@ WorkerEventTarget::WorkerEventTarget(WorkerPrivate* aWorkerPrivate,
     : mMutex("WorkerEventTarget"),
       mWorkerPrivate(aWorkerPrivate),
       mBehavior(aBehavior) {
+  LOG(("WorkerEventTarget::WorkerEventTarget [%p] aBehavior: %u", this,
+       (uint8_t)aBehavior));
   MOZ_DIAGNOSTIC_ASSERT(mWorkerPrivate);
 }
 
 void WorkerEventTarget::ForgetWorkerPrivate(WorkerPrivate* aWorkerPrivate) {
+  LOG(("WorkerEventTarget::ForgetWorkerPrivate [%p] aWorkerPrivate: %p", this,
+       aWorkerPrivate));
   MutexAutoLock lock(mMutex);
   MOZ_DIAGNOSTIC_ASSERT(!mWorkerPrivate || mWorkerPrivate == aWorkerPrivate);
   mWorkerPrivate = nullptr;
@@ -79,6 +93,8 @@ void WorkerEventTarget::ForgetWorkerPrivate(WorkerPrivate* aWorkerPrivate) {
 
 NS_IMETHODIMP
 WorkerEventTarget::DispatchFromScript(nsIRunnable* aRunnable, uint32_t aFlags) {
+  LOGV(("WorkerEventTarget::DispatchFromScript [%p] aRunnable: %p", this,
+        aRunnable));
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
   return Dispatch(runnable.forget(), aFlags);
 }
@@ -87,6 +103,8 @@ NS_IMETHODIMP
 WorkerEventTarget::Dispatch(already_AddRefed<nsIRunnable> aRunnable,
                             uint32_t aFlags) {
   nsCOMPtr<nsIRunnable> runnable(aRunnable);
+  LOGV(
+      ("WorkerEventTarget::Dispatch [%p] aRunnable: %p", this, runnable.get()));
 
   MutexAutoLock lock(mMutex);
 
@@ -95,18 +113,31 @@ WorkerEventTarget::Dispatch(already_AddRefed<nsIRunnable> aRunnable,
   }
 
   if (mBehavior == Behavior::Hybrid) {
+    LOGV(("WorkerEventTarget::Dispatch [%p] Dispatch as normal runnable(%p)",
+          this, runnable.get()));
+
     RefPtr<WorkerRunnable> r =
         mWorkerPrivate->MaybeWrapAsWorkerRunnable(runnable.forget());
     if (r->Dispatch()) {
       return NS_OK;
     }
-
     runnable = std::move(r);
+    LOGV((
+        "WorkerEventTarget::Dispatch [%p] Dispatch as normal runnable(%p) fail",
+        this, runnable.get()));
   }
 
   RefPtr<WorkerControlRunnable> r =
       new WrappedControlRunnable(mWorkerPrivate, std::move(runnable));
+  LOGV(
+      ("WorkerEventTarget::Dispatch [%p] Wrapped runnable as control "
+       "runnable(%p)",
+       this, r.get()));
   if (!r->Dispatch()) {
+    LOGV(
+        ("WorkerEventTarget::Dispatch [%p] Dispatch as control runnable(%p) "
+         "fail",
+         this, r.get()));
     return NS_ERROR_FAILURE;
   }
 
@@ -119,13 +150,31 @@ WorkerEventTarget::DelayedDispatch(already_AddRefed<nsIRunnable>, uint32_t) {
 }
 
 NS_IMETHODIMP
-WorkerEventTarget::RegisterShutdownTask(nsITargetShutdownTask*) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+WorkerEventTarget::RegisterShutdownTask(nsITargetShutdownTask* aTask) {
+  NS_ENSURE_ARG(aTask);
+
+  MutexAutoLock lock(mMutex);
+
+  // If mWorkerPrivate is gone, the event target is already late during
+  // shutdown, return NS_ERROR_UNEXPECTED as documented in `nsIEventTarget.idl`.
+  if (!mWorkerPrivate) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  return mWorkerPrivate->RegisterShutdownTask(aTask);
 }
 
 NS_IMETHODIMP
-WorkerEventTarget::UnregisterShutdownTask(nsITargetShutdownTask*) {
-  return NS_ERROR_NOT_IMPLEMENTED;
+WorkerEventTarget::UnregisterShutdownTask(nsITargetShutdownTask* aTask) {
+  NS_ENSURE_ARG(aTask);
+
+  MutexAutoLock lock(mMutex);
+
+  if (!mWorkerPrivate) {
+    return NS_ERROR_UNEXPECTED;
+  }
+
+  return mWorkerPrivate->UnregisterShutdownTask(aTask);
 }
 
 NS_IMETHODIMP_(bool)

@@ -30,9 +30,9 @@ const {
 
     g,
 } = ChromeUtils.import("resource://reftest/globals.jsm");
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { AppConstants } = ChromeUtils.import(
-    "resource://gre/modules/AppConstants.jsm"
+const { NetUtil } = ChromeUtils.importESModule("resource://gre/modules/NetUtil.sys.mjs");
+const { AppConstants } = ChromeUtils.importESModule(
+    "resource://gre/modules/AppConstants.sys.mjs"
 );
 
 const NS_SCRIPTSECURITYMANAGER_CONTRACTID = "@mozilla.org/scriptsecuritymanager;1";
@@ -472,8 +472,6 @@ function BuildConditionSandbox(aURL) {
     sandbox.isCoverageBuild = g.isCoverageBuild;
     var prefs = Cc["@mozilla.org/preferences-service;1"].
                 getService(Ci.nsIPrefBranch);
-    var env = Cc["@mozilla.org/process/environment;1"].
-                getService(Ci.nsIEnvironment);
 
     sandbox.xulRuntime = Cu.cloneInto({widgetToolkit: xr.widgetToolkit, OS: xr.OS, XPCOMABI: xr.XPCOMABI}, sandbox);
 
@@ -588,6 +586,9 @@ function BuildConditionSandbox(aURL) {
     sandbox.http = new sandbox.Object();
     httpProps.forEach((x) => sandbox.http[x] = hh[x]);
 
+    // set to specific Android13 version (Pixel 5 in CI)
+    sandbox.Android13 = sandbox.Android && (sandbox.http["platform"] == "Android 13");
+
     // Set OSX to be the Mac OS X version, as an integer, or undefined
     // for other platforms.  The integer is formed by 100 times the
     // major version plus the minor version, so 1006 for 10.6, 1010 for
@@ -598,14 +599,6 @@ function BuildConditionSandbox(aURL) {
     // config specific prefs
     sandbox.appleSilicon = prefs.getBoolPref("sandbox.apple_silicon", false);
 
-    // Set a flag on sandbox if the windows default theme is active
-    sandbox.windowsDefaultTheme = g.containingWindow.matchMedia("(-moz-windows-default-theme)").matches;
-
-    try {
-        sandbox.nativeThemePref = !prefs.getBoolPref("widget.non-native-theme.enabled");
-    } catch (e) {
-        sandbox.nativeThemePref = true;
-    }
     sandbox.gpuProcessForceEnabled = prefs.getBoolPref("layers.gpu-process.force-enabled", false);
 
     sandbox.prefs = Cu.cloneInto({
@@ -714,16 +707,7 @@ function ServeTestBase(aURL, depth) {
     // this one is needed so tests can use example.org urls for cross origin testing
     g.server.registerDirectory("/", directory);
 
-    var secMan = Cc[NS_SCRIPTSECURITYMANAGER_CONTRACTID]
-                     .getService(Ci.nsIScriptSecurityManager);
-
-    var testbase = g.ioService.newURI("http://localhost:" + g.httpServerPort +
-                                     path + dirPath);
-    var testBasePrincipal = secMan.createContentPrincipal(testbase, {});
-
-    // Give the testbase URI access to XUL and XBL
-    Services.perms.addFromPrincipal(testBasePrincipal, "allowXULXBL", Services.perms.ALLOW_ACTION);
-    return testbase;
+    return g.ioService.newURI("http://localhost:" + g.httpServerPort + path + dirPath);
 }
 
 function CreateUrls(test) {
@@ -733,8 +717,12 @@ function CreateUrls(test) {
     let manifestURL = g.ioService.newURI(test.manifest);
 
     let testbase = manifestURL;
-    if (test.runHttp)
+    if (test.runHttp) {
         testbase = ServeTestBase(manifestURL, test.httpDepth)
+    }
+
+    let testbasePrincipal = secMan.createContentPrincipal(testbase, {});
+    Services.perms.addFromPrincipal(testbasePrincipal, "allowXULXBL", Services.perms.ALLOW_ACTION);
 
     function FileToURI(file)
     {
@@ -783,10 +771,18 @@ function AddTestItem(aTest, aFilter, aManifestID) {
     var globalFilter = aFilter[0];
     var manifestFilter = aFilter[1];
     var invertManifest = aFilter[2];
-    if (globalFilter && !globalFilter.test(url1.spec))
-        return;
-    if (manifestFilter && !(invertManifest ^ manifestFilter.test(url1.spec)))
-        return;
+    if (globalFilter && !globalFilter.test(url1.spec)) {
+        if (url2 === null)
+            return;
+        if (globalFilter && !globalFilter.test(url2.spec))
+            return;
+    }
+    if (manifestFilter && !(invertManifest ^ manifestFilter.test(url1.spec))) {
+        if (url2 === null)
+            return;
+        if (manifestFilter && !(invertManifest ^ manifestFilter.test(url2.spec)))
+            return;
+    }
     if (g.focusFilterMode == FOCUS_FILTER_NEEDS_FOCUS_TESTS &&
         !aTest.needsFocus)
         return;

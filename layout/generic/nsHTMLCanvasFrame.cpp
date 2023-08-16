@@ -20,7 +20,6 @@
 #include "nsDisplayList.h"
 #include "nsLayoutUtils.h"
 #include "nsStyleUtil.h"
-#include "Layers.h"
 #include "ActiveLayerTracker.h"
 
 #include <algorithm>
@@ -113,6 +112,8 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
       // CompositableHandle managed inside the compositor process. There is
       // nothing to paint until the owner attaches it.
 
+      element->FlushOffscreenCanvas();
+
       nsHTMLCanvasFrame* canvasFrame = static_cast<nsHTMLCanvasFrame*>(mFrame);
       nsIntSize canvasSizeInPx = canvasFrame->GetCanvasSize();
       IntrinsicSize intrinsicSize = IntrinsicSizeFromCanvasSize(canvasSizeInPx);
@@ -125,15 +126,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
 
       RefPtr<ImageContainer> container = element->GetImageContainer();
       if (container) {
+        MOZ_ASSERT(container->IsAsync());
         aManager->CommandBuilder().PushImage(this, container, aBuilder,
                                              aResources, aSc, bounds, bounds);
-        return true;
-      }
-
-      CompositableHandle handle = element->GetCompositableHandle();
-      if (handle) {
-        aManager->CommandBuilder().PushInProcessImage(this, handle, aBuilder,
-                                                      aResources, aSc, bounds);
         return true;
       }
 
@@ -143,7 +138,8 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
     switch (element->GetCurrentContextType()) {
       case CanvasContextType::Canvas2D:
       case CanvasContextType::WebGL1:
-      case CanvasContextType::WebGL2: {
+      case CanvasContextType::WebGL2:
+      case CanvasContextType::WebGPU: {
         bool isRecycled;
         RefPtr<WebRenderCanvasData> canvasData =
             aManager->CommandBuilder()
@@ -181,10 +177,9 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
         // result, a bunch of the calculations normally done as part of that
         // stacking context need to be done manually and pushed over to the
         // parent side, where it will be done when we build the display list for
-        // the iframe. That happens in WebRenderCompositableHolder.
-
-        wr::LayoutRect r = wr::ToLayoutRect(bounds);
-        aBuilder.PushIFrame(r, !BackfaceIsHidden(), data->GetPipelineId().ref(),
+        // the iframe. That happens in WebRenderCompositableHolder.s2);
+        aBuilder.PushIFrame(bounds, !BackfaceIsHidden(),
+                            data->GetPipelineId().ref(),
                             /*ignoreMissingPipelines*/ false);
 
         LayoutDeviceRect scBounds(LayoutDevicePoint(0, 0), bounds.Size());
@@ -194,33 +189,6 @@ class nsDisplayCanvas final : public nsPaintedDisplayItem {
             OpUpdateAsyncImagePipeline(data->GetPipelineId().value(), scBounds,
                                        VideoInfo::Rotation::kDegree_0, filter,
                                        mixBlendMode));
-        break;
-      }
-      case CanvasContextType::WebGPU: {
-        nsHTMLCanvasFrame* canvasFrame =
-            static_cast<nsHTMLCanvasFrame*>(mFrame);
-        HTMLCanvasElement* canvasElement =
-            static_cast<HTMLCanvasElement*>(canvasFrame->GetContent());
-        webgpu::CanvasContext* canvasContext =
-            canvasElement->GetWebGPUContext();
-
-        if (!canvasContext || !canvasContext->mHandle) {
-          return true;
-        }
-
-        nsIntSize canvasSizeInPx = canvasFrame->GetCanvasSize();
-        IntrinsicSize intrinsicSize =
-            IntrinsicSizeFromCanvasSize(canvasSizeInPx);
-        AspectRatio intrinsicRatio =
-            IntrinsicRatioFromCanvasSize(canvasSizeInPx);
-        nsRect area =
-            mFrame->GetContentRectRelativeToSelf() + ToReferenceFrame();
-        nsRect dest = nsLayoutUtils::ComputeObjectDestRect(
-            area, intrinsicSize, intrinsicRatio, mFrame->StylePosition());
-        LayoutDeviceRect bounds = LayoutDeviceRect::FromAppUnits(
-            dest, mFrame->PresContext()->AppUnitsPerDevPixel());
-        aManager->CommandBuilder().PushInProcessImage(
-            this, canvasContext->mHandle, aBuilder, aResources, aSc, bounds);
         break;
       }
       case CanvasContextType::ImageBitmap: {
@@ -437,7 +405,7 @@ nscoord nsHTMLCanvasFrame::GetPrefISize(gfxContext* aRenderingContext) {
 
 /* virtual */
 IntrinsicSize nsHTMLCanvasFrame::GetIntrinsicSize() {
-  const auto containAxes = StyleDisplay()->GetContainSizeAxes();
+  const auto containAxes = GetContainSizeAxes();
   IntrinsicSize size = containAxes.IsBoth()
                            ? IntrinsicSize(0, 0)
                            : IntrinsicSizeFromCanvasSize(GetCanvasSize());
@@ -446,7 +414,7 @@ IntrinsicSize nsHTMLCanvasFrame::GetIntrinsicSize() {
 
 /* virtual */
 AspectRatio nsHTMLCanvasFrame::GetIntrinsicRatio() const {
-  if (StyleDisplay()->GetContainSizeAxes().IsAny()) {
+  if (GetContainSizeAxes().IsAny()) {
     return AspectRatio();
   }
 
@@ -478,7 +446,7 @@ void nsHTMLCanvasFrame::Reflow(nsPresContext* aPresContext,
       ("enter nsHTMLCanvasFrame::Reflow: availSize=%d,%d",
        aReflowInput.AvailableWidth(), aReflowInput.AvailableHeight()));
 
-  MOZ_ASSERT(mState & NS_FRAME_IN_REFLOW, "frame is not in reflow");
+  MOZ_ASSERT(HasAnyStateBits(NS_FRAME_IN_REFLOW), "frame is not in reflow");
 
   WritingMode wm = aReflowInput.GetWritingMode();
   const LogicalSize finalSize = aReflowInput.ComputedSizeWithBorderPadding(wm);
@@ -519,7 +487,7 @@ void nsHTMLCanvasFrame::BuildDisplayList(nsDisplayListBuilder* aBuilder,
 
   DisplayBorderBackgroundOutline(aBuilder, aLists);
 
-  if (IsContentHidden()) {
+  if (HidesContent()) {
     DisplaySelectionOverlay(aBuilder, aLists.Content(),
                             nsISelectionDisplay::DISPLAY_IMAGES);
     return;
@@ -545,6 +513,13 @@ void nsHTMLCanvasFrame::AppendDirectlyOwnedAnonBoxes(
   MOZ_ASSERT(!mFrames.FirstChild()->GetNextSibling(),
              "Must only have our canvas content anon box");
   aResult.AppendElement(OwnedAnonBox(mFrames.FirstChild()));
+}
+
+void nsHTMLCanvasFrame::UnionChildOverflow(
+    mozilla::OverflowAreas& aOverflowAreas) {
+  // Our one child (the canvas content anon box) is unpainted and isn't relevant
+  // for child-overflow purposes. So we need to provide our own trivial impl to
+  // avoid receiving the child-considering impl that we would otherwise inherit.
 }
 
 #ifdef ACCESSIBILITY

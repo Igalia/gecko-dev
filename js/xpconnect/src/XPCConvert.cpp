@@ -41,7 +41,7 @@ using namespace mozilla;
 using namespace mozilla::dom;
 using namespace JS;
 
-//#define STRICT_CHECK_OF_UNICODE
+// #define STRICT_CHECK_OF_UNICODE
 #ifdef STRICT_CHECK_OF_UNICODE
 #  define ILLEGAL_RANGE(c) (0 != ((c)&0xFF80))
 #else  // STRICT_CHECK_OF_UNICODE
@@ -392,7 +392,6 @@ bool XPCConvert::NativeData2JS(JSContext* cx, MutableHandleValue d,
       NS_ERROR("bad type");
       return false;
   }
-  return true;
 }
 
 /***************************************************************************/
@@ -1017,7 +1016,7 @@ bool XPCConvert::JSObject2NativeInterface(JSContext* cx, void** dest,
 
     // Is this really a native xpcom object with a wrapper?
     XPCWrappedNative* wrappedNative = nullptr;
-    if (IS_WN_REFLECTOR(inner)) {
+    if (IsWrappedNativeReflector(inner)) {
       wrappedNative = XPCWrappedNative::Get(inner);
     }
     if (wrappedNative) {
@@ -1160,7 +1159,7 @@ static nsresult JSErrorToXPCException(JSContext* cx, const char* toStringResult,
 
     data = new nsScriptError();
     data->nsIScriptError::InitWithWindowID(
-        bestMessage, NS_ConvertASCIItoUTF16(report->filename),
+        bestMessage, NS_ConvertUTF8toUTF16(report->filename.c_str()),
         linebuf ? nsDependentString(linebuf, report->linebufLength())
                 : EmptyString(),
         report->lineno, report->tokenOffset(), flags, "XPConnect JavaScript"_ns,

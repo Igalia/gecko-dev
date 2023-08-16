@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,7 +9,7 @@ includes: [compareArray.js, temporalHelpers.js]
 features: [Temporal]
 ---*/
 
-const instance = new Temporal.PlainDateTime(2000, 5, 2, 15, "gregory");
+const instance = new Temporal.PlainDateTime(2000, 5, 2, 15, 0, 0, 0, 0, 0, "gregory");
 const base = { era: "ad", month: 5, day: 2, calendar: "gregory" };
 
 [Infinity, -Infinity].forEach((inf) => {

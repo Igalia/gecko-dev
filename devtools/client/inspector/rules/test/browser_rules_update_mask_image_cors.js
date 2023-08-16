@@ -3,7 +3,6 @@
 
 "use strict";
 
-/* import-globals-from ../../../webconsole/test/browser/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
   this
@@ -18,7 +17,7 @@ const TEST_URL = `https://example.org/document-builder.sjs?html=<div style='${ST
 // Used to assert screenshot colors.
 const RED = { r: 255, g: 0, b: 0 };
 
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URL);
   const { inspector, toolbox, view } = await openRuleView();
 

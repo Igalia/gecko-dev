@@ -67,6 +67,17 @@ struct SecondScratchRegisterScope : public AutoRegisterScope {
   explicit SecondScratchRegisterScope(MacroAssembler& masm);
 };
 
+class MOZ_RAII AutoNonDefaultSecondScratchRegister {
+ public:
+  explicit AutoNonDefaultSecondScratchRegister(MacroAssembler& masm,
+                                               Register reg);
+  ~AutoNonDefaultSecondScratchRegister();
+
+ private:
+  Register prevSecondScratch_;
+  MacroAssembler& masm_;
+};
+
 static constexpr Register OsrFrameReg = r3;
 static constexpr Register CallTempReg0 = r5;
 static constexpr Register CallTempReg1 = r6;
@@ -252,15 +263,20 @@ struct ScratchDoubleScope : public AutoFloatRegisterScope {
       : AutoFloatRegisterScope(masm, ScratchDoubleReg_) {}
 };
 
-// Registerd used in RegExpMatcher instruction (do not use JSReturnOperand).
+// Registers used by RegExpMatcher and RegExpExecMatch stubs (do not use
+// JSReturnOperand).
 static constexpr Register RegExpMatcherRegExpReg = CallTempReg0;
 static constexpr Register RegExpMatcherStringReg = CallTempReg1;
 static constexpr Register RegExpMatcherLastIndexReg = CallTempReg2;
 
-// Registerd used in RegExpTester instruction (do not use ReturnReg).
-static constexpr Register RegExpTesterRegExpReg = CallTempReg0;
-static constexpr Register RegExpTesterStringReg = CallTempReg1;
-static constexpr Register RegExpTesterLastIndexReg = CallTempReg2;
+// Registers used by RegExpExecTest stub (do not use ReturnReg).
+static constexpr Register RegExpExecTestRegExpReg = CallTempReg0;
+static constexpr Register RegExpExecTestStringReg = CallTempReg1;
+
+// Registers used by RegExpSearcher stub (do not use ReturnReg).
+static constexpr Register RegExpSearcherRegExpReg = CallTempReg0;
+static constexpr Register RegExpSearcherStringReg = CallTempReg1;
+static constexpr Register RegExpSearcherLastIndexReg = CallTempReg2;
 
 static constexpr FloatRegister d0 = {FloatRegisters::d0, VFPRegister::Double};
 static constexpr FloatRegister d1 = {FloatRegisters::d1, VFPRegister::Double};
@@ -314,7 +330,6 @@ static const uint32_t WasmTrapInstructionLength = 4;
 // See comments in wasm::GenerateFunctionPrologue.  The difference between these
 // is the size of the largest callable prologue on the platform.
 static constexpr uint32_t WasmCheckedCallEntryOffset = 0u;
-static constexpr uint32_t WasmCheckedTailEntryOffset = 12u;
 
 static const Scale ScalePointer = TimesFour;
 

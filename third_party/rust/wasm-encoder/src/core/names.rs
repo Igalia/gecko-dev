@@ -1,3 +1,5 @@
+use std::borrow::Cow;
+
 use crate::{encoding_size, CustomSection, Encode, Section, SectionId};
 
 /// An encoder for the custom `name` section.
@@ -149,15 +151,19 @@ impl NameSection {
         self.bytes.push(id as u8);
         len.encode(&mut self.bytes);
     }
+
+    /// View the encoded section as a CustomSection.
+    pub fn as_custom<'a>(&'a self) -> CustomSection<'a> {
+        CustomSection {
+            name: "name".into(),
+            data: Cow::Borrowed(&self.bytes),
+        }
+    }
 }
 
 impl Encode for NameSection {
     fn encode(&self, sink: &mut Vec<u8>) {
-        CustomSection {
-            name: "name",
-            data: &self.bytes,
-        }
-        .encode(sink);
+        self.as_custom().encode(sink);
     }
 }
 
@@ -199,8 +205,13 @@ impl NameMap {
         self.count += 1;
     }
 
-    fn size(&self) -> usize {
+    pub(crate) fn size(&self) -> usize {
         encoding_size(self.count) + self.bytes.len()
+    }
+
+    /// Returns whether no names have been added to this map.
+    pub fn is_empty(&self) -> bool {
+        self.count == 0
     }
 }
 

@@ -8,12 +8,14 @@
 
 #include "nsString.h"
 #include "nsTArray.h"
+#include "mozilla/MozPromise.h"
 
 #include <stdint.h>
 
 typedef struct _GdkDisplay GdkDisplay;
 typedef struct _GdkDevice GdkDevice;
 typedef union _GdkEvent GdkEvent;
+class nsWindow;
 
 namespace mozilla::widget {
 
@@ -31,6 +33,8 @@ bool GdkIsX11Display(GdkDisplay* display);
 bool GdkIsWaylandDisplay();
 bool GdkIsX11Display();
 
+bool IsXWaylandProtocol();
+
 GdkDevice* GdkGetPointer();
 
 // Sets / returns the last mouse press event we processed.
@@ -39,8 +43,9 @@ GdkEvent* GetLastMousePressEvent();
 
 // Return the snap's instance name, or null when not running as a snap.
 const char* GetSnapInstanceName();
-inline bool IsRunningUnderSnap() { return !!GetSnapInstanceName(); }
+bool IsRunningUnderSnap();
 bool IsRunningUnderFlatpak();
+bool IsPackagedAppFileExists();
 inline bool IsRunningUnderFlatpakOrSnap() {
   return IsRunningUnderFlatpak() || IsRunningUnderSnap();
 }
@@ -54,8 +59,21 @@ enum class PortalKind {
 };
 bool ShouldUsePortal(PortalKind);
 
+// Tries to get a descriptive identifier for the desktop environment that the
+// program is running under. Always normalized to lowercase.
+// See the implementation for the different environment variables and desktop
+// information we try to use.
+//
+// If we can't find a reasonable environment, the empty string is returned.
+const nsCString& GetDesktopEnvironmentIdentifier();
+bool IsGnomeDesktopEnvironment();
+bool IsKdeDesktopEnvironment();
+
 // Parse text/uri-list
 nsTArray<nsCString> ParseTextURIList(const nsACString& data);
+
+using FocusRequestPromise = MozPromise<nsCString, bool, false>;
+RefPtr<FocusRequestPromise> RequestWaylandFocusPromise();
 
 }  // namespace mozilla::widget
 

@@ -7,7 +7,7 @@
 #include "base/process_util.h"
 #include "base/task.h"
 
-#ifdef OS_POSIX
+#ifdef XP_UNIX
 #  include <errno.h>
 #endif
 #include <type_traits>
@@ -59,8 +59,9 @@ MOZ_TYPE_SPECIFIC_SCOPED_POINTER_TEMPLATE(
 
 namespace ipc {
 
-IPCResult IPCResult::Fail(NotNull<IProtocol*> actor, const char* where,
-                          const char* why) {
+/* static */
+IPCResult IPCResult::FailImpl(NotNull<IProtocol*> actor, const char* where,
+                              const char* why) {
   // Calls top-level protocol to handle the error.
   nsPrintfCString errorMsg("%s %s\n", where, why);
   actor->GetIPCChannel()->Listener()->ProcessingError(
@@ -77,7 +78,7 @@ void AnnotateSystemError() {
   int64_t error = 0;
 #if defined(XP_WIN)
   error = ::GetLastError();
-#elif defined(OS_POSIX)
+#else
   error = errno;
 #endif
   if (error) {
@@ -389,17 +390,20 @@ Maybe<IProtocol*> IProtocol::ReadActor(IPC::MessageReader* aReader,
   return Some(listener);
 }
 
-void IProtocol::FatalError(const char* const aErrorMsg) const {
+void IProtocol::FatalError(const char* const aErrorMsg) {
   HandleFatalError(aErrorMsg);
 }
 
-void IProtocol::HandleFatalError(const char* aErrorMsg) const {
+void IProtocol::HandleFatalError(const char* aErrorMsg) {
   if (IProtocol* manager = Manager()) {
     manager->HandleFatalError(aErrorMsg);
     return;
   }
 
   mozilla::ipc::FatalError(aErrorMsg, mSide == ParentSide);
+  if (CanSend()) {
+    GetIPCChannel()->InduceConnectionError();
+  }
 }
 
 bool IProtocol::AllocShmem(size_t aSize, Shmem* aOutMem) {
@@ -550,9 +554,11 @@ void IProtocol::DestroySubtree(ActorDestroyReason aWhy) {
   fuzzing::IPCFuzzController::instance().OnActorDestroyed(this);
 #endif
 
+  int32_t id = Id();
+
   // If we're a managed actor, unregister from our manager
   if (Manager()) {
-    Unregister(Id());
+    Unregister(id);
   }
 
   // Destroy subtree
@@ -579,7 +585,7 @@ void IProtocol::DestroySubtree(ActorDestroyReason aWhy) {
   // The actor is being destroyed, reject any pending responses, invoke
   // `ActorDestroy` to destroy it, and then clear our status to
   // `LinkStatus::Destroyed`.
-  GetIPCChannel()->RejectPendingResponsesForActor(this);
+  GetIPCChannel()->RejectPendingResponsesForActor(id);
   ActorDestroy(aWhy);
   mLinkStatus = LinkStatus::Destroyed;
 }
@@ -597,10 +603,12 @@ void IToplevelProtocol::SetOtherProcessId(base::ProcessId aOtherPid) {
   mOtherPid = aOtherPid;
 }
 
-bool IToplevelProtocol::Open(ScopedPort aPort, base::ProcessId aOtherPid,
+bool IToplevelProtocol::Open(ScopedPort aPort, const nsID& aMessageChannelId,
+                             base::ProcessId aOtherPid,
                              nsISerialEventTarget* aEventTarget) {
   SetOtherProcessId(aOtherPid);
-  return GetIPCChannel()->Open(std::move(aPort), mSide, aEventTarget);
+  return GetIPCChannel()->Open(std::move(aPort), mSide, aMessageChannelId,
+                               aEventTarget);
 }
 
 bool IToplevelProtocol::Open(IToplevelProtocol* aTarget,

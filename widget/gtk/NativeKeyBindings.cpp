@@ -13,7 +13,6 @@
 
 #include "NativeKeyBindings.h"
 #include "nsString.h"
-#include "nsMemory.h"
 #include "nsGtkKeyUtils.h"
 
 #include <gtk/gtk.h>
@@ -383,8 +382,6 @@ bool NativeKeyBindings::GetEditCommandsInternal(
                         GdkModifierType(modifiers));
 
   gCurrentCommands = nullptr;
-
-  MOZ_ASSERT(!gHandled || !aCommands.IsEmpty());
 
   return gHandled;
 }

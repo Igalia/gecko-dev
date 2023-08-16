@@ -66,9 +66,9 @@ Element* CharacterData::GetNameSpaceElement() {
   return Element::FromNodeOrNull(GetParentNode());
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(CharacterData)
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(CharacterData)
+// Note, _INHERITED macro isn't used here since nsINode implementations are
+// rather special.
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(CharacterData)
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(CharacterData)
   return Element::CanSkip(tmp, aRemovingAllowed);
@@ -103,7 +103,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(CharacterData)
   nsIContent::Unlink(tmp);
 
   if (nsContentSlots* slots = tmp->GetExistingContentSlots()) {
-    slots->Unlink();
+    slots->Unlink(*tmp);
   }
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
@@ -344,7 +344,7 @@ nsresult CharacterData::SetTextInternal(
       }
 
       mozAutoSubtreeModified subtree(OwnerDoc(), this);
-      (new AsyncEventDispatcher(this, mutation))->RunDOMEventWhenSafe();
+      AsyncEventDispatcher::RunDOMEventWhenSafe(*this, mutation);
     }
   }
 
@@ -416,11 +416,10 @@ nsresult CharacterData::BindToTree(BindContext& aContext, nsINode& aParent) {
   if (aParent.IsInNativeAnonymousSubtree()) {
     SetFlags(NODE_IS_IN_NATIVE_ANONYMOUS_SUBTREE);
   }
-  if (aParent.HasFlag(NODE_HAS_BEEN_IN_UA_WIDGET)) {
-    SetFlags(NODE_HAS_BEEN_IN_UA_WIDGET);
-  }
   if (IsRootOfNativeAnonymousSubtree()) {
     aParent.SetMayHaveAnonymousChildren();
+  } else if (aParent.HasFlag(NODE_HAS_BEEN_IN_UA_WIDGET)) {
+    SetFlags(NODE_HAS_BEEN_IN_UA_WIDGET);
   }
 
   // Set parent
@@ -460,9 +459,6 @@ nsresult CharacterData::BindToTree(BindContext& aContext, nsINode& aParent) {
   }
 
   MutationObservers::NotifyParentChainChanged(this);
-  if (!hadParent && IsRootOfNativeAnonymousSubtree()) {
-    MutationObservers::NotifyNativeAnonymousChildListChange(this, false);
-  }
 
   UpdateEditableState(false);
 
@@ -489,9 +485,6 @@ void CharacterData::UnbindFromTree(bool aNullParent) {
   HandleShadowDOMRelatedRemovalSteps(aNullParent);
 
   if (aNullParent) {
-    if (IsRootOfNativeAnonymousSubtree()) {
-      MutationObservers::NotifyNativeAnonymousChildListChange(this, true);
-    }
     if (GetParent()) {
       NS_RELEASE(mParent);
     } else {

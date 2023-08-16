@@ -14,11 +14,13 @@ var helpers = require("../helpers");
 var browserWindowEnv = require("../environments/browser-window");
 
 module.exports = {
+  // This rule currently has no messages.
+  // eslint-disable-next-line eslint-plugin/prefer-message-ids
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-browser-window-globals.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/import-browser-window-globals.html",
     },
+    schema: [],
     type: "problem",
   },
 
@@ -33,10 +35,7 @@ module.exports = {
           relativePath = relativePath.split(path.sep).join("/");
         }
 
-        if (
-          browserWindowEnv.browserjsScripts &&
-          browserWindowEnv.browserjsScripts.includes(relativePath)
-        ) {
+        if (browserWindowEnv.browserjsScripts?.includes(relativePath)) {
           for (let global in browserWindowEnv.globals) {
             helpers.addVarToScope(
               global,

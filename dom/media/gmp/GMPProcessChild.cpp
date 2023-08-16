@@ -14,22 +14,19 @@ using mozilla::ipc::IOThreadChild;
 
 namespace mozilla::gmp {
 
-GMPProcessChild::GMPProcessChild(ProcessId aParentPid)
-    : ProcessChild(aParentPid) {}
-
 GMPProcessChild::~GMPProcessChild() = default;
 
 bool GMPProcessChild::Init(int aArgc, char* aArgv[]) {
   nsAutoString pluginFilename;
 
-#if defined(OS_POSIX)
+#if defined(XP_UNIX)
   // NB: need to be very careful in ensuring that the first arg
   // (after the binary name) here is indeed the plugin module path.
   // Keep in sync with dom/plugins/PluginModuleParent.
   std::vector<std::string> values = CommandLine::ForCurrentProcess()->argv();
   MOZ_ASSERT(values.size() >= 2, "not enough args");
   CopyUTF8toUTF16(nsDependentCString(values[1].c_str()), pluginFilename);
-#elif defined(OS_WIN)
+#elif defined(XP_WIN)
   std::vector<std::wstring> values =
       CommandLine::ForCurrentProcess()->GetLooseValues();
   MOZ_ASSERT(values.size() >= 1, "not enough loose args");
@@ -40,8 +37,7 @@ bool GMPProcessChild::Init(int aArgc, char* aArgv[]) {
 
   BackgroundHangMonitor::Startup();
 
-  return mPlugin.Init(pluginFilename, ParentPid(),
-                      IOThreadChild::TakeInitialPort());
+  return mPlugin->Init(pluginFilename, TakeInitialEndpoint());
 }
 
 void GMPProcessChild::CleanUp() { BackgroundHangMonitor::Shutdown(); }

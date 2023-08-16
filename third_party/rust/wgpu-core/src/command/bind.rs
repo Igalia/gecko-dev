@@ -1,9 +1,10 @@
 use crate::{
     binding_model::{BindGroup, LateMinBufferBindingSizeMismatch, PipelineLayout},
     device::SHADER_STAGE_COUNT,
-    hub::{HalApi, Storage},
+    hal_api::HalApi,
     id::{BindGroupId, BindGroupLayoutId, PipelineLayoutId, Valid},
     pipeline::LateSizedBufferGroup,
+    storage::Storage,
     Stored,
 };
 
@@ -309,8 +310,9 @@ struct PushConstantChange {
     enable: bool,
 }
 
-/// Break up possibly overlapping push constant ranges into a set of non-overlapping ranges
-/// which contain all the stage flags of the original ranges. This allows us to zero out (or write any value)
+/// Break up possibly overlapping push constant ranges into a set of
+/// non-overlapping ranges which contain all the stage flags of the
+/// original ranges. This allows us to zero out (or write any value)
 /// to every possible value.
 pub fn compute_nonoverlapping_ranges(
     ranges: &[wgt::PushConstantRange],

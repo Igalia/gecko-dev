@@ -5,7 +5,7 @@
 
 // Test very basic CDP features.
 
-add_task(async function({ CDP }) {
+add_task(async function ({ CDP }) {
   const { mainProcessTarget } = RemoteAgent.cdp.targetList;
   ok(
     mainProcessTarget,
@@ -36,6 +36,12 @@ add_task(async function({ CDP }) {
       version.revision,
       Services.appinfo.sourceURL.split("/").pop(),
       "Browser.getVersion().revision is correct"
+    );
+
+    is(
+      version.jsVersion,
+      Services.appinfo.version,
+      "Browser.getVersion().jsVersion is correct"
     );
 
     const { webSocketDebuggerUrl } = await CDP.Version();

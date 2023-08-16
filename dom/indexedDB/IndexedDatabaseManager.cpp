@@ -23,6 +23,7 @@
 #include "mozilla/dom/ErrorEventBinding.h"
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/dom/RootedDictionary.h"
+#include "mozilla/dom/quota/Assertions.h"
 #include "mozilla/dom/quota/ResultExtensions.h"
 #include "mozilla/intl/LocaleCanonicalizer.h"
 #include "mozilla/ipc/BackgroundChild.h"
@@ -48,7 +49,6 @@
 #include "mozilla/dom/IDBFactoryBinding.h"
 #include "mozilla/dom/IDBIndexBinding.h"
 #include "mozilla/dom/IDBKeyRangeBinding.h"
-#include "mozilla/dom/IDBMutableFileBinding.h"
 #include "mozilla/dom/IDBObjectStoreBinding.h"
 #include "mozilla/dom/IDBOpenDBRequestBinding.h"
 #include "mozilla/dom/IDBRequestBinding.h"
@@ -75,7 +75,8 @@ class FileManagerInfo {
 
     return !mPersistentStorageFileManagers.IsEmpty() ||
            !mTemporaryStorageFileManagers.IsEmpty() ||
-           !mDefaultStorageFileManagers.IsEmpty();
+           !mDefaultStorageFileManagers.IsEmpty() ||
+           !mPrivateStorageFileManagers.IsEmpty();
   }
 
   void InvalidateAllFileManagers() const;
@@ -97,6 +98,7 @@ class FileManagerInfo {
   nsTArray<SafeRefPtr<DatabaseFileManager> > mPersistentStorageFileManagers;
   nsTArray<SafeRefPtr<DatabaseFileManager> > mTemporaryStorageFileManagers;
   nsTArray<SafeRefPtr<DatabaseFileManager> > mDefaultStorageFileManagers;
+  nsTArray<SafeRefPtr<DatabaseFileManager> > mPrivateStorageFileManagers;
 };
 
 }  // namespace indexedDB
@@ -351,7 +353,6 @@ bool IndexedDatabaseManager::ResolveSandboxBinding(JSContext* aCx) {
       !IDBIndex_Binding::GetConstructorObject(aCx) ||
       !IDBKeyRange_Binding::GetConstructorObject(aCx) ||
       !IDBLocaleAwareKeyRange_Binding::GetConstructorObject(aCx) ||
-      !IDBMutableFile_Binding::GetConstructorObject(aCx) ||
       !IDBObjectStore_Binding::GetConstructorObject(aCx) ||
       !IDBOpenDBRequest_Binding::GetConstructorObject(aCx) ||
       !IDBRequest_Binding::GetConstructorObject(aCx) ||
@@ -493,6 +494,19 @@ void IndexedDatabaseManager::InvalidateAllFileManagers() {
   }
 
   mFileManagerInfos.Clear();
+}
+
+void IndexedDatabaseManager::InvalidateFileManagers(
+    PersistenceType aPersistenceType) {
+  AssertIsOnIOThread();
+
+  for (auto iter = mFileManagerInfos.Iter(); !iter.Done(); iter.Next()) {
+    iter.Data()->InvalidateAndRemoveFileManagers(aPersistenceType);
+
+    if (!iter.Data()->HasFileManagers()) {
+      iter.Remove();
+    }
+  }
 }
 
 void IndexedDatabaseManager::InvalidateFileManagers(
@@ -668,6 +682,10 @@ void FileManagerInfo::InvalidateAllFileManagers() const {
   for (i = 0; i < mDefaultStorageFileManagers.Length(); i++) {
     mDefaultStorageFileManagers[i]->Invalidate();
   }
+
+  for (i = 0; i < mPrivateStorageFileManagers.Length(); i++) {
+    mPrivateStorageFileManagers[i]->Invalidate();
+  }
 }
 
 void FileManagerInfo::InvalidateAndRemoveFileManagers(
@@ -708,6 +726,8 @@ nsTArray<SafeRefPtr<DatabaseFileManager> >& FileManagerInfo::GetArray(
       return mTemporaryStorageFileManagers;
     case PERSISTENCE_TYPE_DEFAULT:
       return mDefaultStorageFileManagers;
+    case PERSISTENCE_TYPE_PRIVATE:
+      return mPrivateStorageFileManagers;
 
     case PERSISTENCE_TYPE_INVALID:
     default:

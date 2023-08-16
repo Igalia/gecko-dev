@@ -3,10 +3,12 @@
 
 "use strict";
 
-const { AddonsEngine } = ChromeUtils.import(
-  "resource://services-sync/engines/addons.js"
+const { AddonsEngine } = ChromeUtils.importESModule(
+  "resource://services-sync/engines/addons.sys.mjs"
 );
-const { Service } = ChromeUtils.import("resource://services-sync/service.js");
+const { Service } = ChromeUtils.importESModule(
+  "resource://services-sync/service.sys.mjs"
+);
 
 AddonTestUtils.init(this);
 AddonTestUtils.createAppInfo(
@@ -21,7 +23,7 @@ Services.prefs.setCharPref("extensions.minCompatibleAppVersion", "0");
 Services.prefs.setCharPref("extensions.minCompatiblePlatformVersion", "0");
 Services.prefs.setBoolPref("extensions.experiments.enabled", true);
 
-Svc.Prefs.set("engine.addons", true);
+Svc.PrefBranch.setBoolPref("engine.addons", true);
 
 let reconciler;
 let tracker;
@@ -31,7 +33,7 @@ const addon1ID = "addon1@tests.mozilla.org";
 const ADDONS = {
   test_addon1: {
     manifest: {
-      applications: { gecko: { id: addon1ID } },
+      browser_specific_settings: { gecko: { id: addon1ID } },
     },
   },
 };

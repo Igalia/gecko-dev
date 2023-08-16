@@ -18,13 +18,13 @@ class DateTimeInputTypeBase : public InputType {
   bool IsValueMissing() const override;
   bool IsRangeOverflow() const override;
   bool IsRangeUnderflow() const override;
-  bool HasStepMismatch(bool aUseZeroIfValueNaN) const override;
+  bool HasStepMismatch() const override;
   bool HasBadInput() const override;
 
   nsresult GetRangeOverflowMessage(nsAString& aMessage) override;
   nsresult GetRangeUnderflowMessage(nsAString& aMessage) override;
 
-  nsresult MinMaxStepAttrChanged() override;
+  void MinMaxStepAttrChanged() override;
 
  protected:
   explicit DateTimeInputTypeBase(HTMLInputElement* aInputElement)
@@ -62,8 +62,7 @@ class DateInputType : public DateTimeInputTypeBase {
 
   nsresult GetBadInputMessage(nsAString& aMessage) override;
 
-  bool ConvertStringToNumber(nsAString& aValue,
-                             Decimal& aResultValue) const override;
+  StringToNumberResult ConvertStringToNumber(const nsAString&) const override;
   bool ConvertNumberToString(Decimal aValue,
                              nsAString& aResultString) const override;
 
@@ -81,8 +80,7 @@ class TimeInputType : public DateTimeInputTypeBase {
 
   nsresult GetBadInputMessage(nsAString& aMessage) override;
 
-  bool ConvertStringToNumber(nsAString& aValue,
-                             Decimal& aResultValue) const override;
+  StringToNumberResult ConvertStringToNumber(const nsAString&) const override;
   bool ConvertNumberToString(Decimal aValue,
                              nsAString& aResultString) const override;
   bool IsRangeOverflow() const override;
@@ -108,8 +106,7 @@ class WeekInputType : public DateTimeInputTypeBase {
   }
 
   nsresult GetBadInputMessage(nsAString& aMessage) override;
-  bool ConvertStringToNumber(nsAString& aValue,
-                             Decimal& aResultValue) const override;
+  StringToNumberResult ConvertStringToNumber(const nsAString&) const override;
   bool ConvertNumberToString(Decimal aValue,
                              nsAString& aResultString) const override;
 
@@ -126,8 +123,7 @@ class MonthInputType : public DateTimeInputTypeBase {
   }
 
   nsresult GetBadInputMessage(nsAString& aMessage) override;
-  bool ConvertStringToNumber(nsAString& aValue,
-                             Decimal& aResultValue) const override;
+  StringToNumberResult ConvertStringToNumber(const nsAString&) const override;
   bool ConvertNumberToString(Decimal aValue,
                              nsAString& aResultString) const override;
 
@@ -144,8 +140,7 @@ class DateTimeLocalInputType : public DateTimeInputTypeBase {
   }
 
   nsresult GetBadInputMessage(nsAString& aMessage) override;
-  bool ConvertStringToNumber(nsAString& aValue,
-                             Decimal& aResultValue) const override;
+  StringToNumberResult ConvertStringToNumber(const nsAString&) const override;
   bool ConvertNumberToString(Decimal aValue,
                              nsAString& aResultString) const override;
 

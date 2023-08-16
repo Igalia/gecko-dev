@@ -19,6 +19,7 @@
 
 namespace mozilla {
 
+class MFMediaEngineVideoStream;
 class MFMediaSource;
 
 /**
@@ -37,6 +38,8 @@ class MFMediaEngineStream
   ~MFMediaEngineStream();
 
   virtual nsCString GetDescriptionName() const = 0;
+
+  virtual nsCString GetCodecName() const = 0;
 
   HRESULT RuntimeClassInitialize(uint64_t aStreamId, const TrackInfo& aInfo,
                                  MFMediaSource* aParentSource);
@@ -71,23 +74,39 @@ class MFMediaEngineStream
 
   TaskQueue* GetTaskQueue() { return mTaskQueue; }
 
-  void NotifyNewData(MediaRawData* aSample);
-  void NotifyEndOfStream();
+  void NotifyEndOfStream() {
+    Microsoft::WRL::ComPtr<MFMediaEngineStream> self = this;
+    Unused << mTaskQueue->Dispatch(NS_NewRunnableFunction(
+        "MFMediaEngineStream::NotifyEndOfStream",
+        [self]() { self->NotifyEndOfStreamInternal(); }));
+  }
 
   // Return the type of the track, the result should be either audio or video.
   virtual TrackInfo::TrackType TrackType() = 0;
 
   RefPtr<MediaDataDecoder::FlushPromise> Flush();
 
-  bool IsEnded() const;
-
   MediaEventProducer<TrackInfo::TrackType>& EndedEvent() { return mEndedEvent; }
 
   // True if the stream has been shutdown, it's a thread safe method.
   bool IsShutdown() const { return mIsShutdown; }
 
+  virtual MFMediaEngineVideoStream* AsVideoStream() { return nullptr; }
+
+  RefPtr<MediaDataDecoder::DecodePromise> OutputData(
+      RefPtr<MediaRawData> aSample);
+
+  virtual RefPtr<MediaDataDecoder::DecodePromise> Drain();
+
+  virtual MediaDataDecoder::ConversionRequired NeedsConversion() const {
+    return MediaDataDecoder::ConversionRequired::kNeedNone;
+  }
+
+  virtual bool IsEncrypted() const = 0;
+
  protected:
-  HRESULT GenerateStreamDescriptor(uint64_t aStreamId, const TrackInfo& aInfo);
+  HRESULT GenerateStreamDescriptor(
+      Microsoft::WRL::ComPtr<IMFMediaType>& aMediaType);
 
   // Create a IMFMediaType which includes the details about the stream.
   // https://docs.microsoft.com/en-us/windows/win32/medfound/media-type-attributes
@@ -101,6 +120,24 @@ class MFMediaEngineStream
   void ReplySampleRequestIfPossible();
   bool ShouldServeSamples() const;
 
+  void NotifyNewData(MediaRawData* aSample);
+  void NotifyEndOfStreamInternal();
+
+  virtual bool IsEnded() const;
+
+  // Overwrite this method if inherited class needs to perform clean up on the
+  // task queue when the stream gets shutdowned.
+  virtual void ShutdownCleanUpOnTaskQueue(){};
+
+  // Inherited class must implement this method to return decoded data. it
+  // should uses `mRawDataQueueForGeneratingOutput` to generate output.
+  virtual already_AddRefed<MediaData> OutputDataInternal() = 0;
+
+  void SendRequestSampleEvent(bool aIsEnough);
+
+  HRESULT AddEncryptAttributes(IMFSample* aSample,
+                               const CryptoSample& aCryptoConfig);
+
   void AssertOnTaskQueue() const;
   void AssertOnMFThreadPool() const;
 
@@ -112,11 +149,15 @@ class MFMediaEngineStream
   // This an unique ID retrieved from the IMFStreamDescriptor.
   DWORD mStreamDescriptorId = 0;
 
+  // A unique ID assigned by MFMediaSource, which won't be changed after first
+  // assignment.
+  uint64_t mStreamId = 0;
+
   RefPtr<TaskQueue> mTaskQueue;
 
-  // This class would be run on two threads, MF thread pool and the source's
-  // task queue. Following members would be used across both threads so they
-  // need to be thread-safe.
+  // This class would be run on three threads, MF thread pool, the source's
+  // task queue and MediaPDecoder (wrapper thread). Following members would be
+  // used across both threads so they need to be thread-safe.
 
   // Modify on the MF thread pool, access from any threads.
   Atomic<bool> mIsShutdown;
@@ -125,15 +166,13 @@ class MFMediaEngineStream
   // Modify on MF thread pool, access from any threads.
   Atomic<bool> mIsSelected;
 
-  // True if the stream has received the last data.
-  // Modify on the task queue, access from any threads.
-  Atomic<bool> mReceivedEOS;
+  // A thread-safe queue storing input samples, which provides samples to the
+  // media engine.
+  MediaQueue<MediaRawData> mRawDataQueueForFeedingEngine;
 
-  // Only serve samples when the stream is already started.
-  Atomic<bool> mShouldServeSmamples;
-
-  // A thread-safe queue storing input sample.
-  MediaQueue<MediaRawData> mRawDataQueue;
+  // A thread-safe queue storing input samples, which would be used to generate
+  // decoded data.
+  MediaQueue<MediaRawData> mRawDataQueueForGeneratingOutput;
 
   // Thread-safe members END
 
@@ -143,6 +182,10 @@ class MFMediaEngineStream
 
   // Notify when playback reachs the end for this track.
   MediaEventProducer<TrackInfo::TrackType> mEndedEvent;
+
+  // True if the stream has received the last data, but it could be reset if the
+  // stream starts delivering more data. Used on the task queue only.
+  bool mReceivedEOS;
 };
 
 /**
@@ -150,17 +193,16 @@ class MFMediaEngineStream
  * are not thread-safe and would only be called on the IPC decoder manager
  * thread.
  */
-class MFMediaEngineStreamWrapper : public MediaDataDecoder {
+class MFMediaEngineStreamWrapper final : public MediaDataDecoder {
  public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MFMediaEngineStreamWrapper, final);
+
   MFMediaEngineStreamWrapper(MFMediaEngineStream* aStream,
                              TaskQueue* aTaskQueue,
                              const CreateDecoderParams& aParams)
-      : mStream(aStream),
-        mTaskQueue(aTaskQueue),
-        mFakeDataCreator(new FakeDecodedDataCreator(aParams)) {
+      : mStream(aStream), mTaskQueue(aTaskQueue) {
     MOZ_ASSERT(mStream);
     MOZ_ASSERT(mTaskQueue);
-    MOZ_ASSERT(mFakeDataCreator);
   }
 
   // Methods for MediaDataDecoder, they are all called on the remote
@@ -171,28 +213,14 @@ class MFMediaEngineStreamWrapper : public MediaDataDecoder {
   RefPtr<FlushPromise> Flush() override;
   RefPtr<ShutdownPromise> Shutdown() override;
   nsCString GetDescriptionName() const override;
+  nsCString GetCodecName() const override;
+  ConversionRequired NeedsConversion() const override;
 
  private:
+  ~MFMediaEngineStreamWrapper() = default;
+
   Microsoft::WRL::ComPtr<MFMediaEngineStream> mStream;
-  // We use this to generate fake decoded outputs, as the real data is handled
-  // inside the media engine. Audio output is not possible to get, the video
-  // output would be output via DCOMP.
-  class FakeDecodedDataCreator final {
-   public:
-    explicit FakeDecodedDataCreator(const CreateDecoderParams& aParams);
-    RefPtr<MediaDataDecoder::DecodePromise> Decode(MediaRawData* aSample) {
-      return mDummyDecoder->Decode(aSample);
-    }
-    void Flush() { Unused << mDummyDecoder->Flush(); }
-
-    TrackInfo::TrackType Type() const { return mType; }
-
-   private:
-    RefPtr<MediaDataDecoder> mDummyDecoder;
-    TrackInfo::TrackType mType;
-  };
   RefPtr<TaskQueue> mTaskQueue;
-  UniquePtr<FakeDecodedDataCreator> mFakeDataCreator;
 };
 
 }  // namespace mozilla

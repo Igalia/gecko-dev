@@ -29,6 +29,7 @@
 #include "js/SourceText.h"
 #include "js/StructuredClone.h"
 #include "js/TypeDecls.h"
+#include "js/Utility.h"  // JS::FreePolicy
 #include "js/Wrapper.h"
 #include "jsapi.h"
 #include "jsfriendapi.h"
@@ -130,6 +131,29 @@
 using namespace mozilla;
 using namespace mozilla::dom;
 using namespace mozilla::dom::ipc;
+
+struct FrameMessageMarker {
+  static constexpr Span<const char> MarkerTypeName() {
+    return MakeStringSpan("FrameMessage");
+  }
+  static void StreamJSONMarkerData(baseprofiler::SpliceableJSONWriter& aWriter,
+                                   const ProfilerString16View& aMessageName,
+                                   bool aIsSync) {
+    aWriter.UniqueStringProperty("name", NS_ConvertUTF16toUTF8(aMessageName));
+    aWriter.BoolProperty("sync", aIsSync);
+  }
+  static MarkerSchema MarkerTypeDisplay() {
+    using MS = MarkerSchema;
+    MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
+    schema.AddKeyLabelFormatSearchable("name", "Message Name",
+                                       MS::Format::UniqueString,
+                                       MS::Searchable::Searchable);
+    schema.AddKeyLabelFormat("sync", "Sync", MS::Format::String);
+    schema.SetTooltipLabel("FrameMessage - {marker.name}");
+    schema.SetTableLabel("{marker.name} - {marker.data.name}");
+    return schema;
+  }
+};
 
 #define CACHE_PREFIX(type) "mm/" type
 
@@ -450,7 +474,9 @@ bool nsFrameMessageManager::GetParamsForMessage(JSContext* aCx,
   //    properly cases when interface is implemented in JS and used
   //    as a dictionary.
   nsAutoString json;
-  NS_ENSURE_TRUE(nsContentUtils::StringifyJSON(aCx, &v, json), false);
+  NS_ENSURE_TRUE(
+      nsContentUtils::StringifyJSON(aCx, v, json, UndefinedIsNullStringLiteral),
+      false);
   NS_ENSURE_TRUE(!json.IsEmpty(), false);
 
   JS::Rooted<JS::Value> val(aCx, JS::NullValue());
@@ -469,15 +495,6 @@ bool nsFrameMessageManager::GetParamsForMessage(JSContext* aCx,
 
 static bool sSendingSyncMessage = false;
 
-static bool AllowMessage(size_t aDataLength, const nsAString& aMessageName) {
-  // A message includes more than structured clone data, so subtract
-  // 20KB to make it more likely that a message within this bound won't
-  // result in an overly large IPC message.
-  static const size_t kMaxMessageSize =
-      IPC::Channel::kMaximumMessageSize - 20 * 1024;
-  return aDataLength < kMaxMessageSize;
-}
-
 void nsFrameMessageManager::SendSyncMessage(JSContext* aCx,
                                             const nsAString& aMessageName,
                                             JS::Handle<JS::Value> aObj,
@@ -490,6 +507,8 @@ void nsFrameMessageManager::SendSyncMessage(JSContext* aCx,
 
   AUTO_PROFILER_LABEL_DYNAMIC_LOSSY_NSSTRING(
       "nsFrameMessageManager::SendMessage", OTHER, aMessageName);
+  profiler_add_marker("SendSyncMessage", geckoprofiler::category::IPC, {},
+                      FrameMessageMarker{}, aMessageName, true);
 
   if (sSendingSyncMessage) {
     // No kind of blocking send should be issued on top of a sync message.
@@ -510,11 +529,6 @@ void nsFrameMessageManager::SendSyncMessage(JSContext* aCx,
                                     JS::UndefinedHandleValue);
   }
 #endif
-
-  if (!AllowMessage(data.DataLength(), aMessageName)) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
 
   if (!mCallback) {
     aError.Throw(NS_ERROR_NOT_INITIALIZED);
@@ -587,16 +601,14 @@ void nsFrameMessageManager::DispatchAsyncMessage(
     return;
   }
 
+  profiler_add_marker("SendAsyncMessage", geckoprofiler::category::IPC, {},
+                      FrameMessageMarker{}, aMessageName, false);
+
 #ifdef FUZZING
   if (data.DataLength()) {
     MessageManagerFuzzer::TryMutate(aCx, aMessageName, &data, aTransfers);
   }
 #endif
-
-  if (!AllowMessage(data.DataLength(), aMessageName)) {
-    aError.Throw(NS_ERROR_FAILURE);
-    return;
-  }
 
   aError = DispatchAsyncMessageInternal(aCx, aMessageName, data);
 }
@@ -625,6 +637,8 @@ void nsFrameMessageManager::ReceiveMessage(
     const nsAString& aMessage, bool aIsSync, StructuredCloneData* aCloneData,
     nsTArray<StructuredCloneData>* aRetVal, ErrorResult& aError) {
   MOZ_ASSERT(aTarget);
+  profiler_add_marker("ReceiveMessage", geckoprofiler::category::IPC, {},
+                      FrameMessageMarker{}, aMessage, aIsSync);
 
   nsAutoTObserverArray<nsMessageListenerInfo, 1>* listeners =
       mListeners.Get(aMessage);
@@ -1288,7 +1302,7 @@ nsMessageManagerScriptExecutor::TryCacheLoadAndCompileScript(
     rv = channel->Open(getter_AddRefs(input));
     NS_ENSURE_SUCCESS(rv, nullptr);
     nsString dataString;
-    char16_t* dataStringBuf = nullptr;
+    UniquePtr<Utf8Unit[], JS::FreePolicy> dataStringBuf;
     size_t dataStringLength = 0;
     if (input) {
       nsCString buffer;
@@ -1298,12 +1312,11 @@ nsMessageManagerScriptExecutor::TryCacheLoadAndCompileScript(
       }
 
       uint32_t size = (uint32_t)std::min(written, (uint64_t)UINT32_MAX);
-      ScriptLoader::ConvertToUTF16(channel, (uint8_t*)buffer.get(), size,
-                                   u""_ns, nullptr, dataStringBuf,
-                                   dataStringLength);
+      ScriptLoader::ConvertToUTF8(channel, (uint8_t*)buffer.get(), size, u""_ns,
+                                  nullptr, dataStringBuf, dataStringLength);
     }
 
-    if (!dataStringBuf || dataStringLength == 0) {
+    if (!dataStringBuf) {
       return nullptr;
     }
 
@@ -1317,10 +1330,8 @@ nsMessageManagerScriptExecutor::TryCacheLoadAndCompileScript(
       options.setSourceIsLazy(false);
     }
 
-    JS::UniqueTwoByteChars srcChars(dataStringBuf);
-
-    JS::SourceText<char16_t> srcBuf;
-    if (!srcBuf.init(cx, std::move(srcChars), dataStringLength)) {
+    JS::SourceText<Utf8Unit> srcBuf;
+    if (!srcBuf.init(cx, std::move(dataStringBuf), dataStringLength)) {
       return nullptr;
     }
 

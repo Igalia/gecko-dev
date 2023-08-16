@@ -2,26 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   BrowserSearchTelemetry: "resource:///modules/BrowserSearchTelemetry.sys.mjs",
-  PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  FormHistory: "resource://gre/modules/FormHistory.jsm",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 const TELEMETRY_1ST_RESULT = "PLACES_AUTOCOMPLETE_1ST_RESULT_TIME_MS";
@@ -97,6 +89,10 @@ export class UrlbarController {
       this,
       options.eventTelemetryCategory
     );
+
+    ChromeUtils.defineLazyGetter(this, "logger", () =>
+      lazy.UrlbarUtils.getLogger({ prefix: "Controller" })
+    );
   }
 
   get NOTIFICATIONS() {
@@ -126,7 +122,7 @@ export class UrlbarController {
     // the external consumer reuses the same context multiple times.
     // This also allows to add properties without polluting the context.
     // Note this can't be null-ed or deleted once a query is done, because it's
-    // used by handleDeleteEntry and handleKeyNavigation, that can run after
+    // used by #dismissSelectedResult and handleKeyNavigation, that can run after
     // a query is cancelled or finished.
     let contextWrapper = (this._lastQueryContextWrapper = { queryContext });
 
@@ -158,6 +154,10 @@ export class UrlbarController {
    * can't be cancelled.
    */
   cancelQuery() {
+    // We must clear the pause impression timer in any case, even if the query
+    // already finished.
+    this.engagementEvent.clearPauseImpressionTimer();
+
     // If the query finished already, don't handle cancel.
     if (!this._lastQueryContextWrapper || this._lastQueryContextWrapper.done) {
       return;
@@ -185,6 +185,11 @@ export class UrlbarController {
     if (queryContext.lastResultCount < 6 && queryContext.results.length >= 6) {
       TelemetryStopwatch.finish(TELEMETRY_6_FIRST_RESULTS, queryContext);
     }
+
+    this.engagementEvent.startPauseImpressionTimer(
+      queryContext,
+      this.input.getSearchSource()
+    );
 
     if (queryContext.firstResultChanged) {
       // Notify the input so it can make adjustments based on the first result.
@@ -295,10 +300,21 @@ export class UrlbarController {
     }
 
     if (this.view.isOpen && executeAction && this._lastQueryContextWrapper) {
+      // In native inputs on most platforms, Shift+Up/Down moves the caret to the
+      // start/end of the input and changes its selection, so in that case defer
+      // handling to the input instead of changing the view's selection.
+      if (
+        event.shiftKey &&
+        (event.keyCode === KeyEvent.DOM_VK_UP ||
+          event.keyCode === KeyEvent.DOM_VK_DOWN)
+      ) {
+        return;
+      }
+
       let { queryContext } = this._lastQueryContextWrapper;
       let handled = this.view.oneOffSearchButtons.handleKeyDown(
         event,
-        this.view.visibleElementCount,
+        this.view.visibleRowCount,
         this.view.allowEmptySelection,
         queryContext.searchString
       );
@@ -313,11 +329,16 @@ export class UrlbarController {
           if (this.view.isOpen) {
             this.view.close();
           } else {
-            this.input.handleRevert();
+            this.input.handleRevert(true);
           }
         }
         event.preventDefault();
         break;
+      case KeyEvent.DOM_VK_SPACE:
+        if (!this.view.shouldSpaceActivateSelectedElement()) {
+          break;
+        }
+      // Fall through, we want the SPACE key to activate this element.
       case KeyEvent.DOM_VK_RETURN:
         if (executeAction) {
           this.input.handleCommand(event);
@@ -427,7 +448,7 @@ export class UrlbarController {
           break;
         }
         if (event.shiftKey) {
-          if (!executeAction || this.handleDeleteEntry()) {
+          if (!executeAction || this.#dismissSelectedResult(event)) {
             event.preventDefault();
           }
         } else if (executeAction) {
@@ -440,13 +461,15 @@ export class UrlbarController {
   /**
    * Tries to initialize a speculative connection on a result.
    * Speculative connections are only supported for a subset of all the results.
-   * @param {UrlbarResult} result Tthe result to speculative connect to.
-   * @param {UrlbarQueryContext} context The queryContext
-   * @param {string} reason Reason for the speculative connect request.
-   * @note speculative connect to:
+   *
+   * Speculative connect to:
    *  - Search engine heuristic results
    *  - autofill results
    *  - http/https results
+   *
+   * @param {UrlbarResult} result The result to speculative connect to.
+   * @param {UrlbarQueryContext} context The queryContext
+   * @param {string} reason Reason for the speculative connect request.
    */
   speculativeConnect(result, context, reason) {
     // Never speculative connect in private contexts.
@@ -577,104 +600,79 @@ export class UrlbarController {
   }
 
   /**
-   * Handles deletion of results from the last query context and the view. There
-   * are two kinds of results that can be deleted:
+   * Triggers a "dismiss" engagement for the selected result if one is selected
+   * and it's not the heuristic. Providers that can respond to dismissals of
+   * their results should implement `onEngagement()`, handle the dismissal, and
+   * call `controller.removeResult()`.
    *
-   * - Results for which `provider.blockResult()` returns true
-   * - Results whose source is `HISTORY` are handled specially by this method
-   *   and can always be removed
-   *
-   * No other results can be deleted and this method will ignore them.
-   *
-   * @param {UrlbarResult} [result]
-   *   The result to delete. If given, it must be present in the controller's
-   *   most recent query context. If not given, the currently selected result
-   *   in the view is used.
+   * @param {Event} event
+   *   The event that triggered dismissal.
    * @returns {boolean}
-   *   Returns true if the result was deleted and false if not.
+   *   Whether providers were notified about the engagement. Providers will not
+   *   be notified if there is no selected result or the selected result is the
+   *   heuristic, since the heuristic result cannot be dismissed.
    */
-  handleDeleteEntry(result = undefined) {
+  #dismissSelectedResult(event) {
     if (!this._lastQueryContextWrapper) {
-      Cu.reportError("Cannot delete - the latest query is not present");
+      console.error("Cannot dismiss selected result, last query not present");
       return false;
     }
     let { queryContext } = this._lastQueryContextWrapper;
 
-    if (!result) {
-      // No result specified, so use the currently selected result.
-      let { selectedElement } = this.input.view;
-      if (selectedElement?.classList.contains("urlbarView-button")) {
-        // For results with buttons, delete them only when the main part of the
-        // row is selected, not a button.
-        return false;
-      }
-      result = this.input.view.selectedResult;
+    let { selectedElement } = this.input.view;
+    if (selectedElement?.classList.contains("urlbarView-button")) {
+      // For results with buttons, delete them only when the main part of the
+      // row is selected, not a button.
+      return false;
     }
 
+    let result = this.input.view.selectedResult;
     if (!result || result.heuristic) {
       return false;
     }
 
-    // First call `provider.blockResult()`.
-    let provider = lazy.UrlbarProvidersManager.getProvider(result.providerName);
-    if (!provider) {
-      Cu.reportError(`Provider not found: ${result.providerName}`);
-    }
-    let blockedByProvider = provider?.tryMethod(
-      "blockResult",
-      queryContext,
-      result
-    );
+    this.engagementEvent.record(event, {
+      result,
+      selType: "dismiss",
+      searchString: queryContext.searchString,
+    });
 
-    // If the provider didn't block the result, then continue only if the result
-    // is from history.
-    if (
-      !blockedByProvider &&
-      result.source != lazy.UrlbarUtils.RESULT_SOURCE.HISTORY
-    ) {
-      return false;
+    return true;
+  }
+
+  /**
+   * Removes a result from the current query context and notifies listeners.
+   * Heuristic results cannot be removed.
+   *
+   * @param {UrlbarResult} result
+   *   The result to remove.
+   */
+  removeResult(result) {
+    if (!result || result.heuristic) {
+      return;
     }
+
+    if (!this._lastQueryContextWrapper) {
+      console.error("Cannot remove result, last query not present");
+      return;
+    }
+    let { queryContext } = this._lastQueryContextWrapper;
 
     let index = queryContext.results.indexOf(result);
     if (index < 0) {
-      Cu.reportError("Failed to find the selected result in the results");
-      return false;
+      console.error("Failed to find the selected result in the results");
+      return;
     }
 
     queryContext.results.splice(index, 1);
     this.notify(NOTIFICATIONS.QUERY_RESULT_REMOVED, index);
+  }
 
-    if (blockedByProvider) {
-      return true;
-    }
-
-    // Form history or url restyled as search.
-    if (result.type == lazy.UrlbarUtils.RESULT_TYPE.SEARCH) {
-      if (!queryContext.formHistoryName) {
-        return false;
-      }
-      // Generate the search url to remove it from browsing history.
-      let { url } = lazy.UrlbarUtils.getUrlFromResult(result);
-      lazy.PlacesUtils.history.remove(url).catch(Cu.reportError);
-      // Now remove form history.
-      lazy.FormHistory.update(
-        {
-          op: "remove",
-          fieldname: queryContext.formHistoryName,
-          value: result.payload.suggestion,
-        },
-        {
-          handleError(error) {
-            Cu.reportError(`Removing form history failed: ${error}`);
-          },
-        }
-      );
-      return true;
-    }
-
-    // Remove browsing history entries from Places.
-    lazy.PlacesUtils.history.remove(result.payload.url).catch(Cu.reportError);
-    return true;
+  /**
+   * Clear the previous query context cache.
+   */
+  clearLastQueryContextCache() {
+    this._lastQueryContextWrapper = null;
   }
 
   /**
@@ -690,7 +688,7 @@ export class UrlbarController {
         try {
           listener[name](...params);
         } catch (ex) {
-          Cu.reportError(ex);
+          console.error(ex);
         }
       }
     }
@@ -704,13 +702,15 @@ export class UrlbarController {
  * potentially be extended to other categories.
  * To record an event, invoke start() with a starting event, then either
  * invoke record() with a final event, or discard() to drop the recording.
+ *
  * @see Events.yaml
  */
 class TelemetryEvent {
   constructor(controller, category) {
     this._controller = controller;
     this._category = category;
-    this._isPrivate = controller.input.isPrivate;
+    this.#exposureResultTypes = new Set();
+    this.#beginObservingPingPrefs();
   }
 
   /**
@@ -718,36 +718,50 @@ class TelemetryEvent {
    * After this has been invoked, any subsequent calls to start() are ignored,
    * until either record() or discard() are invoked. Thus, it is safe to keep
    * invoking this on every input event as the user is typing, for example.
+   *
    * @param {event} event A DOM event.
    * @param {string} [searchString] Pass a search string related to the event if
    *        you have one.  The event by itself sometimes isn't enough to
    *        determine the telemetry details we should record.
-   * @note This should never throw, or it may break the urlbar.
-   * @see the in-tree urlbar telemetry documentation.
+   * @throws This should never throw, or it may break the urlbar.
+   * @see {@link https://firefox-source-docs.mozilla.org/browser/urlbar/telemetry.html}
    */
   start(event, searchString = null) {
-    // In case of a "returned" interaction ongoing, the user may either
-    // continue the search, or restart with a new search string. In that case
-    // we want to change the interaction type to "restarted".
-    // Detecting all the possible ways of clearing the input would be tricky,
-    // thus this makes a guess by just checking the first char matches; even if
-    // the user backspaces a part of the string, we still count that as a
-    // "returned" interaction.
-    if (
-      this._startEventInfo &&
-      this._startEventInfo.interactionType == "returned" &&
-      (!searchString || this._startEventInfo.searchString[0] != searchString[0])
-    ) {
-      this._startEventInfo.interactionType = "restarted";
+    if (this._startEventInfo) {
+      if (this._startEventInfo.interactionType == "topsites") {
+        // If the most recent event came from opening the results pane with an
+        // empty string replace the interactionType (that would be "topsites")
+        // with one for the current event to better measure the user flow.
+        this._startEventInfo.interactionType = this._getStartInteractionType(
+          event,
+          searchString
+        );
+        this._startEventInfo.searchString = searchString;
+      } else if (
+        this._startEventInfo.interactionType == "returned" &&
+        (!searchString ||
+          this._startEventInfo.searchString[0] != searchString[0])
+      ) {
+        // In case of a "returned" interaction ongoing, the user may either
+        // continue the search, or restart with a new search string. In that case
+        // we want to change the interaction type to "restarted".
+        // Detecting all the possible ways of clearing the input would be tricky,
+        // thus this makes a guess by just checking the first char matches; even if
+        // the user backspaces a part of the string, we still count that as a
+        // "returned" interaction.
+        this._startEventInfo.interactionType = "restarted";
+      }
+
+      // start is invoked on a user-generated event, but we only count the first
+      // one.  Once an engagement or abandoment happens, we clear _startEventInfo.
+      return;
     }
 
-    // start is invoked on a user-generated event, but we only count the first
-    // one.  Once an engagement or abandoment happens, we clear _startEventInfo.
-    if (!this._category || this._startEventInfo) {
+    if (!this._category) {
       return;
     }
     if (!event) {
-      Cu.reportError("Must always provide an event");
+      console.error("Must always provide an event");
       return;
     }
     const validEvents = [
@@ -761,35 +775,22 @@ class TelemetryEvent {
       "focus",
     ];
     if (!validEvents.includes(event.type)) {
-      Cu.reportError("Can't start recording from event type: " + event.type);
+      console.error("Can't start recording from event type: ", event.type);
       return;
-    }
-
-    let interactionType = "topsites";
-    if (event.interactionType) {
-      interactionType = event.interactionType;
-    } else if (event.type == "input") {
-      interactionType = lazy.UrlbarUtils.isPasteEvent(event)
-        ? "pasted"
-        : "typed";
-    } else if (event.type == "drop") {
-      interactionType = "dropped";
-    } else if (searchString) {
-      interactionType = "typed";
     }
 
     this._startEventInfo = {
       timeStamp: event.timeStamp || Cu.now(),
-      interactionType,
+      interactionType: this._getStartInteractionType(event, searchString),
       searchString,
     };
 
     let { queryContext } = this._controller._lastQueryContextWrapper || {};
-
     this._controller.manager.notifyEngagementChange(
-      this._isPrivate,
       "start",
-      queryContext
+      queryContext,
+      {},
+      this._controller
     );
   }
 
@@ -798,51 +799,115 @@ class TelemetryEvent {
    * When the user picks a result from a search through the mouse or keyboard,
    * an engagement event is recorded. If instead the user abandons a search, by
    * blurring the input field, an abandonment event is recorded.
-   * @param {event} [event] A DOM event.
+   *
+   * On return, `details.isSessionOngoing` will be set to true if the engagement
+   * did not end the search session. Not all engagements end the session. The
+   * session remains ongoing when certain commands are picked (like dismissal)
+   * and results that enter search mode are picked.
+   *
+   * @param {event} [event]
+   *        A DOM event.
+   *        Note: event can be null, that usually happens for paste&go or drop&go.
+   *        If there's no _startEventInfo this is a no-op.
    * @param {object} details An object describing action details.
-   * @param {string} details.searchString The user's search string. Note that
+   * @param {string} [details.searchString] The user's search string. Note that
    *        this string is not sent with telemetry data. It is only used
    *        locally to discern other data, such as the number of characters and
    *        words in the string.
-   * @param {string} details.selIndex Index of the selected result, undefined
-   *        for "blur".
-   * @param {string} details.selType type of the selected element, undefined
+   * @param {string} [details.selType] type of the selected element, undefined
    *        for "blur". One of "unknown", "autofill", "visiturl", "bookmark",
-   *        "history", "keyword", "searchengine", "searchsuggestion",
-   *        "switchtab", "remotetab", "extension", "oneoff".
-   * @param {string} details.provider The name of the provider for the selected
-   *        result.
-   * @note event can be null, that usually happens for paste&go or drop&go.
-   *       If there's no _startEventInfo this is a no-op.
+   *        "help", "history", "keyword", "searchengine", "searchsuggestion",
+   *        "switchtab", "remotetab", "extension", "oneoff", "dismiss".
+   * @param {UrlbarResult} [details.result] The engaged result. This should be
+   *        set to the result related to the picked element.
+   * @param {DOMElement} [details.element] The picked view element.
    */
   record(event, details) {
+    this.clearPauseImpressionTimer();
+
     // This should never throw, or it may break the urlbar.
     try {
       this._internalRecord(event, details);
     } catch (ex) {
-      Cu.reportError("Could not record event: " + ex);
+      console.error("Could not record event: ", ex);
     } finally {
-      this._startEventInfo = null;
-      this._discarded = false;
+      // Reset the start event info except for engagements that do not end the
+      // search session. In that case, the view stays open and further
+      // engagements are possible and should be recorded when they occur.
+      // (`details.isSessionOngoing` is not a param; rather, it's set by
+      // `_internalRecord()`.)
+      if (!details.isSessionOngoing) {
+        this._startEventInfo = null;
+        this._discarded = false;
+      }
     }
   }
 
+  /**
+   * Clear the pause impression timer started by startPauseImpressionTimer().
+   */
+  clearPauseImpressionTimer() {
+    lazy.clearTimeout(this._pauseImpressionTimer);
+  }
+
+  /**
+   * Start a timer that records the pause impression telemetry for given context.
+   * The telemetry will be recorded after
+   * "browser.urlbar.searchEngagementTelemetry.pauseImpressionIntervalMs" ms.
+   * If want to clear this timer, please use clearPauseImpressionTimer().
+   *
+   * @param {UrlbarQueryContext} queryContext
+   *        The query details that will be recorded as pause impression telemetry.
+   * @param {string} searchSource
+   *        The seach source that will be recorded as pause impression telemetry.
+   */
+  startPauseImpressionTimer(queryContext, searchSource) {
+    if (this._impressionStartEventInfo === this._startEventInfo) {
+      // Already took an impression telemetry for this session.
+      return;
+    }
+
+    this.clearPauseImpressionTimer();
+    this._pauseImpressionTimer = lazy.setTimeout(() => {
+      let { numChars, numWords, searchWords } = this._parseSearchString(
+        queryContext.searchString
+      );
+      this._recordSearchEngagementTelemetry(
+        queryContext,
+        "impression",
+        this._startEventInfo,
+        {
+          reason: "pause",
+          numChars,
+          numWords,
+          searchWords,
+          searchSource,
+        }
+      );
+
+      this._impressionStartEventInfo = this._startEventInfo;
+    }, lazy.UrlbarPrefs.get("searchEngagementTelemetry.pauseImpressionIntervalMs"));
+  }
+
   _internalRecord(event, details) {
-    if (!this._category || !this._startEventInfo) {
-      if (this._discarded && this._category) {
+    const startEventInfo = this._startEventInfo;
+
+    if (!this._category || !startEventInfo) {
+      if (this._discarded && this._category && details?.selType !== "dismiss") {
         let { queryContext } = this._controller._lastQueryContextWrapper || {};
         this._controller.manager.notifyEngagementChange(
-          this._isPrivate,
           "discard",
-          queryContext
+          queryContext,
+          {},
+          this._controller
         );
       }
       return;
     }
     if (
       !event &&
-      this._startEventInfo.interactionType != "pasted" &&
-      this._startEventInfo.interactionType != "dropped"
+      startEventInfo.interactionType != "pasted" &&
+      startEventInfo.interactionType != "dropped"
     ) {
       // If no event is passed, we must be executing either paste&go or drop&go.
       throw new Error("Event must be defined, unless input was pasted/dropped");
@@ -851,26 +916,96 @@ class TelemetryEvent {
       throw new Error("Invalid event details: " + details);
     }
 
+    let action;
+    let skipLegacyTelemetry = false;
+    if (!event) {
+      action =
+        startEventInfo.interactionType == "dropped" ? "drop_go" : "paste_go";
+    } else if (event.type == "blur") {
+      action = "blur";
+    } else if (
+      details.element?.dataset.command &&
+      // The "help" selType is recognized by legacy telemetry, and `action`
+      // should be set to either "click" or "enter" depending on whether the
+      // event is a mouse event, so ignore "help" here.
+      details.element.dataset.command != "help"
+    ) {
+      action = details.element.dataset.command;
+      skipLegacyTelemetry = true;
+    } else if (details.selType == "dismiss") {
+      action = "dismiss";
+      skipLegacyTelemetry = true;
+    } else if (MouseEvent.isInstance(event)) {
+      action = event.target.id == "urlbar-go-button" ? "go_button" : "click";
+    } else {
+      action = "enter";
+    }
+
+    let method = action == "blur" ? "abandonment" : "engagement";
+
+    if (method == "engagement") {
+      // Not all engagements end the search session. The session remains ongoing
+      // when certain commands are picked (like dismissal) and results that
+      // enter search mode are picked. We should find a generalized way to
+      // determine this instead of listing all the cases like this.
+      details.isSessionOngoing = !!(
+        ["dismiss", "inaccurate_location", "show_less_frequently"].includes(
+          details.selType
+        ) || details.result?.payload.providesSearchMode
+      );
+    }
+
+    // numWords is not a perfect measurement, since it will return an incorrect
+    // value for languages that do not use spaces or URLs containing spaces in
+    // its query parameters, for example.
+    let { numChars, numWords, searchWords } = this._parseSearchString(
+      details.searchString
+    );
+
+    details.provider = details.result?.providerName;
+    details.selIndex = details.result?.rowIndex ?? -1;
+
+    let { queryContext } = this._controller._lastQueryContextWrapper || {};
+
+    this._recordSearchEngagementTelemetry(
+      queryContext,
+      method,
+      startEventInfo,
+      {
+        action,
+        numChars,
+        numWords,
+        searchWords,
+        provider: details.provider,
+        searchSource: details.searchSource,
+        searchMode: details.searchMode,
+        selectedElement: details.element,
+        selIndex: details.selIndex,
+        selType: details.selType,
+      }
+    );
+
+    if (skipLegacyTelemetry) {
+      this._controller.manager.notifyEngagementChange(
+        method,
+        queryContext,
+        details,
+        this._controller
+      );
+      return;
+    }
+
+    if (action == "go_button") {
+      // Fall back since the conventional telemetry dones't support "go_button" action.
+      action = "click";
+    }
+
     let endTime = (event && event.timeStamp) || Cu.now();
-    let startTime = this._startEventInfo.timeStamp || endTime;
+    let startTime = startEventInfo.timeStamp || endTime;
     // Synthesized events in tests may have a bogus timeStamp, causing a
     // subtraction between monotonic and non-monotonic timestamps; that's why
     // abs is necessary here. It should only happen in tests, anyway.
     let elapsed = Math.abs(Math.round(endTime - startTime));
-
-    let action;
-    if (!event) {
-      action =
-        this._startEventInfo.interactionType == "dropped"
-          ? "drop_go"
-          : "paste_go";
-    } else if (event.type == "blur") {
-      action = "blur";
-    } else {
-      action = MouseEvent.isInstance(event) ? "click" : "enter";
-    }
-    let method = action == "blur" ? "abandonment" : "engagement";
-    let value = this._startEventInfo.interactionType;
 
     // Rather than listening to the pref, just update status when we record an
     // event, if the pref changed from the last time.
@@ -880,18 +1015,12 @@ class TelemetryEvent {
       Services.telemetry.setEventRecordingEnabled("urlbar", recordingEnabled);
     }
 
-    // numWords is not a perfect measurement, since it will return an incorrect
-    // value for languages that do not use spaces or URLs containing spaces in
-    // its query parameters, for example.
     let extra = {
       elapsed: elapsed.toString(),
-      numChars: details.searchString.length.toString(),
-      numWords: details.searchString
-        .trim()
-        .split(lazy.UrlbarTokenizer.REGEXP_SPACES)
-        .filter(t => t)
-        .length.toString(),
+      numChars,
+      numWords,
     };
+
     if (method == "engagement") {
       extra.selIndex = details.selIndex.toString();
       extra.selType = details.selType;
@@ -904,7 +1033,7 @@ class TelemetryEvent {
       this._category,
       method,
       action,
-      value,
+      startEventInfo.interactionType,
       extra
     );
 
@@ -915,22 +1044,287 @@ class TelemetryEvent {
       1
     );
 
-    let { queryContext } = this._controller._lastQueryContextWrapper || {};
-
-    if (method === "engagement" && queryContext.results?.[0].autofill) {
+    if (
+      method === "engagement" &&
+      this._controller.view?.visibleResults?.[0]?.autofill
+    ) {
       // Record autofill impressions upon engagement.
       const type = lazy.UrlbarUtils.telemetryTypeFromResult(
-        queryContext.results[0]
+        this._controller.view.visibleResults[0]
       );
       Services.telemetry.scalarAdd(`urlbar.impression.${type}`, 1);
     }
 
     this._controller.manager.notifyEngagementChange(
-      this._isPrivate,
       method,
       queryContext,
-      details
+      details,
+      this._controller
     );
+  }
+
+  _recordSearchEngagementTelemetry(
+    queryContext,
+    method,
+    startEventInfo,
+    {
+      action,
+      numWords,
+      numChars,
+      provider,
+      reason,
+      searchWords,
+      searchSource,
+      searchMode,
+      selectedElement,
+      selIndex,
+      selType,
+    }
+  ) {
+    const browserWindow = this._controller.browserWindow;
+    let sap = "urlbar";
+    if (searchSource === "urlbar-handoff") {
+      sap = "handoff";
+    } else if (
+      browserWindow.isBlankPageURL(browserWindow.gBrowser.currentURI.spec)
+    ) {
+      sap = "urlbar_newtab";
+    } else if (browserWindow.gBrowser.currentURI.schemeIs("moz-extension")) {
+      sap = "urlbar_addonpage";
+    }
+
+    searchMode = searchMode ?? this._controller.input.searchMode;
+
+    // Distinguish user typed search strings from persisted search terms.
+    const interaction = this.#getInteractionType(
+      method,
+      startEventInfo,
+      searchSource,
+      searchWords,
+      searchMode
+    );
+    const search_mode = this.#getSearchMode(searchMode);
+    const currentResults = this._controller.view?.visibleResults ?? [];
+    let numResults = currentResults.length;
+    let groups = currentResults
+      .map(r => lazy.UrlbarUtils.searchEngagementTelemetryGroup(r))
+      .join(",");
+    let results = currentResults
+      .map(r => lazy.UrlbarUtils.searchEngagementTelemetryType(r))
+      .join(",");
+
+    let eventInfo;
+    if (method === "engagement") {
+      const selected_result = lazy.UrlbarUtils.searchEngagementTelemetryType(
+        currentResults[selIndex],
+        selType
+      );
+      const selected_result_subtype =
+        lazy.UrlbarUtils.searchEngagementTelemetrySubtype(
+          currentResults[selIndex],
+          selectedElement
+        );
+
+      if (selected_result === "input_field" && !this._controller.view?.isOpen) {
+        numResults = 0;
+        groups = "";
+        results = "";
+      }
+
+      eventInfo = {
+        sap,
+        interaction,
+        search_mode,
+        n_chars: numChars,
+        n_words: numWords,
+        n_results: numResults,
+        selected_result,
+        selected_result_subtype,
+        provider,
+        engagement_type:
+          selType === "help" || selType === "dismiss" ? selType : action,
+        groups,
+        results,
+      };
+    } else if (method === "abandonment") {
+      eventInfo = {
+        sap,
+        interaction,
+        search_mode,
+        n_chars: numChars,
+        n_words: numWords,
+        n_results: numResults,
+        groups,
+        results,
+      };
+    } else if (method === "impression") {
+      eventInfo = {
+        reason,
+        sap,
+        interaction,
+        search_mode,
+        n_chars: numChars,
+        n_words: numWords,
+        n_results: numResults,
+        groups,
+        results,
+      };
+    } else {
+      console.error(`Unknown telemetry event method: ${method}`);
+      return;
+    }
+
+    // First check to see if we can record an exposure event
+    if (
+      (method === "abandonment" || method === "engagement") &&
+      this.#exposureResultTypes.size
+    ) {
+      const exposureResults = Array.from(this.#exposureResultTypes).join(",");
+      this._controller.logger.debug(
+        `exposure event: ${JSON.stringify({ results: exposureResults })}`
+      );
+      Glean.urlbar.exposure.record({ results: exposureResults });
+
+      // reset the provider list on the controller
+      this.#exposureResultTypes.clear();
+    }
+
+    this._controller.logger.info(
+      `${method} event: ${JSON.stringify(eventInfo)}`
+    );
+
+    Glean.urlbar[method].record(eventInfo);
+  }
+
+  /**
+   * Add result type to engagementEvent instance exposureResultTypes Set.
+   *
+   * @param {UrlbarResult} result UrlbarResult to have exposure recorded.
+   */
+  addExposure(result) {
+    if (result.exposureResultType) {
+      this.#exposureResultTypes.add(result.exposureResultType);
+    }
+  }
+
+  #getInteractionType(
+    method,
+    startEventInfo,
+    searchSource,
+    searchWords,
+    searchMode
+  ) {
+    if (searchMode?.entry === "topsites_newtab") {
+      return "topsite_search";
+    }
+
+    let interaction = startEventInfo.interactionType;
+    if (
+      (interaction === "returned" || interaction === "restarted") &&
+      this._isRefined(new Set(searchWords), this.#previousSearchWordsSet)
+    ) {
+      interaction = "refined";
+    }
+
+    if (searchSource === "urlbar-persisted") {
+      switch (interaction) {
+        case "returned": {
+          interaction = "persisted_search_terms";
+          break;
+        }
+        case "restarted":
+        case "refined": {
+          interaction = `persisted_search_terms_${interaction}`;
+          break;
+        }
+      }
+    }
+
+    if (
+      (method === "engagement" &&
+        lazy.UrlbarPrefs.isPersistedSearchTermsEnabled()) ||
+      method === "abandonment"
+    ) {
+      this.#previousSearchWordsSet = new Set(searchWords);
+    } else if (method === "engagement") {
+      this.#previousSearchWordsSet = null;
+    }
+
+    return interaction;
+  }
+
+  #getSearchMode(searchMode) {
+    if (!searchMode) {
+      return "";
+    }
+
+    if (searchMode.engineName) {
+      return "search_engine";
+    }
+
+    const source = lazy.UrlbarUtils.LOCAL_SEARCH_MODES.find(
+      m => m.source == searchMode.source
+    )?.telemetryLabel;
+    return source ?? "unknown";
+  }
+
+  _parseSearchString(searchString) {
+    let numChars = searchString.length.toString();
+    let searchWords = searchString
+      .substring(0, lazy.UrlbarUtils.MAX_TEXT_LENGTH)
+      .trim()
+      .split(lazy.UrlbarTokenizer.REGEXP_SPACES)
+      .filter(t => t);
+    let numWords = searchWords.length.toString();
+
+    return {
+      numChars,
+      numWords,
+      searchWords,
+    };
+  }
+
+  /**
+   * Checks whether re-searched by modifying some of the keywords from the
+   * previous search. Concretely, returns true if there is intersects between
+   * both keywords, otherwise returns false. Also, returns false even if both
+   * are the same.
+   *
+   * @param {Set} currentSet The current keywords.
+   * @param {Set} [previousSet] The previous keywords.
+   * @returns {boolean} true if current searching are refined.
+   */
+  _isRefined(currentSet, previousSet = null) {
+    if (!previousSet) {
+      return false;
+    }
+
+    const intersect = (setA, setB) => {
+      let count = 0;
+      for (const word of setA.values()) {
+        if (setB.has(word)) {
+          count += 1;
+        }
+      }
+      return count > 0 && count != setA.size;
+    };
+
+    return (
+      intersect(currentSet, previousSet) || intersect(previousSet, currentSet)
+    );
+  }
+
+  _getStartInteractionType(event, searchString) {
+    if (event.interactionType) {
+      return event.interactionType;
+    } else if (event.type == "input") {
+      return lazy.UrlbarUtils.isPasteEvent(event) ? "pasted" : "typed";
+    } else if (event.type == "drop") {
+      return "dropped";
+    } else if (searchString) {
+      return "typed";
+    }
+    return "topsites";
   }
 
   /**
@@ -939,6 +1333,7 @@ class TelemetryEvent {
    * no-op.
    */
   discard() {
+    this.clearPauseImpressionTimer();
     if (this._startEventInfo) {
       this._startEventInfo = null;
       this._discarded = true;
@@ -946,27 +1341,62 @@ class TelemetryEvent {
   }
 
   /**
-   * Extracts a telemetry type from an element for event telemetry.
+   * Extracts a telemetry type from a result and the element being interacted
+   * with for event telemetry.
+   *
+   * @param {object} result The element to analyze.
    * @param {Element} element The element to analyze.
    * @returns {string} a string type for the telemetry event.
    */
-  typeFromElement(element) {
+  typeFromElement(result, element) {
     if (!element) {
       return "none";
     }
-    let row = element.closest(".urlbarView-row");
-    if (row.result && row.result.providerName != "UrlbarProviderTopSites") {
-      // Element handlers go here.
-      if (element.classList.contains("urlbarView-button-help")) {
-        return row.result.type == lazy.UrlbarUtils.RESULT_TYPE.TIP
-          ? "tiphelp"
-          : "help";
-      }
-      if (element.classList.contains("urlbarView-button-block")) {
-        return "block";
-      }
+    if (
+      element.classList.contains("urlbarView-button-help") ||
+      element.dataset.command == "help"
+    ) {
+      return result?.type == lazy.UrlbarUtils.RESULT_TYPE.TIP
+        ? "tiphelp"
+        : "help";
+    }
+    if (
+      element.classList.contains("urlbarView-button-block") ||
+      element.dataset.command == "dismiss"
+    ) {
+      return "block";
     }
     // Now handle the result.
-    return lazy.UrlbarUtils.telemetryTypeFromResult(row.result);
+    return lazy.UrlbarUtils.telemetryTypeFromResult(result);
   }
+
+  /**
+   * Reset the internal state. This function is used for only when testing.
+   */
+  reset() {
+    this.#previousSearchWordsSet = null;
+  }
+
+  #PING_PREFS = {
+    maxRichResults: Glean.urlbar.prefMaxResults,
+    "suggest.topsites": Glean.urlbar.prefSuggestTopsites,
+  };
+
+  #beginObservingPingPrefs() {
+    for (const p of Object.keys(this.#PING_PREFS)) {
+      this.onPrefChanged(p);
+    }
+    lazy.UrlbarPrefs.addObserver(this);
+  }
+
+  onPrefChanged(pref) {
+    const metric = this.#PING_PREFS[pref];
+    if (metric) {
+      metric.set(lazy.UrlbarPrefs.get(pref));
+    }
+  }
+
+  #previousSearchWordsSet = null;
+
+  #exposureResultTypes;
 }

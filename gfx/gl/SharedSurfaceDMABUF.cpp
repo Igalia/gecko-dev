@@ -10,6 +10,7 @@
 #include "MozFramebuffer.h"
 #include "mozilla/layers/LayersSurfaces.h"  // for SurfaceDescriptor, etc
 #include "mozilla/gfx/gfxVars.h"
+#include "mozilla/widget/DMABufLibWrapper.h"
 
 namespace mozilla::gl {
 
@@ -89,7 +90,7 @@ Maybe<layers::SurfaceDescriptor> SharedSurface_DMABUF::ToSurfaceDescriptor() {
 
 /*static*/
 UniquePtr<SurfaceFactory_DMABUF> SurfaceFactory_DMABUF::Create(GLContext& gl) {
-  if (!widget::GetDMABufDevice()->IsDMABufWebGLEnabled()) {
+  if (!widget::DMABufDevice::IsDMABufWebGLEnabled()) {
     return nullptr;
   }
 
@@ -100,7 +101,7 @@ UniquePtr<SurfaceFactory_DMABUF> SurfaceFactory_DMABUF::Create(GLContext& gl) {
 
   LOGDMABUF(
       ("SurfaceFactory_DMABUF::Create() failed, fallback to SW buffers.\n"));
-  widget::GetDMABufDevice()->DisableDMABufWebGL();
+  widget::DMABufDevice::DisableDMABufWebGL();
   return nullptr;
 }
 

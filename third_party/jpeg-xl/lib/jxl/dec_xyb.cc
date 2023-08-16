@@ -13,12 +13,12 @@
 #include <hwy/highway.h>
 
 #include "lib/jxl/base/compiler_specific.h"
-#include "lib/jxl/base/profiler.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/dec_group_border.h"
 #include "lib/jxl/dec_xyb-inl.h"
 #include "lib/jxl/fields.h"
 #include "lib/jxl/image.h"
+#include "lib/jxl/matrix_ops.h"
 #include "lib/jxl/opsin_params.h"
 #include "lib/jxl/quantizer.h"
 #include "lib/jxl/sanitizers.h"
@@ -27,11 +27,10 @@ namespace jxl {
 namespace HWY_NAMESPACE {
 
 // These templates are not found via ADL.
-using hwy::HWY_NAMESPACE::Broadcast;
+using hwy::HWY_NAMESPACE::MulAdd;
 
 void OpsinToLinearInplace(Image3F* JXL_RESTRICT inout, ThreadPool* pool,
                           const OpsinParams& opsin_params) {
-  PROFILER_FUNC;
   JXL_CHECK_IMAGE_INITIALIZED(*inout, Rect(*inout));
 
   const size_t xsize = inout->xsize();  // not padded
@@ -69,8 +68,6 @@ void OpsinToLinearInplace(Image3F* JXL_RESTRICT inout, ThreadPool* pool,
 void OpsinToLinear(const Image3F& opsin, const Rect& rect, ThreadPool* pool,
                    Image3F* JXL_RESTRICT linear,
                    const OpsinParams& opsin_params) {
-  PROFILER_FUNC;
-
   JXL_ASSERT(SameSize(rect, *linear));
   JXL_CHECK_IMAGE_INITIALIZED(opsin, rect);
 
@@ -135,12 +132,12 @@ void YcbcrToRgb(const Image3F& ycbcr, Image3F* rgb, const Rect& rect) {
     float* g_row = rect.PlaneRow(rgb, 1, y);
     float* b_row = rect.PlaneRow(rgb, 2, y);
     for (size_t x = 0; x < xsize; x += S) {
-      const auto y_vec = Load(df, y_row + x) + c128;
+      const auto y_vec = Add(Load(df, y_row + x), c128);
       const auto cb_vec = Load(df, cb_row + x);
       const auto cr_vec = Load(df, cr_row + x);
-      const auto r_vec = crcr * cr_vec + y_vec;
-      const auto g_vec = cgcr * cr_vec + cgcb * cb_vec + y_vec;
-      const auto b_vec = cbcb * cb_vec + y_vec;
+      const auto r_vec = MulAdd(crcr, cr_vec, y_vec);
+      const auto g_vec = MulAdd(cgcr, cr_vec, MulAdd(cgcb, cb_vec, y_vec));
+      const auto b_vec = MulAdd(cbcb, cb_vec, y_vec);
       Store(r_vec, df, r_row + x);
       Store(g_vec, df, g_row + x);
       Store(b_vec, df, b_row + x);
@@ -238,7 +235,13 @@ Status OutputEncodingInfo::SetFromMetadata(const CodecMetadata& metadata) {
 
 Status OutputEncodingInfo::MaybeSetColorEncoding(
     const ColorEncoding& c_desired) {
-  if (!xyb_encoded || !CanOutputToColorEncoding(c_desired)) {
+  if (c_desired.GetColorSpace() == ColorSpace::kXYB &&
+      ((color_encoding.GetColorSpace() == ColorSpace::kRGB &&
+        color_encoding.primaries != Primaries::kSRGB) ||
+       color_encoding.tf.IsPQ())) {
+    return false;
+  }
+  if (!xyb_encoded && !CanOutputToColorEncoding(c_desired)) {
     return false;
   }
   return SetColorEncoding(c_desired);
@@ -279,11 +282,11 @@ Status OutputEncodingInfo::SetColorEncoding(const ColorEncoding& c_desired) {
                                         c_desired.GetWhitePoint().y,
                                         adapt_to_d50));
       float xyzd50_to_original[9];
-      MatMul(adapt_to_d50, &original_to_xyz[0][0], 3, 3, 3, xyzd50_to_original);
+      Mul3x3Matrix(adapt_to_d50, &original_to_xyz[0][0], xyzd50_to_original);
       JXL_RETURN_IF_ERROR(Inv3x3Matrix(xyzd50_to_original));
       float srgb_to_original[9];
-      MatMul(xyzd50_to_original, srgb_to_xyzd50, 3, 3, 3, srgb_to_original);
-      MatMul(srgb_to_original, orig_inverse_matrix, 3, 3, 3, inverse_matrix);
+      Mul3x3Matrix(xyzd50_to_original, srgb_to_xyzd50, srgb_to_original);
+      Mul3x3Matrix(srgb_to_original, orig_inverse_matrix, inverse_matrix);
       inverse_matrix_is_default = false;
     }
   }
@@ -295,7 +298,7 @@ Status OutputEncodingInfo::SetColorEncoding(const ColorEncoding& c_desired) {
     memcpy(&srgb_to_luma[0], luminances, sizeof(luminances));
     memcpy(&srgb_to_luma[3], luminances, sizeof(luminances));
     memcpy(&srgb_to_luma[6], luminances, sizeof(luminances));
-    MatMul(srgb_to_luma, tmp_inv_matrix, 3, 3, 3, inverse_matrix);
+    Mul3x3Matrix(srgb_to_luma, tmp_inv_matrix, inverse_matrix);
   }
 
   // The internal XYB color space uses absolute luminance, so we scale back the

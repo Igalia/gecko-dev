@@ -5,12 +5,12 @@
 // uses head_http3.js, which uses http2-ca.pem
 "use strict";
 
-/*global inChildProcess, test_flag_priority */
+/* exported inChildProcess, test_flag_priority */
 function inChildProcess() {
   return Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
 }
 
-let Http3Listener = function(
+let Http3Listener = function (
   closure,
   expected_priority,
   expected_incremental,
@@ -28,18 +28,10 @@ function parse_priority_response_header(priority) {
   const priority_array = priority.split(",");
 
   // parse for urgency string
-  const urgency = priority_array.find(element => {
-    if (element.includes("u=")) {
-      return true;
-    }
-  });
+  const urgency = priority_array.find(element => element.includes("u="));
 
   // parse for incremental bool
-  const incremental = !!priority_array.find(element => {
-    if (element == "i") {
-      return true;
-    }
-  });
+  const incremental = !!priority_array.find(element => element == "i");
 
   return [urgency ? urgency : null, incremental];
 }
@@ -52,7 +44,6 @@ Http3Listener.prototype = {
     Assert.equal(request.responseStatus, 200);
 
     let secinfo = request.securityInfo;
-    secinfo.QueryInterface(Ci.nsITransportSecurityInfo);
     Assert.equal(secinfo.resumed, this.resumed);
     Assert.ok(secinfo.serverCert != null);
 

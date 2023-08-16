@@ -1,8 +1,8 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { TabUnloader } = ChromeUtils.import(
-  "resource:///modules/TabUnloader.jsm"
+const { TabUnloader } = ChromeUtils.importESModule(
+  "resource:///modules/TabUnloader.sys.mjs"
 );
 
 const BASE_URL = "https://example.com/browser/browser/modules/test/browser/";
@@ -22,7 +22,7 @@ async function play(tab) {
     }
   );
 
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     let audio = content.document.querySelector("audio");
     await audio.play();
   });
@@ -64,7 +64,7 @@ async function addWebRTCTab(win = window) {
   let popupPromise = new Promise(resolve => {
     win.PopupNotifications.panel.addEventListener(
       "popupshown",
-      function() {
+      function () {
         executeSoon(resolve);
       },
       { once: true }

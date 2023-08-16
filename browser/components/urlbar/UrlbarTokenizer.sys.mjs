@@ -2,22 +2,18 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a tokenizer to be used by the urlbar model.
  * Emitted tokens are objects in the shape { type, value }, where type is one
  * of UrlbarTokenizer.TYPE.
  */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.UrlbarUtils.getLogger({ prefix: "Tokenizer" })
 );
 
@@ -35,7 +31,8 @@ export var UrlbarTokenizer = {
   REGEXP_SINGLE_WORD_HOST: /^[^.:]+$/i,
   REGEXP_HOSTPORT_IP_LIKE: /^(?=(.*[.:].*){2})[a-f0-9\.\[\]:]+$/i,
   // This accepts partial IPv4.
-  REGEXP_HOSTPORT_INVALID_IP: /\.{2,}|\d{5,}|\d{4,}(?![:\]])|^\.|^(\d+\.){4,}\d+$|^\d{4,}$/,
+  REGEXP_HOSTPORT_INVALID_IP:
+    /\.{2,}|\d{5,}|\d{4,}(?![:\]])|^\.|^(\d+\.){4,}\d+$|^\d{4,}$/,
   // This only accepts complete IPv4.
   REGEXP_HOSTPORT_IPV4: /^(\d{1,3}\.){3,}\d{1,3}(:\d+)?$/,
   // This accepts partial IPv6.
@@ -172,10 +169,11 @@ export var UrlbarTokenizer = {
    *
    * @param {string} token
    *        The string token to verify
-   * @param {boolean} [ignoreKnownDomains] If true, the origin doesn't have to be
+   * @param {object} options Options object
+   * @param {boolean} [options.ignoreKnownDomains] If true, the origin doesn't have to be
    *        in the known domain list
-   * @param {boolean} [noIp] If true, the origin cannot be an IP address
-   * @param {boolean} [noPort] If true, the origin cannot have a port number
+   * @param {boolean} [options.noIp] If true, the origin cannot be an IP address
+   * @param {boolean} [options.noPort] If true, the origin cannot have a port number
    * @returns {boolean} whether the token looks like an origin.
    */
   looksLikeOrigin(
@@ -232,13 +230,17 @@ export var UrlbarTokenizer = {
 
   /**
    * Tokenizes the searchString from a UrlbarQueryContext.
+   *
    * @param {UrlbarQueryContext} queryContext
    *        The query context object to tokenize
    * @returns {UrlbarQueryContext} the same query context object with a new
    *          tokens property.
    */
   tokenize(queryContext) {
-    lazy.logger.info("Tokenizing", queryContext);
+    lazy.logger.debug(
+      "Tokenizing search string",
+      JSON.stringify(queryContext.searchString)
+    );
     if (!queryContext.trimmedSearchString) {
       queryContext.tokens = [];
       return queryContext;
@@ -251,7 +253,9 @@ export var UrlbarTokenizer = {
 
   /**
    * Given a token, tells if it's a restriction token.
-   * @param {string} token
+   *
+   * @param {object} token
+   *   The token to check.
    * @returns {boolean} Whether the token is a restriction character.
    */
   isRestrictionToken(token) {
@@ -272,18 +276,28 @@ const CHAR_TO_TYPE_MAP = new Map(
 
 /**
  * Given a search string, splits it into string tokens.
+ *
  * @param {string} searchString
  *        The search string to split
- * @returns {array} An array of string tokens.
+ * @returns {Array} An array of string tokens.
  */
 function splitString(searchString) {
   // The first step is splitting on unicode whitespaces. We ignore whitespaces
   // if the search string starts with "data:", to better support Web developers
   // and compatiblity with other browsers.
   let trimmed = searchString.trim();
-  let tokens = trimmed.startsWith("data:")
-    ? [trimmed]
-    : trimmed.split(UrlbarTokenizer.REGEXP_SPACES);
+  let tokens;
+  if (trimmed.startsWith("data:")) {
+    tokens = [trimmed];
+  } else if (trimmed.length < 500) {
+    tokens = trimmed.split(UrlbarTokenizer.REGEXP_SPACES);
+  } else {
+    // If the string is very long, tokenizing all of it would be expensive. So
+    // we only tokenize a part of it, then let the last token become a
+    // catch-all.
+    tokens = trimmed.substring(0, 500).split(UrlbarTokenizer.REGEXP_SPACES);
+    tokens[tokens.length - 1] += trimmed.substring(500);
+  }
 
   if (!tokens.length) {
     return tokens;
@@ -331,10 +345,10 @@ function splitString(searchString) {
  * Given an array of unfiltered tokens, this function filters them and converts
  * to token objects with a type.
  *
- * @param {array} tokens
+ * @param {Array} tokens
  *        An array of strings, representing search tokens.
- * @returns {array} An array of token objects.
- * @note restriction characters are only considered if they appear at the start
+ * @returns {Array} An array of token objects.
+ * Note: restriction characters are only considered if they appear at the start
  *       or at the end of the tokens list. In case of restriction characters
  *       conflict, the most external ones win. Leading ones win over trailing
  *       ones. Discarded restriction characters are considered text.
@@ -349,6 +363,13 @@ function filterTokens(tokens) {
       lowerCaseValue: token.toLocaleLowerCase(),
       type: UrlbarTokenizer.TYPE.TEXT,
     };
+    // For privacy reasons, we don't want to send a data (or other kind of) URI
+    // to a search engine. So we want to parse any single long token below.
+    if (tokens.length > 1 && token.length > 500) {
+      filtered.push(tokenObj);
+      break;
+    }
+
     let restrictionType = CHAR_TO_TYPE_MAP.get(token);
     if (restrictionType) {
       restrictions.push({ index: i, type: restrictionType });
@@ -404,6 +425,6 @@ function filterTokens(tokens) {
     }
   }
 
-  lazy.logger.info("Filtered Tokens", tokens);
+  lazy.logger.info("Filtered Tokens", filtered);
   return filtered;
 }

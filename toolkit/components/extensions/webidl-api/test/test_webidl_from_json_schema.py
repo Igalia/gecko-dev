@@ -2,26 +2,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys
-
-import mozpack.path as mozpath
-import mozunit
-
 from textwrap import dedent
 
-# Import test helpers module.
-OUR_DIR = mozpath.abspath(mozpath.dirname(__file__))
-sys.path.append(OUR_DIR)
-
-import helpers
+import helpers  # Import test helpers module.
+import mozunit
 
 helpers.setup()
 
 from GenerateWebIDLBindings import (
+    WEBEXT_STUBS_MAPPING,
     APIFunction,
     Schemas,
     WebIDLHelpers,
-    WEBEXT_STUBS_MAPPING,
 )
 
 original_stub_mapping_config = WEBEXT_STUBS_MAPPING.copy()

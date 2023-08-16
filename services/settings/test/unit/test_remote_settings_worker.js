@@ -1,20 +1,20 @@
 /* import-globals-from ../../../common/tests/unit/head_helpers.js */
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
-const { RemoteSettingsWorker } = ChromeUtils.import(
-  "resource://services-settings/RemoteSettingsWorker.jsm"
+const { RemoteSettingsWorker } = ChromeUtils.importESModule(
+  "resource://services-settings/RemoteSettingsWorker.sys.mjs"
 );
-const { RemoteSettingsClient } = ChromeUtils.import(
-  "resource://services-settings/RemoteSettingsClient.jsm"
+const { RemoteSettingsClient } = ChromeUtils.importESModule(
+  "resource://services-settings/RemoteSettingsClient.sys.mjs"
 );
-const { Database } = ChromeUtils.import(
-  "resource://services-settings/Database.jsm"
+const { Database } = ChromeUtils.importESModule(
+  "resource://services-settings/Database.sys.mjs"
 );
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["indexedDB"]);
@@ -51,7 +51,7 @@ add_task(async function test_import_json_dump_into_idb() {
   await RemoteSettingsWorker.importJSONDump("main", "language-dictionaries");
 
   const after = await client.get({ syncIfEmpty: false });
-  Assert.ok(after.length > 0);
+  Assert.ok(!!after.length);
   let lastModifiedStamp = await client.getLastModified();
 
   Assert.equal(

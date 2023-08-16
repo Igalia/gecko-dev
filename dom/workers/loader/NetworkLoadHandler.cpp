@@ -37,10 +37,10 @@ NS_IMPL_ISUPPORTS(NetworkLoadHandler, nsIStreamLoaderObserver,
                   nsIRequestObserver)
 
 NetworkLoadHandler::NetworkLoadHandler(WorkerScriptLoader* aLoader,
-                                       JS::loader::ScriptLoadRequest* aRequest)
+                                       ThreadSafeRequestHandle* aRequestHandle)
     : mLoader(aLoader),
-      mWorkerPrivate(aLoader->mWorkerPrivate),
-      mLoadContext(aRequest->GetWorkerLoadContext()) {
+      mWorkerRef(aLoader->mWorkerRef),
+      mRequestHandle(aRequestHandle) {
   MOZ_ASSERT(mLoader);
 
   // Worker scripts are always decoded as UTF-8 per spec.
@@ -53,8 +53,13 @@ NetworkLoadHandler::OnStreamComplete(nsIStreamLoader* aLoader,
                                      nsISupports* aContext, nsresult aStatus,
                                      uint32_t aStringLen,
                                      const uint8_t* aString) {
+  // If we have cancelled, or we have no mRequest, it means that the loader has
+  // shut down and we can exit early. If the cancel result is still NS_OK
+  if (mRequestHandle->IsEmpty()) {
+    return NS_OK;
+  }
   nsresult rv = DataReceivedFromNetwork(aLoader, aStatus, aStringLen, aString);
-  return mLoader->OnStreamComplete(mLoadContext->mRequest, rv);
+  return mRequestHandle->OnStreamComplete(rv);
 }
 
 nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
@@ -62,13 +67,21 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
                                                      uint32_t aStringLen,
                                                      const uint8_t* aString) {
   AssertIsOnMainThread();
+  MOZ_ASSERT(!mRequestHandle->IsEmpty());
+  WorkerLoadContext* loadContext = mRequestHandle->GetContext();
 
-  if (mLoader->IsCancelled()) {
-    return mLoader->mCancelMainThread.ref();
+  if (!loadContext->mChannel) {
+    return NS_BINDING_ABORTED;
   }
+
+  loadContext->mChannel = nullptr;
 
   if (NS_FAILED(aStatus)) {
     return aStatus;
+  }
+
+  if (mRequestHandle->IsCancelled()) {
+    return mRequestHandle->GetCancelResult();
   }
 
   NS_ASSERTION(aString, "This should never be null!");
@@ -90,17 +103,17 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
     return rv;
   }
 
-  nsIPrincipal* principal = mWorkerPrivate->GetPrincipal();
+  nsIPrincipal* principal = mWorkerRef->Private()->GetPrincipal();
   if (!principal) {
-    WorkerPrivate* parentWorker = mWorkerPrivate->GetParent();
+    WorkerPrivate* parentWorker = mWorkerRef->Private()->GetParent();
     MOZ_ASSERT(parentWorker, "Must have a parent!");
     principal = parentWorker->GetPrincipal();
   }
 
 #ifdef DEBUG
-  if (mLoader->IsMainWorkerScript()) {
+  if (loadContext->IsTopLevel()) {
     nsCOMPtr<nsIPrincipal> loadingPrincipal =
-        mWorkerPrivate->GetLoadingPrincipal();
+        mWorkerRef->Private()->GetLoadingPrincipal();
     // if we are not in a ServiceWorker, and the principal is not null, then
     // the loading principal must subsume the worker principal if it is not a
     // nullPrincipal (sandbox).
@@ -114,8 +127,8 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
   // same-origin checks on them so we should be able to see their errors.
   // Note that for data: url, where we allow it through the same-origin check
   // but then give it a different origin.
-  mLoadContext->mMutedErrorFlag.emplace(!mLoader->IsMainWorkerScript() &&
-                                        !principal->Subsumes(channelPrincipal));
+  loadContext->mMutedErrorFlag.emplace(!loadContext->IsTopLevel() &&
+                                       !principal->Subsumes(channelPrincipal));
 
   // Make sure we're not seeing the result of a 404 or something by checking
   // the 'requestSucceeded' attribute on the http channel.
@@ -142,28 +155,40 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
 
     nsAutoCString sourceMapURL;
     if (nsContentUtils::GetSourceMapURL(httpChannel, sourceMapURL)) {
-      mLoadContext->mRequest->mSourceMapURL =
+      loadContext->mRequest->mSourceMapURL =
           Some(NS_ConvertUTF8toUTF16(sourceMapURL));
     }
   }
 
   // May be null.
-  Document* parentDoc = mWorkerPrivate->GetDocument();
+  Document* parentDoc = mWorkerRef->Private()->GetDocument();
 
   // Set the Source type to "text" for decoding.
-  mLoadContext->mRequest->SetTextSource();
+  loadContext->mRequest->SetTextSource();
 
   // Use the regular ScriptDecoder Decoder for this grunt work! Should be just
   // fine because we're running on the main thread.
-  rv = mDecoder->DecodeRawData(mLoadContext->mRequest, aString, aStringLen,
+  rv = mDecoder->DecodeRawData(loadContext->mRequest, aString, aStringLen,
                                /* aEndOfStream = */ true);
   NS_ENSURE_SUCCESS(rv, rv);
 
-  if (!mLoadContext->mRequest->ScriptTextLength()) {
+  if (!loadContext->mRequest->ScriptTextLength()) {
     nsContentUtils::ReportToConsole(nsIScriptError::warningFlag, "DOM"_ns,
                                     parentDoc, nsContentUtils::eDOM_PROPERTIES,
                                     "EmptyWorkerSourceWarning");
   }
+
+  // For modules, we need to store the base URI on the module request object,
+  // rather than on the worker private (as we do for classic scripts). This is
+  // because module loading is shared across multiple components, with
+  // ScriptLoadRequests being the common structure among them. This specific
+  // use of the base url is used when resolving the module specifier for child
+  // modules.
+  nsCOMPtr<nsIURI> uri;
+  rv = channel->GetOriginalURI(getter_AddRefs(uri));
+  NS_ENSURE_SUCCESS(rv, rv);
+
+  channel->GetURI(getter_AddRefs(loadContext->mRequest->mBaseURL));
 
   // Figure out what we actually loaded.
   nsCOMPtr<nsIURI> finalURI;
@@ -180,24 +205,26 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
       // in case of errors, and is used for debugging.
       // The full URL shouldn't be exposed to the debugger if cross origin.
       // See Bug 1634872.
-      mLoadContext->mRequest->mURL = filename;
+      loadContext->mRequest->mURL = filename;
     }
   }
 
   // Update the principal of the worker and its base URI if we just loaded the
   // worker's primary script.
-  if (mLoader->IsMainWorkerScript()) {
+  bool isDynamic = loadContext->mRequest->IsModuleRequest() &&
+                   loadContext->mRequest->AsModuleRequest()->IsDynamicImport();
+  if (loadContext->IsTopLevel() && !isDynamic) {
     // Take care of the base URI first.
-    mWorkerPrivate->SetBaseURI(finalURI);
+    mWorkerRef->Private()->SetBaseURI(finalURI);
 
     // Store the channel info if needed.
-    mWorkerPrivate->InitChannelInfo(channel);
+    mWorkerRef->Private()->InitChannelInfo(channel);
 
     // Our final channel principal should match the loading principal
     // in terms of the origin.  This used to be an assert, but it seems
     // there are some rare cases where this check can fail in practice.
     // Perhaps some browser script setting nsIChannel.owner, etc.
-    NS_ENSURE_TRUE(mWorkerPrivate->FinalChannelPrincipalIsValid(channel),
+    NS_ENSURE_TRUE(mWorkerRef->Private()->FinalChannelPrincipalIsValid(channel),
                    NS_ERROR_FAILURE);
 
     // However, we must still override the principal since the nsIPrincipal
@@ -205,26 +232,26 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
     // URL must exactly match the final worker script URL in order to
     // properly set the referrer header on fetch/xhr requests.  If bug 1340694
     // is ever fixed this can be removed.
-    rv = mWorkerPrivate->SetPrincipalsAndCSPFromChannel(channel);
+    rv = mWorkerRef->Private()->SetPrincipalsAndCSPFromChannel(channel);
     NS_ENSURE_SUCCESS(rv, rv);
 
-    nsCOMPtr<nsIContentSecurityPolicy> csp = mWorkerPrivate->GetCSP();
+    nsCOMPtr<nsIContentSecurityPolicy> csp = mWorkerRef->Private()->GetCsp();
     // We did inherit CSP in bug 1223647. If we do not already have a CSP, we
     // should get it from the HTTP headers on the worker script.
     if (!csp) {
-      rv = mWorkerPrivate->SetCSPFromHeaderValues(tCspHeaderValue,
-                                                  tCspROHeaderValue);
+      rv = mWorkerRef->Private()->SetCSPFromHeaderValues(tCspHeaderValue,
+                                                         tCspROHeaderValue);
       NS_ENSURE_SUCCESS(rv, rv);
     } else {
-      csp->EnsureEventTarget(mWorkerPrivate->MainThreadEventTarget());
+      csp->EnsureEventTarget(mWorkerRef->Private()->MainThreadEventTarget());
     }
 
-    mWorkerPrivate->UpdateReferrerInfoFromHeader(tRPHeaderCValue);
+    mWorkerRef->Private()->UpdateReferrerInfoFromHeader(tRPHeaderCValue);
 
-    WorkerPrivate* parent = mWorkerPrivate->GetParent();
+    WorkerPrivate* parent = mWorkerRef->Private()->GetParent();
     if (parent) {
       // XHR Params Allowed
-      mWorkerPrivate->SetXHRParamsAllowed(parent->XHRParamsAllowed());
+      mWorkerRef->Private()->SetXHRParamsAllowed(parent->XHRParamsAllowed());
     }
 
     nsCOMPtr<nsILoadInfo> chanLoadInfo = channel->LoadInfo();
@@ -239,9 +266,9 @@ nsresult NetworkLoadHandler::DataReceivedFromNetwork(nsIStreamLoader* aLoader,
     //
     // https://github.com/w3c/ServiceWorker/issues/1261
     //
-    if (IsBlobURI(mWorkerPrivate->GetBaseURI())) {
+    if (IsBlobURI(mWorkerRef->Private()->GetBaseURI())) {
       MOZ_DIAGNOSTIC_ASSERT(mLoader->GetController().isNothing());
-      mLoader->SetController(mWorkerPrivate->GetParentController());
+      mLoader->SetController(mWorkerRef->Private()->GetParentController());
     }
   }
 
@@ -261,10 +288,12 @@ NetworkLoadHandler::OnStartRequest(nsIRequest* aRequest) {
 
 nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   AssertIsOnMainThread();
+  MOZ_ASSERT(!mRequestHandle->IsEmpty());
+  WorkerLoadContext* loadContext = mRequestHandle->GetContext();
 
   // If one load info cancels or hits an error, it can race with the start
   // callback coming from another load info.
-  if (mLoader->IsCancelled()) {
+  if (mRequestHandle->IsCancelled()) {
     return NS_ERROR_FAILURE;
   }
 
@@ -277,20 +306,21 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   // "Extract a MIME type from the response’s header list. If this MIME type
   // (ignoring parameters) is not a JavaScript MIME type, return a network
   // error."
-  if (mWorkerPrivate->IsServiceWorker()) {
+  if (mWorkerRef->Private()->IsServiceWorker()) {
     nsAutoCString mimeType;
     channel->GetContentType(mimeType);
 
     if (!nsContentUtils::IsJavascriptMIMEType(
             NS_ConvertUTF8toUTF16(mimeType))) {
-      const nsCString& scope =
-          mWorkerPrivate->GetServiceWorkerRegistrationDescriptor().Scope();
+      const nsCString& scope = mWorkerRef->Private()
+                                   ->GetServiceWorkerRegistrationDescriptor()
+                                   .Scope();
 
       ServiceWorkerManager::LocalizeAndReportToAllClients(
           scope, "ServiceWorkerRegisterMimeTypeError2",
           nsTArray<nsString>{
               NS_ConvertUTF8toUTF16(scope), NS_ConvertUTF8toUTF16(mimeType),
-              NS_ConvertUTF8toUTF16(mLoadContext->mRequest->mURL)});
+              NS_ConvertUTF8toUTF16(loadContext->mRequest->mURL)});
 
       return NS_ERROR_DOM_NETWORK_ERR;
     }
@@ -299,12 +329,12 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   // We synthesize the result code, but its never exposed to content.
   SafeRefPtr<mozilla::dom::InternalResponse> ir =
       MakeSafeRefPtr<mozilla::dom::InternalResponse>(200, "OK"_ns);
-  ir->SetBody(mLoadContext->mCacheReadStream,
+  ir->SetBody(loadContext->mCacheReadStream,
               InternalResponse::UNKNOWN_BODY_SIZE);
 
   // Drop our reference to the stream now that we've passed it along, so it
   // doesn't hang around once the cache is done with it and keep data alive.
-  mLoadContext->mCacheReadStream = nullptr;
+  loadContext->mCacheReadStream = nullptr;
 
   // Set the channel info of the channel on the response so that it's
   // saved in the cache.
@@ -326,12 +356,12 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   ir->Headers()->FillResponseHeaders(channel);
 
   RefPtr<mozilla::dom::Response> response = new mozilla::dom::Response(
-      mLoadContext->GetCacheCreator()->Global(), std::move(ir), nullptr);
+      mRequestHandle->GetCacheCreator()->Global(), std::move(ir), nullptr);
 
   mozilla::dom::RequestOrUSVString request;
 
-  MOZ_ASSERT(!mLoadContext->mFullURL.IsEmpty());
-  request.SetAsUSVString().ShareOrDependUpon(mLoadContext->mFullURL);
+  MOZ_ASSERT(!loadContext->mFullURL.IsEmpty());
+  request.SetAsUSVString().ShareOrDependUpon(loadContext->mFullURL);
 
   // This JSContext will not end up executing JS code because here there are
   // no ReadableStreams involved.
@@ -339,19 +369,20 @@ nsresult NetworkLoadHandler::PrepareForRequest(nsIRequest* aRequest) {
   jsapi.Init();
 
   ErrorResult error;
-  RefPtr<Promise> cachePromise = mLoadContext->GetCacheCreator()->Cache_()->Put(
-      jsapi.cx(), request, *response, error);
+  RefPtr<Promise> cachePromise =
+      mRequestHandle->GetCacheCreator()->Cache_()->Put(jsapi.cx(), request,
+                                                       *response, error);
   error.WouldReportJSException();
   if (NS_WARN_IF(error.Failed())) {
     return error.StealNSResult();
   }
 
   RefPtr<CachePromiseHandler> promiseHandler =
-      new CachePromiseHandler(mLoader, mLoadContext->mRequest);
+      new CachePromiseHandler(mLoader, mRequestHandle);
   cachePromise->AppendNativeHandler(promiseHandler);
 
-  mLoadContext->mCachePromise.swap(cachePromise);
-  mLoadContext->mCacheStatus = WorkerLoadContext::WritingToCache;
+  loadContext->mCachePromise.swap(cachePromise);
+  loadContext->mCacheStatus = WorkerLoadContext::WritingToCache;
 
   return NS_OK;
 }

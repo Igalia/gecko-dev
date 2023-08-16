@@ -46,27 +46,6 @@ NS_QUERYFRAME_TAIL_INHERITING(nsIFrame)
 #endif
 
 /* virtual */
-nsSize nsPlaceholderFrame::GetXULMinSize(nsBoxLayoutState& aBoxLayoutState) {
-  nsSize size(0, 0);
-  DISPLAY_MIN_SIZE(this, size);
-  return size;
-}
-
-/* virtual */
-nsSize nsPlaceholderFrame::GetXULPrefSize(nsBoxLayoutState& aBoxLayoutState) {
-  nsSize size(0, 0);
-  DISPLAY_PREF_SIZE(this, size);
-  return size;
-}
-
-/* virtual */
-nsSize nsPlaceholderFrame::GetXULMaxSize(nsBoxLayoutState& aBoxLayoutState) {
-  nsSize size(NS_UNCONSTRAINEDSIZE, NS_UNCONSTRAINEDSIZE);
-  DISPLAY_MAX_SIZE(this, size);
-  return size;
-}
-
-/* virtual */
 void nsPlaceholderFrame::AddInlineMinISize(
     gfxContext* aRenderingContext, nsIFrame::InlineMinISizeData* aData) {
   // Override AddInlineMinWith so that *nothing* happens.  In
@@ -120,7 +99,7 @@ void nsPlaceholderFrame::Reflow(nsPresContext* aPresContext,
   // doesn't hold anyways because the default popupgroup goes before than the
   // default tooltip, for example).
   if (HasAnyStateBits(NS_FRAME_FIRST_REFLOW) &&
-      !HasAnyStateBits(PLACEHOLDER_FOR_POPUP) &&
+      !mOutOfFlowFrame->IsMenuPopupFrame() &&
       !mOutOfFlowFrame->HasAnyStateBits(NS_FRAME_FIRST_REFLOW)) {
     // Unfortunately, this can currently happen when the placeholder is in a
     // later continuation or later IB-split sibling than its out-of-flow (as
@@ -150,23 +129,21 @@ void nsPlaceholderFrame::Reflow(nsPresContext* aPresContext,
   aDesiredSize.ClearSize();
 }
 
-static nsIFrame::ChildListID ChildListIDForOutOfFlow(
-    nsFrameState aPlaceholderState, const nsIFrame* aChild) {
+static FrameChildListID ChildListIDForOutOfFlow(nsFrameState aPlaceholderState,
+                                                const nsIFrame* aChild) {
   if (aPlaceholderState & PLACEHOLDER_FOR_FLOAT) {
-    return nsIFrame::kFloatList;
-  }
-  if (aPlaceholderState & PLACEHOLDER_FOR_POPUP) {
-    return nsIFrame::kPopupList;
+    return FrameChildListID::Float;
   }
   if (aPlaceholderState & PLACEHOLDER_FOR_FIXEDPOS) {
-    return nsLayoutUtils::MayBeReallyFixedPos(aChild) ? nsIFrame::kFixedList
-                                                      : nsIFrame::kAbsoluteList;
+    return nsLayoutUtils::MayBeReallyFixedPos(aChild)
+               ? FrameChildListID::Fixed
+               : FrameChildListID::Absolute;
   }
   if (aPlaceholderState & PLACEHOLDER_FOR_ABSPOS) {
-    return nsIFrame::kAbsoluteList;
+    return FrameChildListID::Absolute;
   }
   MOZ_DIAGNOSTIC_ASSERT(false, "unknown list");
-  return nsIFrame::kFloatList;
+  return FrameChildListID::Float;
 }
 
 void nsPlaceholderFrame::DestroyFrom(nsIFrame* aDestructRoot,
@@ -179,7 +156,8 @@ void nsPlaceholderFrame::DestroyFrom(nsIFrame* aDestructRoot,
     // If aDestructRoot is not an ancestor of the out-of-flow frame,
     // then call RemoveFrame on it here.
     // Also destroy it here if it's a popup frame. (Bug 96291)
-    if (HasAnyStateBits(PLACEHOLDER_FOR_POPUP) ||
+    // FIXME(emilio): Is the popup special-case still needed?
+    if (oof->IsMenuPopupFrame() ||
         !nsLayoutUtils::IsProperAncestorFrame(aDestructRoot, oof)) {
       ChildListID listId = ChildListIDForOutOfFlow(GetStateBits(), oof);
       nsFrameManager* fm = PresContext()->FrameConstructor();

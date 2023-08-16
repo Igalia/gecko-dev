@@ -4,11 +4,9 @@
 
 //! https://html.spec.whatwg.org/multipage/#source-size-list
 
-#[cfg(feature = "gecko")]
-use crate::gecko_bindings::sugar::ownership::{HasBoxFFI, HasFFI, HasSimpleFFI};
 use crate::media_queries::Device;
 use crate::parser::{Parse, ParserContext};
-use crate::queries::{QueryCondition, FeatureType};
+use crate::queries::{FeatureType, QueryCondition};
 use crate::values::computed::{self, ToComputedValue};
 use crate::values::specified::{Length, NoCalcLength, ViewportPercentageLength};
 use app_units::Au;
@@ -57,10 +55,12 @@ impl SourceSizeList {
     /// Evaluate this <source-size-list> to get the final viewport length.
     pub fn evaluate(&self, device: &Device, quirks_mode: QuirksMode) -> Au {
         computed::Context::for_media_query_evaluation(device, quirks_mode, |context| {
-            let matching_source_size = self
-                .source_sizes
-                .iter()
-                .find(|source_size| source_size.condition.matches(context));
+            let matching_source_size = self.source_sizes.iter().find(|source_size| {
+                source_size
+                    .condition
+                    .matches(context)
+                    .to_bool(/* unknown = */ false)
+            });
 
             match matching_source_size {
                 Some(source_size) => source_size.value.to_computed_value(context),
@@ -134,12 +134,3 @@ impl SourceSizeList {
         }
     }
 }
-
-#[cfg(feature = "gecko")]
-unsafe impl HasFFI for SourceSizeList {
-    type FFIType = crate::gecko_bindings::structs::RawServoSourceSizeList;
-}
-#[cfg(feature = "gecko")]
-unsafe impl HasSimpleFFI for SourceSizeList {}
-#[cfg(feature = "gecko")]
-unsafe impl HasBoxFFI for SourceSizeList {}

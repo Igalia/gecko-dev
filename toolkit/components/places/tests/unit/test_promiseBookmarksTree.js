@@ -42,7 +42,7 @@ async function compareToNode(aItem, aNode, aIsRootItem, aExcludedGuids = []) {
   compare_prop("dateAdded");
   compare_prop("lastModified");
 
-  if (aIsRootItem && aNode.itemId != PlacesUtils.placesRootId) {
+  if (aIsRootItem && aNode.bookmarkGuid != PlacesUtils.bookmarks.rootGuid) {
     Assert.ok("parentGuid" in aItem);
     await check_has_child(aItem.parentGuid, aItem.guid);
   } else {
@@ -223,7 +223,7 @@ async function test_promiseBookmarksTreeAgainstResult(
   return test_promiseBookmarksTreeForEachNode(node, aOptions, aExcludedGuids);
 }
 
-add_task(async function() {
+add_task(async function () {
   // Add some bookmarks to cover various use cases.
   await new_bookmark({ parentGuid: PlacesUtils.bookmarks.toolbarGuid });
   await new_folder({

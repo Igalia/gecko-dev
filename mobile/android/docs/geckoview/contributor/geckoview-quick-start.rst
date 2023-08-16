@@ -1,5 +1,7 @@
 .. -*- Mode: rst; fill-column: 80; -*-
 
+.. _geckoview-contributor-guide:
+
 =================
 Contributor Guide
 =================
@@ -122,6 +124,10 @@ means you will need to run ``mach build`` yourself to pick up changes to
 native code. `Bug
 1509539 <https://bugzilla.mozilla.org/show_bug.cgi?id=1509539>`_ tracks
 making Android Studio and Gradle do this automatically.
+
+If you want set up code formatting for Kotlin, please reference
+`IntelliJ IDEA configuration
+<https://pinterest.github.io/ktlint/rules/configuration-intellij-idea/>`_.
 
 Custom mozconfig with Android Studio
 ------------------------------------
@@ -281,9 +287,9 @@ Dependency substiting your local GeckoView into a Mozilla project
 Most GeckoView-consuming projects produced by Mozilla support dependency
 substitution via ``local.properties``. These projects include:
 
-- `Fenix <https://github.com/mozilla-mobile/fenix>`_
+- `Fenix <https://github.com/mozilla-mobile/firefox-android/tree/main/fenix>`_
 - `reference-browser <https://github.com/mozilla-mobile/reference-browser>`_
-- `android-components <https://github.com/mozilla-mobile/android-components>`_
+- `android-components <https://github.com/mozilla-mobile/firefox-android/tree/main/android-components>`_
 - `Firefox Reality <https://github.com/MozillaReality/FirefoxReality>`_
 
 Simply edit (or create) the file ``local.properties`` in the project

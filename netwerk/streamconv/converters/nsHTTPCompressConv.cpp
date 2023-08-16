@@ -5,8 +5,6 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "nsHTTPCompressConv.h"
-#include "nsMemory.h"
-#include "plstr.h"
 #include "nsCOMPtr.h"
 #include "nsCRT.h"
 #include "nsError.h"
@@ -15,6 +13,7 @@
 #include "nsComponentManagerUtils.h"
 #include "nsThreadUtils.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/StaticPrefs_network.h"
 #include "mozilla/Logging.h"
 #include "nsIForcePendingChannel.h"
 #include "nsIRequest.h"
@@ -162,8 +161,11 @@ nsHTTPCompressConv::OnStopRequest(nsIRequest* request, nsresult aStatus) {
     if (fpChannel && !isPending) {
       fpChannel->ForcePending(true);
     }
-    if (mBrotli && (mBrotli->mTotalOut == 0) &&
-        !mBrotli->mBrotliStateIsStreamEnd) {
+    bool allowTruncatedEmpty =
+        StaticPrefs::network_compress_allow_truncated_empty_brotli();
+    if (mBrotli && ((allowTruncatedEmpty && NS_FAILED(mBrotli->mStatus)) ||
+                    (!allowTruncatedEmpty && mBrotli->mTotalOut == 0 &&
+                     !mBrotli->mBrotliStateIsStreamEnd))) {
       status = NS_ERROR_INVALID_CONTENT_ENCODING;
     }
     LOG(("nsHttpCompresssConv %p onstop brotlihandler rv %" PRIx32 "\n", this,

@@ -12,6 +12,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/dom/BindingDeclarations.h"
+#include "mozilla/dom/IterableIterator.h"
 #include "mozilla/dom/QueuingStrategyBinding.h"
 #include "mozilla/dom/ReadableStreamController.h"
 #include "mozilla/dom/ReadableStreamDefaultController.h"
@@ -22,10 +23,11 @@
 namespace mozilla::dom {
 
 class Promise;
-class ReadableStreamGenericReader;
+class ReadableStreamBYOBRequest;
 class ReadableStreamDefaultReader;
 class ReadableStreamGenericReader;
 struct ReadableStreamGetReaderOptions;
+struct ReadableStreamIteratorOptions;
 struct ReadIntoRequest;
 class WritableStream;
 struct ReadableWritablePair;
@@ -40,24 +42,42 @@ class BodyStreamHolder;
 class UniqueMessagePortId;
 class MessagePort;
 
-class ReadableStream final : public nsISupports, public nsWrapperCache {
+class ReadableStream : public nsISupports, public nsWrapperCache {
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(ReadableStream)
 
+  friend class WritableStream;
+
  protected:
-  ~ReadableStream();
+  virtual ~ReadableStream();
 
   nsCOMPtr<nsIGlobalObject> mGlobal;
 
- public:
-  explicit ReadableStream(const GlobalObject& aGlobal);
-  explicit ReadableStream(nsIGlobalObject* aGlobal);
+  // If one extends ReadableStream with another cycle collectable class,
+  // calling HoldJSObjects and DropJSObjects should happen using 'this' of
+  // that extending class. And in that case Explicit should be passed to the
+  // constructor of ReadableStream so that it doesn't make those calls.
+  // See also https://bugzilla.mozilla.org/show_bug.cgi?id=1801214.
+  enum class HoldDropJSObjectsCaller { Implicit, Explicit };
 
-  enum class ReaderState { Readable, Closed, Errored };
+  explicit ReadableStream(const GlobalObject& aGlobal,
+                          HoldDropJSObjectsCaller aHoldDropCaller);
+  explicit ReadableStream(nsIGlobalObject* aGlobal,
+                          HoldDropJSObjectsCaller aHoldDropCaller);
+
+ public:
+  // Abstract algorithms
+  MOZ_CAN_RUN_SCRIPT static already_AddRefed<ReadableStream> CreateAbstract(
+      JSContext* aCx, nsIGlobalObject* aGlobal,
+      UnderlyingSourceAlgorithmsBase* aAlgorithms,
+      mozilla::Maybe<double> aHighWaterMark,
+      QueuingStrategySize* aSizeAlgorithm, ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT static already_AddRefed<ReadableStream> CreateByteAbstract(
+      JSContext* aCx, nsIGlobalObject* aGlobal,
+      UnderlyingSourceAlgorithmsBase* aAlgorithms, ErrorResult& aRv);
 
   // Slot Getter/Setters:
- public:
   MOZ_KNOWN_LIVE ReadableStreamController* Controller() { return mController; }
   ReadableStreamDefaultController* DefaultController() {
     MOZ_ASSERT(mController && mController->IsDefault());
@@ -76,6 +96,8 @@ class ReadableStream final : public nsISupports, public nsWrapperCache {
 
   ReadableStreamDefaultReader* GetDefaultReader();
 
+  enum class ReaderState { Readable, Closed, Errored };
+
   ReaderState State() const { return mState; }
   void SetState(const ReaderState& aState) { mState = aState; }
 
@@ -84,44 +106,102 @@ class ReadableStream final : public nsISupports, public nsWrapperCache {
     mStoredError = aStoredError;
   }
 
-  UnderlyingSourceAlgorithmsBase* GetAlgorithms() const { return mAlgorithms; }
-  void SetErrorAlgorithm(UnderlyingSourceAlgorithmsBase* aAlgorithms) {
-    mAlgorithms = aAlgorithms;
+  nsIInputStream* MaybeGetInputStreamIfUnread() {
+    MOZ_ASSERT(!Disturbed());
+    if (UnderlyingSourceAlgorithmsBase* algorithms =
+            Controller()->GetAlgorithms()) {
+      return algorithms->MaybeGetInputStreamIfUnread();
+    }
+    return nullptr;
   }
-
-  void SetNativeUnderlyingSource(BodyStreamHolder* aUnderlyingSource);
-  BodyStreamHolder* GetNativeUnderlyingSource() {
-    return mNativeUnderlyingSource;
-  }
-  bool HasNativeUnderlyingSource() { return mNativeUnderlyingSource; }
-
-  void ReleaseObjects();
 
   // [Transferable]
   // https://html.spec.whatwg.org/multipage/structured-data.html#transfer-steps
   MOZ_CAN_RUN_SCRIPT bool Transfer(JSContext* aCx,
                                    UniqueMessagePortId& aPortId);
+  MOZ_CAN_RUN_SCRIPT static already_AddRefed<ReadableStream>
+  ReceiveTransferImpl(JSContext* aCx, nsIGlobalObject* aGlobal,
+                      MessagePort& aPort);
   // https://html.spec.whatwg.org/multipage/structured-data.html#transfer-receiving-steps
-  static MOZ_CAN_RUN_SCRIPT bool ReceiveTransfer(
+  MOZ_CAN_RUN_SCRIPT static bool ReceiveTransfer(
       JSContext* aCx, nsIGlobalObject* aGlobal, MessagePort& aPort,
       JS::MutableHandle<JSObject*> aReturnObject);
 
+  // Public functions to implement other specs
+  // https://streams.spec.whatwg.org/#other-specs-rs
+
+  // https://streams.spec.whatwg.org/#readablestream-set-up
+  static already_AddRefed<ReadableStream> CreateNative(
+      JSContext* aCx, nsIGlobalObject* aGlobal,
+      UnderlyingSourceAlgorithmsWrapper& aAlgorithms,
+      mozilla::Maybe<double> aHighWaterMark,
+      QueuingStrategySize* aSizeAlgorithm, ErrorResult& aRv);
+
+  // https://streams.spec.whatwg.org/#readablestream-set-up-with-byte-reading-support
+
+ protected:
+  // Sets up the ReadableStream with byte reading support. Intended for
+  // subclasses.
+  void SetUpByteNative(JSContext* aCx,
+                       UnderlyingSourceAlgorithmsWrapper& aAlgorithms,
+                       mozilla::Maybe<double> aHighWaterMark, ErrorResult& aRv);
+
  public:
+  // Creates and sets up a ReadableStream with byte reading support. Use
+  // SetUpByteNative for this purpose in subclasses.
+  static already_AddRefed<ReadableStream> CreateByteNative(
+      JSContext* aCx, nsIGlobalObject* aGlobal,
+      UnderlyingSourceAlgorithmsWrapper& aAlgorithms,
+      mozilla::Maybe<double> aHighWaterMark, ErrorResult& aRv);
+
+  // The following algorithms must only be used on ReadableStream instances
+  // initialized via the above set up or set up with byte reading support
+  // algorithms (not, e.g., on web-developer-created instances):
+
+  // https://streams.spec.whatwg.org/#readablestream-close
+  MOZ_CAN_RUN_SCRIPT void CloseNative(JSContext* aCx, ErrorResult& aRv);
+
+  // https://streams.spec.whatwg.org/#readablestream-error
+  void ErrorNative(JSContext* aCx, JS::Handle<JS::Value> aError,
+                   ErrorResult& aRv);
+
+  // https://streams.spec.whatwg.org/#readablestream-enqueue
+  MOZ_CAN_RUN_SCRIPT void EnqueueNative(JSContext* aCx,
+                                        JS::Handle<JS::Value> aChunk,
+                                        ErrorResult& aRv);
+
+  // https://streams.spec.whatwg.org/#readablestream-current-byob-request-view
+  void GetCurrentBYOBRequestView(JSContext* aCx,
+                                 JS::MutableHandle<JSObject*> aView,
+                                 ErrorResult& aRv);
+
+  // The following algorithms can be used on arbitrary ReadableStream instances,
+  // including ones that are created by web developers. They can all fail in
+  // various operation-specific ways, and these failures should be handled by
+  // the calling specification.
+
+  // https://streams.spec.whatwg.org/#readablestream-get-a-reader
+  already_AddRefed<mozilla::dom::ReadableStreamDefaultReader> GetReader(
+      ErrorResult& aRv);
+
+  // IDL layer functions
+
   nsIGlobalObject* GetParentObject() const { return mGlobal; }
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
 
-  MOZ_CAN_RUN_SCRIPT static already_AddRefed<ReadableStream> Create(
-      JSContext* aCx, nsIGlobalObject* aGlobal,
-      BodyStreamHolder* aUnderlyingSource, ErrorResult& aRv);
+  // IDL methods
 
-  // IDL Methods
   // TODO: Use MOZ_CAN_RUN_SCRIPT when IDL constructors can use it (bug 1749042)
   MOZ_CAN_RUN_SCRIPT_BOUNDARY static already_AddRefed<ReadableStream>
   Constructor(const GlobalObject& aGlobal,
               const Optional<JS::Handle<JSObject*>>& aUnderlyingSource,
               const QueuingStrategy& aStrategy, ErrorResult& aRv);
+
+  MOZ_CAN_RUN_SCRIPT static already_AddRefed<ReadableStream> From(
+      const GlobalObject& aGlobal, JS::Handle<JS::Value> asyncIterable,
+      ErrorResult& aRv);
 
   bool Locked() const;
 
@@ -136,12 +216,31 @@ class ReadableStream final : public nsISupports, public nsWrapperCache {
       ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> PipeTo(
-      WritableStream& aDestinaton, const StreamPipeOptions& aOptions,
+      WritableStream& aDestination, const StreamPipeOptions& aOptions,
       ErrorResult& aRv);
 
   MOZ_CAN_RUN_SCRIPT void Tee(JSContext* aCx,
                               nsTArray<RefPtr<ReadableStream>>& aResult,
                               ErrorResult& aRv);
+
+  struct IteratorData {
+    void Traverse(nsCycleCollectionTraversalCallback& cb);
+    void Unlink();
+
+    RefPtr<ReadableStreamDefaultReader> mReader;
+    bool mPreventCancel;
+  };
+
+  using Iterator = AsyncIterableIterator<ReadableStream>;
+
+  void InitAsyncIteratorData(IteratorData& aData, Iterator::IteratorType aType,
+                             const ReadableStreamIteratorOptions& aOptions,
+                             ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> GetNextIterationResult(
+      Iterator* aIterator, ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> IteratorReturn(
+      JSContext* aCx, Iterator* aIterator, JS::Handle<JS::Value> aValue,
+      ErrorResult& aRv);
 
   // Internal Slots:
  private:
@@ -151,24 +250,10 @@ class ReadableStream final : public nsISupports, public nsWrapperCache {
   ReaderState mState = ReaderState::Readable;
   JS::Heap<JS::Value> mStoredError;
 
-  // Optional Callback for erroring a stream.
-  RefPtr<UnderlyingSourceAlgorithmsBase> mAlgorithms;
-
-  // Optional strong reference to an Underlying Source; This
-  // exists because NativeUnderlyingSource callbacks don't hold
-  // a strong reference to the underlying source: So we need
-  // something else to hold onto that. As well, some of the integration
-  // desires the ability to extract the underlying source from the
-  // ReadableStream.
-  //
-  // While theoretically this ought to be some base class type to support
-  // multiple native underlying source types, I'm not sure what base class
-  // makes any sense for BodyStream, and given there's only body streams
-  // as the underlying source right now, I'm going to punt that problem to
-  // the future where we need to provide other native underlying sources
-  // (i.e. perhaps WebTransport.)
-  RefPtr<BodyStreamHolder> mNativeUnderlyingSource;
+  HoldDropJSObjectsCaller mHoldDropCaller;
 };
+
+namespace streams_abstract {
 
 bool IsReadableStreamLocked(ReadableStream* aStream);
 
@@ -197,18 +282,10 @@ MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> ReadableStreamCancel(
 already_AddRefed<ReadableStreamDefaultReader>
 AcquireReadableStreamDefaultReader(ReadableStream* aStream, ErrorResult& aRv);
 
-MOZ_CAN_RUN_SCRIPT already_AddRefed<ReadableStream> CreateReadableStream(
-    JSContext* aCx, nsIGlobalObject* aGlobal,
-    UnderlyingSourceAlgorithmsBase* aAlgorithms,
-    mozilla::Maybe<double> aHighWaterMark, QueuingStrategySize* aSizeAlgorithm,
-    ErrorResult& aRv);
-
 bool ReadableStreamHasBYOBReader(ReadableStream* aStream);
 bool ReadableStreamHasDefaultReader(ReadableStream* aStream);
 
-MOZ_CAN_RUN_SCRIPT already_AddRefed<ReadableStream> CreateReadableByteStream(
-    JSContext* aCx, nsIGlobalObject* aGlobal,
-    UnderlyingSourceAlgorithmsBase* aAlgorithms, ErrorResult& aRv);
+}  // namespace streams_abstract
 
 }  // namespace mozilla::dom
 

@@ -114,7 +114,7 @@ VIAddVersionKey "OriginalFilename" "helper.exe"
 !insertmacro un.ChangeMUIHeaderImage
 !insertmacro un.ChangeMUISidebarImage
 !insertmacro un.CheckForFilesInUse
-!insertmacro un.CleanUpdateDirectories
+!insertmacro un.CleanMaintenanceServiceLogs
 !insertmacro un.CleanVirtualStore
 !insertmacro un.DeleteShortcuts
 !insertmacro un.GetCommonDirectory
@@ -416,6 +416,15 @@ Section "Uninstall"
   DetailPrint $(STATUS_UNINSTALL_MAIN)
   SetDetailsPrint none
 
+  ; Some system cleanup is most easily handled when XPCOM functionality is
+  ; available - e.g. removing notifications from Window's Action Center. We
+  ; handle this in the `uninstall` background task.
+  ;
+  ; Return value is saved to an unused variable to prevent the the error flag
+  ; from being set.
+  Var /GLOBAL UnusedExecCatchReturn
+  ExecWait '"$INSTDIR\${FileMainEXE}" --backgroundtask uninstall' $UnusedExecCatchReturn
+
   ; Delete the app exe to prevent launching the app while we are uninstalling.
   ClearErrors
   ${DeleteFile} "$INSTDIR\${FileMainEXE}"
@@ -435,10 +444,8 @@ Section "Uninstall"
   ${un.DeleteShortcuts}
 
   ${If} "$AppUserModelID" != ""
-    ; Unregister resources associated with Win7 taskbar jump lists.
-    ${If} ${AtLeastWin7}
-      ApplicationID::UninstallJumpLists "$AppUserModelID"
-    ${EndIf}
+    ; Unregister resources associated with taskbar jump lists.
+    ApplicationID::UninstallJumpLists "$AppUserModelID"
     ; Remove the update sync manager's multi-instance lock file
     Call un.GetCommonDirectory
     Pop $0
@@ -446,13 +453,11 @@ Section "Uninstall"
   ${EndIf}
 
   ${If} "$AppUserModelIDPrivate" != ""
-    ${If} ${AtLeastWin7}
-      ApplicationID::UninstallJumpLists "$AppUserModelIDPrivate"
-    ${EndIf}
+    ApplicationID::UninstallJumpLists "$AppUserModelIDPrivate"
   ${EndIf}
 
-  ; Remove the updates directory
-  ${un.CleanUpdateDirectories} "Mozilla\Firefox" "Mozilla\updates"
+  ; Clean up old maintenance service logs
+  ${un.CleanMaintenanceServiceLogs} "Mozilla\Firefox"
 
   ; Remove any app model id's stored in the registry for this install path
   DeleteRegValue HKCU "Software\Mozilla\${AppName}\TaskBarIDs" "$INSTDIR"
@@ -591,9 +596,7 @@ Section "Uninstall"
     ${UnregisterDLL} "$INSTDIR\AccessibleMarshal.dll"
   ${EndIf}
 
-  ; Only unregister the dll if the registration points to this installation
-  ReadRegStr $R1 HKCR "CLSID\${AccessibleHandlerCLSID}\InprocHandler32" ""
-  ${If} "$INSTDIR\AccessibleHandler.dll" == "$R1"
+  ${If} ${FileExists} "$INSTDIR\AccessibleHandler.dll"
     ${UnregisterDLL} "$INSTDIR\AccessibleHandler.dll"
   ${EndIf}
 
@@ -608,39 +611,37 @@ Section "Uninstall"
 !endif
 
   ; Remove Toast Notification registration.
-  ${If} ${AtLeastWin10}
-    ; Find any GUID used for this installation.
-    ClearErrors
-    ReadRegStr $0 HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  ; Find any GUID used for this installation.
+  ClearErrors
+  ReadRegStr $0 HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
 
-    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
-    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
-    DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
-    DeleteRegKey HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
-    ${If} "$0" != ""
-      DeleteRegValue HKLM "Software\Classes\AppID\$0" "DllSurrogate"
-      DeleteRegKey HKLM "Software\Classes\AppID\$0"
-      DeleteRegValue HKLM "Software\Classes\CLSID\$0" "AppID"
-      DeleteRegValue HKLM "Software\Classes\CLSID\$0\InProcServer32" ""
-      DeleteRegKey HKLM "Software\Classes\CLSID\$0\InProcServer32"
-      DeleteRegKey HKLM "Software\Classes\CLSID\$0"
-    ${EndIf}
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+  DeleteRegValue HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+  DeleteRegKey HKLM "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+  ${If} "$0" != ""
+    DeleteRegValue HKLM "Software\Classes\AppID\$0" "DllSurrogate"
+    DeleteRegKey HKLM "Software\Classes\AppID\$0"
+    DeleteRegValue HKLM "Software\Classes\CLSID\$0" "AppID"
+    DeleteRegValue HKLM "Software\Classes\CLSID\$0\InProcServer32" ""
+    DeleteRegKey HKLM "Software\Classes\CLSID\$0\InProcServer32"
+    DeleteRegKey HKLM "Software\Classes\CLSID\$0"
+  ${EndIf}
 
-    ClearErrors
-    ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  ClearErrors
+  ReadRegStr $0 HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
 
-    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
-    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
-    DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
-    DeleteRegKey HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
-    ${If} "$0" != ""
-      DeleteRegValue HKCU "Software\Classes\AppID\$0" "DllSurrogate"
-      DeleteRegKey HKCU "Software\Classes\AppID\$0"
-      DeleteRegValue HKCU "Software\Classes\CLSID\$0" "AppID"
-      DeleteRegValue HKCU "Software\Classes\CLSID\$0\InProcServer32" ""
-      DeleteRegKey HKCU "Software\Classes\CLSID\$0\InProcServer32"
-      DeleteRegKey HKCU "Software\Classes\CLSID\$0"
-    ${EndIf}
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "CustomActivator"
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "DisplayName"
+  DeleteRegValue HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID" "IconUri"
+  DeleteRegKey HKCU "Software\Classes\AppUserModelId\${ToastAumidPrefix}$AppUserModelID"
+  ${If} "$0" != ""
+    DeleteRegValue HKCU "Software\Classes\AppID\$0" "DllSurrogate"
+    DeleteRegKey HKCU "Software\Classes\AppID\$0"
+    DeleteRegValue HKCU "Software\Classes\CLSID\$0" "AppID"
+    DeleteRegValue HKCU "Software\Classes\CLSID\$0\InProcServer32" ""
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0\InProcServer32"
+    DeleteRegKey HKCU "Software\Classes\CLSID\$0"
   ${EndIf}
 
   ; Uninstall the default browser agent scheduled task and all other scheduled
@@ -674,6 +675,9 @@ Section "Uninstall"
   ${EndIf}
   ${If} ${FileExists} "$INSTDIR\postSigningData"
     Delete /REBOOTOK "$INSTDIR\postSigningData"
+  ${EndIf}
+  ${If} ${FileExists} "$INSTDIR\zoneIdProvenanceData"
+    Delete /REBOOTOK "$INSTDIR\zoneIdProvenanceData"
   ${EndIf}
 
   ; Explicitly remove empty webapprt dir in case it exists (bug 757978).
@@ -1106,15 +1110,10 @@ Function un.onGUIEnd
     ; If we were the default browser and we've now been uninstalled, we need
     ; to take steps to make sure the user doesn't see an "open with" dialog;
     ; they're helping us out by answering this survey, they don't need more
-    ; friction. Sometimes Windows 7 and 8 automatically switch the default to
-    ; IE, but it isn't reliable, so we'll manually invoke IE in that case.
+    ; friction.
     ; Windows 10 always seems to just clear the default browser, so for it
     ; we'll manually invoke Edge using Edge's custom URI scheme.
-    ${If} ${AtLeastWin10}
-      ExecInExplorer::Exec "microsoft-edge:$R1"
-    ${Else}
-      ExecInExplorer::Exec "iexplore.exe" /cmdargs "$R1"
-    ${EndIf}
+    ExecInExplorer::Exec "microsoft-edge:$R1"
   ${EndIf}
 
   ; Finally send the ping, there's no GUI to freeze in case it is slow.

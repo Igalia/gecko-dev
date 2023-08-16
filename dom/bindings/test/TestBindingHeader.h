@@ -24,6 +24,7 @@ namespace mozilla {
 namespace dom {
 class DocGroup;
 class TestExternalInterface;
+class TestUnionArguments;
 class Promise;
 }  // namespace dom
 }  // namespace mozilla
@@ -582,12 +583,13 @@ class TestInterface : public nsISupports, public nsWrapperCache {
       TestNullableTypedArrayReturn&, TestSequenceReturn&,
       TestNullableSequenceReturn&, TestIntegerArguments&,
       TestInterfaceArguments&, TestStringEnumArguments&, TestObjectArguments&,
-      TestOptionalArguments&, TestVoidConstruction&, TestIntegerConstruction&,
-      TestBooleanConstruction&, TestFloatConstruction&, TestStringConstruction&,
-      TestEnumConstruction&, TestInterfaceConstruction&,
-      TestExternalInterfaceConstruction&, TestCallbackInterfaceConstruction&,
-      TestCallbackConstruction&, TestObjectConstruction&,
-      TestTypedArrayConstruction&, TestSequenceConstruction&);
+      TestOptionalArguments&, TestUnionArguments&, TestUndefinedConstruction&,
+      TestIntegerConstruction&, TestBooleanConstruction&,
+      TestFloatConstruction&, TestStringConstruction&, TestEnumConstruction&,
+      TestInterfaceConstruction&, TestExternalInterfaceConstruction&,
+      TestCallbackInterfaceConstruction&, TestCallbackConstruction&,
+      TestObjectConstruction&, TestTypedArrayConstruction&,
+      TestSequenceConstruction&);
 
   // Any types
   void PassAny(JSContext*, JS::Handle<JS::Value>);
@@ -826,11 +828,24 @@ class TestInterface : public nsISupports, public nsWrapperCache {
   void PassRecordOfUnions2(JSContext*,
                            const Record<nsString, OwningObjectOrLong>&);
 
+  void PassUnionWithSequenceOfUnions(
+      const StringOrOnlyForUseInInnerUnionOrCanvasPatternSequence& arg);
+  void PassUnionWithRecordOfUnions(
+      const LongSequenceOrStringOnlyForUseInInnerUnionOrLongSequenceRecord&
+          arg);
+
   void ReceiveUnion(OwningCanvasPatternOrCanvasGradient&);
   void ReceiveUnion2(JSContext*, OwningObjectOrLong&);
   void ReceiveUnionContainingNull(OwningCanvasPatternOrNullOrCanvasGradient&);
   void ReceiveNullableUnion(Nullable<OwningCanvasPatternOrCanvasGradient>&);
   void ReceiveNullableUnion2(JSContext*, Nullable<OwningObjectOrLong>&);
+  void ReceiveUnionWithUndefined(OwningUndefinedOrCanvasPattern&);
+  void ReceiveUnionWithNullableUndefined(OwningUndefinedOrNullOrCanvasPattern&);
+  void ReceiveUnionWithUndefinedAndNullable(
+      OwningUndefinedOrCanvasPatternOrNull&);
+  void ReceiveNullableUnionWithUndefined(
+      Nullable<OwningUndefinedOrCanvasPattern>&);
+
   void GetWritableUnion(OwningCanvasPatternOrCanvasGradient&);
   void SetWritableUnion(const CanvasPatternOrCanvasGradient&);
   void GetWritableUnionContainingNull(
@@ -839,6 +854,20 @@ class TestInterface : public nsISupports, public nsWrapperCache {
       const CanvasPatternOrNullOrCanvasGradient&);
   void GetWritableNullableUnion(Nullable<OwningCanvasPatternOrCanvasGradient>&);
   void SetWritableNullableUnion(const Nullable<CanvasPatternOrCanvasGradient>&);
+  void GetWritableUnionWithUndefined(OwningUndefinedOrCanvasPattern&);
+  void SetWritableUnionWithUndefined(const UndefinedOrCanvasPattern&);
+  void GetWritableUnionWithNullableUndefined(
+      OwningUndefinedOrNullOrCanvasPattern&);
+  void SetWritableUnionWithNullableUndefined(
+      const UndefinedOrNullOrCanvasPattern&);
+  void GetWritableUnionWithUndefinedAndNullable(
+      OwningUndefinedOrCanvasPatternOrNull&);
+  void SetWritableUnionWithUndefinedAndNullable(
+      const UndefinedOrCanvasPatternOrNull&);
+  void GetWritableNullableUnionWithUndefined(
+      Nullable<OwningUndefinedOrCanvasPattern>&);
+  void SetWritableNullableUnionWithUndefined(
+      const Nullable<UndefinedOrCanvasPattern>&);
 
   // Promise types
   void PassPromise(Promise&);
@@ -1553,15 +1582,15 @@ class TestWorkerExposedInterface : public nsISupports, public nsWrapperCache {
   // We need a GetParentObject to make binding codegen happy
   nsISupports* GetParentObject();
 
-  void NeedsSubjectPrincipalMethod(Maybe<nsIPrincipal*>);
-  bool NeedsSubjectPrincipalAttr(Maybe<nsIPrincipal*>);
-  void SetNeedsSubjectPrincipalAttr(bool, Maybe<nsIPrincipal*>);
+  void NeedsSubjectPrincipalMethod(nsIPrincipal&);
+  bool NeedsSubjectPrincipalAttr(nsIPrincipal&);
+  void SetNeedsSubjectPrincipalAttr(bool, nsIPrincipal&);
   void NeedsCallerTypeMethod(CallerType);
   bool NeedsCallerTypeAttr(CallerType);
   void SetNeedsCallerTypeAttr(bool, CallerType);
-  void NeedsNonSystemSubjectPrincipalMethod(Maybe<nsIPrincipal*>);
-  bool NeedsNonSystemSubjectPrincipalAttr(Maybe<nsIPrincipal*>);
-  void SetNeedsNonSystemSubjectPrincipalAttr(bool, Maybe<nsIPrincipal*>);
+  void NeedsNonSystemSubjectPrincipalMethod(nsIPrincipal*);
+  bool NeedsNonSystemSubjectPrincipalAttr(nsIPrincipal*);
+  void SetNeedsNonSystemSubjectPrincipalAttr(bool, nsIPrincipal*);
 };
 
 class TestHTMLConstructorInterface : public nsGenericHTMLElement {

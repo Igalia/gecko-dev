@@ -1,11 +1,8 @@
-from __future__ import absolute_import, unicode_literals
-
 import os
 import sys
 
-import pytest
-
 import mozunit
+import pytest
 
 # need this so the raptor unit tests can find raptor/raptor classes
 here = os.path.abspath(os.path.dirname(__file__))
@@ -13,6 +10,7 @@ raptor_dir = os.path.join(os.path.dirname(here), "raptor")
 sys.path.insert(0, raptor_dir)
 
 from argparse import ArgumentParser, Namespace
+
 from cmdline import verify_options
 
 
@@ -24,9 +22,6 @@ def test_verify_options(filedir):
         page_cycles=1,
         page_timeout=60000,
         debug="True",
-        power_test=False,
-        cpu_test=False,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -35,6 +30,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     parser = ArgumentParser()
 
@@ -52,9 +50,6 @@ def test_verify_options(filedir):
         gecko_profile="False",
         is_release_build=False,
         host="sophie",
-        power_test=False,
-        cpu_test=False,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -63,6 +58,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     verify_options(parser, args)  # assert no exception
 
@@ -74,9 +72,6 @@ def test_verify_options(filedir):
         gecko_profile="False",
         is_release_build=False,
         host="sophie",
-        power_test=False,
-        cpu_test=False,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -85,6 +80,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     verify_options(parser, args)  # assert no exception
 
@@ -96,9 +94,6 @@ def test_verify_options(filedir):
         gecko_profile="False",
         is_release_build=False,
         host="sophie",
-        power_test=False,
-        cpu_test=False,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -107,6 +102,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     verify_options(parser, args)  # assert no exception
 
@@ -118,9 +116,6 @@ def test_verify_options(filedir):
         gecko_profile="False",
         is_release_build=False,
         host="sophie",
-        power_test=False,
-        cpu_test=True,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -129,6 +124,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     verify_options(parser, args)  # assert no exception
 
@@ -140,9 +138,6 @@ def test_verify_options(filedir):
         gecko_profile="False",
         is_release_build=False,
         host="sophie",
-        power_test=False,
-        cpu_test=False,
-        memory_test=False,
         chimera=False,
         browsertime_video=False,
         browsertime_visualmetrics=False,
@@ -151,6 +146,9 @@ def test_verify_options(filedir):
         test_bytecode_cache=False,
         webext=False,
         extra_prefs=[],
+        benchmark_repository=None,
+        benchmark_revision=None,
+        benchmark_branch=None,
     )
     parser = ArgumentParser()
 

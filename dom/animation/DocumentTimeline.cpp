@@ -42,7 +42,8 @@ NS_IMPL_RELEASE_INHERITED(DocumentTimeline, AnimationTimeline)
 
 DocumentTimeline::DocumentTimeline(Document* aDocument,
                                    const TimeDuration& aOriginTime)
-    : AnimationTimeline(aDocument->GetParentObject()),
+    : AnimationTimeline(aDocument->GetParentObject(),
+                        aDocument->GetScopeObject()->GetRTPCallerType()),
       mDocument(aDocument),
       mIsObservingRefreshDriver(false),
       mOriginTime(aOriginTime) {
@@ -253,9 +254,9 @@ void DocumentTimeline::RemoveAnimation(Animation* aAnimation) {
 }
 
 void DocumentTimeline::NotifyAnimationContentVisibilityChanged(
-    Animation* aAnimation, bool visible) {
+    Animation* aAnimation, bool aIsVisible) {
   AnimationTimeline::NotifyAnimationContentVisibilityChanged(aAnimation,
-                                                             visible);
+                                                             aIsVisible);
 
   if (mIsObservingRefreshDriver && mAnimationOrder.isEmpty()) {
     UnregisterFromRefreshDriver();

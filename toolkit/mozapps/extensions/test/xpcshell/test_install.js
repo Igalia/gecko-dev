@@ -10,28 +10,28 @@ const ADDONS = {
     manifest: {
       name: "Test 1",
       version: "1.0",
-      applications: { gecko: { id: "addon1@tests.mozilla.org" } },
+      browser_specific_settings: { gecko: { id: "addon1@tests.mozilla.org" } },
     },
   },
   test_install2_1: {
     manifest: {
       name: "Test 2",
       version: "2.0",
-      applications: { gecko: { id: "addon2@tests.mozilla.org" } },
+      browser_specific_settings: { gecko: { id: "addon2@tests.mozilla.org" } },
     },
   },
   test_install2_2: {
     manifest: {
       name: "Test 2",
       version: "3.0",
-      applications: { gecko: { id: "addon2@tests.mozilla.org" } },
+      browser_specific_settings: { gecko: { id: "addon2@tests.mozilla.org" } },
     },
   },
   test_install3: {
     manifest: {
       name: "Test 3",
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: "addon3@tests.mozilla.org",
           strict_min_version: "0",
@@ -129,7 +129,7 @@ add_task(async function setup() {
   // Create and configure the HTTP server.
   AddonTestUtils.registerJSON(testserver, "/update.json", UPDATE_JSON);
   testserver.registerDirectory("/data/", do_get_file("data"));
-  testserver.registerPathHandler("/redirect", function(aRequest, aResponse) {
+  testserver.registerPathHandler("/redirect", function (aRequest, aResponse) {
     aResponse.setStatusLine(null, 301, "Moved Permanently");
     let url = aRequest.host + ":" + aRequest.port + aRequest.queryString;
     aResponse.setHeader("Location", "http://" + url);

@@ -18,40 +18,12 @@
 #include "TabMessageTypes.h"
 #include "X11UndefineNone.h"
 
-namespace mozilla::dom {
-
-bool ReadRemoteEvent(IPC::MessageReader* aReader,
-                     mozilla::dom::RemoteDOMEvent* aResult);
-
-}  // namespace mozilla::dom
-
 namespace IPC {
-
-template <>
-struct ParamTraits<mozilla::dom::RemoteDOMEvent> {
-  typedef mozilla::dom::RemoteDOMEvent paramType;
-
-  static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    aParam.mEvent->Serialize(aWriter, true);
-  }
-
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    return mozilla::dom::ReadRemoteEvent(aReader, aResult);
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {}
-};
 
 template <>
 struct ParamTraits<nsSizeMode>
     : public ContiguousEnumSerializer<nsSizeMode, nsSizeMode_Normal,
                                       nsSizeMode_Invalid> {};
-
-template <>
-struct ParamTraits<UIStateChangeType>
-    : public ContiguousEnumSerializer<UIStateChangeType,
-                                      UIStateChangeType_NoChange,
-                                      UIStateChangeType_Invalid> {};
 
 template <>
 struct ParamTraits<nsIRemoteTab::NavigationType>
@@ -87,6 +59,19 @@ template <>
 struct ParamTraits<mozilla::ScrollFlags>
     : public BitFlagsEnumSerializer<mozilla::ScrollFlags,
                                     mozilla::ScrollFlags::ALL_BITS> {};
+
+template <>
+struct ParamTraits<mozilla::WhereToScroll> {
+  using paramType = mozilla::WhereToScroll;
+
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteParam(aWriter, aParam.mPercentage);
+  }
+
+  static bool Read(MessageReader* aReader, paramType* aResult) {
+    return ReadParam(aReader, &aResult->mPercentage);
+  }
+};
 
 template <>
 struct ParamTraits<mozilla::ScrollAxis> {

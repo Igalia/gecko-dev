@@ -708,10 +708,17 @@ class SourceSurface : public SupportsThreadSafeWeakPtr<SourceSurface> {
   void* GetUserData(UserDataKey* key) const { return mUserData.Get(key); }
   void RemoveUserData(UserDataKey* key) { mUserData.RemoveAndDestroy(key); }
 
+  /** Tries to extract an optimal subrect for the surface. This may fail if the
+   * request can't be satisfied.
+   */
+  virtual already_AddRefed<SourceSurface> ExtractSubrect(const IntRect& aRect) {
+    return nullptr;
+  }
+
  protected:
   friend class StoredPattern;
 
-  UserData mUserData;
+  ThreadSafeUserData mUserData;
 };
 
 class DataSourceSurface : public SourceSurface {
@@ -996,7 +1003,11 @@ class Path : public external::AtomicRefCounted<Path> {
 
   virtual Float ComputeLength();
 
+  virtual Maybe<Rect> AsRect() const { return Nothing(); }
+
   virtual Point ComputePointAtLength(Float aLength, Point* aTangent = nullptr);
+
+  virtual bool IsEmpty() const = 0;
 
  protected:
   Path();
@@ -1017,6 +1028,8 @@ class PathBuilder : public PathSink {
   virtual already_AddRefed<Path> Finish() = 0;
 
   virtual BackendType GetBackendType() const = 0;
+
+  virtual bool IsActive() const = 0;
 };
 
 struct Glyph {
@@ -1067,6 +1080,40 @@ class SharedFTFaceRefCountedData : public SharedFTFaceData {
   void ReleaseData() { static_cast<T*>(this)->Release(); }
 };
 
+// Helper class used for clearing out user font data when FT font
+// face is destroyed. Since multiple faces may use the same data, be
+// careful to assure that the data is only cleared out when all uses
+// expire. The font entry object contains a refptr to FTUserFontData and
+// each FT face created from that font entry contains a refptr to that
+// same FTUserFontData object.
+// This is also attached to FT faces for installed fonts (recording the
+// filename, rather than storing the font data) if variations are present.
+class FTUserFontData final
+    : public mozilla::gfx::SharedFTFaceRefCountedData<FTUserFontData> {
+ public:
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(FTUserFontData)
+
+  FTUserFontData(const uint8_t* aData, uint32_t aLength)
+      : mFontData(aData), mLength(aLength) {}
+  explicit FTUserFontData(const char* aFilename) : mFilename(aFilename) {}
+
+  const uint8_t* FontData() const { return mFontData; }
+
+  already_AddRefed<mozilla::gfx::SharedFTFace> CloneFace(
+      int aFaceIndex = 0) override;
+
+ private:
+  ~FTUserFontData() {
+    if (mFontData) {
+      free((void*)mFontData);
+    }
+  }
+
+  std::string mFilename;
+  const uint8_t* mFontData = nullptr;
+  uint32_t mLength = 0;
+};
+
 /** SharedFTFace is a shared wrapper around an FT_Face. It is ref-counted,
  * unlike FT_Face itself, so that it may be shared among many users with
  * RefPtr. Users should take care to lock SharedFTFace before accessing any
@@ -1078,7 +1125,7 @@ class SharedFTFace : public external::AtomicRefCounted<SharedFTFace> {
  public:
   MOZ_DECLARE_REFCOUNTED_VIRTUAL_TYPENAME(SharedFTFace)
 
-  explicit SharedFTFace(FT_Face aFace, SharedFTFaceData* aData = nullptr);
+  explicit SharedFTFace(FT_Face aFace, SharedFTFaceData* aData);
   virtual ~SharedFTFace();
 
   FT_Face GetFace() const { return mFace; }
@@ -1241,7 +1288,7 @@ class ScaledFont : public SupportsThreadSafeWeakPtr<ScaledFont> {
   explicit ScaledFont(const RefPtr<UnscaledFont>& aUnscaledFont)
       : mUnscaledFont(aUnscaledFont), mSyntheticObliqueAngle(0.0f) {}
 
-  UserData mUserData;
+  ThreadSafeUserData mUserData;
   RefPtr<UnscaledFont> mUnscaledFont;
   Float mSyntheticObliqueAngle;
 
@@ -1500,6 +1547,18 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget> {
                           const DrawOptions& aOptions = DrawOptions()) = 0;
 
   /**
+   * Stroke a circle on the DrawTarget with a certain source pattern.
+   *
+   * @param aCircle the parameters of the circle
+   * @param aPattern Pattern that forms the source of this stroking operation
+   * @param aOptions Options that are applied to this operation
+   */
+  virtual void StrokeCircle(
+      const Point& aOrigin, float radius, const Pattern& aPattern,
+      const StrokeOptions& aStrokeOptions = StrokeOptions(),
+      const DrawOptions& aOptions = DrawOptions());
+
+  /**
    * Stroke a path on the draw target with a certain source pattern.
    *
    * @param aPath Path that is to be stroked
@@ -1520,6 +1579,17 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget> {
    */
   virtual void Fill(const Path* aPath, const Pattern& aPattern,
                     const DrawOptions& aOptions = DrawOptions()) = 0;
+
+  /**
+   * Fill a circle on the DrawTarget with a certain source pattern.
+   *
+   * @param aCircle the parameters of the circle
+   * @param aPattern Pattern that forms the source of this stroking operation
+   * @param aOptions Options that are applied to this operation
+   */
+  virtual void FillCircle(const Point& aOrigin, float radius,
+                          const Pattern& aPattern,
+                          const DrawOptions& aOptions = DrawOptions());
 
   /**
    * Fill a series of glyphs on the draw target with a certain source pattern.
@@ -1899,6 +1969,11 @@ class DrawTarget : public external::AtomicRefCounted<DrawTarget> {
    */
   virtual void DetachAllSnapshots() = 0;
 
+  /**
+   * Remove all clips in the DrawTarget.
+   */
+  virtual bool RemoveAllClips() { return false; }
+
  protected:
   UserData mUserData;
   Matrix mTransform;
@@ -1967,11 +2042,6 @@ class GFX2D_API Factory {
   static bool CheckSurfaceSize(const IntSize& sz, int32_t limit = 0,
                                int32_t allocLimit = 0);
 
-  /**
-   * Make sure that the given buffer size doesn't exceed the allocation limit.
-   */
-  static bool CheckBufferSize(int32_t bufSize);
-
   /** Make sure the given dimension satisfies the CheckSurfaceSize and is
    * within 8k limit.  The 8k value is chosen a bit randomly.
    */
@@ -1989,6 +2059,9 @@ class GFX2D_API Factory {
   static already_AddRefed<DrawTarget> CreateDrawTarget(BackendType aBackend,
                                                        const IntSize& aSize,
                                                        SurfaceFormat aFormat);
+
+  static already_AddRefed<PathBuilder> CreatePathBuilder(
+      BackendType aBackend, FillRule aFillRule = FillRule::FILL_WINDING);
 
   /**
    * Create a simple PathBuilder, which uses SKIA backend.

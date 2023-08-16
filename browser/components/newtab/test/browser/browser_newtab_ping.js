@@ -3,20 +3,17 @@
 
 "use strict";
 
-const { AboutNewTab } = ChromeUtils.import(
-  "resource:///modules/AboutNewTab.jsm"
-);
 const { ASRouter } = ChromeUtils.import(
   "resource://activity-stream/lib/ASRouter.jsm"
 );
 
-const { ExperimentFakes } = ChromeUtils.import(
-  "resource://testing-common/NimbusTestUtils.jsm"
+const { ExperimentFakes } = ChromeUtils.importESModule(
+  "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 
 let sendTriggerMessageSpy;
 
-add_setup(function() {
+add_setup(function () {
   let sandbox = sinon.createSandbox();
   sendTriggerMessageSpy = sandbox.spy(ASRouter, "sendTriggerMessage");
 
@@ -32,6 +29,9 @@ add_task(async function test_newtab_tab_close_sends_ping() {
 
   Services.fog.testResetFOG();
   sendTriggerMessageSpy.resetHistory();
+  let TelemetryFeed =
+    AboutNewTab.activityStream.store.feeds.get("feeds.telemetry");
+  TelemetryFeed.init(); // INIT action doesn't happen by default.
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
     "about:newtab",
@@ -64,6 +64,12 @@ add_task(async function test_newtab_tab_close_sends_ping() {
       sessionId,
       "Should've closed the session we opened"
     );
+    Assert.ok(Glean.newtabSearch.enabled.testGetValue());
+    Assert.ok(Glean.topsites.enabled.testGetValue());
+    Assert.ok(Glean.topsites.sponsoredEnabled.testGetValue());
+    Assert.ok(Glean.pocket.enabled.testGetValue());
+    Assert.ok(Glean.pocket.sponsoredStoriesEnabled.testGetValue());
+    Assert.equal(false, Glean.pocket.isSignedIn.testGetValue());
   });
 
   BrowserTestUtils.removeTab(tab);
@@ -81,6 +87,9 @@ add_task(async function test_newtab_tab_nav_sends_ping() {
 
   Services.fog.testResetFOG();
   sendTriggerMessageSpy.resetHistory();
+  let TelemetryFeed =
+    AboutNewTab.activityStream.store.feeds.get("feeds.telemetry");
+  TelemetryFeed.init(); // INIT action doesn't happen by default.
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
     "about:newtab",
@@ -113,9 +122,15 @@ add_task(async function test_newtab_tab_nav_sends_ping() {
       sessionId,
       "Should've closed the session we opened"
     );
+    Assert.ok(Glean.newtabSearch.enabled.testGetValue());
+    Assert.ok(Glean.topsites.enabled.testGetValue());
+    Assert.ok(Glean.topsites.sponsoredEnabled.testGetValue());
+    Assert.ok(Glean.pocket.enabled.testGetValue());
+    Assert.ok(Glean.pocket.sponsoredStoriesEnabled.testGetValue());
+    Assert.equal(false, Glean.pocket.isSignedIn.testGetValue());
   });
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, "about:mozilla");
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, "about:mozilla");
   await BrowserTestUtils.waitForCondition(
     () => pingSubmitted,
     "We expect the ping to have submitted."
@@ -135,6 +150,9 @@ add_task(async function test_newtab_doesnt_send_nimbus() {
     value: { newtabPingEnabled: false },
   });
   Services.fog.testResetFOG();
+  let TelemetryFeed =
+    AboutNewTab.activityStream.store.feeds.get("feeds.telemetry");
+  TelemetryFeed.init(); // INIT action doesn't happen by default.
   sendTriggerMessageSpy.resetHistory();
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
@@ -160,17 +178,36 @@ add_task(async function test_newtab_doesnt_send_nimbus() {
   GleanPings.newtab.testBeforeNextSubmit(() => {
     Assert.ok(false, "Must not submit ping!");
   });
-  BrowserTestUtils.loadURI(tab.linkedBrowser, "about:mozilla");
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, "about:mozilla");
   BrowserTestUtils.removeTab(tab);
   await BrowserTestUtils.waitForCondition(() => {
-    let { sessions } = AboutNewTab.activityStream.store.feeds.get(
-      "feeds.telemetry"
-    );
+    let { sessions } =
+      AboutNewTab.activityStream.store.feeds.get("feeds.telemetry");
     return !Array.from(sessions.entries()).filter(
       ([k, v]) => v.session_id === sessionId
     ).length;
   }, "Waiting for sessions to clean up.");
   // Session ended without a ping being sent. Success!
   await doEnrollmentCleanup();
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async function test_newtab_categorization_sends_ping() {
+  await SpecialPowers.pushPrefEnv({
+    set: [["browser.newtabpage.activity-stream.telemetry", true]],
+  });
+
+  Services.fog.testResetFOG();
+  sendTriggerMessageSpy.resetHistory();
+  let TelemetryFeed =
+    AboutNewTab.activityStream.store.feeds.get("feeds.telemetry");
+  let pingSent = false;
+  GleanPings.newtab.testBeforeNextSubmit(reason => {
+    pingSent = true;
+    Assert.equal(reason, "component_init");
+  });
+  await TelemetryFeed.sendPageTakeoverData();
+  Assert.ok(pingSent, "ping was sent");
+
   await SpecialPowers.popPrefEnv();
 });

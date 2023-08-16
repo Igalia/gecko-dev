@@ -10,7 +10,7 @@
 
 var {
   getInplaceEditorForSpan: inplaceEditor,
-} = require("devtools/client/shared/inplace-editor");
+} = require("resource://devtools/client/shared/inplace-editor.js");
 
 // This file contains functions related to the inspector that are also of interest to
 // other test directores as well.
@@ -24,7 +24,7 @@ var {
  *           - inspector
  *           - highlighterTestFront
  */
-var openInspector = async function(hostType) {
+var openInspector = async function (hostType) {
   info("Opening the inspector");
 
   const toolbox = await openToolboxForTab(
@@ -52,7 +52,7 @@ var openInspector = async function(hostType) {
  *           - inspector
  *           - highlighterTestFront
  */
-var openInspectorSidebarTab = async function(id) {
+var openInspectorSidebarTab = async function (id) {
   const { toolbox, inspector, highlighterTestFront } = await openInspector();
 
   info("Selecting the " + id + " sidebar");
@@ -237,7 +237,7 @@ function getNodeFront(selector, { walker }) {
  *        Is the selection representing the slotted version the node.
  * @return {Promise} Resolves when the inspector is updated with the new node
  */
-var selectNode = async function(
+var selectNode = async function (
   selector,
   inspector,
   reason = "test",
@@ -247,7 +247,9 @@ var selectNode = async function(
   const nodeFront = await getNodeFront(selector, inspector);
   const updated = inspector.once("inspector-updated");
 
-  const { ELEMENT_NODE } = require("devtools/shared/dom-node-constants");
+  const {
+    ELEMENT_NODE,
+  } = require("resource://devtools/shared/dom-node-constants.js");
   const onSelectionCssSelectorsUpdated =
     nodeFront?.nodeType == ELEMENT_NODE
       ? inspector.once("selection-css-selectors-updated")
@@ -257,6 +259,48 @@ var selectNode = async function(
   await updated;
   await onSelectionCssSelectorsUpdated;
 };
+
+/**
+ * Using the markupview's _waitForChildren function, wait for all queued
+ * children updates to be handled.
+ * @param {InspectorPanel} inspector The instance of InspectorPanel currently
+ * loaded in the toolbox
+ * @return a promise that resolves when all queued children updates have been
+ * handled
+ */
+function waitForChildrenUpdated({ markup }) {
+  info("Waiting for queued children updates to be handled");
+  return new Promise(resolve => {
+    markup._waitForChildren().then(() => {
+      executeSoon(resolve);
+    });
+  });
+}
+
+// The expand all operation of the markup-view calls itself recursively and
+// there's not one event we can wait for to know when it's done, so use this
+// helper function to wait until all recursive children updates are done.
+async function waitForMultipleChildrenUpdates(inspector) {
+  // As long as child updates are queued up while we wait for an update already
+  // wait again
+  if (
+    inspector.markup._queuedChildUpdates &&
+    inspector.markup._queuedChildUpdates.size
+  ) {
+    await waitForChildrenUpdated(inspector);
+    return waitForMultipleChildrenUpdates(inspector);
+  }
+  return null;
+}
+
+/**
+ * Expand the provided markup container programmatically and  wait for all
+ * children to update.
+ */
+async function expandContainer(inspector, container) {
+  await inspector.markup.expandNode(container.node);
+  await waitForMultipleChildrenUpdates(inspector);
+}
 
 /**
  * Get the NodeFront for a node that matches a given css selector inside a
@@ -358,7 +402,7 @@ function manualDebounce() {
   let calls = [];
 
   function debounce(func, wait, scope) {
-    return function() {
+    return function () {
       const existingCall = calls.find(call => call.func === func);
       if (existingCall) {
         existingCall.args = arguments;
@@ -368,7 +412,7 @@ function manualDebounce() {
     };
   }
 
-  debounce.flush = function() {
+  debounce.flush = function () {
     calls.forEach(({ func, scope, args }) => func.apply(scope, args));
     calls = [];
   };
@@ -477,13 +521,14 @@ async function waitForComputedStyleProperty(
  *
  * @return a promise that resolves to the inplace-editor element when ready
  */
-var focusEditableField = async function(
+var focusEditableField = async function (
   ruleView,
   editable,
   xOffset = 1,
   yOffset = 1,
   options = {}
 ) {
+  editable.scrollIntoView();
   const onFocus = once(editable.parentNode, "focus", true);
   info("Clicking on editable field to turn to edit mode");
   if (options.type === undefined) {
@@ -670,7 +715,7 @@ function getRuleViewLinkTextByIndex(view, index) {
  * @return a promise that resolves to the newly created editor when ready and
  * focused
  */
-var focusNewRuleViewProperty = async function(ruleEditor) {
+var focusNewRuleViewProperty = async function (ruleEditor) {
   info("Clicking on a close ruleEditor brace to start editing a new property");
 
   // Use bottom alignment to avoid scrolling out of the parent element area.
@@ -702,7 +747,7 @@ var focusNewRuleViewProperty = async function(ruleEditor) {
  * @return a promise that resolves when the new property name has been entered
  * and once the value field is focused
  */
-var createNewRuleViewProperty = async function(ruleEditor, inputValue) {
+var createNewRuleViewProperty = async function (ruleEditor, inputValue) {
   info("Creating a new property editor");
   const editor = await focusNewRuleViewProperty(ruleEditor);
 
@@ -729,7 +774,7 @@ var createNewRuleViewProperty = async function(ruleEditor, inputValue) {
  * @return a promise that resolves when the rule-view is filtered for the
  * search term
  */
-var setSearchFilter = async function(view, searchValue) {
+var setSearchFilter = async function (view, searchValue) {
   info('Setting filter text to "' + searchValue + '"');
 
   const searchField = view.searchField;
@@ -799,9 +844,8 @@ async function waitUntilVisitedState(tab, selectors) {
         const ELEMENT_STATE_VISITED = 1 << 19;
 
         for (const selector of args) {
-          const target = content.wrappedJSObject.document.querySelector(
-            selector
-          );
+          const target =
+            content.wrappedJSObject.document.querySelector(selector);
           if (
             !(
               target &&
@@ -825,11 +869,13 @@ async function waitUntilVisitedState(tab, selectors) {
  * @returns Promise<Boolean>
  */
 function hasMatchingElementInContentPage(selector) {
-  return SpecialPowers.spawn(gBrowser.selectedBrowser, [selector], function(
-    innerSelector
-  ) {
-    return content.document.querySelector(innerSelector) !== null;
-  });
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [selector],
+    function (innerSelector) {
+      return content.document.querySelector(innerSelector) !== null;
+    }
+  );
 }
 
 /**
@@ -839,11 +885,13 @@ function hasMatchingElementInContentPage(selector) {
  * @returns Promise<Number> the number of matching elements
  */
 function getNumberOfMatchingElementsInContentPage(selector) {
-  return SpecialPowers.spawn(gBrowser.selectedBrowser, [selector], function(
-    innerSelector
-  ) {
-    return content.document.querySelectorAll(innerSelector).length;
-  });
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [selector],
+    function (innerSelector) {
+      return content.document.querySelectorAll(innerSelector).length;
+    }
+  );
 }
 
 /**
@@ -857,7 +905,7 @@ function getContentPageElementProperty(selector, propertyName) {
   return SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [selector, propertyName],
-    function(innerSelector, innerPropertyName) {
+    function (innerSelector, innerPropertyName) {
       return content.document.querySelector(innerSelector)[innerPropertyName];
     }
   );
@@ -875,10 +923,9 @@ function setContentPageElementProperty(selector, propertyName, propertyValue) {
   return SpecialPowers.spawn(
     gBrowser.selectedBrowser,
     [selector, propertyName, propertyValue],
-    function(innerSelector, innerPropertyName, innerPropertyValue) {
-      content.document.querySelector(innerSelector)[
-        innerPropertyName
-      ] = innerPropertyValue;
+    function (innerSelector, innerPropertyName, innerPropertyValue) {
+      content.document.querySelector(innerSelector)[innerPropertyName] =
+        innerPropertyValue;
     }
   );
 }

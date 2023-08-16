@@ -6,38 +6,39 @@
 
 #include "EditorSpellCheck.h"
 
+#include "EditorBase.h"            // for EditorBase
+#include "HTMLEditor.h"            // for HTMLEditor
+#include "TextServicesDocument.h"  // for TextServicesDocument
+
 #include "mozilla/Attributes.h"   // for final
-#include "mozilla/EditorBase.h"   // for EditorBase
-#include "mozilla/HTMLEditor.h"   // for HTMLEditor
 #include "mozilla/dom/Element.h"  // for Element
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/Selection.h"
 #include "mozilla/dom/StaticRange.h"
-#include "mozilla/intl/Locale.h"           // for mozilla::intl::Locale
-#include "mozilla/intl/LocaleService.h"    // for retrieving app locale
-#include "mozilla/intl/OSPreferences.h"    // for mozilla::intl::OSPreferences
-#include "mozilla/Logging.h"               // for mozilla::LazyLogModule
-#include "mozilla/mozalloc.h"              // for operator delete, etc
-#include "mozilla/mozSpellChecker.h"       // for mozSpellChecker
-#include "mozilla/Preferences.h"           // for Preferences
-#include "mozilla/TextServicesDocument.h"  // for TextServicesDocument
-#include "nsAString.h"                     // for nsAString::IsEmpty, etc
-#include "nsComponentManagerUtils.h"       // for do_CreateInstance
-#include "nsDebug.h"                       // for NS_ENSURE_TRUE, etc
-#include "nsDependentSubstring.h"          // for Substring
-#include "nsError.h"                       // for NS_ERROR_NOT_INITIALIZED, etc
-#include "nsIContent.h"                    // for nsIContent
-#include "nsIContentPrefService2.h"        // for nsIContentPrefService2, etc
-#include "mozilla/dom/Document.h"          // for Document
-#include "nsIEditor.h"                     // for nsIEditor
+#include "mozilla/intl/Locale.h"         // for mozilla::intl::Locale
+#include "mozilla/intl/LocaleService.h"  // for retrieving app locale
+#include "mozilla/intl/OSPreferences.h"  // for mozilla::intl::OSPreferences
+#include "mozilla/Logging.h"             // for mozilla::LazyLogModule
+#include "mozilla/mozalloc.h"            // for operator delete, etc
+#include "mozilla/mozSpellChecker.h"     // for mozSpellChecker
+#include "mozilla/Preferences.h"         // for Preferences
+
+#include "nsAString.h"                // for nsAString::IsEmpty, etc
+#include "nsComponentManagerUtils.h"  // for do_CreateInstance
+#include "nsDebug.h"                  // for NS_ENSURE_TRUE, etc
+#include "nsDependentSubstring.h"     // for Substring
+#include "nsError.h"                  // for NS_ERROR_NOT_INITIALIZED, etc
+#include "nsIContent.h"               // for nsIContent
+#include "nsIContentPrefService2.h"   // for nsIContentPrefService2, etc
+#include "mozilla/dom/Document.h"     // for Document
+#include "nsIEditor.h"                // for nsIEditor
 #include "nsILoadContext.h"
-#include "nsISupportsBase.h"   // for nsISupports
+#include "nsISupports.h"       // for nsISupports
 #include "nsISupportsUtils.h"  // for NS_ADDREF
 #include "nsIURI.h"            // for nsIURI
 #include "nsThreadUtils.h"     // for GetMainThreadSerialEventTarget
 #include "nsVariant.h"         // for nsIWritableVariant, etc
 #include "nsLiteralString.h"   // for NS_LITERAL_STRING, etc
-#include "nsMemory.h"          // for nsMemory
 #include "nsRange.h"
 #include "nsReadableUtils.h"        // for ToNewUnicode, EmptyString, etc
 #include "nsServiceManagerUtils.h"  // for do_GetService
@@ -1025,7 +1026,7 @@ void EditorSpellCheck::SetFallbackDictionary(DictionaryFetcher* aFetcher) {
         mozilla::intl::Locale appLoc;
         auto result =
             mozilla::intl::LocaleParser::TryParse(appLocaleStr, appLoc);
-        if (result.isOk() && loc.Canonicalize().isOk() &&
+        if (result.isOk() && appLoc.Canonicalize().isOk() &&
             loc.Language().Span() == appLoc.Language().Span()) {
           if (BuildDictionaryList(appLocaleStr, dictList,
                                   DICT_COMPARE_CASE_INSENSITIVE, tryDictList)) {
@@ -1042,7 +1043,7 @@ void EditorSpellCheck::SetFallbackDictionary(DictionaryFetcher* aFetcher) {
         mozilla::intl::Locale sysLoc;
         auto result =
             mozilla::intl::LocaleParser::TryParse(sysLocaleStr, sysLoc);
-        if (result.isOk() && loc.Canonicalize().isOk() &&
+        if (result.isOk() && sysLoc.Canonicalize().isOk() &&
             loc.Language().Span() == sysLoc.Language().Span()) {
           if (BuildDictionaryList(sysLocaleStr, dictList,
                                   DICT_COMPARE_CASE_INSENSITIVE, tryDictList)) {

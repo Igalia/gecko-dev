@@ -24,7 +24,7 @@ add_task(async function test_serviceWorker_register_guarded_by_pref() {
   let extensionData = {
     files: {
       "page.html": "<!DOCTYPE html><script src='page.js'></script>",
-      "page.js": async function() {
+      "page.js": async function () {
         browser.test.assertEq(
           undefined,
           navigator.serviceWorker,
@@ -64,7 +64,7 @@ add_task(async function test_serviceWorker_register_guarded_by_pref() {
   extension = ExtensionTestUtils.loadExtension({
     files: {
       ...extensionData.files,
-      "page.js": async function() {
+      "page.js": async function () {
         try {
           await navigator.serviceWorker.register("sw.js");
         } catch (err) {
@@ -205,7 +205,7 @@ function loadTestExtension({ version }) {
       background: {
         service_worker: "sw.js",
       },
-      applications: { gecko: { id: "test-bg-sw@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test-bg-sw@mochi.test" } },
     },
     files: {
       "page.html": "<!DOCTYPE html><body></body>",

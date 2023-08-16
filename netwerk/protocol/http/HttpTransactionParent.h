@@ -11,11 +11,12 @@
 #include "mozilla/net/HttpTransactionShell.h"
 #include "mozilla/net/NeckoChannelParams.h"
 #include "mozilla/net/PHttpTransactionParent.h"
-#include "nsHttp.h"
 #include "nsCOMPtr.h"
+#include "nsHttp.h"
+#include "nsIRequest.h"
 #include "nsIThreadRetargetableRequest.h"
 #include "nsITransport.h"
-#include "nsIRequest.h"
+#include "nsITransportSecurityInfo.h"
 
 namespace mozilla::net {
 
@@ -48,12 +49,13 @@ class HttpTransactionParent final : public PHttpTransactionParent,
 
   mozilla::ipc::IPCResult RecvOnStartRequest(
       const nsresult& aStatus, const Maybe<nsHttpResponseHead>& aResponseHead,
-      const nsCString& aSecurityInfoSerialization,
-      const bool& aProxyConnectFailed, const TimingStructArgs& aTimings,
+      nsITransportSecurityInfo* aSecurityInfo, const bool& aProxyConnectFailed,
+      const TimingStructArgs& aTimings,
       const int32_t& aProxyConnectResponseCode,
       nsTArray<uint8_t>&& aDataForSniffer, const Maybe<nsCString>& aAltSvcUsed,
       const bool& aDataToChildProcess, const bool& aRestarted,
-      const uint32_t& aHTTPSSVCReceivedStage, const bool& aSupportsHttp3);
+      const uint32_t& aHTTPSSVCReceivedStage, const bool& aSupportsHttp3,
+      const nsIRequest::TRRMode& aMode, const TRRSkippedReason& aSkipReason);
   mozilla::ipc::IPCResult RecvOnTransportStatus(
       const nsresult& aStatus, const int64_t& aProgress,
       const int64_t& aProgressMax,
@@ -73,7 +75,11 @@ class HttpTransactionParent final : public PHttpTransactionParent,
   mozilla::ipc::IPCResult RecvOnH2PushStream(const uint32_t& aPushedStreamId,
                                              const nsCString& aResourceUrl,
                                              const nsCString& aRequestString);
-  mozilla::ipc::IPCResult RecvEarlyHint(const nsCString& aValue);
+  mozilla::ipc::IPCResult RecvEarlyHint(const nsCString& aValue,
+                                        const nsACString& aReferrerPolicy,
+                                        const nsACString& aCSPHeader);
+
+  virtual mozilla::TimeStamp GetPendingTime() override;
 
   already_AddRefed<nsIEventTarget> GetNeckoTarget();
 
@@ -93,12 +99,13 @@ class HttpTransactionParent final : public PHttpTransactionParent,
                          HttpConnectionInfoCloneArgs& aArgs);
   void DoOnStartRequest(
       const nsresult& aStatus, const Maybe<nsHttpResponseHead>& aResponseHead,
-      const nsCString& aSecurityInfoSerialization,
-      const bool& aProxyConnectFailed, const TimingStructArgs& aTimings,
+      nsITransportSecurityInfo* aSecurityInfo, const bool& aProxyConnectFailed,
+      const TimingStructArgs& aTimings,
       const int32_t& aProxyConnectResponseCode,
       nsTArray<uint8_t>&& aDataForSniffer, const Maybe<nsCString>& aAltSvcUsed,
       const bool& aDataToChildProcess, const bool& aRestarted,
-      const uint32_t& aHTTPSSVCReceivedStage, const bool& aSupportsHttp3);
+      const uint32_t& aHTTPSSVCReceivedStage, const bool& aSupportsHttp3,
+      const nsIRequest::TRRMode& aMode, const TRRSkippedReason& aSkipReason);
   void DoOnDataAvailable(const nsCString& aData, const uint64_t& aOffset,
                          const uint32_t& aCount);
   void DoOnStopRequest(
@@ -110,17 +117,17 @@ class HttpTransactionParent final : public PHttpTransactionParent,
   void DoNotifyListener();
   void ContinueDoNotifyListener();
   // Get event target for ODA.
-  already_AddRefed<nsIEventTarget> GetODATarget();
+  already_AddRefed<nsISerialEventTarget> GetODATarget();
   void CancelOnMainThread(nsresult aRv);
   void HandleAsyncAbort();
 
   nsCOMPtr<nsITransportEventSink> mEventsink;
   nsCOMPtr<nsIStreamListener> mChannel;
-  nsCOMPtr<nsIEventTarget> mTargetThread;
-  nsCOMPtr<nsIEventTarget> mODATarget;
+  nsCOMPtr<nsISerialEventTarget> mTargetThread;
+  nsCOMPtr<nsISerialEventTarget> mODATarget;
   Mutex mEventTargetMutex MOZ_UNANNOTATED{
       "HttpTransactionParent::EventTargetMutex"};
-  nsCOMPtr<nsISupports> mSecurityInfo;
+  nsCOMPtr<nsITransportSecurityInfo> mSecurityInfo;
   UniquePtr<nsHttpResponseHead> mResponseHead;
   UniquePtr<nsHttpHeaderArray> mResponseTrailers;
   RefPtr<ChannelEventQueue> mEventQ;
@@ -138,13 +145,15 @@ class HttpTransactionParent final : public PHttpTransactionParent,
   bool mOnStartRequestCalled{false};
   bool mOnStopRequestCalled{false};
   bool mResolvedByTRR{false};
+  nsIRequest::TRRMode mEffectiveTRRMode{nsIRequest::TRR_DEFAULT_MODE};
+  TRRSkippedReason mTRRSkipReason{nsITRRSkipReason::TRR_UNSET};
   bool mEchConfigUsed = false;
   int32_t mProxyConnectResponseCode{0};
   uint64_t mChannelId{0};
   bool mDataSentToChildProcess{false};
   bool mIsDocumentLoad;
   bool mRestarted{false};
-  uint32_t mCaps{0};
+  Atomic<uint32_t, ReleaseAcquire> mCaps{0};
   TimeStamp mRedirectStart;
   TimeStamp mRedirectEnd;
 

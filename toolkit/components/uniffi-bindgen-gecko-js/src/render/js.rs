@@ -3,13 +3,13 @@ License, v. 2.0. If a copy of the MPL was not distributed with this
 * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 use super::shared::*;
-use crate::{FunctionIds, ObjectIds};
+use crate::{CallbackIds, Config, FunctionIds, ObjectIds};
 use askama::Template;
 use extend::ext;
 use heck::{ToLowerCamelCase, ToShoutySnakeCase, ToUpperCamelCase};
 use uniffi_bindgen::interface::{
-    Argument, ComponentInterface, Constructor, Enum, Error, Field, Function, Literal, Method,
-    Object, Radix, Record, Type,
+    Argument, AsType, CallbackInterface, ComponentInterface, Constructor, Enum, Field, Function,
+    Literal, Method, Object, Radix, Record, Type,
 };
 
 fn arg_names(args: &[&Argument]) -> String {
@@ -37,12 +37,45 @@ fn render_enum_literal(typ: &Type, variant_name: &str) -> String {
         panic!("Rendering an enum literal on a type that is not an enum")
     }
 }
+
 #[derive(Template)]
-#[template(path = "js/wrapper.jsm", escape = "none")]
+#[template(path = "js/wrapper.sys.mjs", escape = "none")]
 pub struct JSBindingsTemplate<'a> {
     pub ci: &'a ComponentInterface,
+    pub config: &'a Config,
     pub function_ids: &'a FunctionIds<'a>,
     pub object_ids: &'a ObjectIds<'a>,
+    pub callback_ids: &'a CallbackIds<'a>,
+}
+
+impl<'a> JSBindingsTemplate<'a> {
+    pub fn js_module_name(&self) -> String {
+        self.js_module_name_for_ci_namespace(self.ci.namespace())
+    }
+
+    fn external_type_module(&self, crate_name: &str) -> String {
+        format!(
+            "resource://gre/modules/{}",
+            self.js_module_name_for_crate_name(crate_name),
+        )
+    }
+
+    // TODO: Once https://phabricator.services.mozilla.com/D156116 is merged maybe the next two
+    // functions should use a map from the config file
+
+    fn js_module_name_for_ci_namespace(&self, namespace: &str) -> String {
+        // The plain namespace name is a bit too generic as a module name for m-c, so we
+        // prefix it with "Rust". Later we'll probably allow this to be customized.
+        format!("Rust{}.sys.mjs", namespace.to_upper_camel_case())
+    }
+
+    fn js_module_name_for_crate_name(&self, crate_name: &str) -> String {
+        let namespace = match crate_name {
+            "uniffi_geometry" => "geometry",
+            s => s,
+        };
+        self.js_module_name_for_ci_namespace(namespace)
+    }
 }
 
 // Define extension traits with methods used in our template code
@@ -99,51 +132,76 @@ pub impl Record {
     }
 }
 
+#[ext(name=CallbackInterfaceJSExt)]
+pub impl CallbackInterface {
+    fn nm(&self) -> String {
+        self.name().to_upper_camel_case()
+    }
+
+    fn handler(&self) -> String {
+        format!("callbackHandler{}", self.nm())
+    }
+}
+
 #[ext(name=FieldJSExt)]
 pub impl Field {
     fn nm(&self) -> String {
         self.name().to_lower_camel_case()
     }
 
+    fn lower_fn(&self) -> String {
+        self.as_type().lower_fn()
+    }
+
+    fn lift_fn(&self) -> String {
+        self.as_type().lift_fn()
+    }
+
     fn write_datastream_fn(&self) -> String {
-        self.type_().write_datastream_fn()
+        self.as_type().write_datastream_fn()
     }
 
     fn read_datastream_fn(&self) -> String {
-        self.type_().read_datastream_fn()
+        self.as_type().read_datastream_fn()
+    }
+
+    fn compute_size_fn(&self) -> String {
+        self.as_type().compute_size_fn()
     }
 
     fn ffi_converter(&self) -> String {
-        self.type_().ffi_converter()
-    }
-
-    fn check_type(&self) -> String {
-        format!(
-            "{}.checkType(\"{}\", {})",
-            self.type_().ffi_converter(),
-            self.nm(),
-            self.nm()
-        )
+        self.as_type().ffi_converter()
     }
 }
 
 #[ext(name=ArgumentJSExt)]
 pub impl Argument {
-    fn lower_fn_name(&self) -> String {
-        format!("{}.lower", self.type_().ffi_converter())
-    }
-
     fn nm(&self) -> String {
         self.name().to_lower_camel_case()
     }
 
-    fn check_type(&self) -> String {
-        format!(
-            "{}.checkType(\"{}\", {})",
-            self.type_().ffi_converter(),
-            self.nm(),
-            self.nm()
-        )
+    fn lower_fn(&self) -> String {
+        self.as_type().lower_fn()
+    }
+
+    fn lift_fn(&self) -> String {
+        self.as_type().lift_fn()
+    }
+
+    fn write_datastream_fn(&self) -> String {
+        self.as_type().write_datastream_fn()
+    }
+
+    fn read_datastream_fn(&self) -> String {
+        self.as_type().read_datastream_fn()
+    }
+
+    fn compute_size_fn(&self) -> String {
+        self.as_type().compute_size_fn()
+    }
+
+    fn ffi_converter(&self) -> String {
+        self.as_type().ffi_converter()
     }
 }
 
@@ -157,12 +215,24 @@ pub impl Type {
         }
     }
 
+    fn lower_fn(&self) -> String {
+        format!("{}.lower", self.ffi_converter())
+    }
+
+    fn lift_fn(&self) -> String {
+        format!("{}.lift", self.ffi_converter())
+    }
+
     fn write_datastream_fn(&self) -> String {
         format!("{}.write", self.ffi_converter())
     }
 
     fn read_datastream_fn(&self) -> String {
         format!("{}.read", self.ffi_converter())
+    }
+
+    fn compute_size_fn(&self) -> String {
+        format!("{}.computeSize", self.ffi_converter())
     }
 
     fn ffi_converter(&self) -> String {
@@ -188,13 +258,6 @@ pub impl Function {
 
     fn nm(&self) -> String {
         self.name().to_lower_camel_case()
-    }
-}
-
-#[ext(name=ErrorJSExt)]
-pub impl Error {
-    fn nm(&self) -> String {
-        self.name().to_upper_camel_case()
     }
 }
 

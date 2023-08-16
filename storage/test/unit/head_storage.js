@@ -5,13 +5,16 @@
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-var { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+var { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
+});
 
 const OPEN_HISTOGRAM = "SQLITE_STORE_OPEN";
 const QUERY_HISTOGRAM = "SQLITE_STORE_QUERY";
@@ -88,7 +91,7 @@ function asyncCleanup() {
 
   // close the connection
   print("*** Storage Tests: Trying to asyncClose!");
-  getOpenedDatabase().asyncClose(function() {
+  getOpenedDatabase().asyncClose(function () {
     closed = true;
   });
 
@@ -282,7 +285,7 @@ function getTableRowCount(aTableName) {
 
 function asyncClone(db, readOnly) {
   return new Promise((resolve, reject) => {
-    db.asyncClone(readOnly, function(status, db2) {
+    db.asyncClone(readOnly, function (status, db2) {
       if (Components.isSuccessCode(status)) {
         resolve(db2);
       } else {
@@ -294,7 +297,7 @@ function asyncClone(db, readOnly) {
 
 function asyncClose(db) {
   return new Promise((resolve, reject) => {
-    db.asyncClose(function(status) {
+    db.asyncClose(function (status) {
       if (Components.isSuccessCode(status)) {
         resolve();
       } else {
@@ -339,7 +342,7 @@ function openAsyncDatabase(file, options) {
       file,
       openFlags,
       connectionFlags,
-      function(status, db) {
+      function (status, db) {
         if (Components.isSuccessCode(status)) {
           resolve(db.QueryInterface(Ci.mozIStorageAsyncConnection));
         } else {

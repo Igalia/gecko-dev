@@ -153,6 +153,12 @@ union RequestParams
   ListOriginsParams;
 };
 
+union BoolResponse
+{
+  nsresult;
+  bool;
+};
+
 [ManualDealloc, ChildImpl=virtual, ParentImpl=virtual]
 protocol PQuota
 {
@@ -167,6 +173,9 @@ parent:
   async PQuotaUsageRequest(UsageRequestParams params);
 
   async PQuotaRequest(RequestParams params);
+
+  async ClearStoragesForPrivateBrowsing()
+      returns(BoolResponse response);
 
   async StartIdleMaintenance();
 

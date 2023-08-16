@@ -7,65 +7,88 @@
 #ifndef DOM_FS_CHILD_FILESYSTEMREQUESTHANDLER_H_
 #define DOM_FS_CHILD_FILESYSTEMREQUESTHANDLER_H_
 
-#include "fs/FileSystemChildFactory.h"
-
 #include "mozilla/dom/FileSystemTypes.h"
-#include "mozilla/dom/FileSystemHandle.h"
-#include "nsStringFwd.h"
 
 template <class T>
 class RefPtr;
 
-namespace mozilla::dom {
-class FileSystemHandle;
-class Promise;
-class OriginPrivateFileSystemChild;
-}  // namespace mozilla::dom
+namespace mozilla {
 
-namespace mozilla::dom::fs {
+class ErrorResult;
+
+namespace dom {
+
+class FileSystemHandle;
+class FileSystemManager;
+class Promise;
+
+namespace fs {
 
 class FileSystemChildMetadata;
 class FileSystemEntryMetadata;
-
-class ArrayAppendable {};
+class FileSystemEntryMetadataArray;
+class FileSystemEntryPair;
 
 class FileSystemRequestHandler {
  public:
-  explicit FileSystemRequestHandler(FileSystemChildFactory* aChildFactory)
-      : mChildFactory(aChildFactory) {}
+  virtual void GetRootHandle(RefPtr<FileSystemManager> aManager,
+                             RefPtr<Promise> aPromise, ErrorResult& aError);
 
-  FileSystemRequestHandler()
-      : FileSystemRequestHandler(new FileSystemChildFactory()) {}
-
-  virtual void GetRoot(RefPtr<Promise> aPromise);
-
-  virtual void GetDirectoryHandle(RefPtr<FileSystemActorHolder>& aActor,
+  virtual void GetDirectoryHandle(RefPtr<FileSystemManager>& aManager,
                                   const FileSystemChildMetadata& aDirectory,
-                                  bool aCreate, RefPtr<Promise> aPromise);
+                                  bool aCreate, RefPtr<Promise> aPromise,
+                                  ErrorResult& aError);
 
-  virtual void GetFileHandle(RefPtr<FileSystemActorHolder>& aActor,
+  virtual void GetFileHandle(RefPtr<FileSystemManager>& aManager,
                              const FileSystemChildMetadata& aFile, bool aCreate,
-                             RefPtr<Promise> aPromise);
+                             RefPtr<Promise> aPromise, ErrorResult& aError);
 
-  virtual void GetFile(RefPtr<FileSystemActorHolder>& aActor,
+  virtual void GetFile(RefPtr<FileSystemManager>& aManager,
                        const FileSystemEntryMetadata& aFile,
-                       RefPtr<Promise> aPromise);
+                       RefPtr<Promise> aPromise, ErrorResult& aError);
 
-  virtual void GetEntries(RefPtr<FileSystemActorHolder>& aActor,
+  virtual void GetAccessHandle(RefPtr<FileSystemManager>& aManager,
+                               const FileSystemEntryMetadata& aFile,
+                               const RefPtr<Promise>& aPromise,
+                               ErrorResult& aError);
+
+  virtual void GetWritable(RefPtr<FileSystemManager>& aManager,
+                           const FileSystemEntryMetadata& aFile, bool aKeepData,
+                           const RefPtr<Promise>& aPromise,
+                           ErrorResult& aError);
+
+  virtual void GetEntries(RefPtr<FileSystemManager>& aManager,
                           const EntryId& aDirectory, PageNumber aPage,
-                          RefPtr<Promise> aPromise, ArrayAppendable& aSink);
+                          RefPtr<Promise> aPromise,
+                          RefPtr<FileSystemEntryMetadataArray>& aSink,
+                          ErrorResult& aError);
 
-  virtual void RemoveEntry(RefPtr<FileSystemActorHolder>& aActor,
+  virtual void RemoveEntry(RefPtr<FileSystemManager>& aManager,
                            const FileSystemChildMetadata& aEntry,
-                           bool aRecursive, RefPtr<Promise> aPromise);
+                           bool aRecursive, RefPtr<Promise> aPromise,
+                           ErrorResult& aError);
+
+  virtual void MoveEntry(RefPtr<FileSystemManager>& aManager,
+                         FileSystemHandle* aHandle,
+                         FileSystemEntryMetadata* const aEntry,
+                         const FileSystemChildMetadata& aNewEntry,
+                         RefPtr<Promise> aPromise, ErrorResult& aError);
+
+  virtual void RenameEntry(RefPtr<FileSystemManager>& aManager,
+                           FileSystemHandle* aHandle,
+                           FileSystemEntryMetadata* const aEntry,
+                           const Name& aName, RefPtr<Promise> aPromise,
+                           ErrorResult& aError);
+
+  virtual void Resolve(RefPtr<FileSystemManager>& aManager,
+                       const FileSystemEntryPair& aEndpoints,
+                       RefPtr<Promise> aPromise, ErrorResult& aError);
 
   virtual ~FileSystemRequestHandler() = default;
-
- protected:
-  const UniquePtr<FileSystemChildFactory> mChildFactory;
-
 };  // class FileSystemRequestHandler
 
-}  // namespace mozilla::dom::fs
+}  // namespace fs
+}  // namespace dom
+}  // namespace mozilla
 
 #endif  // DOM_FS_CHILD_FILESYSTEMREQUESTHANDLER_H_

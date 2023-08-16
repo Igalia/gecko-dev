@@ -51,22 +51,6 @@ void JSWindowActorParent::SendRawMessage(
     return;
   }
 
-  size_t length = 0;
-  if (aData) {
-    length += aData->DataLength();
-  }
-  if (aStack) {
-    length += aStack->DataLength();
-  }
-
-  if (NS_WARN_IF(!AllowMessage(aMeta, length))) {
-    aRv.ThrowDataCloneError(
-        nsPrintfCString("JSWindowActorParent serialization error: data too "
-                        "large, in actor '%s'",
-                        PromiseFlatCString(aMeta.actorName()).get()));
-    return;
-  }
-
   Maybe<ClonedMessageData> msgData;
   if (aData) {
     msgData.emplace();
@@ -108,9 +92,6 @@ CanonicalBrowsingContext* JSWindowActorParent::GetBrowsingContext(
 void JSWindowActorParent::ClearManager() { mManager = nullptr; }
 
 NS_IMPL_CYCLE_COLLECTION_INHERITED(JSWindowActorParent, JSActor, mManager)
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(JSWindowActorParent, JSActor)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(JSWindowActorParent)
 NS_INTERFACE_MAP_END_INHERITING(JSActor)

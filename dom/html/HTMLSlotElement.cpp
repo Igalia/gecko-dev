@@ -11,6 +11,7 @@
 #include "mozilla/dom/HTMLUnknownElement.h"
 #include "mozilla/dom/ShadowRoot.h"
 #include "mozilla/dom/Text.h"
+#include "mozilla/AppShutdown.h"
 #include "nsContentUtils.h"
 #include "nsGkAtoms.h"
 
@@ -73,9 +74,8 @@ void HTMLSlotElement::UnbindFromTree(bool aNullParent) {
   }
 }
 
-nsresult HTMLSlotElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                        const nsAttrValueOrString* aValue,
-                                        bool aNotify) {
+void HTMLSlotElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                    const nsAttrValue* aValue, bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::name) {
     if (ShadowRoot* containingShadow = GetContainingShadow()) {
       containingShadow->RemoveSlot(this);
@@ -86,11 +86,11 @@ nsresult HTMLSlotElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
                                              aNotify);
 }
 
-nsresult HTMLSlotElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                       const nsAttrValue* aValue,
-                                       const nsAttrValue* aOldValue,
-                                       nsIPrincipal* aSubjectPrincipal,
-                                       bool aNotify) {
+void HTMLSlotElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                   const nsAttrValue* aValue,
+                                   const nsAttrValue* aOldValue,
+                                   nsIPrincipal* aSubjectPrincipal,
+                                   bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None && aName == nsGkAtoms::name) {
     if (ShadowRoot* containingShadow = GetContainingShadow()) {
       containingShadow->AddSlot(this);
@@ -341,7 +341,7 @@ void HTMLSlotElement::EnqueueSlotChangeEvent() {
 
   // FIXME(bug 1459704): Need to figure out how to deal with microtasks posted
   // during shutdown.
-  if (gXPCOMThreadsShutDown) {
+  if (AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMShutdownThreads)) {
     return;
   }
 

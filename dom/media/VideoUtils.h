@@ -9,7 +9,6 @@
 
 #include "AudioSampleFormat.h"
 #include "MediaInfo.h"
-#include "TimeUnits.h"
 #include "VideoLimits.h"
 #include "mozilla/AbstractThread.h"
 #include "mozilla/Attributes.h"
@@ -109,6 +108,7 @@ class MediaResource;
 media::TimeIntervals GetEstimatedBufferedTimeRanges(
     mozilla::MediaResource* aStream, int64_t aDurationUsecs);
 
+double ToMicrosecondResolution(double aSeconds);
 // Converts from number of audio frames (aFrames) to microseconds, given
 // the specified audio rate (aRate).
 CheckedInt64 FramesToUsecs(int64_t aFrames, uint32_t aRate);
@@ -153,7 +153,8 @@ uint32_t DecideAudioPlaybackChannels(const AudioInfo& info);
 
 // Decide the sample-rate to use for audio output according to the
 // given AudioInfo and the prefs that are being set.
-uint32_t DecideAudioPlaybackSampleRate(const AudioInfo& info);
+uint32_t DecideAudioPlaybackSampleRate(const AudioInfo& info,
+                                       bool aShouldResistFingerprinting);
 
 bool IsDefaultPlaybackDeviceMono();
 
@@ -345,6 +346,8 @@ bool ParseCodecsString(const nsAString& aCodecs,
                        nsTArray<nsString>& aOutCodecs);
 
 bool IsH264CodecString(const nsAString& aCodec);
+
+bool IsH265CodecString(const nsAString& aCodec);
 
 bool IsAACCodecString(const nsAString& aCodec);
 

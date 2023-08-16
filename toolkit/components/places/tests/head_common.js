@@ -23,8 +23,8 @@ const TITLE_LENGTH_MAX = 4096;
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 var { PlacesSyncUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PlacesSyncUtils.sys.mjs"
@@ -33,22 +33,21 @@ var { PlacesSyncUtils } = ChromeUtils.importESModule(
 ChromeUtils.defineESModuleGetters(this, {
   BookmarkHTMLUtils: "resource://gre/modules/BookmarkHTMLUtils.sys.mjs",
   BookmarkJSONUtils: "resource://gre/modules/BookmarkJSONUtils.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   PlacesBackups: "resource://gre/modules/PlacesBackups.sys.mjs",
   PlacesDBUtils: "resource://gre/modules/PlacesDBUtils.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
   PlacesTransactions: "resource://gre/modules/PlacesTransactions.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  Sqlite: "resource://gre/modules/Sqlite.jsm",
-  TestUtils: "resource://testing-common/TestUtils.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(this, "SMALLPNG_DATA_URI", function() {
+XPCOMUtils.defineLazyGetter(this, "SMALLPNG_DATA_URI", function () {
   return NetUtil.newURI(
     "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAA" +
       "AAAA6fptVAAAACklEQVQI12NgAAAAAgAB4iG8MwAAAABJRU5ErkJggg=="
@@ -56,7 +55,7 @@ XPCOMUtils.defineLazyGetter(this, "SMALLPNG_DATA_URI", function() {
 });
 const SMALLPNG_DATA_LEN = 67;
 
-XPCOMUtils.defineLazyGetter(this, "SMALLSVG_DATA_URI", function() {
+XPCOMUtils.defineLazyGetter(this, "SMALLSVG_DATA_URI", function () {
   return NetUtil.newURI(
     "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy5" +
       "3My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMDAgMTAwIiBmaWxs" +
@@ -68,15 +67,16 @@ XPCOMUtils.defineLazyGetter(this, "SMALLSVG_DATA_URI", function() {
   );
 });
 
+XPCOMUtils.defineLazyGetter(this, "PlacesFrecencyRecalculator", () => {
+  return Cc["@mozilla.org/places/frecency-recalculator;1"].getService(
+    Ci.nsIObserver
+  ).wrappedJSObject;
+});
+
 var gTestDir = do_get_cwd();
 
 // Initialize profile.
 var gProfD = do_get_profile(true);
-
-Services.prefs.setBoolPref("browser.urlbar.usepreloadedtopurls.enabled", false);
-registerCleanupFunction(() =>
-  Services.prefs.clearUserPref("browser.urlbar.usepreloadedtopurls.enabled")
-);
 
 // Remove any old database.
 clearDB();
@@ -380,7 +380,7 @@ function promiseTopicObserved(aTopic) {
 /**
  * Simulates a Places shutdown.
  */
-var shutdownPlaces = function() {
+var shutdownPlaces = function () {
   info("shutdownPlaces: starting");
   let promise = new Promise(resolve => {
     Services.obs.addObserver(resolve, "places-connection-closed");
@@ -523,34 +523,6 @@ function check_JSON_backup(aIsAutomaticBackup) {
 }
 
 /**
- * Returns the frecency of a url.
- *
- * @param aURI
- *        The URI or spec to get frecency for.
- * @return the frecency value.
- */
-function frecencyForUrl(aURI) {
-  let url = aURI;
-  if (aURI instanceof Ci.nsIURI) {
-    url = aURI.spec;
-  } else if (URL.isInstance(aURI)) {
-    url = aURI.href;
-  }
-  let stmt = DBConn().createStatement(
-    "SELECT frecency FROM moz_places WHERE url_hash = hash(?1) AND url = ?1"
-  );
-  stmt.bindByIndex(0, url);
-  try {
-    if (!stmt.executeStep()) {
-      throw new Error("No result for frecency.");
-    }
-    return stmt.getInt32(0);
-  } finally {
-    stmt.finalize();
-  }
-}
-
-/**
  * Returns the hidden status of a url.
  *
  * @param aURI
@@ -615,29 +587,6 @@ function do_check_valid_places_guid(aGuid) {
 }
 
 /**
- * Retrieves the guid for a given uri.
- *
- * @param aURI
- *        The uri to check.
- * @param [optional] aStack
- *        The stack frame used to report the error.
- * @return the associated the guid.
- */
-function do_get_guid_for_uri(aURI) {
-  let stmt = DBConn().createStatement(
-    `SELECT guid
-     FROM moz_places
-     WHERE url_hash = hash(:url) AND url = :url`
-  );
-  stmt.params.url = aURI.spec;
-  Assert.ok(stmt.executeStep(), "GUID for URI statement should succeed");
-  let guid = stmt.row.guid;
-  stmt.finalize();
-  do_check_valid_places_guid(guid);
-  return guid;
-}
-
-/**
  * Tests that a guid was set in moz_places for a given uri.
  *
  * @param aURI
@@ -645,35 +594,14 @@ function do_get_guid_for_uri(aURI) {
  * @param [optional] aGUID
  *        The expected guid in the database.
  */
-function do_check_guid_for_uri(aURI, aGUID) {
-  let guid = do_get_guid_for_uri(aURI);
+async function check_guid_for_uri(aURI, aGUID) {
+  let guid = await PlacesTestUtils.getDatabaseValue("moz_places", "guid", {
+    url: aURI,
+  });
   if (aGUID) {
     do_check_valid_places_guid(aGUID);
     Assert.equal(guid, aGUID, "Should have a guid in moz_places for the URI");
   }
-}
-
-/**
- * Retrieves the guid for a given bookmark.
- *
- * @param aId
- *        The bookmark id to check.
- * @param [optional] aStack
- *        The stack frame used to report the error.
- * @return the associated the guid.
- */
-function do_get_guid_for_bookmark(aId) {
-  let stmt = DBConn().createStatement(
-    `SELECT guid
-     FROM moz_bookmarks
-     WHERE id = :item_id`
-  );
-  stmt.params.item_id = aId;
-  Assert.ok(stmt.executeStep(), "Should succeed executing the SQL statement");
-  let guid = stmt.row.guid;
-  stmt.finalize();
-  do_check_valid_places_guid(guid);
-  return guid;
 }
 
 /**
@@ -684,8 +612,10 @@ function do_get_guid_for_bookmark(aId) {
  * @param [optional] aGUID
  *        The expected guid in the database.
  */
-function do_check_guid_for_bookmark(aId, aGUID) {
-  let guid = do_get_guid_for_bookmark(aId);
+async function check_guid_for_bookmark(aId, aGUID) {
+  let guid = await PlacesTestUtils.getDatabaseValue("moz_bookmarks", "guid", {
+    id: aId,
+  });
   if (aGUID) {
     do_check_valid_places_guid(aGUID);
     Assert.equal(guid, aGUID, "Should have the correct GUID for the bookmark");
@@ -716,18 +646,6 @@ function do_compare_arrays(a1, a2, sorted) {
     !a2.filter(e => !a1.includes(e)).length
   );
 }
-
-/**
- * Generic nsINavBookmarkObserver that doesn't implement anything, but provides
- * dummy methods to prevent errors about an object not having a certain method.
- */
-function NavBookmarkObserver() {}
-
-NavBookmarkObserver.prototype = {
-  onItemRemoved() {},
-  onItemChanged() {},
-  QueryInterface: ChromeUtils.generateQI(["nsINavBookmarkObserver"]),
-};
 
 /**
  * Generic nsINavHistoryResultObserver that doesn't implement anything, but
@@ -878,7 +796,7 @@ async function compareFavicons(icon1, icon2, msg) {
           loadUsingSystemPrincipal: true,
           contentPolicyType: Ci.nsIContentPolicy.TYPE_INTERNAL_IMAGE_FAVICON,
         },
-        function(inputStream, status) {
+        function (inputStream, status) {
           if (!Components.isSuccessCode(status)) {
             reject();
           }

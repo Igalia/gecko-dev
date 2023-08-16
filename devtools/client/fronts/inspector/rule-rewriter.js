@@ -12,18 +12,18 @@
 
 "use strict";
 
-const { getCSSLexer } = require("devtools/shared/css/lexer");
+const { getCSSLexer } = require("resource://devtools/shared/css/lexer.js");
 const {
   COMMENT_PARSING_HEURISTIC_BYPASS_CHAR,
   escapeCSSComment,
   parseNamedDeclarations,
   unescapeCSSComment,
-} = require("devtools/shared/css/parsing-utils");
+} = require("resource://devtools/shared/css/parsing-utils.js");
 
 loader.lazyRequireGetter(
   this,
   ["getIndentationFromPrefs", "getIndentationFromString"],
-  "devtools/shared/indentation",
+  "resource://devtools/shared/indentation.js",
   true
 );
 
@@ -216,7 +216,7 @@ RuleRewriter.prototype = {
 
     // Pop a closing paren from the stack.
     const popSomeParens = closer => {
-      while (parenStack.length > 0) {
+      while (parenStack.length) {
         const paren = parenStack.pop();
 
         if (paren.closer === closer) {
@@ -485,24 +485,20 @@ RuleRewriter.prototype = {
       return null;
     }
 
-    if (this.rule.parentStyleSheet.resourceId) {
-      const prefIndent = getIndentationFromPrefs();
-      if (prefIndent) {
-        const { indentUnit, indentWithTabs } = prefIndent;
-        return indentWithTabs ? "\t" : " ".repeat(indentUnit);
-      }
-
-      const styleSheetsFront = await this.rule.targetFront.getFront(
-        "stylesheets"
-      );
-      const { str: source } = await styleSheetsFront.getText(
-        this.rule.parentStyleSheet.resourceId
-      );
-      const { indentUnit, indentWithTabs } = getIndentationFromString(source);
+    const prefIndent = getIndentationFromPrefs();
+    if (prefIndent) {
+      const { indentUnit, indentWithTabs } = prefIndent;
       return indentWithTabs ? "\t" : " ".repeat(indentUnit);
     }
 
-    return this.rule.parentStyleSheet.guessIndentation();
+    const styleSheetsFront = await this.rule.targetFront.getFront(
+      "stylesheets"
+    );
+    const { str: source } = await styleSheetsFront.getText(
+      this.rule.parentStyleSheet.resourceId
+    );
+    const { indentUnit, indentWithTabs } = getIndentationFromString(source);
+    return indentWithTabs ? "\t" : " ".repeat(indentUnit);
   },
 
   /**
@@ -523,7 +519,7 @@ RuleRewriter.prototype = {
     this.completeInitialization(index);
     let newIndentation = "";
     if (this.hasNewLine) {
-      if (this.declarations.length > 0) {
+      if (this.declarations.length) {
         newIndentation = this.getIndentation(
           this.inputString,
           this.declarations[0].offsets[0]

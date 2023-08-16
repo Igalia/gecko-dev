@@ -45,6 +45,26 @@ namespace mozilla {
 
 #define IDEOGRAPHIC_SPACE (u"\x3000"_ns)
 
+static uint32_t GetOrCreateCompositionId(WidgetCompositionEvent* aEvent) {
+  // If we're in the parent process, return new composition ID.
+  if (XRE_IsParentProcess()) {
+    static uint32_t sNextCompositionId = 1u;
+    if (MOZ_UNLIKELY(sNextCompositionId == UINT32_MAX)) {
+      sNextCompositionId = 1u;
+    }
+    // FYI: When we send the event to a remote process, TextComposition will
+    // set aEvent->mCompositionId to this value.  Therefore, we don't need to
+    // set it here.
+    return sNextCompositionId++;
+  }
+  // If aEvent comes from the parent process, the event has composition ID
+  // considered by the parent process.  Then, we should use it.
+  // Otherwise, aEvent is synthesized in this process, it won't cross the
+  // process boundary between this process and the parent process.  Therefore,
+  // we don't need to set meaningful composition ID for the text composition.
+  return aEvent->mCompositionId;
+}
+
 /******************************************************************************
  * TextComposition
  ******************************************************************************/
@@ -58,6 +78,7 @@ TextComposition::TextComposition(nsPresContext* aPresContext, nsINode* aNode,
       mNode(aNode),
       mBrowserParent(aBrowserParent),
       mNativeContext(aCompositionEvent->mNativeIMEContext),
+      mCompositionId(GetOrCreateCompositionId(aCompositionEvent)),
       mCompositionStartOffset(0),
       mTargetClauseOffsetInComposition(0),
       mCompositionStartOffsetInTextNode(UINT32_MAX),
@@ -202,7 +223,6 @@ BaseEventFlags TextComposition::CloneAndDispatchAs(
 
   WidgetCompositionEvent compositionEvent(aCompositionEvent->IsTrusted(),
                                           aMessage, aCompositionEvent->mWidget);
-  compositionEvent.mTime = aCompositionEvent->mTime;
   compositionEvent.mTimeStamp = aCompositionEvent->mTimeStamp;
   compositionEvent.mData = aCompositionEvent->mData;
   compositionEvent.mNativeIMEContext = aCompositionEvent->mNativeIMEContext;
@@ -245,8 +265,8 @@ void TextComposition::OnCompositionEventDiscarded(
              "Shouldn't be called with untrusted event");
 
   if (mBrowserParent) {
-    // The composition event should be discarded in the child process too.
-    Unused << mBrowserParent->SendCompositionEvent(*aCompositionEvent);
+    Unused << mBrowserParent->SendCompositionEvent(*aCompositionEvent,
+                                                   mCompositionId);
   }
 
   // XXX If composition events are discarded, should we dispatch them with
@@ -344,7 +364,8 @@ void TextComposition::DispatchCompositionEvent(
   // If the content is a container of BrowserParent, composition should be in
   // the remote process.
   if (mBrowserParent) {
-    Unused << mBrowserParent->SendCompositionEvent(*aCompositionEvent);
+    Unused << mBrowserParent->SendCompositionEvent(*aCompositionEvent,
+                                                   mCompositionId);
     aCompositionEvent->StopPropagation();
     if (aCompositionEvent->CausesDOMTextEvent()) {
       mLastData = aCompositionEvent->mData;
@@ -512,9 +533,16 @@ void TextComposition::HandleSelectionEvent(
     return;
   }
 
-  ContentEventHandler handler(aPresContext);
   AutoRestore<bool> saveHandlingSelectionEvent(sHandlingSelectionEvent);
   sHandlingSelectionEvent = true;
+
+  if (RefPtr<IMEContentObserver> contentObserver =
+          IMEStateManager::GetActiveContentObserver()) {
+    contentObserver->MaybeHandleSelectionEvent(aPresContext, aSelectionEvent);
+    return;
+  }
+
+  ContentEventHandler handler(aPresContext);
   // XXX During setting selection, a selection listener may change selection
   //     again.  In such case, sHandlingSelectionEvent doesn't indicate if
   //     the selection change is caused by a selection event.  However, it
@@ -638,6 +666,7 @@ void TextComposition::DispatchCompositionEventRunnable(
 }
 
 nsresult TextComposition::RequestToCommit(nsIWidget* aWidget, bool aDiscard) {
+  MOZ_ASSERT(this == IMEStateManager::GetTextCompositionFor(aWidget));
   // If this composition is already requested to be committed or canceled,
   // or has already finished in IME, we don't need to request it again because
   // request from this instance shouldn't cause committing nor canceling current
@@ -880,11 +909,11 @@ RawRangeBoundary TextComposition::LastIMESelectionEndRef() const {
  ******************************************************************************/
 
 TextComposition::CompositionEventDispatcher::CompositionEventDispatcher(
-    TextComposition* aComposition, nsINode* aEventTarget,
+    TextComposition* aTextComposition, nsINode* aEventTarget,
     EventMessage aEventMessage, const nsAString& aData,
     bool aIsSynthesizedEvent)
     : Runnable("TextComposition::CompositionEventDispatcher"),
-      mTextComposition(aComposition),
+      mTextComposition(aTextComposition),
       mEventTarget(aEventTarget),
       mData(aData),
       mEventMessage(aEventMessage),

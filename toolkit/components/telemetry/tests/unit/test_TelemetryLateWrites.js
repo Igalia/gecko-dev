@@ -55,7 +55,7 @@ function write_string_to_file(file, contents) {
   );
   bos.setOutputStream(ostream);
 
-  let utf8 = new TextEncoder("utf-8").encode(contents);
+  let utf8 = new TextEncoder().encode(contents);
   bos.writeByteArray(utf8);
   ostream.QueryInterface(Ci.nsISafeOutputStream).finish();
   ostream.close();
@@ -97,7 +97,7 @@ function run_test() {
   Assert.equal(lateWrites.stacks.length, 0);
 
   do_test_pending();
-  Telemetry.asyncFetchTelemetryData(function() {
+  Telemetry.asyncFetchTelemetryData(function () {
     actual_test();
   });
 }
@@ -112,7 +112,7 @@ function actual_test() {
   Assert.ok("memoryMap" in lateWrites);
   Assert.equal(lateWrites.memoryMap.length, N_MODULES);
   for (let id in LOADED_MODULES) {
-    let matchingLibrary = lateWrites.memoryMap.filter(function(
+    let matchingLibrary = lateWrites.memoryMap.filter(function (
       library,
       idx,
       array
@@ -132,7 +132,7 @@ function actual_test() {
   let second_stack = lateWrites.stacks[1];
   function stackChecker(canonicalStack) {
     let unevalCanonicalStack = uneval(canonicalStack);
-    return function(obj, idx, array) {
+    return function (obj, idx, array) {
       return unevalCanonicalStack == obj;
     };
   }

@@ -8,12 +8,14 @@
 
 #include <limits>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <type_traits>
 #include <unordered_map>
 #include <vector>
 
 #include "GLDefs.h"
+#include "GLVendor.h"
 #include "ImageContainer.h"
 #include "mozilla/Casting.h"
 #include "mozilla/CheckedInt.h"
@@ -83,26 +85,10 @@ inline void* calloc(const ForbidNarrowing<size_t> n,
 
 // -
 
-namespace detail {
-
-template <typename From>
-class AutoAssertCastT final {
-  const From mVal;
-
- public:
-  explicit AutoAssertCastT(const From val) : mVal(val) {}
-
-  template <typename To>
-  operator To() const {
-    return AssertedCast<To>(mVal);
-  }
-};
-
-}  // namespace detail
-
+// TODO: Remove this now-mere-alias.
 template <typename From>
 inline auto AutoAssertCast(const From val) {
-  return detail::AutoAssertCastT<From>(val);
+  return LazyAssertedCast(val);
 }
 
 const char* GetEnumName(GLenum val, const char* defaultRet = "<unknown>");
@@ -259,6 +245,7 @@ enum class WebGLExtensionID : uint8_t {
   WEBGL_draw_buffers,
   WEBGL_explicit_present,
   WEBGL_lose_context,
+  WEBGL_provoking_vertex,
   Max
 };
 
@@ -359,7 +346,7 @@ struct FloatOrInt final  // For TexParameter[fi] and friends.
 
 // -
 
-struct WebGLContextOptions {
+struct WebGLContextOptions final {
   bool alpha = true;
   bool depth = true;
   bool stencil = false;
@@ -372,8 +359,8 @@ struct WebGLContextOptions {
 
   dom::WebGLPowerPreference powerPreference =
       dom::WebGLPowerPreference::Default;
+  bool ignoreColorSpace = true;
   dom::PredefinedColorSpace colorSpace = dom::PredefinedColorSpace::Srgb;
-  bool ignoreColorSpace = true;  // Our legacy behavior.
   bool shouldResistFingerprinting = true;
 
   bool enableDebugRendererInfo = false;
@@ -399,6 +386,8 @@ struct WebGLContextOptions {
       enableDebugRendererInfo);
     // clang-format on
   }
+
+  // -
 
   WebGLContextOptions();
   WebGLContextOptions(const WebGLContextOptions&) = default;
@@ -662,6 +651,7 @@ struct Limits final {
 
   // Exts
   bool astcHdr = false;
+  bool rgbColorRenderable = false;
   uint32_t maxColorDrawBuffers = 1;
   uint64_t queryCounterBitsTimeElapsed = 0;
   uint64_t queryCounterBitsTimestamp = 0;
@@ -673,6 +663,7 @@ struct InitContextResult final {
   WebGLContextOptions options;
   webgl::Limits limits;
   EnumMask<layers::SurfaceDescriptor::Type> uploadableSdTypes;
+  gl::GLVendor vendor;
 };
 
 // -
@@ -876,68 +867,9 @@ class RawBuffer final {
   RawBuffer& operator=(RawBuffer&&) = default;
 };
 
-// -
-
-struct CopyableRange final : public Range<const uint8_t> {};
-
-// -
-
-// clang-format off
-
-#define FOREACH_ID(X) \
-  X(FuncScopeIdError) \
-  X(compressedTexImage2D) \
-  X(compressedTexImage3D) \
-  X(compressedTexSubImage2D) \
-  X(compressedTexSubImage3D) \
-  X(copyTexSubImage2D) \
-  X(copyTexSubImage3D) \
-  X(drawArrays) \
-  X(drawArraysInstanced) \
-  X(drawElements) \
-  X(drawElementsInstanced) \
-  X(drawRangeElements) \
-  X(renderbufferStorage) \
-  X(renderbufferStorageMultisample) \
-  X(texImage2D) \
-  X(texImage3D) \
-  X(TexStorage2D) \
-  X(TexStorage3D) \
-  X(texSubImage2D) \
-  X(texSubImage3D) \
-  X(vertexAttrib1f) \
-  X(vertexAttrib1fv) \
-  X(vertexAttrib2f) \
-  X(vertexAttrib2fv) \
-  X(vertexAttrib3f) \
-  X(vertexAttrib3fv) \
-  X(vertexAttrib4f) \
-  X(vertexAttrib4fv) \
-  X(vertexAttribI4i) \
-  X(vertexAttribI4iv) \
-  X(vertexAttribI4ui) \
-  X(vertexAttribI4uiv) \
-  X(vertexAttribIPointer) \
-  X(vertexAttribPointer)
-
-// clang-format on
-
-enum class FuncScopeId {
-#define _(X) X,
-  FOREACH_ID(_)
-#undef _
-};
-
-static constexpr const char* const FUNCSCOPE_NAME_BY_ID[] = {
-#define _(X) #X,
-    FOREACH_ID(_)
-#undef _
-};
-
-#undef FOREACH_ID
-
-inline auto GetFuncScopeName(const FuncScopeId id) {
-  return FUNCSCOPE_NAME_BY_ID[static_cast<size_t>(id)];
+template <class T>
+inline Range<T> ShmemRange(const mozilla::ipc::Shmem& shmem) {
+  return {shmem.get<T>(), shmem.Size<T>()};
 }
 
 // -
@@ -970,6 +902,22 @@ inline Maybe<T> MaybeAs(const U val) {
 
 // -
 
+inline GLenum IsTexImageTarget(const GLenum imageTarget) {
+  switch (imageTarget) {
+    case LOCAL_GL_TEXTURE_2D:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_X:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Y:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_Y:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
+    case LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
+    case LOCAL_GL_TEXTURE_3D:
+    case LOCAL_GL_TEXTURE_2D_ARRAY:
+      return true;
+  }
+  return false;
+}
+
 inline GLenum ImageToTexTarget(const GLenum imageTarget) {
   switch (imageTarget) {
     case LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_X:
@@ -979,9 +927,11 @@ inline GLenum ImageToTexTarget(const GLenum imageTarget) {
     case LOCAL_GL_TEXTURE_CUBE_MAP_NEGATIVE_Z:
     case LOCAL_GL_TEXTURE_CUBE_MAP_POSITIVE_Z:
       return LOCAL_GL_TEXTURE_CUBE_MAP;
-    default:
-      return imageTarget;
   }
+  if (IsTexImageTarget(imageTarget)) {
+    return imageTarget;
+  }
+  return 0;
 }
 
 inline bool IsTexTarget3D(const GLenum texTarget) {
@@ -1228,6 +1178,24 @@ inline void Memcpy(const RangedPtr<uint8_t>& destBytes,
   memcpy(destBytes.get(), srcBytes.get(), byteSize);
 }
 
+template <class T, class U>
+inline void Memcpy(const Range<T>* const destRange,
+                   const RangedPtr<U>& srcBegin) {
+  Memcpy(destRange->begin(), srcBegin, destRange->length());
+}
+template <class T, class U>
+inline void Memcpy(const RangedPtr<T>* const destBegin,
+                   const Range<U>& srcRange) {
+  Memcpy(destBegin, srcRange->begin(), srcRange->length());
+}
+
+// -
+
+inline bool StartsWith(const std::string_view str,
+                       const std::string_view part) {
+  return str.find(part) == 0;
+}
+
 // -
 
 namespace webgl {
@@ -1237,6 +1205,34 @@ namespace webgl {
 // now.
 // (http://opengl.gpuinfo.org/gl_stats_caps_single.php?listreportsbycap=GL_MAX_COLOR_ATTACHMENTS)
 inline constexpr size_t kMaxDrawBuffers = 8;
+
+union UniformDataVal {
+  float f32;
+  int32_t i32;
+  uint32_t u32;
+};
+
+enum class ProvokingVertex : GLenum {
+  FirstVertex = LOCAL_GL_FIRST_VERTEX_CONVENTION,
+  LastVertex = LOCAL_GL_LAST_VERTEX_CONVENTION,
+};
+inline constexpr bool IsEnumCase(const ProvokingVertex raw) {
+  switch (raw) {
+    case ProvokingVertex::FirstVertex:
+    case ProvokingVertex::LastVertex:
+      return true;
+  }
+  return false;
+}
+
+template <class E>
+inline constexpr std::optional<E> AsEnumCase(
+    const std::underlying_type_t<E> raw) {
+  const auto ret = static_cast<E>(raw);
+  if (!IsEnumCase(ret)) return {};
+  return ret;
+}
+
 }  // namespace webgl
 
 }  // namespace mozilla

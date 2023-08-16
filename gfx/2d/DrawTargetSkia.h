@@ -65,14 +65,9 @@ class DrawTargetSkia : public DrawTarget {
                                      const Point& aDest,
                                      const ShadowOptions& aShadow,
                                      CompositionOp aOperator) override;
-  void Clear(const Rect* aRect = nullptr);
-  virtual void ClearRect(const Rect& aRect) override { Clear(&aRect); }
-  void BlendSurface(SourceSurface* aSurface, const IntRect& aSourceRect,
-                    const IntPoint& aDestination, CompositionOp aOperator);
+  virtual void ClearRect(const Rect& aRect) override;
   virtual void CopySurface(SourceSurface* aSurface, const IntRect& aSourceRect,
-                           const IntPoint& aDestination) override {
-    BlendSurface(aSurface, aSourceRect, aDestination, CompositionOp::OP_SOURCE);
-  }
+                           const IntPoint& aDestination) override;
   virtual void FillRect(const Rect& aRect, const Pattern& aPattern,
                         const DrawOptions& aOptions = DrawOptions()) override;
   virtual void StrokeRect(const Rect& aRect, const Pattern& aPattern,
@@ -107,6 +102,7 @@ class DrawTargetSkia : public DrawTarget {
   virtual void PushDeviceSpaceClipRects(const IntRect* aRects,
                                         uint32_t aCount) override;
   virtual void PopClip() override;
+  virtual bool RemoveAllClips() override;
   virtual void PushLayer(bool aOpaque, Float aOpacity, SourceSurface* aMask,
                          const Matrix& aMaskTransform,
                          const IntRect& aBounds = IntRect(),
@@ -135,6 +131,7 @@ class DrawTargetSkia : public DrawTarget {
 
   virtual already_AddRefed<PathBuilder> CreatePathBuilder(
       FillRule aFillRule = FillRule::FILL_WINDING) const override;
+
   virtual already_AddRefed<GradientStops> CreateGradientStops(
       GradientStop* aStops, uint32_t aNumStops,
       ExtendMode aExtendMode = ExtendMode::CLAMP) const override;
@@ -158,7 +155,7 @@ class DrawTargetSkia : public DrawTarget {
     return stream.str();
   }
 
-  Maybe<Rect> GetDeviceClipRect() const;
+  Maybe<IntRect> GetDeviceClipRect(bool aAllowComplex = false) const;
 
   Maybe<Rect> GetGlyphLocalBounds(ScaledFont* aFont, const GlyphBuffer& aBuffer,
                                   const Pattern& aPattern,

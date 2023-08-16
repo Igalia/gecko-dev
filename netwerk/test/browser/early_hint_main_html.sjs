@@ -16,12 +16,14 @@ function handleRequest(request, response) {
       new_hint = false;
       response.write("HTTP/1.1 103 Early Hint\r\n");
     }
-    if (imgUrl.length == 0) {
+    if (!imgUrl.length) {
       // next hint in new early hint response when empty string is passed
       new_header = true;
       if (uuid === "new_response") {
         new_hint = true;
         response.write("\r\n");
+      } else if (uuid === "non_link_header") {
+        response.write("Content-Length: 25\r\n");
       }
       response.write("\r\n");
     } else {

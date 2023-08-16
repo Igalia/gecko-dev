@@ -24,6 +24,7 @@
 #include "mozIExtensionProcessScript.h"
 #include "nsEscape.h"
 #include "nsGkAtoms.h"
+#include "nsHashKeys.h"
 #include "nsIChannel.h"
 #include "nsIContentPolicy.h"
 #include "mozilla/dom/Document.h"
@@ -47,12 +48,16 @@ using dom::Promise;
 
 #define DEFAULT_CSP_PREF \
   "extensions.webextensions.default-content-security-policy"
-#define DEFAULT_DEFAULT_CSP \
-  "script-src 'self' 'wasm-unsafe-eval'; object-src 'self';"
+#define DEFAULT_DEFAULT_CSP "script-src 'self' 'wasm-unsafe-eval';"
 
 #define DEFAULT_CSP_PREF_V3 \
   "extensions.webextensions.default-content-security-policy.v3"
-#define DEFAULT_DEFAULT_CSP_V3 "script-src 'self'; object-src 'self';"
+#define DEFAULT_DEFAULT_CSP_V3 "script-src 'self'; upgrade-insecure-requests;"
+
+#define RESTRICTED_DOMAINS_PREF "extensions.webextensions.restrictedDomains"
+
+#define QUARANTINED_DOMAINS_PREF "extensions.quarantinedDomains.list"
+#define QUARANTINED_DOMAINS_ENABLED "extensions.quarantinedDomains.enabled"
 
 #define OBS_TOPIC_PRELOAD_SCRIPT "web-extension-preload-content-script"
 #define OBS_TOPIC_LOAD_SCRIPT "web-extension-load-content-script"
@@ -62,6 +67,14 @@ static const char kDocElementInserted[] = "initial-document-element-inserted";
 /*****************************************************************************
  * ExtensionPolicyService
  *****************************************************************************/
+
+using CoreByHostMap = nsTHashMap<nsCStringASCIICaseInsensitiveHashKey,
+                                 RefPtr<extensions::WebExtensionPolicyCore>>;
+
+static StaticRWLock sEPSLock;
+static StaticAutoPtr<CoreByHostMap> sCoreByHost MOZ_GUARDED_BY(sEPSLock);
+static StaticRefPtr<AtomSet> sRestrictedDomains MOZ_GUARDED_BY(sEPSLock);
+static StaticRefPtr<AtomSet> sQuarantinedDomains MOZ_GUARDED_BY(sEPSLock);
 
 /* static */
 mozIExtensionProcessScript& ExtensionPolicyService::ProcessScript() {
@@ -79,6 +92,8 @@ mozIExtensionProcessScript& ExtensionPolicyService::ProcessScript() {
 }
 
 /* static */ ExtensionPolicyService& ExtensionPolicyService::GetSingleton() {
+  MOZ_ASSERT(NS_IsMainThread());
+
   static RefPtr<ExtensionPolicyService> sExtensionPolicyService;
 
   if (MOZ_UNLIKELY(!sExtensionPolicyService)) {
@@ -89,6 +104,13 @@ mozIExtensionProcessScript& ExtensionPolicyService::ProcessScript() {
   return *sExtensionPolicyService.get();
 }
 
+/* static */
+RefPtr<extensions::WebExtensionPolicyCore>
+ExtensionPolicyService::GetCoreByHost(const nsACString& aHost) {
+  StaticAutoReadLock lock(sEPSLock);
+  return sCoreByHost ? sCoreByHost->Get(aHost) : nullptr;
+}
+
 ExtensionPolicyService::ExtensionPolicyService() {
   mObs = services::GetObserverService();
   MOZ_RELEASE_ASSERT(mObs);
@@ -97,10 +119,27 @@ ExtensionPolicyService::ExtensionPolicyService() {
   mDefaultCSPV3.SetIsVoid(true);
 
   RegisterObservers();
+
+  {
+    StaticAutoWriteLock lock(sEPSLock);
+    MOZ_DIAGNOSTIC_ASSERT(!sCoreByHost,
+                          "ExtensionPolicyService created twice?");
+    sCoreByHost = new CoreByHostMap();
+  }
+
+  UpdateRestrictedDomains();
+  UpdateQuarantinedDomains();
 }
 
 ExtensionPolicyService::~ExtensionPolicyService() {
   UnregisterWeakMemoryReporter(this);
+
+  {
+    StaticAutoWriteLock lock(sEPSLock);
+    sCoreByHost = nullptr;
+    sRestrictedDomains = nullptr;
+    sQuarantinedDomains = nullptr;
+  }
 }
 
 bool ExtensionPolicyService::UseRemoteExtensions() const {
@@ -121,11 +160,23 @@ bool ExtensionPolicyService::IsExtensionProcess() const {
   return !isRemote && XRE_IsParentProcess();
 }
 
+bool ExtensionPolicyService::GetQuarantinedDomainsEnabled() const {
+  StaticAutoReadLock lock(sEPSLock);
+  return sQuarantinedDomains != nullptr;
+}
+
 WebExtensionPolicy* ExtensionPolicyService::GetByURL(const URLInfo& aURL) {
   if (aURL.Scheme() == nsGkAtoms::moz_extension) {
     return GetByHost(aURL.Host());
   }
   return nullptr;
+}
+
+WebExtensionPolicy* ExtensionPolicyService::GetByHost(
+    const nsACString& aHost) const {
+  AssertIsOnMainThread();
+  RefPtr<WebExtensionPolicyCore> core = GetCoreByHost(aHost);
+  return core ? core->GetMainThreadPolicy() : nullptr;
 }
 
 void ExtensionPolicyService::GetAll(
@@ -143,8 +194,11 @@ bool ExtensionPolicyService::RegisterExtension(WebExtensionPolicy& aPolicy) {
   }
 
   mExtensions.InsertOrUpdate(aPolicy.Id(), RefPtr{&aPolicy});
-  mExtensionHosts.InsertOrUpdate(aPolicy.MozExtensionHostname(),
-                                 RefPtr{&aPolicy});
+
+  {
+    StaticAutoWriteLock lock(sEPSLock);
+    sCoreByHost->InsertOrUpdate(aPolicy.MozExtensionHostname(), aPolicy.Core());
+  }
   return true;
 }
 
@@ -158,7 +212,11 @@ bool ExtensionPolicyService::UnregisterExtension(WebExtensionPolicy& aPolicy) {
   }
 
   mExtensions.Remove(aPolicy.Id());
-  mExtensionHosts.Remove(aPolicy.MozExtensionHostname());
+
+  {
+    StaticAutoWriteLock lock(sEPSLock);
+    sCoreByHost->Remove(aPolicy.MozExtensionHostname());
+  }
   return true;
 }
 
@@ -220,6 +278,9 @@ void ExtensionPolicyService::RegisterObservers() {
 
   Preferences::AddStrongObserver(this, DEFAULT_CSP_PREF);
   Preferences::AddStrongObserver(this, DEFAULT_CSP_PREF_V3);
+  Preferences::AddStrongObserver(this, RESTRICTED_DOMAINS_PREF);
+  Preferences::AddStrongObserver(this, QUARANTINED_DOMAINS_PREF);
+  Preferences::AddStrongObserver(this, QUARANTINED_DOMAINS_ENABLED);
 }
 
 void ExtensionPolicyService::UnregisterObservers() {
@@ -231,6 +292,9 @@ void ExtensionPolicyService::UnregisterObservers() {
 
   Preferences::RemoveObserver(this, DEFAULT_CSP_PREF);
   Preferences::RemoveObserver(this, DEFAULT_CSP_PREF_V3);
+  Preferences::RemoveObserver(this, RESTRICTED_DOMAINS_PREF);
+  Preferences::RemoveObserver(this, QUARANTINED_DOMAINS_PREF);
+  Preferences::RemoveObserver(this, QUARANTINED_DOMAINS_ENABLED);
 }
 
 nsresult ExtensionPolicyService::Observe(nsISupports* aSubject,
@@ -254,6 +318,11 @@ nsresult ExtensionPolicyService::Observe(nsISupports* aSubject,
       mDefaultCSP.SetIsVoid(true);
     } else if (!strcmp(pref, DEFAULT_CSP_PREF_V3)) {
       mDefaultCSPV3.SetIsVoid(true);
+    } else if (!strcmp(pref, RESTRICTED_DOMAINS_PREF)) {
+      UpdateRestrictedDomains();
+    } else if (!strcmp(pref, QUARANTINED_DOMAINS_PREF) ||
+               !strcmp(pref, QUARANTINED_DOMAINS_ENABLED)) {
+      UpdateQuarantinedDomains();
     }
   }
   return NS_OK;
@@ -514,6 +583,55 @@ void ExtensionPolicyService::CheckContentScripts(const DocInfo& aDocInfo,
   }
 }
 
+/* static */
+RefPtr<AtomSet> ExtensionPolicyService::RestrictedDomains() {
+  StaticAutoReadLock lock(sEPSLock);
+  return sRestrictedDomains;
+}
+
+/* static */
+RefPtr<AtomSet> ExtensionPolicyService::QuarantinedDomains() {
+  StaticAutoReadLock lock(sEPSLock);
+  return sQuarantinedDomains;
+}
+
+void ExtensionPolicyService::UpdateRestrictedDomains() {
+  nsAutoCString eltsString;
+  Unused << Preferences::GetCString(RESTRICTED_DOMAINS_PREF, eltsString);
+
+  AutoTArray<nsString, 32> elts;
+  for (const nsACString& elt : eltsString.Split(',')) {
+    elts.AppendElement(NS_ConvertUTF8toUTF16(elt));
+    elts.LastElement().StripWhitespace();
+  }
+  RefPtr<AtomSet> atomSet = new AtomSet(elts);
+
+  StaticAutoWriteLock lock(sEPSLock);
+  sRestrictedDomains = atomSet;
+}
+
+void ExtensionPolicyService::UpdateQuarantinedDomains() {
+  if (!Preferences::GetBool(QUARANTINED_DOMAINS_ENABLED)) {
+    StaticAutoWriteLock lock(sEPSLock);
+    sQuarantinedDomains = nullptr;
+    return;
+  }
+
+  nsAutoCString eltsString;
+  AutoTArray<nsString, 32> elts;
+  if (NS_SUCCEEDED(
+          Preferences::GetCString(QUARANTINED_DOMAINS_PREF, eltsString))) {
+    for (const nsACString& elt : eltsString.Split(',')) {
+      elts.AppendElement(NS_ConvertUTF8toUTF16(elt));
+      elts.LastElement().StripWhitespace();
+    }
+  }
+  RefPtr<AtomSet> atomSet = new AtomSet(elts);
+
+  StaticAutoWriteLock lock(sEPSLock);
+  sQuarantinedDomains = atomSet;
+}
+
 /*****************************************************************************
  * nsIAddonPolicyService
  *****************************************************************************/
@@ -628,8 +746,7 @@ nsresult ExtensionPolicyService::ExtensionURIToAddonId(nsIURI* aURI,
   return NS_OK;
 }
 
-NS_IMPL_CYCLE_COLLECTION(ExtensionPolicyService, mExtensions, mExtensionHosts,
-                         mObservers)
+NS_IMPL_CYCLE_COLLECTION(ExtensionPolicyService, mExtensions, mObservers)
 
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ExtensionPolicyService)
   NS_INTERFACE_MAP_ENTRY(nsIAddonPolicyService)

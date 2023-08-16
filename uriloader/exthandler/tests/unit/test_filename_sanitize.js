@@ -10,8 +10,8 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 add_task(async function validate_filename_method() {
   let mimeService = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
 
-  function checkFilename(filename, flags) {
-    return mimeService.validateFileNameForSaving(filename, "image/png", flags);
+  function checkFilename(filename, flags, mime = "image/png") {
+    return mimeService.validateFileNameForSaving(filename, mime, flags);
   }
 
   Assert.equal(checkFilename("basicfile.png", 0), "basicfile.png");
@@ -41,19 +41,19 @@ add_task(async function validate_filename_method() {
   Assert.equal(checkFilename(" happy\u061c\u2069.png", 0), "happy__.png");
   Assert.equal(
     checkFilename("12345678".repeat(31) + "abcdefgh.png", 0),
-    "12345678".repeat(31) + "abc.png"
+    "12345678".repeat(31) + "ab.png"
   );
   Assert.equal(
     checkFilename("簡単".repeat(41) + ".png", 0),
     "簡単".repeat(41) + ".png"
   );
   Assert.equal(
-    checkFilename("簡単".repeat(42) + ".png", 0),
-    "簡単".repeat(41) + "簡.png"
+    checkFilename("a" + "簡単".repeat(42) + ".png", 0),
+    "a" + "簡単".repeat(40) + "簡.png"
   );
   Assert.equal(
-    checkFilename("簡単".repeat(56) + ".png", 0),
-    "簡単".repeat(40) + "簡.png"
+    checkFilename("a" + "簡単".repeat(56) + ".png", 0),
+    "a" + "簡単".repeat(40) + ".png"
   );
   Assert.equal(checkFilename("café.png", 0), "café.png");
   Assert.equal(
@@ -62,7 +62,7 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename("café".repeat(51) + ".png", 0),
-    "café".repeat(50) + ".png"
+    "café".repeat(49) + "caf.png"
   );
 
   Assert.equal(
@@ -84,11 +84,11 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename("noextensionfile".repeat(17), 0),
-    "noextensionfile".repeat(16) + "noextension.png"
+    "noextensionfile".repeat(16) + "noextensio.png"
   );
   Assert.equal(
     checkFilename("noextensionfile".repeat(16) + "noextensionfil.", 0),
-    "noextensionfile".repeat(16) + "noextension.png"
+    "noextensionfile".repeat(16) + "noextensio.png"
   );
 
   Assert.equal(checkFilename("  first  .png  ", 0), "first .png");
@@ -130,25 +130,43 @@ add_task(async function validate_filename_method() {
   );
   Assert.equal(
     checkFilename(repeatStr + "seventh.png", 0),
-    repeatStr + "sev.png"
+    repeatStr + "se.png"
+  );
+
+  // no filename, so index is used by default.
+  Assert.equal(checkFilename(".png", 0), "png.png");
+
+  // sanitization only, so Untitled is not added, but initial period is stripped.
+  Assert.equal(
+    checkFilename(".png", mimeService.VALIDATE_SANITIZE_ONLY),
+    "png"
+  );
+
+  // correct .png extension is applied.
+  Assert.equal(checkFilename(".butterpecan.icecream", 0), "butterpecan.png");
+
+  // sanitization only, so extension is not modified, but initial period is stripped.
+  Assert.equal(
+    checkFilename(".butterpecan.icecream", mimeService.VALIDATE_SANITIZE_ONLY),
+    "butterpecan.icecream"
   );
 
   let ext = ".fairlyLongExtension";
   Assert.equal(
     checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
-    repeatStr.substring(0, 255 - ext.length) + ext
+    repeatStr.substring(0, 254 - ext.length) + ext
   );
 
-  ext = "lo%?ng/invalid? ch\\ars";
+  ext = "lo%?n/ginvalid? ch\\ars";
   Assert.equal(
     checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
-    repeatStr + "lo% ng_"
+    repeatStr + "lo% n_"
   );
 
   ext = ".long/invalid%? ch\\ars";
   Assert.equal(
     checkFilename(repeatStr + ext, mimeService.VALIDATE_SANITIZE_ONLY),
-    repeatStr.substring(0, 234) + ".long_invalid% ch_ars"
+    repeatStr.substring(0, 233) + ".long_invalid% ch_ars"
   );
 
   Assert.equal(
@@ -158,5 +176,223 @@ add_task(async function validate_filename_method() {
   Assert.equal(
     checkFilename("test_ﾃｽﾄ_T\x83E\\S\x83T.pﾃ\x83ng", 0),
     "test_ﾃｽﾄ_T E_S T.png"
+  );
+
+  // Check we don't invalidate surrogate pairs when trimming.
+  Assert.equal(checkFilename("test😀", 0, ""), "test😀");
+  Assert.equal(checkFilename("test😀😀", 0, ""), "test😀😀");
+
+  // Now check some media types
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogg", "video/ogg", 0),
+    "video.ogg",
+    "video.ogg"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogv", "video/ogg", 0),
+    "video.ogv",
+    "video.ogv"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("video.ogt", "video/ogg", 0),
+    "video.ogv",
+    "video.ogt"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp3", "audio/mpeg", 0),
+    "audio.mp3",
+    "audio.mp3"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mpega", "audio/mpeg", 0),
+    "audio.mpega",
+    "audio.mpega"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp2", "audio/mpeg", 0),
+    "audio.mp2",
+    "audio.mp2"
+  );
+
+  let expected = "audio.mp3";
+  if (AppConstants.platform == "linux") {
+    expected = "audio.mpga";
+  } else if (AppConstants.platform == "android") {
+    expected = "audio.mp4";
+  }
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("audio.mp4", "audio/mpeg", 0),
+    expected,
+    "audio.mp4"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4a", "audio/mp4", 0),
+    "sound.m4a",
+    "sound.m4a"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4b", "audio/mp4", 0),
+    AppConstants.platform == "android" ? "sound.m4a" : "sound.m4b",
+    "sound.m4b"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("sound.m4c", "audio/mp4", 0),
+    AppConstants.platform == "macosx" ? "sound.mp4" : "sound.m4a",
+    "sound.mpc"
+  );
+
+  // This has a long filename with a 13 character extension. The end of the filename should be
+  // cropped to fit into 255 bytes.
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "라이브9.9만 시청컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장24%102 000원 브랜드데이 앵콜 🎁 1.등 유산균 컬처렐 특가!",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY
+    ),
+    "라이브9.9만 시청컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 .등 유산균 컬처렐 특가!",
+    "very long filename with extension"
+  );
+
+  // This filename has a very long extension, almost the entire filename.
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "라이브9.9만 시청컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장24%102 000원 브랜드데이 앵콜 🎁 1등 유산균 컬처렐 특가!",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY
+    ),
+    "라이브9",
+    "another very long filename with long extension"
+  );
+
+  // This filename is cropped at 254 bytes.
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      ".라이브99만 시청컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장24%102 000원 브랜드데이 앵콜 🎁 1등 유산균 컬처렐 특가!",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY
+    ),
+    "라이브99만 시청컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장컬처렐 다이제스티브 3박스 - 3박스 더 (뚱랑이 굿즈 증정) - 선물용 쇼핑백 2장24%102 000원 브랜드데",
+    "very filename with extension only"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.LNK", "text/unknown", 0),
+    "filename.LNK.download",
+    "filename.LNK"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.local", "text/unknown", 0),
+    "filename.local.download",
+    "filename.local"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.url", "text/unknown", 0),
+    "filename.url.download",
+    "filename.url"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.URl", "text/unknown", 0),
+    "filename.URl.download",
+    "filename.URl"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.scf", "text/unknown", 0),
+    "filename.scf.download",
+    "filename.scf"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.sCF", "text/unknown", 0),
+    "filename.sCF.download",
+    "filename.sCF"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving("filename.lnk\n", "text/unknown", 0),
+    "filename.lnk.download",
+    "filename.lnk with newline"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.lnk\n  ",
+      "text/unknown",
+      0
+    ),
+    "filename.lnk.download",
+    "filename.lnk with newline"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.\n\t  lnk",
+      "text/unknown",
+      0
+    ),
+    "filename. lnk",
+    "filename.lnk with space and newline"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.local\u180e\u180e\u180e",
+      "text/unknown",
+      0
+    ),
+    "filename.local.download",
+    "filename.lnk with vowel separators"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.LNK",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY
+    ),
+    "filename.LNK.download",
+    "filename.LNK sanitize only"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.LNK\n",
+      "text/unknown",
+      mimeService.VALIDATE_ALLOW_INVALID_FILENAMES
+    ),
+    "filename.LNK",
+    "filename.LNK allow invalid"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.URL\n",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY |
+        mimeService.VALIDATE_ALLOW_INVALID_FILENAMES
+    ),
+    "filename.URL",
+    "filename.URL allow invalid, sanitize only"
+  );
+
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.desktop",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY
+    ),
+    "filename.desktop.download",
+    "filename.desktop sanitize only"
+  );
+  Assert.equal(
+    mimeService.validateFileNameForSaving(
+      "filename.DESKTOP\n",
+      "text/unknown",
+      mimeService.VALIDATE_SANITIZE_ONLY |
+        mimeService.VALIDATE_ALLOW_INVALID_FILENAMES
+    ),
+    "filename.DESKTOP",
+    "filename.DESKTOP allow invalid, sanitize only"
   );
 });

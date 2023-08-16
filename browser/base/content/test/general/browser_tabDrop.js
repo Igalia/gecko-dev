@@ -13,20 +13,18 @@ registerCleanupFunction(async function cleanup() {
   while (gBrowser.tabs.length > 1) {
     BrowserTestUtils.removeTab(gBrowser.tabs[gBrowser.tabs.length - 1]);
   }
-  await Services.search.setDefault(originalEngine);
 });
 
-let originalEngine;
 add_task(async function test_setup() {
   // Stop search-engine loads from hitting the network
-  await SearchTestUtils.installSearchExtension({
-    name: "MozSearch",
-    search_url: "https://example.com/",
-    search_url_get_params: "q={searchTerms}",
-  });
-  let engine = Services.search.getEngineByName("MozSearch");
-  originalEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "MozSearch",
+      search_url: "https://example.com/",
+      search_url_get_params: "q={searchTerms}",
+    },
+    { setAsDefault: true }
+  );
 });
 
 add_task(async function single_url() {

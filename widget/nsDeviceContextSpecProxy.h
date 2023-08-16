@@ -11,6 +11,7 @@
 #include "nsCOMPtr.h"
 #include "nsString.h"
 #include "mozilla/layout/printing/DrawEventRecorder.h"
+#include "mozilla/gfx/PrintPromise.h"
 
 class nsIFile;
 class nsIUUIDGenerator;
@@ -23,6 +24,7 @@ class RemotePrintJobChild;
 
 class nsDeviceContextSpecProxy final : public nsIDeviceContextSpec {
  public:
+  using IntSize = mozilla::gfx::IntSize;
   using RemotePrintJobChild = mozilla::layout::RemotePrintJobChild;
 
   explicit nsDeviceContextSpecProxy(RemotePrintJobChild* aRemotePrintJob);
@@ -40,11 +42,9 @@ class nsDeviceContextSpecProxy final : public nsIDeviceContextSpec {
                            const nsAString& aPrintToFileName,
                            int32_t aStartPage, int32_t aEndPage) final;
 
-  NS_IMETHOD EndDocument() final;
+  RefPtr<mozilla::gfx::PrintEndDocumentPromise> EndDocument() final;
 
-  NS_IMETHOD AbortDocument() final;
-
-  NS_IMETHOD BeginPage() final;
+  NS_IMETHOD BeginPage(const IntSize& aSizeInPoints) final;
 
   NS_IMETHOD EndPage() final;
 
@@ -53,6 +53,7 @@ class nsDeviceContextSpecProxy final : public nsIDeviceContextSpec {
 
   RefPtr<RemotePrintJobChild> mRemotePrintJob;
   RefPtr<mozilla::layout::DrawEventRecorderPRFileDesc> mRecorder;
+  IntSize mCurrentPageSizeInPoints;
 };
 
 #endif  // nsDeviceContextSpecProxy_h

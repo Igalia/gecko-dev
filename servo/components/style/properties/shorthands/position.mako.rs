@@ -9,7 +9,6 @@
                     servo_2020_pref="layout.flexbox.enabled",
                     sub_properties="flex-direction flex-wrap"
                     extra_prefixes="webkit"
-                    derive_serialize="True"
                     spec="https://drafts.csswg.org/css-flexbox/#flex-flow-property">
     use crate::properties::longhands::{flex_direction, flex_wrap};
 
@@ -42,6 +41,21 @@
             flex_direction: unwrap_or_initial!(flex_direction, direction),
             flex_wrap: unwrap_or_initial!(flex_wrap, wrap),
         })
+    }
+
+    impl<'a> ToCss for LonghandsToSerialize<'a> {
+        fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
+            if *self.flex_direction == flex_direction::get_initial_specified_value() &&
+               *self.flex_wrap != flex_wrap::get_initial_specified_value() {
+                return self.flex_wrap.to_css(dest)
+            }
+            self.flex_direction.to_css(dest)?;
+            if *self.flex_wrap != flex_wrap::get_initial_specified_value() {
+                dest.write_char(' ')?;
+                self.flex_wrap.to_css(dest)?;
+            }
+            Ok(())
+        }
     }
 </%helpers:shorthand>
 
@@ -138,7 +152,7 @@
             self.row_gap.to_css(dest)
           } else {
             self.row_gap.to_css(dest)?;
-            dest.write_str(" ")?;
+            dest.write_char(' ')?;
             self.column_gap.to_css(dest)
           }
       }
@@ -497,7 +511,7 @@
                                                                   .zip(&mut names_iter)
                                                                   .zip(track_list.values.iter()) {
                     if i > 0 {
-                        dest.write_str(" ")?;
+                        dest.write_char(' ')?;
                     }
 
                     if !names.is_empty() {
@@ -508,7 +522,7 @@
 
                     // If the track size is the initial value then it's redundant here.
                     if !value.is_initial() {
-                        dest.write_str(" ")?;
+                        dest.write_char(' ')?;
                         value.to_css(dest)?;
                     }
                 }
@@ -665,7 +679,7 @@
                 }
 
                 if !self.grid_auto_columns.is_initial() {
-                    dest.write_str(" ")?;
+                    dest.write_char(' ')?;
                     self.grid_auto_columns.to_css(dest)?;
                 }
 
@@ -691,7 +705,7 @@
             }
 
             if !self.grid_auto_rows.is_initial() {
-                dest.write_str(" ")?;
+                dest.write_char(' ')?;
                 self.grid_auto_rows.to_css(dest)?;
             }
 
@@ -749,7 +763,7 @@
         fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
             self.align_content.to_css(dest)?;
             if self.align_content.0 != self.justify_content.0 {
-                dest.write_str(" ")?;
+                dest.write_char(' ')?;
                 self.justify_content.to_css(dest)?;
             }
             Ok(())
@@ -790,7 +804,7 @@
         fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
             self.align_self.to_css(dest)?;
             if self.align_self.0 != self.justify_self.0 {
-                dest.write_str(" ")?;
+                dest.write_char(' ')?;
                 self.justify_self.to_css(dest)?;
             }
             Ok(())
@@ -832,7 +846,7 @@
         fn to_css<W>(&self, dest: &mut CssWriter<W>) -> fmt::Result where W: fmt::Write {
             self.align_items.to_css(dest)?;
             if self.align_items.0 != self.justify_items.0 {
-                dest.write_str(" ")?;
+                dest.write_char(' ')?;
                 self.justify_items.to_css(dest)?;
             }
 

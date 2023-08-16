@@ -11,7 +11,7 @@ const TEST_URL = testServer.urlFor("index.html");
 
 // getTokenFromPosition pauses 0.5s for each line,
 // so this test is quite slow to complete
-requestLongerTimeout(2);
+requestLongerTimeout(4);
 
 /**
  * Cover the breakpoints positions/columns:
@@ -30,35 +30,60 @@ add_task(async function testBreakableLinesOverReloads() {
   );
 
   info("Assert breakable lines of the first html page load");
-  await assertBreakablePositions(dbg, "index.html", 68, [
+  await assertBreakablePositions(dbg, "index.html", 78, [
     { line: 16, columns: [6, 14] },
     { line: 17, columns: [] },
-    { line: 21, columns: [6, 14] },
-    { line: 23, columns: [] },
-    { line: 28, columns: [] },
-    { line: 34, columns: [] },
+    { line: 21, columns: [12, 20, 48] },
+    { line: 24, columns: [12, 20] },
+    { line: 25, columns: [] },
+    { line: 30, columns: [] },
+    { line: 36, columns: [] },
   ]);
+
+  info("Pretty print first html page load and assert breakable lines");
+  await prettyPrint(dbg);
+  await assertBreakablePositions(dbg, "index.html:formatted", 87, [
+    { line: 16, columns: [0, 8] },
+    { line: 22, columns: [0, 8, 35] },
+    { line: 27, columns: [0, 8] },
+    { line: 28, columns: [] },
+    { line: 36, columns: [] },
+  ]);
+  await closeTab(dbg, "index.html:formatted");
 
   info("Assert breakable lines of the first original source file, original.js");
   // The length of original.js is longer than the test file
   // because the sourcemap replaces the content of the original file
   // and appends a few lines with a "WEBPACK FOOTER" comment
   // All the appended lines are empty lines or comments, so none of them are breakable.
-  await assertBreakablePositions(dbg, "original.js", 13, [
+  await assertBreakablePositions(dbg, "original.js", 15, [
     { line: 1, columns: [] },
     { line: 2, columns: [2, 9, 32] },
     { line: 3, columns: [] },
     { line: 5, columns: [] },
-    { line: 6, columns: [2, 8] },
-    { line: 7, columns: [2, 10] },
-    { line: 8, columns: [] },
+    { line: 8, columns: [2, 8] },
+    { line: 9, columns: [2, 10] },
+    { line: 10, columns: [] },
   ]);
 
   info("Assert breakable lines of the simple first load of script.js");
-  await assertBreakablePositions(dbg, "script.js", 3, [
-    { line: 1, columns: [] },
-    { line: 3, columns: [] },
+  await assertBreakablePositions(dbg, "script.js", 9, [
+    { line: 1, columns: [0, 8] },
+    { line: 5, columns: [2, 10] },
+    { line: 7, columns: [2, 9] },
+    { line: 8, columns: [] },
+    { line: 9, columns: [] },
   ]);
+
+  info("Pretty print first load of script.js and assert breakable lines");
+  await prettyPrint(dbg);
+  await assertBreakablePositions(dbg, "script.js:formatted", 8, [
+    { line: 1, columns: [0, 8] },
+    { line: 4, columns: [2, 10] },
+    { line: 6, columns: [2, 9] },
+    { line: 7, columns: [] },
+  ]);
+  await closeTab(dbg, "script.js:formatted");
 
   info(
     "Reload the page, wait for sources and assert that breakable lines get updated"
@@ -68,7 +93,7 @@ add_task(async function testBreakableLinesOverReloads() {
 
   info("Assert breakable lines of the more complex second load of script.js");
   await assertBreakablePositions(dbg, "script.js", 23, [
-    { line: 2, columns: [] },
+    { line: 2, columns: [0, 8] },
     { line: 13, columns: [4, 12] },
     { line: 14, columns: [] },
     { line: 15, columns: [] },
@@ -82,11 +107,35 @@ add_task(async function testBreakableLinesOverReloads() {
     { line: 23, columns: [] },
   ]);
 
+  info("Pretty print first load of script.js and assert breakable lines");
+  await prettyPrint(dbg);
+  await assertBreakablePositions(dbg, "script.js:formatted", 23, [
+    { line: 2, columns: [0, 8] },
+    { line: 13, columns: [4, 12] },
+    { line: 14, columns: [] },
+    { line: 15, columns: [] },
+    { line: 16, columns: [] },
+    { line: 17, columns: [] },
+    { line: 18, columns: [2, 10] },
+    { line: 19, columns: [] },
+    { line: 20, columns: [] },
+    { line: 21, columns: [] },
+    { line: 22, columns: [] },
+  ]);
+  await closeTab(dbg, "script.js:formatted");
+
   info("Assert breakable lines of the second html page load");
   await assertBreakablePositions(dbg, "index.html", 33, [
     { line: 25, columns: [6, 14] },
     { line: 27, columns: [] },
   ]);
+
+  info("Pretty print second html page load and assert breakable lines");
+  await prettyPrint(dbg);
+  await assertBreakablePositions(dbg, "index.html:formatted", 33, [
+    { line: 25, columns: [0, 8] },
+  ]);
+  await closeTab(dbg, "index.html:formatted");
 
   info("Assert breakable lines of the second orignal file");
   // See first assertion about original.js,
@@ -135,9 +184,9 @@ async function assertBreakablePositions(
     // If there is no column breakpoint, skip all further assertions
     // Last lines of inline script are reported as breakable lines and selectors reports
     // one breakable column, but, we don't report any available column breakpoint for them.
-    if (columns.length == 0) {
+    if (!columns.length) {
       // So, only ensure that the really is no marker on this line
-      const lineElement = await getTokenFromPosition(dbg, { line, ch: -1 });
+      const lineElement = await getTokenFromPosition(dbg, { line });
       const columnMarkers = lineElement.querySelectorAll(".column-breakpoint");
       is(
         columnMarkers.length,
@@ -167,21 +216,24 @@ async function assertBreakablePositions(
       );
       ok(
         columns.includes(selPos.location.column),
-        `Selector breakable column has an expected column (${selPos.location.column} vs ${columns})`
+        `Selector breakable column has an expected column (${
+          selPos.location.column
+        } in ${JSON.stringify(columns)}) for line ${line}`
       );
       is(
-        selPos.location.sourceId,
+        selPos.location.source.id,
         source.id,
-        "Selector breakable column has the right sourceId"
+        "Selector breakable column has the right source id"
       );
       is(
-        selPos.location.sourceUrl,
+        selPos.location.source.url,
         source.url,
-        "Selector breakable column has the right sourceUrl"
+        "Selector breakable column has the right source url"
       );
     }
 
-    const lineElement = await getTokenFromPosition(dbg, { line, ch: -1 });
+    const tokenElement = await getTokenFromPosition(dbg, { line });
+    const lineElement = tokenElement.closest(".CodeMirror-line");
     // Those are the breakpoint chevron we click on to set a breakpoint on a given column
     const columnMarkers = [
       ...lineElement.querySelectorAll(".column-breakpoint"),

@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -9,7 +9,7 @@ features: [Temporal]
 includes: [temporalHelpers.js]
 ---*/
 
-[-86400_000_000_001, 86400_000_000_001].forEach((wrongOffset) => {
+[-86400_000_000_000, 86400_000_000_000].forEach((wrongOffset) => {
   const timeZone = TemporalHelpers.specificOffsetTimeZone(wrongOffset);
   const calendar = new Temporal.Calendar("iso8601");
   const duration = new Temporal.Duration(1);

@@ -34,6 +34,7 @@
 #include "gc/ZoneAllocator.h"       // for ZoneAllocPolicy
 #include "js/Debug.h"               // JS_DefineDebuggerObject
 #include "js/GCAPI.h"               // for GarbageCollectionEvent
+#include "js/GCVariant.h"           // for GCVariant
 #include "js/Proxy.h"               // for PropertyDescriptor
 #include "js/RootingAPI.h"          // for Handle
 #include "js/TracingAPI.h"          // for TraceRoot
@@ -285,7 +286,7 @@ class Completion {
 };
 
 typedef HashSet<WeakHeapPtr<GlobalObject*>,
-                MovableCellHasher<WeakHeapPtr<GlobalObject*>>, ZoneAllocPolicy>
+                StableCellHasher<WeakHeapPtr<GlobalObject*>>, ZoneAllocPolicy>
     WeakGlobalObjectSet;
 
 #ifdef DEBUG
@@ -498,6 +499,12 @@ class MOZ_RAII DebuggerList {
                                            FireHookFun fireHook);
 };
 
+// The Debugger.prototype object.
+class DebuggerPrototypeObject : public NativeObject {
+ public:
+  static const JSClass class_;
+};
+
 class DebuggerInstanceObject : public NativeObject {
  private:
   static const JSClassOps classOps_;
@@ -544,7 +551,6 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
     HookCount
   };
   enum {
-    JSSLOT_DEBUG_DEBUGGER,
     JSSLOT_DEBUG_PROTO_START,
     JSSLOT_DEBUG_FRAME_PROTO = JSSLOT_DEBUG_PROTO_START,
     JSSLOT_DEBUG_ENV_PROTO,
@@ -553,7 +559,8 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
     JSSLOT_DEBUG_SOURCE_PROTO,
     JSSLOT_DEBUG_MEMORY_PROTO,
     JSSLOT_DEBUG_PROTO_STOP,
-    JSSLOT_DEBUG_HOOK_START = JSSLOT_DEBUG_PROTO_STOP,
+    JSSLOT_DEBUG_DEBUGGER = JSSLOT_DEBUG_PROTO_STOP,
+    JSSLOT_DEBUG_HOOK_START,
     JSSLOT_DEBUG_HOOK_STOP = JSSLOT_DEBUG_HOOK_START + HookCount,
     JSSLOT_DEBUG_MEMORY_INSTANCE = JSSLOT_DEBUG_HOOK_STOP,
     JSSLOT_DEBUG_DEBUGGEE_LINK,
@@ -927,11 +934,13 @@ class Debugger : private mozilla::LinkedListElement<Debugger> {
       IsObserving observing);
 
   template <typename FrameFn /* void (Debugger*, DebuggerFrame*) */>
-  static void forEachOnStackDebuggerFrame(AbstractFramePtr frame, FrameFn fn);
+  static void forEachOnStackDebuggerFrame(AbstractFramePtr frame,
+                                          const JS::AutoRequireNoGC& nogc,
+                                          FrameFn fn);
   template <typename FrameFn /* void (Debugger*, DebuggerFrame*) */>
-  static void forEachOnStackOrSuspendedDebuggerFrame(JSContext* cx,
-                                                     AbstractFramePtr frame,
-                                                     FrameFn fn);
+  static void forEachOnStackOrSuspendedDebuggerFrame(
+      JSContext* cx, AbstractFramePtr frame, const JS::AutoRequireNoGC& nogc,
+      FrameFn fn);
 
   /*
    * Return a vector containing all Debugger.Frame instances referring to

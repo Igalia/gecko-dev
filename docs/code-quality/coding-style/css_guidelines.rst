@@ -259,12 +259,6 @@ Text Direction
    Values <https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Logical_Properties>`__
    for more information.
 
-Testing
-~~~~~~~
-
-To test for RTL layouts, you can go to ``about:config`` and set
-``intl.uidirection`` to ``-1``.
-
 Writing cross-platform CSS
 --------------------------
 
@@ -340,7 +334,7 @@ content values (which is probably what you want), and you're going to
 want them both after the global values, so your imports will look like
 this:
 
-.. code:: xhtml
+.. code:: html
 
    <?xml-stylesheet href="chrome://global/skin/global.css" type="text/css"?>
    <?xml-stylesheet href="chrome://browser/content/path/module.css" type="text/css"?>

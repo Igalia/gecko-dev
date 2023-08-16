@@ -3,6 +3,7 @@ use crate::core::*;
 use crate::names::{resolve_error, Namespace};
 use crate::token::{Id, Index};
 use crate::Error;
+use std::collections::HashMap;
 
 pub fn resolve<'a>(fields: &mut Vec<ModuleField<'a>>) -> Result<Resolver<'a>, Error> {
     let mut resolver = Resolver::default();
@@ -25,7 +26,7 @@ pub struct Resolver<'a> {
     tags: Namespace<'a>,
     datas: Namespace<'a>,
     elems: Namespace<'a>,
-    fields: Namespace<'a>,
+    fields: HashMap<u32, Namespace<'a>>,
     type_info: Vec<TypeInfo<'a>>,
 }
 
@@ -46,16 +47,20 @@ impl<'a> Resolver<'a> {
     }
 
     fn register_type(&mut self, ty: &Type<'a>) -> Result<(), Error> {
+        let type_index = self.types.register(ty.id, "type")?;
+
         match &ty.def {
             // For GC structure types we need to be sure to populate the
             // field namespace here as well.
             //
-            // The field namespace is global, but the resolved indices
-            // are relative to the struct they are defined in
+            // The field namespace is relative to the struct fields are defined in
             TypeDef::Struct(r#struct) => {
                 for (i, field) in r#struct.fields.iter().enumerate() {
                     if let Some(id) = field.id {
-                        self.fields.register_specific(id, i as u32, "field")?;
+                        self.fields
+                            .entry(type_index)
+                            .or_insert(Namespace::default())
+                            .register_specific(id, i as u32, "field")?;
                     }
                 }
             }
@@ -75,7 +80,6 @@ impl<'a> Resolver<'a> {
             _ => self.type_info.push(TypeInfo::Other),
         }
 
-        self.types.register(ty.id, "type")?;
         Ok(())
     }
 
@@ -95,12 +99,12 @@ impl<'a> Resolver<'a> {
 
             ModuleField::Type(i) => {
                 return self.register_type(i);
-            },
+            }
             ModuleField::Rec(i) => {
                 for ty in &i.types {
                     self.register_type(ty)?;
                 }
-                return Ok(())
+                return Ok(());
             }
             ModuleField::Elem(e) => self.elems.register(e.id, "elem")?,
             ModuleField::Data(d) => self.datas.register(d.id, "data")?,
@@ -176,7 +180,7 @@ impl<'a> Resolver<'a> {
                     }
 
                     // .. followed by locals themselves
-                    for local in locals {
+                    for local in locals.iter() {
                         scope.register(local.id, "local")?;
                     }
 
@@ -262,8 +266,11 @@ impl<'a> Resolver<'a> {
             }
 
             ModuleField::Table(t) => {
-                if let TableKind::Normal(t) = &mut t.kind {
-                    self.resolve_heaptype(&mut t.elem.heap)?;
+                if let TableKind::Normal { ty, init_expr } = &mut t.kind {
+                    self.resolve_heaptype(&mut ty.elem.heap)?;
+                    if let Some(init_expr) = init_expr {
+                        self.resolve_expr(init_expr)?;
+                    }
                 }
                 Ok(())
             }
@@ -278,6 +285,10 @@ impl<'a> Resolver<'a> {
             _ => {}
         }
         Ok(())
+    }
+
+    fn resolve_reftype(&self, ty: &mut RefType<'a>) -> Result<(), Error> {
+        self.resolve_heaptype(&mut ty.heap)
     }
 
     fn resolve_heaptype(&self, ty: &mut HeapType<'a>) -> Result<(), Error> {
@@ -384,54 +395,21 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
     }
 
     fn resolve_block_type(&mut self, bt: &mut BlockType<'a>) -> Result<(), Error> {
-        // Ok things get interesting here. First off when parsing `bt`
-        // *optionally* has an index and a function type listed. If
-        // they're both not present it's equivalent to 0 params and 0
-        // results.
+        // If the index is specified on this block type then that's the source
+        // of resolution and the resolver step here will verify the inline type
+        // matches. Note that indexes may come from the source text itself but
+        // may also come from being injected as part of the type expansion phase
+        // of resolution.
         //
-        // In MVP wasm blocks can have 0 params and 0-1 results. Now
-        // there's also multi-value. We want to prefer MVP wasm wherever
-        // possible (for backcompat) so we want to list this block as
-        // being an "MVP" block if we can. The encoder only has
-        // `BlockType` to work with, so it'll be looking at `params` and
-        // `results` to figure out what to encode. If `params` and
-        // `results` fit within MVP, then it uses MVP encoding
-        //
-        // To put all that together, here we handle:
-        //
-        // * If the `index` was specified, resolve it and use it as the
-        //   source of truth. If this turns out to be an MVP type,
-        //   record it as such.
-        // * Otherwise use `params` and `results` as the source of
-        //   truth. *If* this were a non-MVP compatible block `index`
-        //   would be filled by by `tyexpand.rs`.
-        //
-        // tl;dr; we handle the `index` here if it's set and then fill
-        // out `params` and `results` if we can, otherwise no work
-        // happens.
+        // If no type is present then that means that the inline type is not
+        // present or has 0-1 results. In that case the nested value types are
+        // resolved, if they're there, to get encoded later on.
         if bt.ty.index.is_some() {
-            let (ty, _) = self.resolver.resolve_type_use(&mut bt.ty)?;
-            let n = match ty {
-                Index::Num(n, _) => *n,
-                Index::Id(_) => panic!("expected `Num`"),
-            };
-            let ty = match self.resolver.type_info.get(n as usize) {
-                Some(TypeInfo::Func { params, results }) => (params, results),
-                _ => return Ok(()),
-            };
-            if ty.0.len() == 0 && ty.1.len() <= 1 {
-                let mut inline = FunctionType::default();
-                inline.results = ty.1.clone();
-                bt.ty.inline = Some(inline);
-                bt.ty.index = None;
-            }
-        }
-
-        // If the inline annotation persists to this point then resolve
-        // all of its inline value types.
-        if let Some(inline) = &mut bt.ty.inline {
+            self.resolver.resolve_type_use(&mut bt.ty)?;
+        } else if let Some(inline) = &mut bt.ty.inline {
             inline.resolve(self.resolver)?;
         }
+
         Ok(())
     }
 
@@ -443,7 +421,7 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
         }
 
         match instr {
-            MemorySize(i) | MemoryGrow(i) | MemoryFill(i) => {
+            MemorySize(i) | MemoryGrow(i) | MemoryFill(i) | MemoryDiscard(i) => {
                 self.resolver.resolve(&mut i.mem, Ns::Memory)?;
             }
             MemoryInit(i) => {
@@ -508,19 +486,23 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
                 self.resolver.resolve_type_use(&mut c.ty)?;
             }
 
+            CallRef(i) | ReturnCallRef(i) => {
+                self.resolver.resolve(i, Ns::Type)?;
+            }
+
             FuncBind(b) => {
                 self.resolver.resolve_type_use(&mut b.ty)?;
             }
 
             Let(t) => {
                 // Resolve (ref T) in locals
-                for local in &mut t.locals {
+                for local in t.locals.iter_mut() {
                     self.resolver.resolve_valtype(&mut local.ty)?;
                 }
 
                 // Register all locals defined in this let
                 let mut scope = Namespace::default();
-                for local in &t.locals {
+                for local in t.locals.iter() {
                     scope.register(local.id, "local")?;
                 }
                 self.scopes.push(scope);
@@ -601,16 +583,6 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
                 self.resolve_label(i)?;
             }
 
-            BrOnCast(i) | BrOnCastFail(i) => {
-                self.resolve_label(&mut i.label)?;
-                self.resolver.resolve(&mut i.r#type, Ns::Type)?;
-            }
-
-            BrOnFunc(l) | BrOnData(l) | BrOnI31(l) | BrOnArray(l) |
-            BrOnNonFunc(l) | BrOnNonData(l) | BrOnNonI31(l) | BrOnNonArray(l) => {
-                self.resolve_label(l)?;
-            }
-
             Select(s) => {
                 if let Some(list) = &mut s.tys {
                     for ty in list {
@@ -619,23 +591,37 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
                 }
             }
 
-            RefTest(i)
-            | RefCast(i)
-            | StructNew(i)
-            | StructNewDefault(i)
-            | ArrayNew(i)
-            | ArrayNewDefault(i)
-            | ArrayGet(i)
-            | ArrayGetS(i)
-            | ArrayGetU(i)
-            | ArraySet(i)
-            | ArrayLen(i) => {
+            RefTest(i) => {
+                self.resolver.resolve_reftype(&mut i.r#type)?;
+            }
+            RefCast(i) => {
+                self.resolver.resolve_reftype(&mut i.r#type)?;
+            }
+            BrOnCast(i) => {
+                self.resolve_label(&mut i.label)?;
+                self.resolver.resolve_reftype(&mut i.to_type)?;
+                self.resolver.resolve_reftype(&mut i.from_type)?;
+            }
+            BrOnCastFail(i) => {
+                self.resolve_label(&mut i.label)?;
+                self.resolver.resolve_reftype(&mut i.to_type)?;
+                self.resolver.resolve_reftype(&mut i.from_type)?;
+            }
+
+            StructNew(i) | StructNewDefault(i) | ArrayNew(i) | ArrayNewDefault(i) | ArrayGet(i)
+            | ArrayGetS(i) | ArrayGetU(i) | ArraySet(i) => {
                 self.resolver.resolve(i, Ns::Type)?;
             }
 
             StructSet(s) | StructGet(s) | StructGetS(s) | StructGetU(s) => {
-                self.resolver.resolve(&mut s.r#struct, Ns::Type)?;
-                self.resolver.fields.resolve(&mut s.field, "field")?;
+                let type_index = self.resolver.resolve(&mut s.r#struct, Ns::Type)?;
+                if let Index::Id(field_id) = s.field {
+                    self.resolver
+                        .fields
+                        .get(&type_index)
+                        .ok_or(Error::new(field_id.span(), format!("accessing a named field `{}` in a struct without named fields, type index {}", field_id.name(), type_index)))?
+                        .resolve(&mut s.field, "field")?;
+                }
             }
 
             ArrayNewFixed(a) => {
@@ -649,9 +635,20 @@ impl<'a, 'b> ExprResolver<'a, 'b> {
                 self.resolver.resolve(&mut a.array, Ns::Type)?;
                 self.resolver.elems.resolve(&mut a.elem_idx, "elem")?;
             }
+            ArrayFill(a) => {
+                self.resolver.resolve(&mut a.array, Ns::Type)?;
+            }
             ArrayCopy(a) => {
                 self.resolver.resolve(&mut a.dest_array, Ns::Type)?;
                 self.resolver.resolve(&mut a.src_array, Ns::Type)?;
+            }
+            ArrayInitData(a) => {
+                self.resolver.resolve(&mut a.array, Ns::Type)?;
+                self.resolver.datas.resolve(&mut a.segment, "data")?;
+            }
+            ArrayInitElem(a) => {
+                self.resolver.resolve(&mut a.array, Ns::Type)?;
+                self.resolver.elems.resolve(&mut a.segment, "elem")?;
             }
 
             RefNull(ty) => self.resolver.resolve_heaptype(ty)?,

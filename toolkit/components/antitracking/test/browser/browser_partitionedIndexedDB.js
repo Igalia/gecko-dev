@@ -1,5 +1,3 @@
-/* import-globals-from partitionedstorage_head.js */
-
 PartitionedStorageHelper.runTest(
   "IndexedDB",
   async (win3rdParty, win1stParty, allowed) => {
@@ -59,12 +57,12 @@ PartitionedStorageHelper.runPartitioningTest(
 
       a.onsuccess = e => {
         let db = e.target.result;
-        db
-          .transaction("foobar")
-          .objectStore("foobar")
-          .get(1).onsuccess = ee => {
-          resolve(ee.target.result === undefined ? "" : ee.target.result.value);
-        };
+        db.transaction("foobar").objectStore("foobar").get(1).onsuccess =
+          ee => {
+            resolve(
+              ee.target.result === undefined ? "" : ee.target.result.value
+            );
+          };
       };
     });
   },

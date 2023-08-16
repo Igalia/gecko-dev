@@ -21,7 +21,6 @@
 #include "nsIProtocolHandler.h"
 #include "nsIXMLContentSink.h"
 #include "nsHTMLParts.h"
-#include "nsHTMLStyleSheet.h"
 #include "nsGkAtoms.h"
 #include "nsPresContext.h"
 #include "nsPIDOMWindow.h"
@@ -93,7 +92,7 @@ using namespace mozilla::dom;
 
 #include "prtime.h"
 
-//#define DEBUG_charset
+// #define DEBUG_charset
 
 // ==================================================================
 // =
@@ -611,7 +610,7 @@ void nsHTMLDocument::GetSupportedNames(nsTArray<nsString>& aNames) {
 
 bool nsHTMLDocument::MatchFormControls(Element* aElement, int32_t aNamespaceID,
                                        nsAtom* aAtom, void* aData) {
-  return aElement->IsNodeOfType(nsIContent::eHTML_FORM_CONTROL);
+  return aElement->IsHTMLFormControlElement();
 }
 
 nsresult nsHTMLDocument::Clone(dom::NodeInfo* aNodeInfo,

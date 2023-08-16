@@ -33,7 +33,7 @@ addAccessibleTask(
   </tbody>
 </table>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const table = findAccessibleChildByID(docAcc, "table", [
       nsIAccessibleTable,
     ]);
@@ -74,9 +74,9 @@ addAccessibleTask(
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -91,7 +91,7 @@ addAccessibleTask(
   <tr><td id="e" headers="c f">e</td><td id="f">f</td></tr>
 </table>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const cells = {};
     for (const id of ["a", "b", "c", "d", "e", "f"]) {
       cells[id] = findAccessibleChildByID(docAcc, id, [nsIAccessibleTableCell]);
@@ -111,9 +111,9 @@ addAccessibleTask(
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -128,7 +128,7 @@ addAccessibleTask(
   </table></th></tr>
 </table>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const outerTable = findAccessibleChildByID(docAcc, "outerTable", [
       nsIAccessibleTable,
     ]);
@@ -154,9 +154,9 @@ addAccessibleTask(
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -177,7 +177,7 @@ addAccessibleTask(
   <tr><th>a</th></tr>
 </table>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const t1 = findAccessibleChildByID(docAcc, "t1", [nsIAccessibleTable]);
     const c1 = findAccessibleChildByID(docAcc, "c1");
     is(t1.caption, c1, "t1 caption correct");
@@ -192,9 +192,9 @@ addAccessibleTask(
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -206,16 +206,16 @@ addAccessibleTask(
 <table id="layout"><tr><td>a</td></tr></table>
 <table id="data"><tr><th>a</th></tr></table>
 <table id="mutate"><tr><td>a</td><td>b</td></tr></table>
+<div id="newTableContainer"></div>
   `,
-  async function(browser, docAcc) {
-    const layout = findAccessibleChildByID(docAcc, "layout", [
-      nsIAccessibleTable,
-    ]);
+  async function (browser, docAcc) {
+    const layout = findAccessibleChildByID(docAcc, "layout");
     testAttrs(layout, { "layout-guess": "true" }, true);
-    const data = findAccessibleChildByID(docAcc, "data", [nsIAccessibleTable]);
+    const data = findAccessibleChildByID(docAcc, "data");
     testAbsentAttrs(data, { "layout-guess": "true" });
     const mutate = findAccessibleChildByID(docAcc, "mutate");
     testAttrs(mutate, { "layout-guess": "true" }, true);
+
     info("mutate: Adding 5 rows");
     let reordered = waitForEvent(EVENT_REORDER, mutate);
     await invokeContentTask(browser, [], () => {
@@ -229,12 +229,76 @@ addAccessibleTask(
     });
     await reordered;
     testAbsentAttrs(mutate, { "layout-guess": "true" });
+
+    info("mutate: Removing 5 rows");
+    reordered = waitForEvent(EVENT_REORDER, mutate);
+    await invokeContentTask(browser, [], () => {
+      // Pause refresh driver so all the children removals below will
+      // be collated into the same tick and only one 'reorder' event will
+      // be dispatched.
+      content.windowUtils.advanceTimeAndRefresh(100);
+
+      let tBody = content.document.getElementById("mutate").tBodies[0];
+      for (let r = 0; r < 6; ++r) {
+        tBody.lastChild.remove();
+      }
+
+      // Resume refresh driver
+      content.windowUtils.restoreNormalRefresh();
+    });
+    await reordered;
+    testAttrs(mutate, { "layout-guess": "true" }, true);
+
+    info("mutate: Adding new table");
+    let shown = waitForEvent(EVENT_SHOW, "newTable");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById(
+        "newTableContainer"
+      ).innerHTML = `<table id="newTable"><tr><th>a</th></tr></table>`;
+    });
+    let newTable = (await shown).accessible;
+    testAbsentAttrs(newTable, { "layout-guess": "true" });
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
+  }
+);
+
+/**
+ * Test table layout guess with border styling changes.
+ */
+addAccessibleTask(
+  `
+  <table id="layout"><tr><td id="cell">a</td><td>b</td></tr>
+  <tr><td>c</td><td>d</td></tr><tr><td>c</td><td>d</td></tr></table>
+  `,
+  async function (browser, docAcc) {
+    const layout = findAccessibleChildByID(docAcc, "layout");
+    testAttrs(layout, { "layout-guess": "true" }, true);
+    info("changing border style on table cell");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("cell").style.border = "1px solid black";
+      content.document.body.offsetTop; // Flush layout.
+    });
+    await untilCacheOk(() => {
+      // manually verify the attribute doesn't exist, since `testAbsentAttrs`
+      // has internal calls to ok() which fail if the cache hasn't yet updated
+      for (let prop of layout.attributes.enumerate()) {
+        if (prop.key == "layout-guess") {
+          return false;
+        }
+      }
+      return true;
+    }, "Table is a data table");
+  },
+  {
+    chrome: true,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -252,7 +316,7 @@ addAccessibleTask(
   </div>
 </div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const grid = findAccessibleChildByID(docAcc, "grid", [nsIAccessibleTable]);
     is(grid.rowCount, 2, "grid rowCount correct");
     is(grid.columnCount, 2, "grid columnCount correct");
@@ -281,9 +345,9 @@ addAccessibleTask(
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
 );
 
@@ -304,7 +368,7 @@ addAccessibleTask(
 </table>
 <div id="owner"></div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const table = findAccessibleChildByID(docAcc, "table", [
       nsIAccessibleTable,
     ]);
@@ -337,25 +401,239 @@ addAccessibleTask(
     await setNodeHidden(browser, "b", false);
     await reordered;
     is(table.columnCount, 2, "table columnCount correct");
-    if (isCacheEnabled) {
-      info("Moving b out of table using aria-owns");
-      reordered = waitForEvent(EVENT_REORDER, "r1");
-      await invokeContentTask(browser, [], () => {
-        content.document.getElementById("owner").setAttribute("aria-owns", "b");
-      });
-      await reordered;
-      is(table.columnCount, 1, "table columnCount correct");
-    } else {
-      todo(
-        false,
-        "CachedTableAccessible disabled, so counts broken when cell moved with aria-owns"
-      );
-    }
+    info("Moving b out of table using aria-owns");
+    reordered = waitForEvent(EVENT_REORDER, "r1");
+    await invokeContentTask(browser, [], () => {
+      content.document.getElementById("owner").setAttribute("aria-owns", "b");
+    });
+    await reordered;
+    is(table.columnCount, 1, "table columnCount correct");
   },
   {
     chrome: true,
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
-    remoteIframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
   }
+);
+
+/**
+ * Test the handling of ARIA tables with display: contents.
+ */
+addAccessibleTask(
+  `
+<div id="table" role="table" style="display: contents;">
+  <div role="row"><div role="cell">a</div></div>
+</div>
+  `,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table", [
+      nsIAccessibleTable,
+    ]);
+    is(table.rowCount, 1, "table rowCount correct");
+    is(table.columnCount, 1, "table columnCount correct");
+  },
+  {
+    chrome: true,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
+  }
+);
+
+/**
+ * Test a broken ARIA table with an invalid cell.
+ */
+addAccessibleTask(
+  `
+<div id="table" role="table">
+  <div role="main">
+    <div role="row">
+      <div id="cell" role="cell">a</div>
+    </div>
+  </div>
+</div>
+  `,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table", [
+      nsIAccessibleTable,
+    ]);
+    is(table.rowCount, 0, "table rowCount correct");
+    is(table.columnCount, 0, "table columnCount correct");
+    const cell = findAccessibleChildByID(docAcc, "cell");
+    let queryOk = false;
+    try {
+      cell.QueryInterface(nsIAccessibleTableCell);
+      queryOk = true;
+    } catch (e) {}
+    ok(!queryOk, "Got nsIAccessibleTableCell on an invalid cell");
+  },
+  {
+    chrome: true,
+    topLevel: true,
+    iframe: true,
+    remoteIframe: true,
+  }
+);
+
+/**
+ * Test that building the cache for a malformed table with an iframe inside a
+ * row doesn't crash (bug 1800780).
+ */
+addAccessibleTask(
+  `<table><tr id="tr"></tr></table>`,
+  async function (browser, docAcc) {
+    let reordered = waitForEvent(EVENT_REORDER, "tr");
+    await invokeContentTask(browser, [], () => {
+      const iframe = content.document.createElement("iframe");
+      content.document.getElementById("tr").append(iframe);
+    });
+    await reordered;
+  },
+  { topLevel: true }
+);
+
+/**
+ * Verify that table row and column information is correct when there are
+ * intervening generics between the table and a rowgroup.
+ */
+addAccessibleTask(
+  `
+<div id="table" role="grid">
+  <div role="rowgroup">
+    <div role="row">
+      <div role="columnheader">a</div>
+    </div>
+  </div>
+  <div tabindex="-1" style="height: 1px; overflow: auto;">
+    <div role="rowgroup">
+      <div role="row">
+        <div id="cell" role="gridcell">b</div>
+      </div>
+    </div>
+  </div>
+</div>
+  `,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table", [
+      nsIAccessibleTable,
+    ]);
+
+    info("Verifying that the table row and column counts are correct.");
+    is(table.rowCount, 2, "table rowCount correct");
+    is(table.columnCount, 1, "table columnCount correct");
+
+    info("Verifying that the cell row and column extents are correct.");
+    const cell = findAccessibleChildByID(docAcc, "cell", [
+      nsIAccessibleTableCell,
+    ]);
+    is(cell.rowExtent, 1, "cell rowExtent correct");
+    is(cell.columnExtent, 1, "cell colExtent correct");
+    is(cell.rowIndex, 1, "cell rowIndex correct");
+    is(cell.columnIndex, 0, "cell columnIndex correct");
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Verify that table row and column information is correct when there are
+ * intervening generics between rows and cells.
+ */
+addAccessibleTask(
+  `
+<div id="table" role="grid">
+  <div role="rowgroup">
+    <div role="row">
+      <div role="columnheader">a</div>
+    </div>
+  </div>
+  <div role="rowgroup">
+    <div role="row">
+      <div tabindex="-1" style="height: 1px; overflow: auto;">
+        <div id="cell" role="gridcell">b</div>
+      </div>
+    </div>
+  </div>
+</div>
+  `,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table", [
+      nsIAccessibleTable,
+    ]);
+
+    info("Verifying that the table row and column counts are correct.");
+    is(table.rowCount, 2, "table rowCount correct");
+    is(table.columnCount, 1, "table columnCount correct");
+
+    info("Verifying that the cell row and column extents are correct.");
+    const cell = findAccessibleChildByID(docAcc, "cell", [
+      nsIAccessibleTableCell,
+    ]);
+    is(cell.rowExtent, 1, "cell rowExtent correct");
+    is(cell.columnExtent, 1, "cell colExtent correct");
+    is(cell.rowIndex, 1, "cell rowIndex correct");
+    is(cell.columnIndex, 0, "cell columnIndex correct");
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Verify that we don't crash for authoring error like <table role="gridcell">.
+ */
+addAccessibleTask(
+  `<table id="table" role="gridcell">`,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table");
+    ok(table, "Retrieved table Accessible");
+  },
+  { chrome: true, topLevel: true }
+);
+
+/**
+ * Test ARIA tables in SVG.
+ */
+addAccessibleTask(
+  `
+<svg id="table" role="table">
+  <text id="caption" role="caption">caption</text>
+  <g role="row">
+    <text id="a" role="columnheader">a</text>
+    <text id="b" role="columnheader">b</text>
+  </g>
+  <g role="row">
+    <text id="c" role="cell">c</text>
+    <text id="d" role="cell">d</text>
+  </g>
+</svg>
+  `,
+  async function (browser, docAcc) {
+    const table = findAccessibleChildByID(docAcc, "table", [
+      nsIAccessibleTable,
+    ]);
+    is(table.rowCount, 2, "table rowCount correct");
+    is(table.columnCount, 2, "table columnCount correct");
+    const caption = findAccessibleChildByID(docAcc, "caption");
+    is(table.caption, caption, "table caption correct");
+    testTableIndexes(table, [
+      [0, 1],
+      [2, 3],
+    ]);
+    const cells = {};
+    for (const id of ["a", "b", "c", "d"]) {
+      cells[id] = findAccessibleChildByID(docAcc, id, [nsIAccessibleTableCell]);
+    }
+    testHeaderCells([
+      {
+        cell: cells.c,
+        rowHeaderCells: [],
+        columnHeaderCells: [cells.a],
+      },
+      {
+        cell: cells.d,
+        rowHeaderCells: [],
+        columnHeaderCells: [cells.b],
+      },
+    ]);
+  },
+  { chrome: true, topLevel: true, remoteIframe: true }
 );

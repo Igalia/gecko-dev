@@ -17,13 +17,14 @@ MOCHITEST_MANIFESTS += ["mochitest.ini"]
 MOCHITEST_CHROME_MANIFESTS += ["chrome.ini"]
 
 TEST_WEBIDL_FILES += [
+    "TestCallback.webidl",
     "TestDictionary.webidl",
     "TestJSImplInheritanceGen.webidl",
     "TestTypedef.webidl",
 ]
 
 TESTING_JS_MODULES += [
-    "TestInterfaceJS.jsm",
+    "TestInterfaceJS.sys.mjs",
 ]
 
 PREPROCESSED_TEST_WEBIDL_FILES += [

@@ -31,11 +31,9 @@
  * is then available to scanning devices.
  */
 
-const { Cu, CC, Cc, Ci } = require("chrome");
-const EventEmitter = require("devtools/shared/event-emitter");
-const Services = require("Services");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
-const UDPSocket = CC(
+const UDPSocket = Components.Constructor(
   "@mozilla.org/network/udp-socket;1",
   "nsIUDPSocket",
   "init"
@@ -150,9 +148,7 @@ LocalDevice.prototype = {
       // TODO: Bug 1180997: Find the right way to expose an editable name
       this.name = Services.sysinfo.get("device");
     } else {
-      this.name = Cc["@mozilla.org/network/dns-service;1"].getService(
-        Ci.nsIDNSService
-      ).myHostName;
+      this.name = Services.dns.myHostName;
     }
   },
 

@@ -3,11 +3,11 @@
 
 "use strict";
 
-const { SyncDisconnect, SyncDisconnectInternal } = ChromeUtils.import(
-  "resource://services-sync/SyncDisconnect.jsm"
+const { SyncDisconnect, SyncDisconnectInternal } = ChromeUtils.importESModule(
+  "resource://services-sync/SyncDisconnect.sys.mjs"
 );
-const { AsyncShutdown } = ChromeUtils.import(
-  "resource://gre/modules/AsyncShutdown.jsm"
+const { AsyncShutdown } = ChromeUtils.importESModule(
+  "resource://gre/modules/AsyncShutdown.sys.mjs"
 );
 
 add_task(async function test_shutdown_blocker() {

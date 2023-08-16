@@ -163,7 +163,6 @@ def dmd(value):
 
 set_config("MOZ_DMD", dmd)
 set_define("MOZ_DMD", dmd)
-add_old_configure_assignment("MOZ_DMD", dmd)
 imply_option("--enable-profiling", dmd)
 imply_option("--enable-jemalloc", dmd, when=compile_environment)
 imply_option("--enable-replace-malloc", dmd, when=compile_environment)
@@ -172,7 +171,9 @@ imply_option("--enable-replace-malloc", dmd, when=compile_environment)
 # ==============================================================
 @depends(target)
 def midir_linux_support(target):
-    return target.kernel == "Linux" and target.os != "Android"
+    return (
+        target.kernel == "Linux" and target.os != "Android" and target.cpu != "riscv64"
+    )
 
 
 @depends(target, midir_linux_support)
@@ -198,6 +199,10 @@ def audio_backends_default(target):
         return ("sndio",)
     elif target.os == "OSX":
         return ("audiounit",)
+    elif target.os == "NetBSD":
+        return ("sunaudio",)
+    elif target.os == "SunOS":
+        return ("sunaudio",)
     elif target.os == "WINNT":
         return ("wasapi",)
     else:
@@ -216,6 +221,7 @@ option(
         "oss",
         "pulseaudio",
         "sndio",
+        "sunaudio",
         "wasapi",
     ),
     default=audio_backends_default,
@@ -292,6 +298,15 @@ def imply_sndio(values, target):
 
 
 @depends("--enable-audio-backends", target)
+def imply_sunaudio(values, target):
+    if any("sunaudio" in value for value in values) and (
+        target.os != "NetBSD" and target.os != "SunOS"
+    ):
+        die("Cannot enable sunaudio on %s", target.os)
+    return any("sunaudio" in value for value in values) or None
+
+
+@depends("--enable-audio-backends", target)
 def imply_wasapi(values, target):
     if any("wasapi" in value for value in values) and target.os != "WINNT":
         die("Cannot enable WASAPI on %s", target.os)
@@ -314,6 +329,8 @@ imply_option("--enable-pulseaudio", imply_pulseaudio, reason="--enable-audio-bac
 
 imply_option("--enable-sndio", imply_sndio, reason="--enable-audio-backends")
 
+set_config("MOZ_SUNAUDIO", imply_sunaudio, when="--enable-audio-backends")
+
 set_config("MOZ_WASAPI", imply_wasapi, when="--enable-audio-backends")
 
 # ALSA cubeb backend
@@ -329,6 +346,7 @@ def enable_alsa_or_midir_linux_support(alsa_enabled, midir_linux_support):
 pkg_check_modules("MOZ_ALSA", "alsa", when=enable_alsa_or_midir_linux_support)
 
 set_config("MOZ_ALSA", True, when="--enable-alsa")
+set_define("MOZ_ALSA", True, when="--enable-alsa")
 
 # JACK cubeb backend
 # ==============================================================
@@ -349,6 +367,7 @@ option(
 pulseaudio = pkg_check_modules("MOZ_PULSEAUDIO", "libpulse", when="--enable-pulseaudio")
 
 set_config("MOZ_PULSEAUDIO", depends_if(pulseaudio)(lambda _: True))
+set_define("MOZ_PULSEAUDIO", depends_if(pulseaudio)(lambda _: True))
 
 # sndio cubeb backend
 # ==============================================================
@@ -411,11 +430,15 @@ def toolkit_choices(target):
     elif target.os == "Android":
         return ("cairo-android",)
     else:
+        # cairo-gtk3 - X11 backend with optional Wayland backend (auto detected)
+        # cairo-gtk3-wayland - Wayland backend with optional X11 backend (auto detected)
+        # cairo-gtk3-x11-wayland - builds explicitly with X11 & Wayland backends
         return (
             "cairo-gtk3",
             "cairo-gtk3-wayland",
-            "cairo-gtk3-wayland-only",
             "cairo-gtk3-x11-wayland",
+            "cairo-gtk3-wayland-only",
+            "cairo-gtk3-x11-only",
         )
 
 
@@ -466,18 +489,40 @@ def toolkit_gtk(toolkit):
     return toolkit == "gtk"
 
 
+@depends(toolkit_gtk, full_toolkit)
+def toolkit_gtk_x11(toolkit_gtk, full_toolkit):
+    return toolkit_gtk and full_toolkit != "cairo-gtk3-wayland-only"
+
+
+@depends(full_toolkit)
+def toolkit_gtk_x11_optional(full_toolkit):
+    return full_toolkit == "cairo-gtk3-wayland"
+
+
+@depends(toolkit_gtk, full_toolkit)
+def toolkit_gtk_wayland(toolkit_gtk, full_toolkit):
+    return toolkit_gtk and full_toolkit != "cairo-gtk3-x11-only"
+
+
+@depends(full_toolkit)
+def toolkit_gtk_wayland_optional(full_toolkit):
+    return full_toolkit == "cairo-gtk3"
+
+
 # Wayland support
 # ==============================================================
 wayland_headers = pkg_check_modules(
     "MOZ_WAYLAND",
-    "gtk+-wayland-3.0 >= 3.14 xkbcommon >= 0.4.1 libdrm >= 2.4",
-    allow_missing=depends(full_toolkit)(lambda t: t == "cairo-gtk3"),
-    when=toolkit_gtk,
+    "gtk+-wayland-3.0 >= 3.14 xkbcommon >= 0.4.1",
+    allow_missing=toolkit_gtk_wayland_optional,
+    when=toolkit_gtk_wayland,
 )
 
 
-@depends(wayland_headers, toolkit_gtk, artifact_builds)
-def wayland_headers(wayland, toolkit_gtk, artifacts):
+@depends(wayland_headers, toolkit_gtk, artifact_builds, toolkit_gtk_wayland)
+def wayland_headers(wayland, toolkit_gtk, artifacts, toolkit_gtk_wayland):
+    if not toolkit_gtk_wayland:
+        return False
     if toolkit_gtk and artifacts:
         return True
     return wayland
@@ -485,6 +530,30 @@ def wayland_headers(wayland, toolkit_gtk, artifacts):
 
 set_config("MOZ_WAYLAND", depends_if(wayland_headers)(lambda _: True))
 set_define("MOZ_WAYLAND", depends_if(wayland_headers)(lambda _: True))
+
+
+# Hardware-accelerated video decode with VAAPI and V4L2 on Linux
+# ==============================================================
+@depends(target, toolkit_gtk)
+def vaapi(target, toolkit_gtk):
+    # VAAPI is mostly used on x86(-64) but is sometimes used on ARM/ARM64 SOCs.
+    if target.cpu in ("arm", "aarch64", "x86", "x86_64") and toolkit_gtk:
+        return True
+
+
+@depends(target, toolkit_gtk)
+def v4l2(target, toolkit_gtk):
+    # V4L2 decode is only used in GTK/Linux and generally only appears on
+    # embedded SOCs.
+    if target.cpu in ("arm", "aarch64", "riscv64") and toolkit_gtk:
+        return True
+
+
+set_config("MOZ_ENABLE_VAAPI", True, when=vaapi)
+set_config("MOZ_ENABLE_V4L2", True, when=v4l2)
+set_define("MOZ_ENABLE_VAAPI", True, when=vaapi)
+set_define("MOZ_ENABLE_V4L2", True, when=v4l2)
+
 
 # GL Provider
 # ==============================================================
@@ -506,14 +575,12 @@ def gl_provider_define(provider):
 set_define("MOZ_GL_PROVIDER", gl_provider_define)
 
 
-@depends(gl_provider, wayland_headers, toolkit_gtk)
-def gl_default_provider(value, wayland, toolkit_gtk):
+@depends(gl_provider, toolkit_gtk)
+def gl_default_provider(value, toolkit_gtk):
     if value:
         return value
-    elif wayland:
-        return "EGL"
     elif toolkit_gtk:
-        return "GLX"
+        return "EGL"
 
 
 set_config("MOZ_GL_PROVIDER", gl_provider)
@@ -569,7 +636,6 @@ def fc_freetype(value, toolkit):
         return True
 
 
-add_old_configure_assignment("USE_FC_FREETYPE", fc_freetype)
 set_define("USE_FC_FREETYPE", fc_freetype)
 
 # Pango
@@ -625,8 +691,8 @@ set_define("MOZ_APPLEMEDIA", applemedia)
 option("--disable-wmf", help="Disable support for Windows Media Foundation")
 
 
-@depends("--disable-wmf", target)
-def wmf(value, target):
+@depends("--disable-wmf", target, "--help")
+def wmf(value, target, _):
     enabled = bool(value)
     if value.origin == "default":
         # Enable Windows Media Foundation support by default.
@@ -731,7 +797,6 @@ def fmp4(value, target, wmf, applemedia):
 
 set_config("MOZ_FMP4", fmp4)
 set_define("MOZ_FMP4", fmp4)
-add_old_configure_assignment("MOZ_FMP4", fmp4)
 
 
 @depends(target)
@@ -759,6 +824,14 @@ set_config("MOZ_VORBIS", sample_type_is_float)
 set_define("MOZ_TREMOR", sample_type_is_s16)
 set_config("MOZ_TREMOR", sample_type_is_s16)
 
+option(
+    "--disable-real-time-tracing",
+    help="Disable tracing of real-time audio callbacks",
+)
+
+set_config("MOZ_REAL_TIME_TRACING", True, when="--enable-real-time-tracing")
+set_define("MOZ_REAL_TIME_TRACING", True, when="--enable-real-time-tracing")
+
 # OpenMAX IL Decoding Support
 # ==============================================================
 option("--enable-openmax", help="Enable OpenMAX IL for video/audio decoding")
@@ -776,13 +849,15 @@ set_define("MOZ_OMX", openmax)
 
 # EME Support
 # ==============================================================
-@depends(target)
-def eme_choices(target):
+@depends(target, wmf)
+def eme_choices(target, wmf):
     if (
         target.kernel in ("WINNT", "Linux")
         and target.os != "Android"
         and target.cpu in ("x86", "x86_64")
     ):
+        if wmf:
+            return ("widevine", "wmfcdm")
         return ("widevine",)
     if target.kernel == "WINNT" and target.cpu == "aarch64":
         return ("widevine",)
@@ -832,6 +907,19 @@ def eme_win32_artifact(modules, target):
 
 
 set_config("MOZ_EME_WIN32_ARTIFACT", eme_win32_artifact)
+
+
+# Media Foundation CDM support
+# ==============================================================
+@depends(eme_modules, when=wmfmediaengine)
+def wmfcdm(modules):
+    if "wmfcdm" in modules:
+        return True
+
+
+set_config("MOZ_WMF_CDM", True, when=wmfcdm)
+set_define("MOZ_WMF_CDM", True, when=wmfcdm)
+
 
 option(
     name="--enable-chrome-format",
@@ -916,14 +1004,12 @@ project_flag("MOZ_PLACES", help="Build Places if required", set_as_define=True)
 project_flag(
     "MOZ_SERVICES_HEALTHREPORT",
     help="Build Firefox Health Reporter Service",
-    set_for_old_configure=True,
     set_as_define=True,
 )
 
 project_flag(
     "MOZ_NORMANDY",
     help="Enable Normandy recipe runner",
-    set_for_old_configure=True,
     set_as_define=True,
 )
 
@@ -961,9 +1047,6 @@ option(
 )
 
 set_define("MOZ_TELEMETRY_REPORTING", True, when="MOZ_TELEMETRY_REPORTING")
-add_old_configure_assignment(
-    "MOZ_TELEMETRY_REPORTING", True, when="MOZ_TELEMETRY_REPORTING"
-)
 
 
 @depends("MOZ_TELEMETRY_REPORTING", milestone.is_nightly)
@@ -1087,7 +1170,6 @@ def webspeech(value):
 
 set_config("MOZ_WEBSPEECH", webspeech)
 set_define("MOZ_WEBSPEECH", webspeech)
-add_old_configure_assignment("MOZ_WEBSPEECH", webspeech)
 
 # Speech API test backend
 # ==============================================================
@@ -1277,40 +1359,34 @@ set_config("MOZ_GECKODRIVER", geckodriver)
 def webrtc_default(target):
     # Turn off webrtc for OS's we don't handle yet, but allow
     # --enable-webrtc to override.
-    os_match = False
-    for os_fragment in (
-        "linux",
-        "mingw",
-        "android",
-        "linuxandroid",
-        "dragonfly",
-        "freebsd",
-        "netbsd",
-        "openbsd",
-        "darwin",
-    ):
-        if target.raw_os.startswith(os_fragment):
-            os_match = True
+    os_match = target.kernel in (
+        "Linux",
+        "WINNT",
+        "DragonFly",
+        "FreeBSD",
+        "kFreeBSD",
+        "NetBSD",
+        "OpenBSD",
+    )
 
-    cpu_match = False
-    if (
-        target.cpu
-        in (
-            "x86_64",
-            "arm",
-            "aarch64",
-            "x86",
-            "ia64",
-            "mips32",
-            "mips64",
-        )
-        or target.cpu.startswith("ppc")
-    ):
-        cpu_match = True
+    if not os_match:
+        os_match = target.os in ("OSX",)
 
-    if os_match and cpu_match:
-        return True
-    return False
+    cpu_match = target.cpu in (
+        "x86_64",
+        "arm",
+        "aarch64",
+        "x86",
+        "ia64",
+        "ppc",
+        "ppc64",
+        "riscv64",
+    )
+
+    if not cpu_match:
+        cpu_match = target.endianness == "little" and target.cpu in ("mips32", "mips64")
+
+    return os_match and cpu_match
 
 
 option(
@@ -1392,10 +1468,8 @@ def x11_libs(webrtc):
 x11_headers = pkg_check_modules(
     "MOZ_X11",
     x11_libs,
-    allow_missing=depends(full_toolkit)(lambda t: t == "cairo-gtk3-wayland"),
-    when=depends(full_toolkit)(
-        lambda t: t in ("cairo-gtk3", "cairo-gtk3-wayland", "cairo-gtk3-x11-wayland")
-    ),
+    allow_missing=toolkit_gtk_x11_optional,
+    when=toolkit_gtk_x11,
 )
 
 
@@ -1406,10 +1480,8 @@ pkg_check_modules(
     "MOZ_X11_SM",
     ["ice", "sm"],
     cflags_only=True,
-    allow_missing=depends(full_toolkit)(lambda t: t == "cairo-gtk3-wayland"),
-    when=depends(full_toolkit)(
-        lambda t: t in ("cairo-gtk3", "cairo-gtk3-wayland", "cairo-gtk3-x11-wayland")
-    ),
+    allow_missing=toolkit_gtk_x11_optional,
+    when=toolkit_gtk_x11,
 )
 
 
@@ -1429,7 +1501,31 @@ def enable_asan_reporter(value):
 
 set_config("MOZ_ASAN_REPORTER", enable_asan_reporter)
 set_define("MOZ_ASAN_REPORTER", enable_asan_reporter)
-add_old_configure_assignment("MOZ_ASAN_REPORTER", enable_asan_reporter)
+
+# Checks for library functions
+# ==============================================================
+with only_when(compile_environment & depends(target.os)(lambda os: os != "WINNT")):
+    set_define("HAVE_STAT64", check_symbol("stat64"))
+    set_define("HAVE_LSTAT64", check_symbol("lstat64"))
+    set_define("HAVE_TRUNCATE64", check_symbol("truncate64"))
+    set_define("HAVE_STATVFS64", check_symbol("statvfs64"))
+    set_define("HAVE_STATVFS", check_symbol("statvfs"))
+    set_define("HAVE_STATFS64", check_symbol("statfs64"))
+    set_define("HAVE_STATFS", check_symbol("statfs"))
+    set_define("HAVE_LUTIMES", check_symbol("lutimes"))
+    set_define("HAVE_POSIX_FADVISE", check_symbol("posix_fadvise"))
+    set_define("HAVE_POSIX_FALLOCATE", check_symbol("posix_fallocate"))
+    set_define("HAVE_EVENTFD", check_symbol("eventfd"))
+
+    have_arc4random = check_symbol("arc4random")
+    set_define("HAVE_ARC4RANDOM", have_arc4random)
+    set_define("HAVE_ARC4RANDOM_BUF", check_symbol("arc4random_buf"))
+    set_define("HAVE_MALLINFO", check_symbol("mallinfo"))
+
+# Checks for headers
+# ==============================================================
+with only_when(compile_environment & depends(target.os)(lambda os: os != "WINNT")):
+    set_define("HAVE_SYSIOCCOM_H", check_header("sys/ioccom.h"))
 
 # Elfhack
 # ==============================================================
@@ -1446,18 +1542,122 @@ with only_when("--enable-compile-environment"):
     @depends("--enable-release", enable_linker)
     def default_elfhack(release, linker):
         # Disable elfhack when explicitly building with --enable-linker=lld
-        if linker and linker.origin != "default" and linker[0] == "lld":
+        if linker and linker.origin != "default" and linker[0] in ("lld", "mold"):
             return False
         return bool(release)
 
-    with only_when(has_elfhack):
-        option(
-            "--disable-elf-hack",
-            default=default_elfhack,
-            help="{Enable|Disable} elf hacks",
-        )
+    option(
+        "--disable-elf-hack",
+        default=default_elfhack,
+        help="{Enable|Disable} elf hacks",
+        when=has_elfhack,
+    )
 
-        set_config("USE_ELF_HACK", depends_if("--enable-elf-hack")(lambda _: True))
+    @depends(
+        have_arc4random,
+        android_version,
+        depends("--enable-elf-hack", when=has_elfhack)(lambda x: x),
+        when=target_has_linux_kernel,
+    )
+    def may_use_pack_relative_relocs(have_arc4random, android_version, elfhack):
+        # Packed relative relocations are only supported on Android since
+        # version 11 (API 30), and in glibc since version 2.36.
+        # glibc 2.36 also added the arc4random function, which is our proxy
+        # to detect this (or newer) version being used.
+        # When targetting those newer versions, we allow ourselves to use
+        # packed relative relocations rather than elfhack. We still prefer
+        # elfhack when explicitly enabled.
+        if elfhack and elfhack.origin != "default":
+            return False
+        if android_version:
+            return android_version >= 30
+        return have_arc4random
+
+    @depends(
+        c_compiler,
+        extra_toolchain_flags,
+        linker_ldflags,
+        readelf,
+        configure_cache,
+        when=may_use_pack_relative_relocs,
+    )
+    @checking("for -z pack-relative-relocs option to ld", bool)
+    @imports(_from="__builtin__", _import="FileNotFoundError")
+    @imports("os")
+    @imports(_from="tempfile", _import="mkstemp")
+    @imports("textwrap")
+    def pack_relative_relocs(
+        c_compiler,
+        extra_toolchain_flags,
+        linker_ldflags,
+        readelf,
+        configure_cache,
+    ):
+        try:
+            fd, path = mkstemp(prefix="conftest.")
+            os.close(fd)
+
+            pack_rel_relocs = ["-Wl,-z,pack-relative-relocs"]
+            if (
+                try_invoke_compiler(
+                    configure_cache,
+                    [c_compiler.compiler] + c_compiler.flags,
+                    c_compiler.language,
+                    # The resulting binary is expected to have relative
+                    # relocations, the `ptr` variable attempts to ensure
+                    # there is at least one.
+                    "int main() { return 0; }\nint (*ptr)() = main;",
+                    pack_rel_relocs
+                    + ["-o", path]
+                    + (extra_toolchain_flags or [])
+                    + linker_ldflags,
+                    wrapper=c_compiler.wrapper,
+                    onerror=lambda: None,
+                )
+                is not None
+            ):
+                # BFD ld ignores options it doesn't understand. So check
+                # that we did get packed relative relocations (DT_RELR).
+                env = os.environ.copy()
+                env["LANG"] = "C"
+                dyn = check_cmd_output(readelf, "-d", path, env=env)
+                tags = [
+                    int(l.split()[0], 16)
+                    for l in dyn.splitlines()
+                    if l.strip().startswith("0x")
+                ]
+                # Older versions of readelf don't know about DT_RELR but will
+                # still display the tag number.
+                if 0x23 in tags:
+                    return pack_rel_relocs
+        finally:
+            try:
+                os.remove(path)
+            except FileNotFoundError:
+                pass
+
+    add_old_configure_assignment("PACK_REL_RELOC_FLAGS", pack_relative_relocs)
+
+    @depends(
+        select_linker,
+        pack_relative_relocs,
+        "--enable-elf-hack",
+        when=has_elfhack,
+    )
+    def use_elf_hack(linker, pack_relative_relocs, elfhack):
+        if elfhack:
+            # If elfhack was not manually enabled and packed relative relocations
+            # can be used, then don't enable elfhack even if it would normally have.
+            if elfhack.origin == "default" and pack_relative_relocs:
+                return
+            if linker and linker.KIND == "lld":
+                die(
+                    "Cannot enable elfhack with lld."
+                    " Use --enable-linker=bfd, --enable-linker=gold, or --disable-elf-hack"
+                )
+            return True
+
+    set_config("USE_ELF_HACK", use_elf_hack)
 
 
 @depends(build_environment)
@@ -1866,7 +2066,7 @@ with only_when(compile_environment):
     )
 
     with only_when("--with-system-libvpx"):
-        vpx = pkg_check_modules("MOZ_LIBVPX", "vpx >= 1.8.0")
+        vpx = pkg_check_modules("MOZ_LIBVPX", "vpx >= 1.10.0")
 
         check_header(
             "vpx/vpx_decoder.h",
@@ -1905,37 +2105,14 @@ with only_when(compile_environment):
                 return namespace(version="2.03", what="VPX")
             return namespace(what="VPX")
 
-    # Building with -mfpu=neon requires either the "softfp" or the
-    # "hardfp" ABI. Depending on the compiler's default target, and the
-    # CFLAGS, the default ABI might be neither, in which case it is the
-    # "softfloat" ABI.
-    # The "softfloat" ABI is binary-compatible with the "softfp" ABI, so
-    # we can safely mix code built with both ABIs. So, if we detect
-    # that compiling uses the "softfloat" ABI, force the use of the
-    # "softfp" ABI instead.
-    # Confusingly, the __SOFTFP__ preprocessor variable indicates the
-    # "softfloat" ABI, not the "softfp" ABI.
-    # Note: VPX_ASFLAGS is also used in CFLAGS.
-    softfp = cxx_compiler.try_compile(
-        body="""
-        #ifndef __SOFTFP__
-        #error "compiler target supports -mfpu=neon, so we don't have to add extra flags"
-        #endif""",
-        when=in_tree_vpx.arm_asm,
-    )
-
-    @depends(in_tree_vpx, vpx_nasm, softfp, target)
-    def vpx_as_flags(vpx, vpx_nasm, softfp, target):
-        flags = []
+    @depends(in_tree_vpx, vpx_nasm, target, neon_flags)
+    def vpx_as_flags(vpx, vpx_nasm, target, neon_flags):
         if vpx and vpx.arm_asm:
             # These flags are a lie; they're just used to enable the requisite
             # opcodes; actual arch detection is done at runtime.
-            flags = ["-march=armv7-a", "-mfpu=neon"]
-            if softfp:
-                flags.append("-mfloat-abi=softfp")
+            return neon_flags
         elif vpx and vpx_nasm and target.os != "WINNT" and target.cpu != "x86_64":
-            flags = ["-DPIC"]
-        return flags
+            return ("-DPIC",)
 
     set_config("VPX_USE_NASM", True, when=vpx_nasm)
     set_config("VPX_ASFLAGS", vpx_as_flags)
@@ -2012,13 +2189,13 @@ with only_when(compile_environment):
         set_config("MOZ_JPEG_CFLAGS", jpeg_flags.cflags)
         set_config("MOZ_JPEG_LIBS", jpeg_flags.ldflags)
 
-    @depends("--with-system-jpeg", target)
-    def in_tree_jpeg_arm(system_jpeg, target):
+    @depends("--with-system-jpeg", target, neon_flags)
+    def in_tree_jpeg_arm(system_jpeg, target, neon_flags):
         if system_jpeg:
             return
 
         if target.cpu == "arm":
-            return ("-march=armv7-a", "-mfpu=neon")
+            return neon_flags
         elif target.cpu == "aarch64":
             return ("-march=armv8-a",)
 
@@ -2153,6 +2330,8 @@ with only_when(compile_environment):
 
     @depends(target)
     def libav_fft(target):
+        if target.os == "Android" and target.cpu != "arm":
+            return True
         return target.kernel in ("WINNT", "Darwin") or target.cpu == "x86_64"
 
     set_config("MOZ_LIBAV_FFT", depends(when=libav_fft)(lambda: True))
@@ -2203,10 +2382,6 @@ with only_when(compile_environment | artifact_builds):
 
         if flac_only or not enable:
             use_nasm = False
-
-        if use_nasm:
-            # default disabled components
-            flags.append("-Pdefaults_disabled.asm")
 
         return namespace(
             enable=enable,
@@ -2316,42 +2491,7 @@ set_config("NASM_ASFLAGS", nasm_asflags)
 # ==============================================================
 
 with only_when(compile_environment & target_is_windows):
-
-    def d3d_compiler_dll_result(value):
-        if not value.path:
-            return "provided by the OS"
-        return value.path
-
-    @depends(target, valid_windows_sdk_dir, fxc)
-    @checking("for D3D compiler DLL", d3d_compiler_dll_result)
-    @imports("os.path")
-    def d3d_compiler_dll(target, windows_sdk_dir, fxc):
-        suffix = {
-            "x86_64": "x64",
-        }.get(target.cpu, target.cpu)
-
-        name = "d3dcompiler_47.dll"
-
-        if target.cpu == "aarch64":
-            # AArch64 Windows comes with d3dcompiler_47.dll installed
-            return namespace(name=name, path=None)
-
-        if windows_sdk_dir:
-            path = os.path.join(windows_sdk_dir.path, "Redist", "D3D", suffix, name)
-            error_extra = "in Windows SDK at {}".format(windows_sdk_dir.path)
-        else:
-            path = os.path.join(os.path.dirname(fxc), name)
-            error_extra = "alongside FXC at {}".format(fxc)
-
-        if os.path.exists(path):
-            return namespace(name=name, path=path)
-        die("Could not find {} {}".format(name, error_extra))
-
     set_config("MOZ_ANGLE_RENDERER", True)
-    set_config(
-        "MOZ_D3DCOMPILER_VISTA_DLL", d3d_compiler_dll.name, when=d3d_compiler_dll.path
-    )
-    set_config("MOZ_D3DCOMPILER_VISTA_DLL_PATH", d3d_compiler_dll.path)
 
 # Remoting protocol support
 # ==============================================================
@@ -2373,18 +2513,18 @@ set_define("MOZ_HAS_REMOTE", has_remote)
 def wasm_sandboxing_libraries():
     return (
         "graphite",
-        "ogg",
         "hunspell",
         "expat",
         "woff2",
     )
 
 
-@depends(dependable(wasm_sandboxing_libraries))
-def default_wasm_sandboxing_libraries(libraries):
-    non_default_libs = set()
+@depends(dependable(wasm_sandboxing_libraries), build_project)
+def default_wasm_sandboxing_libraries(libraries, build_project):
+    if build_project != "tools/rusttests":
+        non_default_libs = set()
 
-    return tuple(l for l in libraries if l not in non_default_libs)
+        return tuple(l for l in libraries if l not in non_default_libs)
 
 
 option(
@@ -2421,21 +2561,10 @@ with only_when(requires_wasm_sandboxing & compile_environment):
     @depends(
         "--with-wasi-sysroot",
         bootstrap_path("sysroot-wasm32-wasi", when=bootstrap_wasi_sysroot),
-        "--with-wasm-sandboxed-libraries",
     )
     @imports("os")
-    def wasi_sysroot(wasi_sysroot, bootstrapped_sysroot, sandboxed_libs):
+    def wasi_sysroot(wasi_sysroot, bootstrapped_sysroot):
         if not wasi_sysroot:
-            if not bootstrapped_sysroot:
-                suggest_disable = ""
-                if sandboxed_libs.origin == "default":
-                    suggest_disable = (
-                        " Or build with --without-wasm-sandboxed-libraries."
-                    )
-                die(
-                    "Cannot find a wasi sysroot. Please give its location with "
-                    "--with-wasi-sysroot." + suggest_disable
-                )
             return bootstrapped_sysroot
 
         wasi_sysroot = wasi_sysroot[0]
@@ -2446,24 +2575,59 @@ with only_when(requires_wasm_sandboxing & compile_environment):
 
         return wasi_sysroot
 
+    @depends(wasi_sysroot)
+    def wasi_sysroot_flags(wasi_sysroot):
+        if wasi_sysroot:
+            log.info("Using wasi sysroot in %s", wasi_sysroot)
+            return ["--sysroot=%s" % wasi_sysroot]
+        return []
+
     set_config("WASI_SYSROOT", wasi_sysroot)
 
-    def wasm_compiler_with_flags(compiler, sysroot):
-        if not sysroot:
-            return
-        elif compiler:
+    def wasm_compiler_with_flags(compiler, sysroot_flags):
+        if compiler:
             return (
-                compiler.wrapper
-                + [compiler.compiler]
-                + compiler.flags
-                + ["--sysroot=%s" % sysroot]
+                compiler.wrapper + [compiler.compiler] + compiler.flags + sysroot_flags
             )
 
-    wasm_cc = compiler("C", wasm, other_compiler=c_compiler)
+    @template
+    def wasm_compiler_error(msg):
+        @depends("--with-wasm-sandboxed-libraries")
+        def wasm_compiler_error(sandboxed_libs):
+            suggest_disable = ""
+            if sandboxed_libs.origin == "default":
+                suggest_disable = " Or build with --without-wasm-sandboxed-libraries."
+            return lambda: die(msg + suggest_disable)
 
-    @depends(wasm_cc, wasi_sysroot)
-    def wasm_cc_with_flags(wasm_cc, wasi_sysroot):
-        return wasm_compiler_with_flags(wasm_cc, wasi_sysroot)
+        return wasm_compiler_error
+
+    @template
+    def check_wasm_compiler(compiler, language):
+        compiler.try_compile(
+            includes=["cstring" if language == "C++" else "string.h"],
+            flags=wasi_sysroot_flags,
+            check_msg="the wasm %s compiler can find wasi headers" % language,
+            onerror=wasm_compiler_error(
+                "Cannot find wasi headers or problem with the wasm compiler. "
+                "Please fix the problem."
+            ),
+        )
+
+        compiler.try_run(
+            flags=wasi_sysroot_flags,
+            check_msg="the wasm %s linker can find wasi libraries" % language,
+            onerror=wasm_compiler_error(
+                "Cannot find wasi libraries or problem with the wasm linker. "
+                "Please fix the problem."
+            ),
+        )
+
+    wasm_cc = compiler("C", wasm, other_compiler=c_compiler)
+    check_wasm_compiler(wasm_cc, "C")
+
+    @depends(wasm_cc, wasi_sysroot_flags)
+    def wasm_cc_with_flags(wasm_cc, wasi_sysroot_flags):
+        return wasm_compiler_with_flags(wasm_cc, wasi_sysroot_flags)
 
     set_config("WASM_CC", wasm_cc_with_flags)
 
@@ -2474,16 +2638,15 @@ with only_when(requires_wasm_sandboxing & compile_environment):
         other_compiler=cxx_compiler,
         other_c_compiler=c_compiler,
     )
+    check_wasm_compiler(wasm_cxx, "C++")
 
-    @depends(wasm_cxx, wasi_sysroot)
-    def wasm_cxx_with_flags(wasm_cxx, wasi_sysroot):
-        return wasm_compiler_with_flags(wasm_cxx, wasi_sysroot)
+    @depends(wasm_cxx, wasi_sysroot_flags)
+    def wasm_cxx_with_flags(wasm_cxx, wasi_sysroot_flags):
+        return wasm_compiler_with_flags(wasm_cxx, wasi_sysroot_flags)
 
     set_config("WASM_CXX", wasm_cxx_with_flags)
 
-    wasm_compile_flags = dependable(
-        ["-fno-exceptions", "-fno-strict-aliasing", "-Qunused-arguments"]
-    )
+    wasm_compile_flags = dependable(["-fno-exceptions", "-fno-strict-aliasing"])
     option(env="WASM_CFLAGS", nargs=1, help="Options to pass to WASM_CC")
 
     @depends("WASM_CFLAGS", wasm_compile_flags)
@@ -2529,20 +2692,6 @@ def wasm_sandboxing_config_defines():
 wasm_sandboxing_config_defines()
 
 
-# new XULStore implementation
-# ==============================================================
-
-
-@depends(milestone)
-def new_xulstore(milestone):
-    if milestone.is_nightly:
-        return True
-
-
-set_config("MOZ_NEW_XULSTORE", True, when=new_xulstore)
-set_define("MOZ_NEW_XULSTORE", True, when=new_xulstore)
-
-
 # new Notification Store implementation
 # ==============================================================
 
@@ -2582,12 +2731,30 @@ check_prog(
 )
 
 
+@depends(valid_windows_sdk_dir, host)
+@imports(_from="os", _import="environ")
+def pdbstr_paths(valid_windows_sdk_dir, host):
+    if not valid_windows_sdk_dir:
+        return
+
+    vc_host = {
+        "x86": "x86",
+        "x86_64": "x64",
+    }.get(host.cpu)
+
+    return [
+        environ["PATH"],
+        os.path.join(valid_windows_sdk_dir.path, "Debuggers", vc_host, "srcsrv"),
+    ]
+
+
 check_prog(
     "PDBSTR",
     ["pdbstr.exe"],
     allow_missing=True,
-    bootstrap="pdbstr",
     when=compile_environment & target_is_windows,
+    paths=pdbstr_paths,
+    allow_spaces=True,
 )
 
 
@@ -2643,7 +2810,7 @@ set_define("MOZ_ENABLE_FORKSERVER", forkserver_flag, forkserver_flag)
 # Crash Reporter
 # ==============================================================
 
-with only_when(compile_environment & target_is_linux):
+with only_when(compile_environment & target_has_linux_kernel):
     # Check if we need to use the breakpad_getcontext fallback.
     getcontext = check_symbol("getcontext")
     set_config("HAVE_GETCONTEXT", getcontext)
@@ -2657,17 +2824,12 @@ include("../build/moz.configure/nss.configure")
 # Enable or disable running in background task mode: headless for
 # periodic, short-lived, maintenance tasks.
 # ==============================================================================
-
-
 option(
     "--disable-backgroundtasks",
     help="Disable running in background task mode",
 )
-
-
-set_config(
-    "MOZ_BACKGROUNDTASKS", depends_if("--enable-backgroundtasks")(lambda _: True)
-)
+set_config("MOZ_BACKGROUNDTASKS", True, when="--enable-backgroundtasks")
+set_define("MOZ_BACKGROUNDTASKS", True, when="--enable-backgroundtasks")
 
 
 # Update-related programs: updater, maintenance service, update agent,
@@ -2776,8 +2938,8 @@ set_config(
 # ==============================================================
 @depends(target)
 def oxidized_breakpad(target):
-    if target.kernel == "Linux" and target.os != "Android":
-        return target.cpu in ("x86", "x86_64")
+    if target.kernel == "Linux":
+        return target.cpu in ("aarch64", "arm", "x86", "x86_64")
     return False
 
 
@@ -2848,7 +3010,6 @@ option(
 
 set_config("MOZ_CRASHREPORTER", True, when="--enable-crashreporter")
 set_define("MOZ_CRASHREPORTER", True, when="--enable-crashreporter")
-add_old_configure_assignment("MOZ_CRASHREPORTER", True, when="--enable-crashreporter")
 
 with only_when(compile_environment):
     with only_when("--enable-crashreporter"):
@@ -2868,6 +3029,23 @@ with only_when(compile_environment):
             True,
             when=depends(target)(lambda t: t.os == "WINNT" and t.bitness == 32),
         )
+
+
+# If we have any service that uploads data (and requires data submission
+# policy alert), set MOZ_DATA_REPORTING.
+# ==============================================================
+@depends(
+    "MOZ_TELEMETRY_REPORTING",
+    "MOZ_SERVICES_HEALTHREPORT",
+    "--enable-crashreporter",
+    "MOZ_NORMANDY",
+)
+def data_reporting(telemetry, healthreport, crashreporter, normandy):
+    return telemetry or healthreport or crashreporter or normandy
+
+
+set_config("MOZ_DATA_REPORTING", True, when=data_reporting)
+set_define("MOZ_DATA_REPORTING", True, when=data_reporting)
 
 
 # Gtk+
@@ -2931,6 +3109,7 @@ def necko_wifi_dbus(necko_wifi, dbus):
 
 
 set_config("NECKO_WIFI_DBUS", True, when=necko_wifi_dbus)
+set_define("NECKO_WIFI_DBUS", True, when=necko_wifi_dbus)
 
 
 # Frontend JS debug mode
@@ -3030,6 +3209,8 @@ option(
 set_config("MOZ_SANDBOX", True, when="--enable-sandbox")
 set_define("MOZ_SANDBOX", True, when="--enable-sandbox")
 
+with only_when(depends(target.kernel)(lambda k: k not in ("Darwin", "WINNT"))):
+    set_define("MOZ_CONTENT_TEMP_DIR", True, when="--enable-sandbox")
 
 # Searching of system directories for extensions.
 # ==============================================================
@@ -3153,7 +3334,7 @@ with only_when(compile_environment):
 
 # Custom dynamic linker for Android
 # ==============================================================
-with only_when(target_is_linux & compile_environment):
+with only_when(target_has_linux_kernel & compile_environment):
     option(
         env="MOZ_LINKER",
         default=depends(target.os, when="--enable-jemalloc")(
@@ -3171,7 +3352,7 @@ with only_when(target_is_linux & compile_environment):
 
 # 32-bits ethtool_cmd.speed
 # ==============================================================
-with only_when(target_is_linux & compile_environment):
+with only_when(target_has_linux_kernel & compile_environment):
     set_config(
         "MOZ_WEBRTC_HAVE_ETHTOOL_SPEED_HI",
         c_compiler.try_compile(
@@ -3189,7 +3370,7 @@ check_header(
         "Can't find header linux/joystick.h, needed for gamepad support."
         " Please install Linux kernel headers."
     ),
-    when=target_is_linux & compile_environment,
+    when=target_has_linux_kernel & compile_environment,
 )
 
 # Smart card support
@@ -3214,20 +3395,82 @@ option(
 
 set_config("MOZ_UNIFFI_FIXTURES", True, when="--enable-uniffi-fixtures")
 
-# Checks for library functions
+# System policies
 # ==============================================================
-with only_when(compile_environment & depends(target.os)(lambda os: os != "WINNT")):
-    set_define("HAVE_STAT64", check_symbol("stat64"))
-    set_define("HAVE_LSTAT64", check_symbol("lstat64"))
-    set_define("HAVE_TRUNCATE64", check_symbol("truncate64"))
-    set_define("HAVE_STATVFS64", check_symbol("statvfs64"))
-    set_define("HAVE_STATVFS", check_symbol("statvfs"))
-    set_define("HAVE_STATFS64", check_symbol("statfs64"))
-    set_define("HAVE_STATFS", check_symbol("statfs"))
-    set_define("HAVE_LUTIMES", check_symbol("lutimes"))
-    set_define("HAVE_POSIX_FADVISE", check_symbol("posix_fadvise"))
-    set_define("HAVE_POSIX_FALLOCATE", check_symbol("posix_fallocate"))
 
-    set_define("HAVE_ARC4RANDOM", check_symbol("arc4random"))
-    set_define("HAVE_ARC4RANDOM_BUF", check_symbol("arc4random_buf"))
-    set_define("HAVE_MALLINFO", check_symbol("mallinfo"))
+option(
+    "--disable-system-policies",
+    help="Disable reading policies from Windows registry, macOS's file system attributes, and /etc/firefox",
+)
+
+set_config("MOZ_SYSTEM_POLICIES", True, when="--enable-system-policies")
+
+# Allow disabling the creation a legacy profile
+# ==============================================================
+
+option(
+    "--disable-legacy-profile-creation",
+    help="Disable the creation a legacy profile, to be used by old versions "
+    "of Firefox, when no profiles exist.",
+)
+
+set_config("MOZ_CREATE_LEGACY_PROFILE", True, when="--enable-legacy-profile-creation")
+
+
+# STL wrapping
+# ==============================================================
+set_config("WRAP_STL_INCLUDES", True)
+set_config(
+    "STL_FLAGS",
+    depends(build_environment.dist)(lambda dist: [f"-I{dist}/stl_wrappers"]),
+)
+
+
+# Perl detection
+# ==============================================================
+@depends(target)
+def need_perl(target):
+    # Ideally, we'd also depend on gnu_as here, but that adds complications.
+    return target.cpu == "arm"
+
+
+perl = check_prog("PERL", ("perl5", "perl"), when=need_perl)
+
+
+@template
+def perl_version_check(min_version):
+    @depends(perl)
+    @checking("for minimum required perl version >= %s" % min_version)
+    def get_perl_version(perl):
+        return Version(
+            check_cmd_output(
+                perl,
+                "-e",
+                "print $]",
+                onerror=lambda: die("Failed to get perl version."),
+            )
+        )
+
+    @depends(get_perl_version)
+    def check_perl_version(version):
+        if version < min_version:
+            die("Perl %s or higher is required.", min_version)
+
+    @depends(perl)
+    @checking("for full perl installation")
+    @imports("subprocess")
+    def has_full_perl_installation(perl):
+        ret = subprocess.call([perl, "-e", "use Config; exit(!-d $Config{archlib})"])
+        return ret == 0
+
+    @depends(has_full_perl_installation)
+    def require_full_perl_installation(has_full_perl_installation):
+        if not has_full_perl_installation:
+            die(
+                "Cannot find Config.pm or $Config{archlib}. "
+                "A full perl installation is required."
+            )
+
+
+with only_when(need_perl):
+    perl_version_check("5.006")

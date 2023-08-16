@@ -420,13 +420,28 @@ import org.mozilla.gecko.gfx.GeckoSurface;
     final List<String> found =
         findMatchingCodecNames(fmt, flags == MediaCodec.CONFIGURE_FLAG_ENCODE);
     for (final String name : found) {
-      final AsyncCodec codec = configureCodec(name, fmt, surface, flags, drmStubId);
+      final AsyncCodec codec =
+          configureCodec(
+              name, fmt, surface != null ? surface.getSurface() : null, flags, drmStubId);
       if (codec == null) {
         Log.w(LOGTAG, "unable to configure " + name + ". Try next.");
         continue;
       }
       mIsHardwareAccelerated = !name.startsWith(SW_CODEC_PREFIX);
       mCodec = codec;
+      // Bug 1789846: Check if the Codec provides stride or height values to use.
+      if (flags == MediaCodec.CONFIGURE_FLAG_ENCODE && fmt.containsKey(MediaFormat.KEY_WIDTH)) {
+        final MediaFormat inputFormat = mCodec.getInputFormat();
+        if (inputFormat != null) {
+          if (inputFormat.containsKey(MediaFormat.KEY_STRIDE)) {
+            fmt.setInteger(MediaFormat.KEY_STRIDE, inputFormat.getInteger(MediaFormat.KEY_STRIDE));
+          }
+          if (inputFormat.containsKey(MediaFormat.KEY_SLICE_HEIGHT)) {
+            fmt.setInteger(
+                MediaFormat.KEY_SLICE_HEIGHT, inputFormat.getInteger(MediaFormat.KEY_SLICE_HEIGHT));
+          }
+        }
+      }
       mInputProcessor = new InputProcessor();
       final boolean renderToSurface = surface != null;
       mOutputProcessor = new OutputProcessor(renderToSurface);
@@ -453,8 +468,15 @@ import org.mozilla.gecko.gfx.GeckoSurface;
     final int height =
         format.containsKey(MediaFormat.KEY_HEIGHT) ? format.getInteger(MediaFormat.KEY_HEIGHT) : 0;
 
-    final int numCodecs = MediaCodecList.getCodecCount();
+    int numCodecs = 0;
     final List<String> found = new ArrayList<>();
+    try {
+      numCodecs = MediaCodecList.getCodecCount();
+    } catch (final RuntimeException e) {
+      Log.e(LOGTAG, "Failed retrieving codec count finding matching codec names", e);
+      return found;
+    }
+
     for (int i = 0; i < numCodecs; i++) {
       final MediaCodecInfo info = MediaCodecList.getCodecInfoAt(i);
       if (info.isEncoder() == !isEncoder) {

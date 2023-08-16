@@ -8,7 +8,7 @@ def _assign_slots(obj, args):
 
 
 class Longhand(object):
-    __slots__ = ["name", "method", "id", "rules", "flags", "pref"]
+    __slots__ = ["name", "method", "id", "rules", "flags", "pref", "aliases"]
 
     def __init__(self, *args):
         _assign_slots(self, args)
@@ -19,7 +19,7 @@ class Longhand(object):
 
 
 class Shorthand(object):
-    __slots__ = ["name", "method", "id", "rules", "flags", "pref", "subprops"]
+    __slots__ = ["name", "method", "id", "rules", "flags", "pref", "subprops", "aliases"]
 
     def __init__(self, *args):
         _assign_slots(self, args)
@@ -58,9 +58,6 @@ LONGHANDS_NOT_SERIALIZED_WITH_SERVO = [
     # Servo serializes one value when both are the same, a few tests expect two.
     "border-spacing",
 
-    # Resolved value should be zero when the column-rule-style is none.
-    "column-rule-width",
-
     # These resolve auto to zero in a few cases, but not all.
     "max-height",
     "max-width",
@@ -73,7 +70,6 @@ LONGHANDS_NOT_SERIALIZED_WITH_SERVO = [
     # Layout dependent.
     "width",
     "height",
-    "line-height",
     "grid-template-rows",
     "grid-template-columns",
     "perspective-origin",
@@ -145,19 +141,21 @@ def pref(prop):
 
 def sub_properties(prop):
     return ", ".join('"{}"'.format(p.ident) for p in prop.sub_properties)
+
+def aliases(prop):
+    return ", ".join('"{}"'.format(p.ident) for p in prop.aliases)
 %>
 
-data = [
-    % for prop in data.longhands:
-    Longhand("${prop.name}", "${method(prop)}", "${prop.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)}),
-    % endfor
+data = {
+% for prop in data.longhands:
+    "${prop.ident}": Longhand("${prop.name}", "${method(prop)}", "${prop.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)}, [${aliases(prop)}]),
+% endfor
 
-    % for prop in data.shorthands:
-    Shorthand("${prop.name}", "${prop.camel_case}", "${prop.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)},
-              [${sub_properties(prop)}]),
-    % endfor
+% for prop in data.shorthands:
+    "${prop.ident}": Shorthand("${prop.name}", "${prop.camel_case}", "${prop.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)}, [${sub_properties(prop)}], [${aliases(prop)}]),
+% endfor
 
-    % for prop in data.all_aliases():
-    Alias("${prop.name}", "${prop.camel_case}", "${prop.ident}", "${prop.original.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)}),
-    % endfor
-]
+% for prop in data.all_aliases():
+    "${prop.ident}": Alias("${prop.name}", "${prop.camel_case}", "${prop.ident}", "${prop.original.ident}", [${rules(prop)}], [${flags(prop)}], ${pref(prop)}),
+% endfor
+}

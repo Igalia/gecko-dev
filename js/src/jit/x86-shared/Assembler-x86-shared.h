@@ -208,6 +208,7 @@ class CPUInfo {
   static bool bmi1Present;
   static bool bmi2Present;
   static bool lzcntPresent;
+  static bool fmaPresent;
   static bool avx2Present;
 
   static void SetMaxEnabledSSEVersion(SSEVersion v) {
@@ -234,6 +235,7 @@ class CPUInfo {
   static bool IsBMI1Present() { return bmi1Present; }
   static bool IsBMI2Present() { return bmi2Present; }
   static bool IsLZCNTPresent() { return lzcntPresent; }
+  static bool IsFMAPresent() { return fmaPresent; }
   static bool IsAVX2Present() { return avx2Present; }
 
   static bool FlagsHaveBeenComputed() { return maxSSEVersion != UnknownSSE; }
@@ -1176,6 +1178,7 @@ class AssemblerX86Shared : public AssemblerShared {
   static bool SupportsWasmSimd() { return CPUInfo::IsSSE41Present(); }
   static bool HasAVX() { return CPUInfo::IsAVXPresent(); }
   static bool HasAVX2() { return CPUInfo::IsAVX2Present(); }
+  static bool HasFMA() { return CPUInfo::IsFMAPresent(); }
 
   static bool HasRoundInstruction(RoundingMode mode) {
     switch (mode) {
@@ -1264,6 +1267,25 @@ class AssemblerX86Shared : public AssemblerShared {
         break;
       case Operand::MEM_ADDRESS32:
         masm.cmpw_im(rhs.value, lhs.address());
+        break;
+      default:
+        MOZ_CRASH("unexpected operand kind");
+    }
+  }
+  void cmpb(Register rhs, const Operand& lhs) {
+    switch (lhs.kind()) {
+      case Operand::REG:
+        masm.cmpb_rr(rhs.encoding(), lhs.reg());
+        break;
+      case Operand::MEM_REG_DISP:
+        masm.cmpb_rm(rhs.encoding(), lhs.disp(), lhs.base());
+        break;
+      case Operand::MEM_SCALE:
+        masm.cmpb_rm(rhs.encoding(), lhs.disp(), lhs.base(), lhs.index(),
+                     lhs.scale());
+        break;
+      case Operand::MEM_ADDRESS32:
+        masm.cmpb_rm(rhs.encoding(), lhs.address());
         break;
       default:
         MOZ_CRASH("unexpected operand kind");
@@ -4769,6 +4791,24 @@ class AssemblerX86Shared : public AssemblerShared {
       default:
         MOZ_CRASH("unexpected operand kind");
     }
+  }
+  void vfmadd231ps(FloatRegister src1, FloatRegister src0, FloatRegister dest) {
+    MOZ_ASSERT(HasFMA());
+    masm.vfmadd231ps_rrr(src1.encoding(), src0.encoding(), dest.encoding());
+  }
+  void vfnmadd231ps(FloatRegister src1, FloatRegister src0,
+                    FloatRegister dest) {
+    MOZ_ASSERT(HasFMA());
+    masm.vfnmadd231ps_rrr(src1.encoding(), src0.encoding(), dest.encoding());
+  }
+  void vfmadd231pd(FloatRegister src1, FloatRegister src0, FloatRegister dest) {
+    MOZ_ASSERT(HasFMA());
+    masm.vfmadd231pd_rrr(src1.encoding(), src0.encoding(), dest.encoding());
+  }
+  void vfnmadd231pd(FloatRegister src1, FloatRegister src0,
+                    FloatRegister dest) {
+    MOZ_ASSERT(HasFMA());
+    masm.vfnmadd231pd_rrr(src1.encoding(), src0.encoding(), dest.encoding());
   }
 
   void flushBuffer() {}

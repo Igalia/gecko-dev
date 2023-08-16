@@ -1,9 +1,4 @@
-# All entries in this file are to suppress issues reported by function.
-# Blacklists for other reasons should go in separate blacklist files.
-
 [function]
-
-# bug 1751818
-fun:*gfxFontEntry*GrGetTable*
-fun:*gfxFontEntry*GrReleaseTable*
-fun:*gfxGraphiteShaper*GrGetAdvance*
+# Disable function sanitizer for all C files (new feature in clang 17) until we
+# we can narrow this down. See bug 1841935.
+src:*.c

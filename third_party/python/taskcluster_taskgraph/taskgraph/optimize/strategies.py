@@ -10,7 +10,6 @@ logger = logging.getLogger(__name__)
 
 @register_strategy("index-search")
 class IndexSearch(OptimizationStrategy):
-
     # A task with no dependencies remaining after optimization will be replaced
     # if artifacts exist for the corresponding index_paths.
     # Otherwise, we're in one of the following cases:
@@ -50,13 +49,8 @@ class IndexSearch(OptimizationStrategy):
 @register_strategy("skip-unless-changed")
 class SkipUnlessChanged(OptimizationStrategy):
     def should_remove_task(self, task, params, file_patterns):
-        if params.get("repository_type") != "hg":
-            raise RuntimeError(
-                "SkipUnlessChanged optimization only works with mercurial repositories"
-            )
-
-        # pushlog_id == -1 - this is the case when run from a cron.yml job
-        if params.get("pushlog_id") == -1:
+        # pushlog_id == -1 - this is the case when run from a cron.yml job or on a git repository
+        if params.get("repository_type") == "hg" and params.get("pushlog_id") == -1:
             return False
 
         changed = files_changed.check(params, file_patterns)

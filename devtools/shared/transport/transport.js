@@ -4,19 +4,18 @@
 
 "use strict";
 
-const { Cc, Cr, CC } = require("chrome");
-const DevToolsUtils = require("devtools/shared/DevToolsUtils");
+const DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
 const { dumpn, dumpv } = DevToolsUtils;
-const flags = require("devtools/shared/flags");
-const StreamUtils = require("devtools/shared/transport/stream-utils");
+const flags = require("resource://devtools/shared/flags.js");
+const StreamUtils = require("resource://devtools/shared/transport/stream-utils.js");
 const {
   Packet,
   JSONPacket,
   BulkPacket,
-} = require("devtools/shared/transport/packets");
+} = require("resource://devtools/shared/transport/packets.js");
 
 loader.lazyGetter(this, "ScriptableInputStream", () => {
-  return CC(
+  return Components.Constructor(
     "@mozilla.org/scriptableinputstream;1",
     "nsIScriptableInputStream",
     "init"
@@ -214,7 +213,7 @@ DebuggerTransport.prototype = {
       this._finishCurrentOutgoing();
     }
 
-    if (this._outgoing.length > 0) {
+    if (this._outgoing.length) {
       const threadManager = Cc["@mozilla.org/thread-manager;1"].getService();
       this._output.asyncWait(this, 0, 0, threadManager.currentThread);
     }
@@ -243,7 +242,7 @@ DebuggerTransport.prototype = {
    * The current outgoing packet will attempt to write some amount of data, but
    * may not complete.
    */
-  onOutputStreamReady: DevToolsUtils.makeInfallible(function(stream) {
+  onOutputStreamReady: DevToolsUtils.makeInfallible(function (stream) {
     if (!this._outgoingEnabled || this._outgoing.length === 0) {
       return;
     }
@@ -324,7 +323,7 @@ DebuggerTransport.prototype = {
   /**
    * Called when the stream is either readable or closed.
    */
-  onInputStreamReady: DevToolsUtils.makeInfallible(function(stream) {
+  onInputStreamReady: DevToolsUtils.makeInfallible(function (stream) {
     try {
       while (
         stream.available() &&

@@ -1,6 +1,5 @@
 /* -*- Mode: indent-tabs-mode: nil; js-indent-level: 2 -*- */
 /* vim: set sts=2 sw=2 et tw=80: */
-/* import-globals-from ../../..//gfx/layers/apz/test/mochitest/apz_test_native_event_utils.js */
 
 "use strict";
 
@@ -21,232 +20,7 @@ async function waitForWhile() {
   await new Promise(r => requestAnimationFrame(r));
 }
 
-const NativePanHandlerForWindows = {
-  beginPhase: SpecialPowers.DOMWindowUtils.PHASE_BEGIN,
-  updatePhase: SpecialPowers.DOMWindowUtils.PHASE_UPDATE,
-  endPhase: SpecialPowers.DOMWindowUtils.PHASE_END,
-  promiseNativePanEvent: promiseNativeTouchpadPanEventAndWaitForObserver,
-  deltaOnRTL: 50,
-};
-
-const NativePanHandlerForMac = {
-  // From https://developer.apple.com/documentation/coregraphics/cgscrollphase/kcgscrollphasebegan?language=occ , etc.
-  beginPhase: 1, // kCGScrollPhaseBegan
-  updatePhase: 2, // kCGScrollPhaseChanged
-  endPhase: 4, // kCGScrollPhaseEnded
-  promiseNativePanEvent: promiseNativePanGestureEventAndWaitForObserver,
-  deltaOnRTL: -50,
-};
-
-function getPanHandler() {
-  switch (getPlatform()) {
-    case "windows":
-      return NativePanHandlerForWindows;
-    case "mac":
-      return NativePanHandlerForMac;
-    default:
-      throw new Error(
-        "There's no native pan handler on platform " + getPlatform()
-      );
-  }
-}
-
-const NativePanHandler = getPanHandler();
-
-async function panRightToLeft(aElement, aX, aY, aMultiplier) {
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    NativePanHandler.deltaOnRTL * aMultiplier,
-    0,
-    NativePanHandler.beginPhase
-  );
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    NativePanHandler.deltaOnRTL,
-    0,
-    NativePanHandler.updatePhase
-  );
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    NativePanHandler.deltaOnRTL * aMultiplier,
-    0,
-    NativePanHandler.updatePhase
-  );
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    0,
-    0,
-    NativePanHandler.endPhase
-  );
-}
-
-async function panLeftToRight(aElement, aX, aY, aMultiplier) {
-  await panLeftToRightBegin(aElement, aX, aY, aMultiplier);
-  await panLeftToRightUpdate(aElement, aX, aY, aMultiplier);
-  await panLeftToRightEnd(aElement, aX, aY, aMultiplier);
-}
-
-async function panLeftToRightBegin(aElement, aX, aY, aMultiplier) {
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    -NativePanHandler.deltaOnRTL * aMultiplier,
-    0,
-    NativePanHandler.beginPhase
-  );
-}
-
-async function panLeftToRightUpdate(aElement, aX, aY, aMultiplier) {
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    -NativePanHandler.deltaOnRTL * aMultiplier,
-    0,
-    NativePanHandler.updatePhase
-  );
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    -NativePanHandler.deltaOnRTL * aMultiplier,
-    0,
-    NativePanHandler.updatePhase
-  );
-}
-
-async function panLeftToRightEnd(aElement, aX, aY, aMultiplier) {
-  await NativePanHandler.promiseNativePanEvent(
-    aElement,
-    aX,
-    aY,
-    0,
-    0,
-    NativePanHandler.endPhase
-  );
-}
-
 requestLongerTimeout(2);
-
-add_task(async () => {
-  await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
-      ["widget.disable-swipe-tracker", false],
-      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
-      ["widget.swipe.success-velocity-contribution", 0.5],
-    ],
-  });
-
-  const firstPage = "about:about";
-  const secondPage = "about:mozilla";
-  const tab = await BrowserTestUtils.openNewForegroundTab(
-    gBrowser,
-    firstPage,
-    true /* waitForLoad */
-  );
-
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
-  await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
-
-  // Make sure we can go back to the previous page.
-  ok(gBrowser.webNavigation.canGoBack);
-  // and we cannot go forward to the next page.
-  ok(!gBrowser.webNavigation.canGoForward);
-
-  let wheelEventCount = 0;
-  tab.linkedBrowser.addEventListener("wheel", () => {
-    wheelEventCount++;
-  });
-
-  // Try to navigate forward.
-  await panRightToLeft(tab.linkedBrowser, 100, 100, 1);
-  // NOTE: The last endPhase shouldn't fire a wheel event since
-  // its delta is zero.
-  is(wheelEventCount, 3, "Received 3 wheel events");
-
-  await waitForWhile();
-  // Make sure any navigation didn't happen.
-  is(tab.linkedBrowser.currentURI.spec, secondPage);
-
-  // Try to navigate backward.
-  wheelEventCount = 0;
-  let startLoadingPromise = BrowserTestUtils.browserStarted(
-    tab.linkedBrowser,
-    firstPage
-  );
-  let stoppedLoadingPromise = BrowserTestUtils.browserStopped(
-    tab.linkedBrowser,
-    firstPage
-  );
-  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
-  // NOTE: We only get a wheel event for the beginPhase, rest of events have
-  // been captured by the swipe gesture module.
-  is(wheelEventCount, 1, "Received a wheel event");
-
-  // Make sure the gesture triggered going back to the previous page.
-  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
-
-  ok(gBrowser.webNavigation.canGoForward);
-
-  // Now try to navigate forward again.
-  wheelEventCount = 0;
-  startLoadingPromise = BrowserTestUtils.browserStarted(
-    tab.linkedBrowser,
-    secondPage
-  );
-  stoppedLoadingPromise = BrowserTestUtils.browserStopped(
-    tab.linkedBrowser,
-    secondPage
-  );
-  await panRightToLeft(tab.linkedBrowser, 100, 100, 1);
-  is(wheelEventCount, 1, "Received a wheel event");
-
-  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
-
-  ok(gBrowser.webNavigation.canGoBack);
-
-  // Now try to navigate backward again but with preventDefault-ed event
-  // handler.
-  wheelEventCount = 0;
-  let wheelEventListener = event => {
-    event.preventDefault();
-  };
-  tab.linkedBrowser.addEventListener("wheel", wheelEventListener);
-  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
-  is(wheelEventCount, 3, "Received all wheel events");
-
-  await waitForWhile();
-  // Make sure any navigation didn't happen.
-  is(tab.linkedBrowser.currentURI.spec, secondPage);
-
-  // Now drop the event handler and disable the swipe tracker and try to swipe
-  // again.
-  wheelEventCount = 0;
-  tab.linkedBrowser.removeEventListener("wheel", wheelEventListener);
-  await SpecialPowers.pushPrefEnv({
-    set: [["widget.disable-swipe-tracker", true]],
-  });
-
-  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
-  is(wheelEventCount, 3, "Received all wheel events");
-
-  await waitForWhile();
-  // Make sure any navigation didn't happen.
-  is(tab.linkedBrowser.currentURI.spec, secondPage);
-
-  BrowserTestUtils.removeTab(tab);
-});
 
 add_task(async () => {
   // Set the default values for an OS that supports swipe to nav, except for
@@ -255,8 +29,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
-      ["browser.swipe.navigation-icon-move-distance", 0],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       // Set the velocity-contribution to 0 so we can exactly control the
@@ -274,7 +47,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -298,18 +71,20 @@ add_task(async () => {
   let computedOpacity = window
     .getComputedStyle(gHistorySwipeAnimation._prevBox)
     .getPropertyValue("opacity");
-  ok(
-    0.98 < computedOpacity && computedOpacity < 0.99,
-    "opacity of prevbox is not quite 1"
-  );
+  is(computedOpacity, "1", "opacity of prevbox is 1");
   let opacity = gHistorySwipeAnimation._prevBox.style.opacity;
-  ok(0.98 < opacity && opacity < 0.99, "opacity of prevbox is not quite 1");
+  is(opacity, "", "opacity style isn't explicitly set");
 
-  const translateDistance = Services.prefs.getIntPref(
-    "browser.swipe.navigation-icon-move-distance",
-    0
-  );
-  if (translateDistance != 0) {
+  const isTranslatingIcon =
+    Services.prefs.getIntPref(
+      "browser.swipe.navigation-icon-start-position",
+      0
+    ) != 0 ||
+    Services.prefs.getIntPref(
+      "browser.swipe.navigation-icon-end-position",
+      0
+    ) != 0;
+  if (isTranslatingIcon != 0) {
     isnot(
       window
         .getComputedStyle(gHistorySwipeAnimation._prevBox)
@@ -353,7 +128,7 @@ add_task(async () => {
   opacity = gHistorySwipeAnimation._prevBox.style.opacity;
   ok(opacity == 0, "element.style opacity of prevbox 0");
 
-  if (translateDistance != 0) {
+  if (isTranslatingIcon) {
     // We don't have a transition for translate property so that we still have
     // some amount of translate.
     isnot(
@@ -371,6 +146,7 @@ add_task(async () => {
   ok(gBrowser.webNavigation.canGoForward);
 
   BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });
 
 // Same test as above but whole-page-pixel-size is increased and the multipliers passed to panLeftToRight correspondingly increased.
@@ -381,7 +157,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       // Set the velocity-contribution to 0 so we can exactly control the
@@ -399,7 +175,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -423,12 +199,9 @@ add_task(async () => {
   let computedOpacity = window
     .getComputedStyle(gHistorySwipeAnimation._prevBox)
     .getPropertyValue("opacity");
-  ok(
-    0.98 < computedOpacity && computedOpacity < 0.99,
-    "opacity of prevbox is not quite 1"
-  );
+  is(computedOpacity, "1", "opacity of prevbox is 1");
   let opacity = gHistorySwipeAnimation._prevBox.style.opacity;
-  ok(0.98 < opacity && opacity < 0.99, "opacity of prevbox is not quite 1");
+  is(opacity, "", "opacity style isn't explicitly set");
 
   await panLeftToRightEnd(tab.linkedBrowser, 100, 100, 1.8);
 
@@ -470,6 +243,7 @@ add_task(async () => {
   ok(gBrowser.webNavigation.canGoForward);
 
   BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async () => {
@@ -479,7 +253,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       // Set the velocity-contribution to 1 (default 0.05f) so velocity is a
@@ -500,7 +274,7 @@ add_task(async () => {
       true /* waitForLoad */
     );
 
-    BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+    BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
     await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
     // Make sure we can go back to the previous page.
@@ -571,6 +345,7 @@ add_task(async () => {
     numTries--;
   }
   ok(numTries > 0, "never ran the test");
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async () => {
@@ -580,7 +355,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       // Set the velocity-contribution to 0 so we can exactly control the
@@ -598,7 +373,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -634,13 +409,14 @@ add_task(async () => {
   );
 
   BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       // Set the velocity-contribution to 0 so we can exactly control the
@@ -682,7 +458,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -756,6 +532,7 @@ add_task(async () => {
   gBrowser.tabbox.removeEventListener("MozSwipeGestureEnd", anObserver, true);
 
   BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });
 
 add_task(async () => {
@@ -764,7 +541,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       ["widget.swipe.success-velocity-contribution", 999999.0],
@@ -780,7 +557,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -801,10 +578,31 @@ add_task(async () => {
   await panLeftToRightBegin(tab.linkedBrowser, 100, 100, 100);
 
   ok(gHistorySwipeAnimation._prevBox != null, "should have prevbox");
-  let transitionPromise = new Promise(resolve => {
+  let transitionCancelPromise = new Promise(resolve => {
+    gHistorySwipeAnimation._prevBox.addEventListener(
+      "transitioncancel",
+      event => {
+        if (
+          event.propertyName == "opacity" &&
+          event.target == gHistorySwipeAnimation._prevBox
+        ) {
+          resolve();
+        }
+      },
+      { once: true }
+    );
+  });
+  let transitionStartPromise = new Promise(resolve => {
     gHistorySwipeAnimation._prevBox.addEventListener(
       "transitionstart",
-      resolve,
+      event => {
+        if (
+          event.propertyName == "opacity" &&
+          event.target == gHistorySwipeAnimation._prevBox
+        ) {
+          resolve();
+        }
+      },
       { once: true }
     );
   });
@@ -817,7 +615,7 @@ add_task(async () => {
 
   ok(gBrowser.webNavigation.canGoForward);
 
-  await transitionPromise;
+  await Promise.any([transitionStartPromise, transitionCancelPromise]);
 
   await TestUtils.waitForCondition(() => {
     return (
@@ -826,7 +624,65 @@ add_task(async () => {
     );
   });
 
+  // Navigate forward and check the forward navigation icon box state.
+  startLoadingPromise = BrowserTestUtils.browserStarted(
+    tab.linkedBrowser,
+    secondPage
+  );
+  stoppedLoadingPromise = BrowserTestUtils.browserStopped(
+    tab.linkedBrowser,
+    secondPage
+  );
+
+  await panRightToLeftBegin(tab.linkedBrowser, 100, 100, 100);
+
+  ok(gHistorySwipeAnimation._nextBox != null, "should have nextbox");
+  transitionCancelPromise = new Promise(resolve => {
+    gHistorySwipeAnimation._nextBox.addEventListener(
+      "transitioncancel",
+      event => {
+        if (
+          event.propertyName == "opacity" &&
+          event.target == gHistorySwipeAnimation._nextBox
+        ) {
+          resolve();
+        }
+      }
+    );
+  });
+  transitionStartPromise = new Promise(resolve => {
+    gHistorySwipeAnimation._nextBox.addEventListener(
+      "transitionstart",
+      event => {
+        if (
+          event.propertyName == "opacity" &&
+          event.target == gHistorySwipeAnimation._nextBox
+        ) {
+          resolve();
+        }
+      }
+    );
+  });
+
+  await panRightToLeftUpdate(tab.linkedBrowser, 100, 100, 100);
+  await panRightToLeftEnd(tab.linkedBrowser, 100, 100, 100);
+
+  // Make sure the gesture triggered going forward to the next page.
+  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
+
+  ok(gBrowser.webNavigation.canGoBack);
+
+  await Promise.any([transitionStartPromise, transitionCancelPromise]);
+
+  await TestUtils.waitForCondition(() => {
+    return (
+      gHistorySwipeAnimation._nextBox == null &&
+      gHistorySwipeAnimation._prevBox == null
+    );
+  });
+
   BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });
 
 // A simple test case on RTL.
@@ -834,7 +690,7 @@ add_task(async () => {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
-      ["browser.gesture.swipe.eight", "Browser:ForwardOrForwardDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
       ["widget.disable-swipe-tracker", false],
       ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
       ["widget.swipe.success-velocity-contribution", 0.5],
@@ -852,7 +708,7 @@ add_task(async () => {
     true /* waitForLoad */
   );
 
-  BrowserTestUtils.loadURI(tab.linkedBrowser, secondPage);
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
   await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
 
   // Make sure we can go back to the previous page.
@@ -895,4 +751,525 @@ add_task(async () => {
   ok(newWin.gBrowser.webNavigation.canGoBack);
 
   await BrowserTestUtils.closeWindow(newWin);
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
+      ["widget.swipe.success-velocity-contribution", 0.5],
+      ["apz.overscroll.enabled", true],
+      ["apz.test.logging_enabled", true],
+    ],
+  });
+
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:about",
+    true /* waitForLoad */
+  );
+
+  const URL_ROOT = getRootDirectory(gTestPath).replace(
+    "chrome://mochitests/content/",
+    "http://mochi.test:8888/"
+  );
+  BrowserTestUtils.loadURIString(
+    tab.linkedBrowser,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+
+  // Make sure we can go back to the previous page.
+  ok(gBrowser.webNavigation.canGoBack);
+
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    // Set `overscroll-behavior-x: contain` and flush it.
+    content.document.documentElement.style.overscrollBehaviorX = "contain";
+    content.document.documentElement.getBoundingClientRect();
+    await content.wrappedJSObject.promiseApzFlushedRepaints();
+  });
+
+  // Start a pan gesture but keep touching.
+  await panLeftToRightBegin(tab.linkedBrowser, 100, 100, 2);
+
+  // Flush APZ pending requests to make sure the pan gesture has been processed.
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    await content.wrappedJSObject.promiseApzFlushedRepaints();
+  });
+
+  const isOverscrolled = await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [],
+    () => {
+      const scrollId = SpecialPowers.DOMWindowUtils.getViewId(
+        content.document.scrollingElement
+      );
+      const data = SpecialPowers.DOMWindowUtils.getCompositorAPZTestData();
+      return data.additionalData.some(entry => {
+        return (
+          entry.key == scrollId &&
+          entry.value.split(",").includes("overscrolled")
+        );
+      });
+    }
+  );
+
+  ok(isOverscrolled, "The root scroller should have overscrolled");
+
+  // Finish the pan gesture.
+  await panLeftToRightUpdate(tab.linkedBrowser, 100, 100, 2);
+  await panLeftToRightEnd(tab.linkedBrowser, 100, 100, 2);
+
+  // And wait a while to give a chance to navigate.
+  await waitForWhile();
+
+  // Make sure any navigation didn't happen.
+  is(tab.linkedBrowser.currentURI.spec, URL_ROOT + "helper_swipe_gesture.html");
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+// A test case to make sure the short circuit path for swipe-to-navigations in
+// APZ works, i.e. cases where we know for sure that the target APZC for a given
+// pan-start event isn't scrollable in the pan-start event direction.
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["apz.overscroll.enabled", true],
+    ],
+  });
+
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:about",
+    true /* waitForLoad */
+  );
+
+  const URL_ROOT = getRootDirectory(gTestPath).replace(
+    "chrome://mochitests/content/",
+    "http://mochi.test:8888/"
+  );
+  BrowserTestUtils.loadURIString(
+    tab.linkedBrowser,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+
+  // Make sure the content can allow both of overscrolling and
+  // swipe-to-navigations.
+  const overscrollBehaviorX = await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [],
+    () => {
+      return content.window.getComputedStyle(content.document.documentElement)
+        .overscrollBehaviorX;
+    }
+  );
+  is(overscrollBehaviorX, "auto");
+
+  // Make sure we can go back to the previous page.
+  ok(gBrowser.webNavigation.canGoBack);
+
+  // Start a pan gesture but keep touching.
+  await panLeftToRightBegin(tab.linkedBrowser, 100, 100, 2);
+
+  // The above pan event should invoke a SwipeGestureStart event immediately so
+  // that the swipe-to-navigation icon box should be uncollapsed to show it.
+  ok(!gHistorySwipeAnimation._prevBox.collapsed);
+
+  // Finish the pan gesture, i.e. sending a pan-end event, otherwise a new
+  // pan-start event in the next will also generate a pan-interrupt event which
+  // will break the test.
+  await panLeftToRightUpdate(tab.linkedBrowser, 100, 100, 2);
+  await panLeftToRightEnd(tab.linkedBrowser, 100, 100, 2);
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
+      ["widget.swipe.success-velocity-contribution", 0.5],
+      ["apz.overscroll.enabled", true],
+      ["apz.test.logging_enabled", true],
+    ],
+  });
+
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:about",
+    true /* waitForLoad */
+  );
+
+  const URL_ROOT = getRootDirectory(gTestPath).replace(
+    "chrome://mochitests/content/",
+    "http://mochi.test:8888/"
+  );
+  BrowserTestUtils.loadURIString(
+    tab.linkedBrowser,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+
+  // Make sure we can go back to the previous page.
+  ok(gBrowser.webNavigation.canGoBack);
+
+  // Start a pan gesture but keep touching.
+  await panLeftToRightBegin(tab.linkedBrowser, 100, 100, 2);
+
+  // Flush APZ pending requests to make sure the pan gesture has been processed.
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    await content.wrappedJSObject.promiseApzFlushedRepaints();
+  });
+
+  const isOverscrolled = await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [],
+    () => {
+      const scrollId = SpecialPowers.DOMWindowUtils.getViewId(
+        content.document.scrollingElement
+      );
+      const data = SpecialPowers.DOMWindowUtils.getCompositorAPZTestData();
+      return data.additionalData.some(entry => {
+        return entry.key == scrollId && entry.value.includes("overscrolled");
+      });
+    }
+  );
+
+  ok(!isOverscrolled, "The root scroller should not have overscrolled");
+
+  await panLeftToRightEnd(tab.linkedBrowser, 100, 100, 0);
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
+      ["widget.swipe.success-velocity-contribution", 0.5],
+    ],
+  });
+
+  // Load three pages and go to the second page so that it can be navigated
+  // to both back and forward.
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:about",
+    true /* waitForLoad */
+  );
+
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, "about:mozilla");
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    "about:mozilla"
+  );
+
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, "about:home");
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    "about:home"
+  );
+
+  gBrowser.goBack();
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    "about:mozilla"
+  );
+
+  // Make sure we can go back and go forward.
+  ok(gBrowser.webNavigation.canGoBack);
+  ok(gBrowser.webNavigation.canGoForward);
+
+  // Start a history back pan gesture but keep touching.
+  await panLeftToRightBegin(tab.linkedBrowser, 100, 100, 1);
+
+  ok(
+    !gHistorySwipeAnimation._prevBox.collapsed,
+    "The icon box for the previous navigation should NOT be collapsed"
+  );
+  ok(
+    gHistorySwipeAnimation._nextBox.collapsed,
+    "The icon box for the next navigation should be collapsed"
+  );
+
+  // Pan back to the opposite direction so that the gesture should be cancelled.
+  // eslint-disable-next-line no-undef
+  await NativePanHandler.promiseNativePanEvent(
+    tab.linkedBrowser,
+    100,
+    100,
+    // eslint-disable-next-line no-undef
+    NativePanHandler.delta,
+    0,
+    // eslint-disable-next-line no-undef
+    NativePanHandler.updatePhase
+  );
+
+  ok(
+    gHistorySwipeAnimation._prevBox.collapsed,
+    "The icon box for the previous navigation should be collapsed"
+  );
+  ok(
+    gHistorySwipeAnimation._nextBox.collapsed,
+    "The icon box for the next navigation should be collapsed"
+  );
+
+  await panLeftToRightEnd(tab.linkedBrowser, 100, 100, 0);
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
+      ["widget.swipe.success-velocity-contribution", 0.5],
+      ["apz.overscroll.enabled", true],
+      ["apz.overscroll.damping", 5.0],
+      ["apz.content_response_timeout", 0],
+    ],
+  });
+
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    "about:about",
+    true /* waitForLoad */
+  );
+
+  const URL_ROOT = getRootDirectory(gTestPath).replace(
+    "chrome://mochitests/content/",
+    "http://mochi.test:8888/"
+  );
+
+  // Load a horizontal scrollable content.
+  BrowserTestUtils.loadURIString(
+    tab.linkedBrowser,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+  await BrowserTestUtils.browserLoaded(
+    tab.linkedBrowser,
+    false /* includeSubFrames */,
+    URL_ROOT + "helper_swipe_gesture.html"
+  );
+
+  // Make sure we can go back to the previous page.
+  ok(gBrowser.webNavigation.canGoBack);
+
+  // Shift the horizontal scroll position slightly to make the content
+  // overscrollable.
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    content.document.documentElement.scrollLeft = 1;
+    content.document.documentElement.getBoundingClientRect();
+    await content.wrappedJSObject.promiseApzFlushedRepaints();
+  });
+
+  // Swipe horizontally to overscroll.
+  await panLeftToRight(tab.linkedBrowser, 1, 100, 1);
+
+  // Swipe again over the overscroll gutter.
+  await panLeftToRight(tab.linkedBrowser, 1, 100, 1);
+
+  // Wait the overscroll gutter is restored.
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    // For some reasons using functions in apz_test_native_event_utils.js
+    // sometimes causes "TypeError content.wrappedJSObject.XXXX is not a
+    // function" error, so we observe "APZ:TransformEnd" instead of using
+    // promiseTransformEnd().
+    await new Promise((resolve, reject) => {
+      SpecialPowers.Services.obs.addObserver(function observer(
+        subject,
+        topic,
+        data
+      ) {
+        try {
+          SpecialPowers.Services.obs.removeObserver(observer, topic);
+          resolve([subject, data]);
+        } catch (ex) {
+          SpecialPowers.Services.obs.removeObserver(observer, topic);
+          reject(ex);
+        }
+      },
+      "APZ:TransformEnd");
+    });
+  });
+
+  // Set up an APZ aware event listener and...
+  await SpecialPowers.spawn(tab.linkedBrowser, [], async () => {
+    content.document.documentElement.addEventListener("wheel", e => {}, {
+      passive: false,
+    });
+    await content.wrappedJSObject.promiseApzFlushedRepaints();
+  });
+
+  // Try to swipe back again without overscrolling to make sure swipe-navigation
+  // works with the APZ aware event listener.
+  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
+
+  let startLoadingPromise = BrowserTestUtils.browserStarted(
+    tab.linkedBrowser,
+    "about:about"
+  );
+  let stoppedLoadingPromise = BrowserTestUtils.browserStopped(
+    tab.linkedBrowser,
+    "about:about"
+  );
+
+  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
+
+  ok(gBrowser.webNavigation.canGoForward);
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
+});
+
+// NOTE: This test listens wheel events so that it causes an overscroll issue
+// (bug 1800022). To avoid the bug, we need to run this test case at the end
+// of this file.
+add_task(async () => {
+  await SpecialPowers.pushPrefEnv({
+    set: [
+      ["browser.gesture.swipe.left", "Browser:BackOrBackDuplicate"],
+      ["browser.gesture.swipe.right", "Browser:ForwardOrForwardDuplicate"],
+      ["widget.disable-swipe-tracker", false],
+      ["widget.swipe.velocity-twitch-tolerance", 0.0000001],
+      ["widget.swipe.success-velocity-contribution", 0.5],
+    ],
+  });
+
+  const firstPage = "about:about";
+  const secondPage = "about:mozilla";
+  const tab = await BrowserTestUtils.openNewForegroundTab(
+    gBrowser,
+    firstPage,
+    true /* waitForLoad */
+  );
+
+  BrowserTestUtils.loadURIString(tab.linkedBrowser, secondPage);
+  await BrowserTestUtils.browserLoaded(tab.linkedBrowser, false, secondPage);
+
+  // Make sure we can go back to the previous page.
+  ok(gBrowser.webNavigation.canGoBack);
+  // and we cannot go forward to the next page.
+  ok(!gBrowser.webNavigation.canGoForward);
+
+  let wheelEventCount = 0;
+  tab.linkedBrowser.addEventListener("wheel", () => {
+    wheelEventCount++;
+  });
+
+  // Try to navigate forward.
+  await panRightToLeft(tab.linkedBrowser, 100, 100, 1);
+  // NOTE: The last endPhase shouldn't fire a wheel event since
+  // its delta is zero.
+  is(wheelEventCount, 2, "Received 2 wheel events");
+
+  await waitForWhile();
+  // Make sure any navigation didn't happen.
+  is(tab.linkedBrowser.currentURI.spec, secondPage);
+
+  // Try to navigate backward.
+  wheelEventCount = 0;
+  let startLoadingPromise = BrowserTestUtils.browserStarted(
+    tab.linkedBrowser,
+    firstPage
+  );
+  let stoppedLoadingPromise = BrowserTestUtils.browserStopped(
+    tab.linkedBrowser,
+    firstPage
+  );
+  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
+  // NOTE: We only get a wheel event for the beginPhase, rest of events have
+  // been captured by the swipe gesture module.
+  is(wheelEventCount, 1, "Received a wheel event");
+
+  // Make sure the gesture triggered going back to the previous page.
+  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
+
+  ok(gBrowser.webNavigation.canGoForward);
+
+  // Now try to navigate forward again.
+  wheelEventCount = 0;
+  startLoadingPromise = BrowserTestUtils.browserStarted(
+    tab.linkedBrowser,
+    secondPage
+  );
+  stoppedLoadingPromise = BrowserTestUtils.browserStopped(
+    tab.linkedBrowser,
+    secondPage
+  );
+  await panRightToLeft(tab.linkedBrowser, 100, 100, 1);
+  is(wheelEventCount, 1, "Received a wheel event");
+
+  await Promise.all([startLoadingPromise, stoppedLoadingPromise]);
+
+  ok(gBrowser.webNavigation.canGoBack);
+
+  // Now try to navigate backward again but with preventDefault-ed event
+  // handler.
+  wheelEventCount = 0;
+  let wheelEventListener = event => {
+    event.preventDefault();
+  };
+  tab.linkedBrowser.addEventListener("wheel", wheelEventListener);
+  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
+  is(wheelEventCount, 3, "Received all wheel events");
+
+  await waitForWhile();
+  // Make sure any navigation didn't happen.
+  is(tab.linkedBrowser.currentURI.spec, secondPage);
+
+  // Now drop the event handler and disable the swipe tracker and try to swipe
+  // again.
+  wheelEventCount = 0;
+  tab.linkedBrowser.removeEventListener("wheel", wheelEventListener);
+  await SpecialPowers.pushPrefEnv({
+    set: [["widget.disable-swipe-tracker", true]],
+  });
+
+  await panLeftToRight(tab.linkedBrowser, 100, 100, 1);
+  is(wheelEventCount, 3, "Received all wheel events");
+
+  await waitForWhile();
+  // Make sure any navigation didn't happen.
+  is(tab.linkedBrowser.currentURI.spec, secondPage);
+
+  BrowserTestUtils.removeTab(tab);
+  await SpecialPowers.popPrefEnv();
 });

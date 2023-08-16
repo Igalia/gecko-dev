@@ -26,12 +26,15 @@
 #include "modules/video_capture/video_capture_config.h"
 #include "modules/video_capture/video_capture_defines.h"
 #include "rtc_base/synchronization/mutex.h"
+#include "rtc_base/system/rtc_export.h"
 
 namespace webrtc {
 
+class VideoCaptureOptions;
+
 namespace videocapturemodule {
 // Class definitions
-class VideoCaptureImpl : public VideoCaptureModule {
+class RTC_EXPORT VideoCaptureImpl : public VideoCaptureModule {
  public:
   /*
    *   Create a video capture module object
@@ -42,8 +45,12 @@ class VideoCaptureImpl : public VideoCaptureModule {
    */
   static rtc::scoped_refptr<VideoCaptureModule> Create(
       const char* deviceUniqueIdUTF8);
+  static rtc::scoped_refptr<VideoCaptureModule> Create(
+      VideoCaptureOptions* options,
+      const char* deviceUniqueIdUTF8);
 
   static DeviceInfo* CreateDeviceInfo();
+  static DeviceInfo* CreateDeviceInfo(VideoCaptureOptions* options);
 
   // Helpers for converting between (integral) degrees and
   // VideoRotation values.  Return 0 on success.
@@ -53,6 +60,8 @@ class VideoCaptureImpl : public VideoCaptureModule {
   // Call backs
   void RegisterCaptureDataCallback(
       rtc::VideoSinkInterface<VideoFrame>* dataCallback) override;
+  virtual void RegisterCaptureDataCallback(
+      RawVideoSinkInterface* dataCallback) override;
   void DeRegisterCaptureDataCallback(
       rtc::VideoSinkInterface<VideoFrame>* dataCallback) override;
 
@@ -63,7 +72,7 @@ class VideoCaptureImpl : public VideoCaptureModule {
 
   const char* CurrentDeviceName() const override;
 
-  // |capture_time| must be specified in NTP time format in milliseconds.
+  // `capture_time` must be specified in NTP time format in milliseconds.
   int32_t IncomingFrame(uint8_t* videoFrame,
                         size_t videoFrameLength,
                         const VideoCaptureCapability& frameInfo,
@@ -90,6 +99,10 @@ class VideoCaptureImpl : public VideoCaptureModule {
  private:
   void UpdateFrameCount();
   uint32_t CalculateFrameRate(int64_t now_ns);
+  void DeliverRawFrame(uint8_t* videoFrame,
+                       size_t videoFrameLength,
+                       const VideoCaptureCapability& frameInfo,
+                       int64_t captureTime);
 
   // last time the module process function was called.
   int64_t _lastProcessTimeNanos;
@@ -97,6 +110,7 @@ class VideoCaptureImpl : public VideoCaptureModule {
   int64_t _lastFrameRateCallbackTimeNanos;
 
   std::set<rtc::VideoSinkInterface<VideoFrame>*> _dataCallBacks;
+  RawVideoSinkInterface* _rawDataCallBack;
 
   int64_t _lastProcessFrameTimeNanos;
   // timestamp for local captured frames

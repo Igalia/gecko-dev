@@ -3,11 +3,11 @@
 
 "use strict";
 
-const { DownloadIntegration } = ChromeUtils.import(
-  "resource://gre/modules/DownloadIntegration.jsm"
+const { DownloadIntegration } = ChromeUtils.importESModule(
+  "resource://gre/modules/DownloadIntegration.sys.mjs"
 );
-const { FileTestUtils } = ChromeUtils.import(
-  "resource://testing-common/FileTestUtils.jsm"
+const { FileTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/FileTestUtils.sys.mjs"
 );
 const gHandlerService = Cc[
   "@mozilla.org/uriloader/handler-service;1"
@@ -157,7 +157,7 @@ async function createDownloadTest(
   let downloadFinishedPromise = skipDownload
     ? null
     : promiseDownloadFinished(downloadList);
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, file.url);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, file.url);
   if (action.id === Ci.nsIHandlerInfo.alwaysAsk) {
     info("Check Always Ask dialog.");
     let dialogWindow = await dialogWindowPromise;
@@ -240,16 +240,13 @@ add_task(async function test_download_preferred_action() {
   }
   let downloadList = await Downloads.getList(Downloads.PUBLIC);
   let oldLaunchFile = DownloadIntegration.launchFile;
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await removeAllDownloads();
     DownloadIntegration.launchFile = oldLaunchFile;
     Services.prefs.clearUserPref(
-      "browser.download.improvements_to_download_panel"
-    );
-    Services.prefs.clearUserPref(
       "browser.download.always_ask_before_handling_new_types"
     );
-    BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:home");
+    BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:home");
     for (const index in FILE_TYPES_TO_TEST) {
       let file = FILE_TYPES_TO_TEST[index];
       let mimeSettings = gMIMEService.getFromTypeAndExtension(
@@ -264,10 +261,7 @@ add_task(async function test_download_preferred_action() {
     }
   });
   await SpecialPowers.pushPrefEnv({
-    set: [
-      ["browser.download.improvements_to_download_panel", true],
-      ["browser.download.always_ask_before_handling_new_types", false],
-    ],
+    set: [["browser.download.always_ask_before_handling_new_types", false]],
   });
   let launcherPath = FileTestUtils.getTempFile("app-launcher").path;
   let localHandlerApp = localHandlerAppFactory.createInstance(

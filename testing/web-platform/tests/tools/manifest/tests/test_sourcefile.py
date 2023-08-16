@@ -526,6 +526,40 @@ def test_testharness_variant_invalid(variant):
         s.test_variants
 
 
+def test_reftest_variant():
+    content = (b"<meta name=variant content=\"?first\">" +
+               b"<meta name=variant content=\"?second\">" +
+               b"<link rel=\"match\" href=\"ref.html\">")
+
+    s = create("html/test.html", contents=content)
+    assert not s.name_is_non_test
+    assert not s.name_is_manual
+    assert not s.name_is_visual
+    assert not s.name_is_worker
+    assert not s.name_is_reference
+
+    item_type, items = s.manifest_items()
+    assert item_type == "reftest"
+
+    actual_tests = [
+        {"url": item.url, "refs": item.references}
+        for item in items
+    ]
+
+    expected_tests = [
+        {
+            "url": "/html/test.html?first",
+            "refs": [("/html/ref.html?first", "==")],
+        },
+        {
+            "url": "/html/test.html?second",
+            "refs": [("/html/ref.html?second", "==")],
+        },
+    ]
+
+    assert actual_tests == expected_tests
+
+
 @pytest.mark.parametrize("ext", ["htm", "html"])
 def test_relative_testharness(ext):
     content = b"<script src=../resources/testharness.js></script>"
@@ -806,6 +840,21 @@ def test_spec_links_whitespace(url):
     content = b"<link rel=help href='%s'>" % url
     s = create("foo/test.html", content)
     assert s.spec_links == {"http://example.com/"}
+
+
+@pytest.mark.parametrize("input,expected", [
+    (b"""<link rel="help" title="Intel" href="foo">\n""", ["foo"]),
+    (b"""<link rel=help title="Intel" href="foo">\n""", ["foo"]),
+    (b"""<link  rel=help  href="foo" >\n""", ["foo"]),
+    (b"""<link rel="author" href="foo">\n""", []),
+    (b"""<link href="foo">\n""", []),
+    (b"""<link rel="help" href="foo">\n<link rel="help" href="bar">\n""", ["foo", "bar"]),
+    (b"""<link rel="help" href="foo">\n<script>\n""", ["foo"]),
+    (b"""random\n""", []),
+])
+def test_spec_links_complex(input, expected):
+    s = create("foo/test.html", input)
+    assert s.spec_links == set(expected)
 
 
 def test_url_base():

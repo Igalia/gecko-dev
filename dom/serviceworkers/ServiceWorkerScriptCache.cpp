@@ -8,7 +8,10 @@
 
 #include "js/Array.h"               // JS::GetArrayLength
 #include "js/PropertyAndElement.h"  // JS_GetElement
+#include "js/Utility.h"             // JS::FreePolicy
+#include "mozilla/TaskQueue.h"
 #include "mozilla/Unused.h"
+#include "mozilla/UniquePtr.h"
 #include "mozilla/dom/CacheBinding.h"
 #include "mozilla/dom/cache/CacheStorage.h"
 #include "mozilla/dom/cache/Cache.h"
@@ -799,7 +802,7 @@ void CompareNetwork::Abort() {
     mState = Finished;
 
     MOZ_ASSERT(mChannel);
-    mChannel->Cancel(NS_BINDING_ABORTED);
+    mChannel->CancelWithReason(NS_BINDING_ABORTED, "CompareNetwork::Abort"_ns);
     mChannel = nullptr;
 
     if (mCC) {
@@ -931,7 +934,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
       mURLList.AppendElement(channelURLSpec);
     }
 
-    char16_t* buffer = nullptr;
+    UniquePtr<char16_t[], JS::FreePolicy> buffer;
     size_t len = 0;
 
     rv = ScriptLoader::ConvertToUTF16(channel, aString, aLen, u"UTF-8"_ns,
@@ -940,7 +943,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
       return rv;
     }
 
-    mBuffer.Adopt(buffer, len);
+    mBuffer.Adopt(buffer.release(), len);
 
     rv = NS_OK;
     return NS_OK;
@@ -1001,7 +1004,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
     // (in that case the originalURL is the resolved jar URI and so we have to
     // look to the channel principal instead).
     if (channelPrincipal->SchemeIs("moz-extension")) {
-      char16_t* buffer = nullptr;
+      UniquePtr<char16_t[], JS::FreePolicy> buffer;
       size_t len = 0;
 
       rv = ScriptLoader::ConvertToUTF16(channel, aString, aLen, u"UTF-8"_ns,
@@ -1010,7 +1013,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
         return rv;
       }
 
-      mBuffer.Adopt(buffer, len);
+      mBuffer.Adopt(buffer.release(), len);
 
       return NS_OK;
     }
@@ -1096,7 +1099,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
     mURLList.AppendElement(channelURLSpec);
   }
 
-  char16_t* buffer = nullptr;
+  UniquePtr<char16_t[], JS::FreePolicy> buffer;
   size_t len = 0;
 
   rv = ScriptLoader::ConvertToUTF16(httpChannel, aString, aLen, u"UTF-8"_ns,
@@ -1105,7 +1108,7 @@ CompareNetwork::OnStreamComplete(nsIStreamLoader* aLoader,
     return rv;
   }
 
-  mBuffer.Adopt(buffer, len);
+  mBuffer.Adopt(buffer.release(), len);
 
   rv = NS_OK;
   return NS_OK;
@@ -1154,7 +1157,7 @@ void CompareCache::Abort() {
     mState = Finished;
 
     if (mPump) {
-      mPump->Cancel(NS_BINDING_ABORTED);
+      mPump->CancelWithReason(NS_BINDING_ABORTED, "CompareCache::Abort"_ns);
       mPump = nullptr;
     }
   }
@@ -1175,7 +1178,7 @@ CompareCache::OnStreamComplete(nsIStreamLoader* aLoader, nsISupports* aContext,
     return aStatus;
   }
 
-  char16_t* buffer = nullptr;
+  UniquePtr<char16_t[], JS::FreePolicy> buffer;
   size_t len = 0;
 
   nsresult rv = ScriptLoader::ConvertToUTF16(nullptr, aString, aLen,
@@ -1185,7 +1188,7 @@ CompareCache::OnStreamComplete(nsIStreamLoader* aLoader, nsISupports* aContext,
     return rv;
   }
 
-  mBuffer.Adopt(buffer, len);
+  mBuffer.Adopt(buffer.release(), len);
 
   Finish(NS_OK, true);
   return NS_OK;
@@ -1278,7 +1281,9 @@ void CompareCache::ManageValueResult(JSContext* aCx,
   if (rr) {
     nsCOMPtr<nsIEventTarget> sts =
         do_GetService(NS_STREAMTRANSPORTSERVICE_CONTRACTID);
-    rv = rr->RetargetDeliveryTo(sts);
+    RefPtr<TaskQueue> queue =
+        TaskQueue::Create(sts.forget(), "CompareCache STS Delivery Queue");
+    rv = rr->RetargetDeliveryTo(queue);
     if (NS_WARN_IF(NS_FAILED(rv))) {
       mPump = nullptr;
       Finish(rv, false);

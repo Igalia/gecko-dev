@@ -663,8 +663,8 @@ void MouseScrollHandler::HandleScrollMessageAsMouseWheelMessage(
        "mLineOrPageDeltaX: %d, mLineOrPageDeltaY: %d, "
        "isShift: %s, isControl: %s, isAlt: %s, isMeta: %s }",
        aWidget, (aMessage == MOZ_WM_VSCROLL) ? "V" : "H", aWParam, aLParam,
-       wheelEvent.mRefPoint.x, wheelEvent.mRefPoint.y, wheelEvent.mDeltaX,
-       wheelEvent.mDeltaY, wheelEvent.mLineOrPageDeltaX,
+       wheelEvent.mRefPoint.x.value, wheelEvent.mRefPoint.y.value,
+       wheelEvent.mDeltaX, wheelEvent.mDeltaY, wheelEvent.mLineOrPageDeltaX,
        wheelEvent.mLineOrPageDeltaY, GetBoolName(wheelEvent.IsShift()),
        GetBoolName(wheelEvent.IsControl()), GetBoolName(wheelEvent.IsAlt()),
        GetBoolName(wheelEvent.IsMeta())));
@@ -803,30 +803,6 @@ bool MouseScrollHandler::LastEventInfo::InitWheelEvent(
     // If the scroll delta mode isn't per line scroll, we shouldn't allow to
     // override the system scroll speed setting.
     aWheelEvent.mAllowToOverrideSystemScrollSpeed = false;
-  } else if (!MouseScrollHandler::sInstance->mSystemSettings
-                  .IsOverridingSystemScrollSpeedAllowed()) {
-    // If the system settings are customized by either the user or
-    // the mouse utility, we shouldn't allow to override the system scroll
-    // speed setting.
-    aWheelEvent.mAllowToOverrideSystemScrollSpeed = false;
-  } else {
-    // For suppressing too fast scroll, we should ensure that the maximum
-    // overridden delta value should be less than overridden scroll speed
-    // with default scroll amount.
-    double defaultScrollAmount = mIsVertical
-                                     ? SystemSettings::DefaultScrollLines()
-                                     : SystemSettings::DefaultScrollChars();
-    double maxDelta = WidgetWheelEvent::ComputeOverriddenDelta(
-        defaultScrollAmount, mIsVertical);
-    if (maxDelta != defaultScrollAmount) {
-      double overriddenDelta =
-          WidgetWheelEvent::ComputeOverriddenDelta(Abs(delta), mIsVertical);
-      if (overriddenDelta > maxDelta) {
-        // Suppress to fast scroll since overriding system scroll speed with
-        // current delta value causes too big delta value.
-        aWheelEvent.mAllowToOverrideSystemScrollSpeed = false;
-      }
-    }
   }
 
   MOZ_LOG(
@@ -837,7 +813,7 @@ bool MouseScrollHandler::LastEventInfo::InitWheelEvent(
        "isShift: %s, isControl: %s, isAlt: %s, isMeta: %s, "
        "mAllowToOverrideSystemScrollSpeed: %s }, "
        "mAccumulatedDelta: %d",
-       aWidget, aWheelEvent.mRefPoint.x, aWheelEvent.mRefPoint.y,
+       aWidget, aWheelEvent.mRefPoint.x.value, aWheelEvent.mRefPoint.y.value,
        aWheelEvent.mDeltaX, aWheelEvent.mDeltaY, aWheelEvent.mLineOrPageDeltaX,
        aWheelEvent.mLineOrPageDeltaY, GetBoolName(aWheelEvent.IsShift()),
        GetBoolName(aWheelEvent.IsControl()), GetBoolName(aWheelEvent.IsAlt()),
@@ -1000,12 +976,6 @@ void MouseScrollHandler::SystemSettings::TrustedScrollSettingsDriver() {
   }
 
   // XXX We're not sure about other touchpad drivers...
-}
-
-bool MouseScrollHandler::SystemSettings::
-    IsOverridingSystemScrollSpeedAllowed() {
-  return mScrollLines == DefaultScrollLines() &&
-         mScrollChars == DefaultScrollChars();
 }
 
 /******************************************************************************

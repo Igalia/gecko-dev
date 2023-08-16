@@ -20,11 +20,14 @@
 #include "jit/ScriptFromCalleeToken.h"
 #include "jit/TrialInlining.h"
 #include "vm/BytecodeUtil.h"
+#include "vm/Compartment.h"
 #include "vm/FrameIter.h"  // js::OnlyJSJitFrameIter
+#include "vm/JitActivation.h"
 #include "vm/JSScript.h"
 
 #include "gc/GCContext-inl.h"
 #include "jit/JSJitFrameIter-inl.h"
+#include "vm/JSContext-inl.h"
 #include "vm/JSScript-inl.h"
 
 using namespace js;
@@ -35,6 +38,7 @@ using mozilla::CheckedInt;
 JitScript::JitScript(JSScript* script, Offset fallbackStubsOffset,
                      Offset endOffset, const char* profileString)
     : profileString_(profileString),
+      owningScript_(script),
       endOffset_(endOffset),
       icScript_(script->getWarmUpCount(),
                 fallbackStubsOffset - offsetOfICScript(),
@@ -59,6 +63,8 @@ JitScript::~JitScript() {
   // BaselineScript and IonScript must have been destroyed at this point.
   MOZ_ASSERT(!hasBaselineScript());
   MOZ_ASSERT(!hasIonScript());
+
+  MOZ_ASSERT(!isInList());
 }
 #else
 JitScript::~JitScript() = default;
@@ -117,6 +123,8 @@ bool JSScript::createJitScript(JSContext* cx) {
 
   jitScript->icScript()->initICEntries(cx, this);
 
+  cx->zone()->jitZone()->registerJitScript(jitScript.get());
+
   warmUpData_.initJitScript(jitScript.release());
   AddCellMemory(this, allocSize.value(), MemoryUse::JitScript);
 
@@ -166,11 +174,9 @@ void JSScript::releaseJitScriptOnFinalize(JS::GCContext* gcx) {
   releaseJitScript(gcx);
 }
 
-void JitScript::CachedIonData::trace(JSTracer* trc) {
-  TraceNullableEdge(trc, &templateEnv, "jitscript-iondata-template-env");
-}
-
 void JitScript::trace(JSTracer* trc) {
+  TraceEdge(trc, &owningScript_, "JitScript::owningScript_");
+
   icScript_.trace(trc);
 
   if (hasBaselineScript()) {
@@ -181,12 +187,28 @@ void JitScript::trace(JSTracer* trc) {
     ionScript()->trace(trc);
   }
 
-  if (hasCachedIonData()) {
-    cachedIonData().trace(trc);
+  if (templateEnv_.isSome()) {
+    TraceNullableEdge(trc, templateEnv_.ptr(), "jitscript-template-env");
   }
 
   if (hasInliningRoot()) {
     inliningRoot()->trace(trc);
+  }
+}
+
+void JitScript::traceWeak(JSTracer* trc) {
+  if (!icScript_.traceWeak(trc)) {
+#ifdef DEBUG
+    hasPurgedStubs_ = true;
+#endif
+  }
+
+  if (hasInliningRoot()) {
+    inliningRoot()->traceWeak(trc);
+  }
+
+  if (hasIonScript()) {
+    ionScript()->traceWeak(trc);
   }
 }
 
@@ -196,6 +218,19 @@ void ICScript::trace(JSTracer* trc) {
     ICEntry& ent = icEntry(i);
     ent.trace(trc);
   }
+}
+
+bool ICScript::traceWeak(JSTracer* trc) {
+  // Mark all IC stub codes hanging off the IC stub entries.
+  bool allSurvived = true;
+  for (size_t i = 0; i < numICEntries(); i++) {
+    ICEntry& ent = icEntry(i);
+    if (!ent.traceWeak(trc)) {
+      allSurvived = false;
+    }
+  }
+
+  return allSurvived;
 }
 
 bool ICScript::addInlinedChild(JSContext* cx, UniquePtr<ICScript> child,
@@ -275,6 +310,9 @@ void JitScript::ensureProfileString(JSContext* cx, JSScript* script) {
 void JitScript::Destroy(Zone* zone, JitScript* script) {
   script->prepareForDestruction(zone);
 
+  // Remove from JitZone's linked list of JitScripts.
+  script->remove();
+
   js_delete(script);
 }
 
@@ -288,6 +326,7 @@ void JitScript::prepareForDestruction(Zone* zone) {
   jitScriptStubSpace_.freeAllAfterMinorGC(zone);
 
   // Trigger write barriers.
+  owningScript_ = nullptr;
   baselineScript_.set(zone, nullptr);
   ionScript_.set(zone, nullptr);
 }
@@ -402,6 +441,8 @@ void ICScript::purgeOptimizedStubs(Zone* zone) {
       prev = stub->toCacheIRStub();
       stub = stub->toCacheIRStub()->next();
     }
+
+    lastStub->toFallbackStub()->clearMayHaveFoldedStub();
   }
 
 #ifdef DEBUG
@@ -417,47 +458,51 @@ void ICScript::purgeOptimizedStubs(Zone* zone) {
 #endif
 }
 
-JitScript::CachedIonData::CachedIonData(EnvironmentObject* templateEnv,
-                                        IonBytecodeInfo bytecodeInfo)
-    : templateEnv(templateEnv), bytecodeInfo(bytecodeInfo) {}
+bool JitScript::ensureHasCachedBaselineJitData(JSContext* cx,
+                                               HandleScript script) {
+  if (templateEnv_.isSome()) {
+    return true;
+  }
 
-bool JitScript::ensureHasCachedIonData(JSContext* cx, HandleScript script) {
-  MOZ_ASSERT(script->jitScript() == this);
-
-  if (hasCachedIonData()) {
+  if (!script->function() ||
+      !script->function()->needsFunctionEnvironmentObjects()) {
+    templateEnv_.emplace();
     return true;
   }
 
   Rooted<EnvironmentObject*> templateEnv(cx);
-  if (script->function()) {
-    RootedFunction fun(cx, script->function());
+  Rooted<JSFunction*> fun(cx, script->function());
 
-    if (fun->needsNamedLambdaEnvironment()) {
-      templateEnv =
-          NamedLambdaObject::createTemplateObject(cx, fun, gc::TenuredHeap);
-      if (!templateEnv) {
-        return false;
-      }
-    }
-
-    if (fun->needsCallObject()) {
-      templateEnv = CallObject::createTemplateObject(cx, script, templateEnv,
-                                                     gc::TenuredHeap);
-      if (!templateEnv) {
-        return false;
-      }
+  if (fun->needsNamedLambdaEnvironment()) {
+    templateEnv = NamedLambdaObject::createTemplateObject(cx, fun);
+    if (!templateEnv) {
+      return false;
     }
   }
 
-  IonBytecodeInfo bytecodeInfo = AnalyzeBytecodeForIon(cx, script);
+  if (fun->needsCallObject()) {
+    templateEnv = CallObject::createTemplateObject(cx, script, templateEnv);
+    if (!templateEnv) {
+      return false;
+    }
+  }
 
-  UniquePtr<CachedIonData> data =
-      cx->make_unique<CachedIonData>(templateEnv, bytecodeInfo);
-  if (!data) {
+  templateEnv_.emplace(templateEnv);
+  return true;
+}
+
+bool JitScript::ensureHasCachedIonData(JSContext* cx, HandleScript script) {
+  MOZ_ASSERT(script->jitScript() == this);
+
+  if (usesEnvironmentChain_.isSome()) {
+    return true;
+  }
+
+  if (!ensureHasCachedBaselineJitData(cx, script)) {
     return false;
   }
 
-  cachedIonData_ = std::move(data);
+  usesEnvironmentChain_.emplace(ScriptUsesEnvironmentChain(script));
   return true;
 }
 
@@ -632,7 +677,7 @@ gc::AllocSite* JitScript::createAllocSite(JSScript* script) {
   if (!nursery.canCreateAllocSite()) {
     // Don't block attaching an optimized stub, but don't process allocations
     // for this site.
-    return script->zone()->unknownAllocSite();
+    return script->zone()->unknownAllocSite(JS::TraceKind::Object);
   }
 
   if (!allocSites_.reserve(allocSites_.length() + 1)) {
@@ -646,7 +691,7 @@ gc::AllocSite* JitScript::createAllocSite(JSScript* script) {
     return nullptr;
   }
 
-  new (site) gc::AllocSite(script->zone(), script);
+  new (site) gc::AllocSite(script->zone(), script, JS::TraceKind::Object);
 
   allocSites_.infallibleAppend(site);
 
@@ -662,8 +707,8 @@ bool JitScript::resetAllocSites(bool resetNurserySites,
   bool anyReset = false;
 
   for (gc::AllocSite* site : allocSites_) {
-    if ((resetNurserySites && site->initialHeap() == gc::DefaultHeap) ||
-        (resetPretenuredSites && site->initialHeap() == gc::TenuredHeap)) {
+    if ((resetNurserySites && site->initialHeap() == gc::Heap::Default) ||
+        (resetPretenuredSites && site->initialHeap() == gc::Heap::Tenured)) {
       if (site->maybeResetState()) {
         anyReset = true;
       }
@@ -699,7 +744,8 @@ JitScript* ICScript::outerJitScript() {
 //    other than the first changes from 0.
 // 3. The hash will change if the entered count of the fallback stub
 //    changes from 0.
-//
+// 4. The hash will change if the failure count of the fallback stub
+//    changes from 0.
 HashNumber ICScript::hash() {
   HashNumber h = 0;
   for (size_t i = 0; i < numICEntries(); i++) {
@@ -717,16 +763,12 @@ HashNumber ICScript::hash() {
       }
     }
 
-    // Hash whether the fallback has entry count 0.
+    // Hash whether the fallback has entry count 0 and failure count 0.
     MOZ_ASSERT(stub->isFallback());
     h = mozilla::AddToHash(h, stub->enteredCount() == 0);
+    h = mozilla::AddToHash(h, stub->toFallbackStub()->state().hasFailures());
   }
 
-  if (inlinedChildren_) {
-    for (auto& callsite : *inlinedChildren_) {
-      h = mozilla::AddToHash(h, callsite.callee_->hash());
-    }
-  }
   return h;
 }
 #endif

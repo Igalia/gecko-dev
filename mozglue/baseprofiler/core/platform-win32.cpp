@@ -34,7 +34,6 @@
 
 #include "nsWindowsDllInterceptor.h"
 #include "mozilla/StackWalk_windows.h"
-#include "mozilla/WindowsVersion.h"
 
 namespace mozilla {
 namespace baseprofiler {
@@ -288,11 +287,10 @@ void SamplerThread::Stop(PSLockRef aLock) {
 static void PlatformInit(PSLockRef aLock) {}
 
 #if defined(HAVE_NATIVE_UNWIND)
-void Registers::SyncPopulate() {
-  CONTEXT context;
-  RtlCaptureContext(&context);
-  PopulateRegsFromContext(*this, &context);
-}
+#  define REGISTERS_SYNC_POPULATE(regs) \
+    CONTEXT context;                    \
+    RtlCaptureContext(&context);        \
+    PopulateRegsFromContext(regs, &context);
 #endif
 
 #if defined(GP_PLAT_amd64_windows)
@@ -337,11 +335,8 @@ MFBT_API void InitializeWin64ProfilerHooks() {
 
   NtDllIntercept.Init("ntdll.dll");
   stub_LdrUnloadDll.Set(NtDllIntercept, "LdrUnloadDll", &patched_LdrUnloadDll);
-  if (IsWin8OrLater()) {  // LdrResolveDelayLoadedAPI was introduced in Win8
-    stub_LdrResolveDelayLoadedAPI.Set(NtDllIntercept,
-                                      "LdrResolveDelayLoadedAPI",
-                                      &patched_LdrResolveDelayLoadedAPI);
-  }
+  stub_LdrResolveDelayLoadedAPI.Set(NtDllIntercept, "LdrResolveDelayLoadedAPI",
+                                    &patched_LdrResolveDelayLoadedAPI);
 }
 #endif  // defined(GP_PLAT_amd64_windows)
 

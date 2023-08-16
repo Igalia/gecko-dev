@@ -46,7 +46,6 @@ EXPORTS += [
 ]
 
 EXPORTS.mozilla.dom += [
-    "BasicRenderingContext2D.h",
     "CanvasGradient.h",
     "CanvasPath.h",
     "CanvasPattern.h",
@@ -70,6 +69,7 @@ EXPORTS.mozilla.dom += [
     "WebGLCommandQueue.h",
     "WebGLIpdl.h",
     "WebGLParent.h",
+    "WebGLTexelConversions.h",
     "WebGLTypes.h",
     "XRWebGLLayer.h",
 ]

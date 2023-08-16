@@ -121,7 +121,7 @@ class CanvasEventRingBuffer final : public gfx::EventRingBuffer {
    */
   bool WaitForDataToRead(TimeDuration aTimeout, int32_t aRetryCount);
 
-  int32_t ReadNextEvent();
+  uint8_t ReadNextEvent();
 
   void read(char* const aOut, const size_t aSize) final;
 
@@ -255,8 +255,6 @@ class CanvasDrawEventRecorder final : public gfx::DrawEventRecorderPrivate {
 
   void StoreSourceSurfaceRecording(gfx::SourceSurface* aSurface,
                                    const char* aReason) final;
-
-  void RecordSourceSurfaceDestruction(void* aSurface) final;
 
   void Flush() final {}
 

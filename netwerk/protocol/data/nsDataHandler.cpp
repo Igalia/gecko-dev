@@ -9,9 +9,11 @@
 #include "nsError.h"
 #include "nsIOService.h"
 #include "DataChannelChild.h"
-#include "plstr.h"
 #include "nsSimpleURI.h"
 #include "mozilla/dom/MimeType.h"
+#include "mozilla/StaticPrefs_network.h"
+
+using namespace mozilla;
 
 ////////////////////////////////////////////////////////////////////////////////
 
@@ -31,21 +33,6 @@ nsDataHandler::GetScheme(nsACString& result) {
   return NS_OK;
 }
 
-NS_IMETHODIMP
-nsDataHandler::GetDefaultPort(int32_t* result) {
-  // no ports for data protocol
-  *result = -1;
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsDataHandler::GetProtocolFlags(uint32_t* result) {
-  *result = URI_NORELATIVE | URI_NOAUTH | URI_INHERITS_SECURITY_CONTEXT |
-            URI_LOADABLE_BY_ANYONE | URI_NON_PERSISTABLE |
-            URI_IS_LOCAL_RESOURCE | URI_SYNC_LOAD_IS_OK;
-  return NS_OK;
-}
-
 /* static */ nsresult nsDataHandler::CreateNewURI(const nsACString& aSpec,
                                                   const char* aCharset,
                                                   nsIURI* aBaseURI,
@@ -59,7 +46,8 @@ nsDataHandler::GetProtocolFlags(uint32_t* result) {
   // Strip whitespace unless this is text, where whitespace is important
   // Don't strip escaped whitespace though (bug 391951)
   nsresult rv;
-  if (base64 || (strncmp(contentType.get(), "text/", 5) != 0 &&
+  if (base64 || (StaticPrefs::network_url_strip_data_url_whitespace() &&
+                 strncmp(contentType.get(), "text/", 5) != 0 &&
                  contentType.Find("xml") == kNotFound)) {
     // it's ascii encoded binary, don't let any spaces in
     rv = NS_MutateURI(new mozilla::net::nsSimpleURI::Mutator())

@@ -293,8 +293,7 @@ nsresult nsContentPermissionUtils::AskPermission(
 
     req->IPDLAddRef();
     ContentChild::GetSingleton()->SendPContentPermissionRequestConstructor(
-        req, permArray, IPC::Principal(principal),
-        IPC::Principal(topLevelPrincipal),
+        req, permArray, principal, topLevelPrincipal,
         hasValidTransientUserGestureActivation,
         isRequestDelegatedToUnsafeThirdParty, child->GetTabId());
     ContentPermissionRequestChildMap()[req.get()] = child->GetTabId();
@@ -692,7 +691,7 @@ nsContentPermissionRequestProxy::GetPrincipal(
     return NS_ERROR_FAILURE;
   }
 
-  NS_ADDREF(*aRequestingPrincipal = mParent->mPrincipal);
+  NS_IF_ADDREF(*aRequestingPrincipal = mParent->mPrincipal);
   return NS_OK;
 }
 
@@ -704,12 +703,7 @@ nsContentPermissionRequestProxy::GetTopLevelPrincipal(
     return NS_ERROR_FAILURE;
   }
 
-  if (!mParent->mTopLevelPrincipal) {
-    *aRequestingPrincipal = nullptr;
-    return NS_OK;
-  }
-
-  NS_ADDREF(*aRequestingPrincipal = mParent->mTopLevelPrincipal);
+  NS_IF_ADDREF(*aRequestingPrincipal = mParent->mTopLevelPrincipal);
   return NS_OK;
 }
 

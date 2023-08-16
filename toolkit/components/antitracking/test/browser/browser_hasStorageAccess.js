@@ -1,8 +1,6 @@
 // This test ensures HasStorageAccess API returns the right value under different
 // scenarios.
 
-/* import-globals-from antitracking_head.js */
-
 var settings = [
   // same-origin no-tracker
   {
@@ -18,12 +16,11 @@ var settings = [
   },
   // 3rd-party no-tracker with permission
   {
-    name:
-      "Test whether 3rd-party non-tracker frame has storage access when storage permission is granted before",
+    name: "Test whether 3rd-party non-tracker frame has storage access when storage permission is granted before",
     topPage: TEST_TOP_PAGE,
     thirdPartyPage: TEST_4TH_PARTY_PAGE,
     setup: () => {
-      let type = "3rdPartyStorage^http://not-tracking.example.com";
+      let type = "3rdPartyFrameStorage^http://example.com";
       let permission = Services.perms.ALLOW_ACTION;
       let expireType = Services.perms.EXPIRE_SESSION;
       PermissionTestUtils.add(TEST_DOMAIN, type, permission, expireType, 0);
@@ -41,12 +38,11 @@ var settings = [
   },
   // 3rd-party tracker with permission
   {
-    name:
-      "Test whether 3rd-party tracker frame has storage access when storage access permission is granted before",
+    name: "Test whether 3rd-party tracker frame has storage access when storage access permission is granted before",
     topPage: TEST_TOP_PAGE,
     thirdPartyPage: TEST_3RD_PARTY_PAGE,
     setup: () => {
-      let type = "3rdPartyStorage^https://tracking.example.org";
+      let type = "3rdPartyFrameStorage^https://example.org";
       let permission = Services.perms.ALLOW_ACTION;
       let expireType = Services.perms.EXPIRE_SESSION;
       PermissionTestUtils.add(TEST_DOMAIN, type, permission, expireType, 0);
@@ -149,7 +145,7 @@ var testCases = [
   },
 ];
 
-(function() {
+(function () {
   settings.forEach(setting => {
     if (setting.setup) {
       add_task(async _ => {

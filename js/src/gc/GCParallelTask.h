@@ -14,9 +14,9 @@
 #include <utility>
 
 #include "gc/GCContext.h"
-#include "js/TypeDecls.h"
 #include "js/Utility.h"
 #include "threading/ProtectedData.h"
+#include "vm/HelperThreads.h"
 #include "vm/HelperThreadTask.h"
 
 #define JS_MEMBER_FN_PTR_TYPE(ClassT, ReturnT, /* ArgTs */...) \
@@ -32,16 +32,59 @@ enum class PhaseKind : uint8_t;
 }
 
 namespace gc {
+
 class GCRuntime;
+
+static inline mozilla::TimeDuration TimeSince(mozilla::TimeStamp prev) {
+  mozilla::TimeStamp now = mozilla::TimeStamp::Now();
+  // Sadly this happens sometimes.
+  MOZ_ASSERT(now >= prev);
+  if (now < prev) {
+    now = prev;
+  }
+  return now - prev;
 }
 
+}  // namespace gc
+
 class AutoLockHelperThreadState;
+class GCParallelTask;
 class HelperThread;
+
+// A wrapper around a linked list to enforce synchronization.
+class GCParallelTaskList {
+  mozilla::LinkedList<GCParallelTask> tasks;
+
+ public:
+  bool isEmpty(const AutoLockHelperThreadState& lock) {
+    gHelperThreadLock.assertOwnedByCurrentThread();
+    return tasks.isEmpty();
+  }
+
+  void insertBack(GCParallelTask* task, const AutoLockHelperThreadState& lock) {
+    gHelperThreadLock.assertOwnedByCurrentThread();
+    tasks.insertBack(task);
+  }
+
+  GCParallelTask* popFirst(const AutoLockHelperThreadState& lock) {
+    gHelperThreadLock.assertOwnedByCurrentThread();
+    return tasks.popFirst();
+  }
+
+  size_t sizeOfExcludingThis(mozilla::MallocSizeOf aMallocSizeOf,
+                             const AutoLockHelperThreadState& lock) const {
+    gHelperThreadLock.assertOwnedByCurrentThread();
+    return tasks.sizeOfExcludingThis(aMallocSizeOf);
+  }
+};
 
 // A generic task used to dispatch work to the helper thread system.
 // Users override the pure-virtual run() method.
-class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
+class GCParallelTask : private mozilla::LinkedListElement<GCParallelTask>,
                        public HelperThreadTask {
+  friend class mozilla::LinkedList<GCParallelTask>;
+  friend class mozilla::LinkedListElement<GCParallelTask>;
+
  public:
   gc::GCRuntime* const gc;
 
@@ -71,10 +114,11 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
 
   UnprotectedData<State> state_;
 
+  // May be set to the time this task was queued to collect telemetry.
+  mozilla::TimeStamp maybeQueueTime_;
+
   // Amount of time this task took to execute.
   MainThreadOrGCTaskData<mozilla::TimeDuration> duration_;
-
-  explicit GCParallelTask(const GCParallelTask&) = delete;
 
  protected:
   // A flag to signal a request for early completion of the off-thread task.
@@ -87,15 +131,15 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
         phaseKind(phaseKind),
         use(use),
         state_(State::Idle),
-        duration_(nullptr),
         cancel_(false) {}
-  GCParallelTask(GCParallelTask&& other)
+  GCParallelTask(GCParallelTask&& other) noexcept
       : gc(other.gc),
         phaseKind(other.phaseKind),
         use(other.use),
         state_(other.state_),
-        duration_(nullptr),
         cancel_(false) {}
+
+  explicit GCParallelTask(const GCParallelTask&) = delete;
 
   // Derived classes must override this to ensure that join() gets called
   // before members get destructed.
@@ -119,6 +163,7 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
 
   // Instead of dispatching to a helper, run the task on the current thread.
   void runFromMainThread();
+  void runFromMainThread(AutoLockHelperThreadState& lock);
 
   // If the task is not already running, either start it or run it on the main
   // thread if that fails.
@@ -153,6 +198,8 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
   // Override this method to provide the task's functionality.
   virtual void run(AutoLockHelperThreadState& lock) = 0;
 
+  virtual void recordDuration();
+
   bool isCancelled() const { return cancel_; }
 
  private:
@@ -161,6 +208,7 @@ class GCParallelTask : public mozilla::LinkedListElement<GCParallelTask>,
     // builds that may hide bugs. There's no race if the assertion passes.
     MOZ_ASSERT(state_ == State::Idle);
   }
+
   bool isRunning(const AutoLockHelperThreadState& lock) const {
     return state_ == State::Running;
   }

@@ -5,10 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 /* eslint complexity: ["error", 53] */
 
-"use strict";
-
 /**
- * This module exports a provider that providers results from the Places
+ * This module exports a provider that provides results from the Places
  * database, including history, bookmarks, and open tabs.
  */
 // Constants
@@ -36,6 +34,15 @@ const QUERYINDEX_PLACEID = 8;
 const QUERYINDEX_SWITCHTAB = 9;
 const QUERYINDEX_FRECENCY = 10;
 
+// Constants to support an alternative frecency algorithm.
+const PAGES_USE_ALT_FRECENCY = Services.prefs.getBoolPref(
+  "places.frecency.pages.alternative.featureGate",
+  false
+);
+const PAGES_FRECENCY_FIELD = PAGES_USE_ALT_FRECENCY
+  ? "alt_frecency"
+  : "frecency";
+
 // This SQL query fragment provides the following:
 //   - whether the entry is bookmarked (QUERYINDEX_BOOKMARKED)
 //   - the bookmark title, if it is a bookmark (QUERYINDEX_BOOKMARKTITLE)
@@ -56,12 +63,12 @@ const SQL_BOOKMARK_TAGS_FRAGMENT = `EXISTS(SELECT 1 FROM moz_bookmarks WHERE fk 
 // condition once, and avoid evaluating "btitle" and "tags" when it is false.
 function defaultQuery(conditions = "") {
   let query = `SELECT :query_type, h.url, h.title, ${SQL_BOOKMARK_TAGS_FRAGMENT},
-            h.visit_count, h.typed, h.id, t.open_count, h.frecency
+            h.visit_count, h.typed, h.id, t.open_count, ${PAGES_FRECENCY_FIELD}
      FROM moz_places h
      LEFT JOIN moz_openpages_temp t
             ON t.url = h.url
            AND t.userContextId = :userContextId
-     WHERE h.frecency <> 0
+     WHERE ${PAGES_FRECENCY_FIELD} <> 0
        AND CASE WHEN bookmarked
          THEN
            AUTOCOMPLETE_MATCH(:searchString, h.url,
@@ -77,7 +84,7 @@ function defaultQuery(conditions = "") {
                               :matchBehavior, :searchBehavior, NULL)
          END
        ${conditions ? "AND" : ""} ${conditions}
-     ORDER BY h.frecency DESC, h.id DESC
+     ORDER BY ${PAGES_FRECENCY_FIELD} DESC, h.id DESC
      LIMIT :maxResults`;
   return query;
 }
@@ -96,8 +103,6 @@ const SQL_SWITCHTAB_QUERY = `SELECT :query_type, t.url, t.url, NULL, NULL, NULL,
 
 // Getters
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 import {
   UrlbarProvider,
   UrlbarUtils,
@@ -106,20 +111,17 @@ import {
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  KeywordUtils: "resource://gre/modules/KeywordUtils.sys.mjs",
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProviderOpenTabs: "resource:///modules/UrlbarProviderOpenTabs.sys.mjs",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
   UrlbarTokenizer: "resource:///modules/UrlbarTokenizer.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  KeywordUtils: "resource://gre/modules/KeywordUtils.jsm",
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  Sqlite: "resource://gre/modules/Sqlite.jsm",
 });
 
 function setTimeout(callback, ms) {
@@ -129,7 +131,7 @@ function setTimeout(callback, ms) {
 }
 
 // Maps restriction character types to textual behaviors.
-XPCOMUtils.defineLazyGetter(lazy, "typeToBehaviorMap", () => {
+ChromeUtils.defineLazyGetter(lazy, "typeToBehaviorMap", () => {
   return new Map([
     [lazy.UrlbarTokenizer.TYPE.RESTRICT_HISTORY, "history"],
     [lazy.UrlbarTokenizer.TYPE.RESTRICT_BOOKMARK, "bookmark"],
@@ -141,7 +143,7 @@ XPCOMUtils.defineLazyGetter(lazy, "typeToBehaviorMap", () => {
   ]);
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "sourceToBehaviorMap", () => {
+ChromeUtils.defineLazyGetter(lazy, "sourceToBehaviorMap", () => {
   return new Map([
     [UrlbarUtils.RESULT_SOURCE.HISTORY, "history"],
     [UrlbarUtils.RESULT_SOURCE.BOOKMARKS, "bookmark"],
@@ -238,10 +240,10 @@ function makeActionUrl(type, params) {
  * This means we could sort these wrongly, the muxer should take care of it.
  *
  * @param {UrlbarQueryContext} context the query context.
- * @param {array} matches The match objects.
+ * @param {Array} matches The match objects.
  * @param {set} urls a Set containing all the found urls, used to discard
  *        already added results.
- * @returns {array} converted results
+ * @returns {Array} converted results
  */
 function convertLegacyMatches(context, matches, urls) {
   let results = [];
@@ -277,7 +279,8 @@ function convertLegacyMatches(context, matches, urls) {
 
 /**
  * Creates a new UrlbarResult from the provided data.
- * @param {array} tokens the search tokens.
+ *
+ * @param {Array} tokens the search tokens.
  * @param {object} info includes properties from the legacy result.
  * @returns {object} an UrlbarResult
  */
@@ -285,42 +288,21 @@ function makeUrlbarResult(tokens, info) {
   let action = lazy.PlacesUtils.parseActionUrl(info.url);
   if (action) {
     switch (action.type) {
-      case "searchengine": {
-        if (action.params.isSearchHistory) {
-          // Return a form history result.
-          return new lazy.UrlbarResult(
-            UrlbarUtils.RESULT_TYPE.SEARCH,
-            UrlbarUtils.RESULT_SOURCE.HISTORY,
-            ...lazy.UrlbarResult.payloadAndSimpleHighlights(tokens, {
-              engine: action.params.engineName,
-              suggestion: [
-                action.params.searchSuggestion,
-                UrlbarUtils.HIGHLIGHT.SUGGESTED,
-              ],
-              lowerCaseSuggestion: action.params.searchSuggestion.toLocaleLowerCase(),
-            })
-          );
-        }
-
+      case "searchengine":
+        // Return a form history result.
         return new lazy.UrlbarResult(
           UrlbarUtils.RESULT_TYPE.SEARCH,
-          UrlbarUtils.RESULT_SOURCE.SEARCH,
+          UrlbarUtils.RESULT_SOURCE.HISTORY,
           ...lazy.UrlbarResult.payloadAndSimpleHighlights(tokens, {
-            engine: [action.params.engineName, UrlbarUtils.HIGHLIGHT.TYPED],
+            engine: action.params.engineName,
             suggestion: [
               action.params.searchSuggestion,
               UrlbarUtils.HIGHLIGHT.SUGGESTED,
             ],
-            lowerCaseSuggestion: action.params.searchSuggestion?.toLocaleLowerCase(),
-            keyword: action.params.alias,
-            query: [
-              action.params.searchQuery.trim(),
-              UrlbarUtils.HIGHLIGHT.NONE,
-            ],
-            icon: info.icon,
+            lowerCaseSuggestion:
+              action.params.searchSuggestion.toLocaleLowerCase(),
           })
         );
-      }
       case "switchtab":
         return new lazy.UrlbarResult(
           UrlbarUtils.RESULT_TYPE.TAB_SWITCH,
@@ -342,7 +324,7 @@ function makeUrlbarResult(tokens, info) {
           })
         );
       default:
-        Cu.reportError(`Unexpected action type: ${action.type}`);
+        console.error(`Unexpected action type: ${action.type}`);
         return null;
     }
   }
@@ -410,8 +392,11 @@ const MATCH_TYPE = {
  * Manages a single instance of a Places search.
  *
  * @param {UrlbarQueryContext} queryContext
- * @param {function} listener Called as: `listener(matches, searchOngoing)`
+ *   The query context.
+ * @param {Function} listener
+ *   Called as: `listener(matches, searchOngoing)`
  * @param {PlacesProvider} provider
+ *   The singleton that contains Places information
  */
 function Search(queryContext, listener, provider) {
   // We want to store the original string for case sensitive searches.
@@ -420,7 +405,16 @@ function Search(queryContext, listener, provider) {
   let unescapedSearchString = UrlbarUtils.unEscapeURIForUI(
     this._trimmedOriginalSearchString
   );
-  let [prefix, suffix] = UrlbarUtils.stripURLPrefix(unescapedSearchString);
+  // We want to make sure "about:" is not stripped as a prefix so that the
+  // about pages provider will run and ultimately only suggest about pages when
+  // a user types "about:" into the address bar.
+  let prefix, suffix;
+  if (unescapedSearchString.startsWith("about:")) {
+    prefix = "";
+    suffix = unescapedSearchString;
+  } else {
+    [prefix, suffix] = UrlbarUtils.stripURLPrefix(unescapedSearchString);
+  }
   this._searchString = suffix;
   this._strippedPrefix = prefix.toLowerCase();
 
@@ -440,13 +434,14 @@ function Search(queryContext, listener, provider) {
   if (this._searchModeEngine) {
     // Filter Places results on host.
     let engine = Services.search.getEngineByName(this._searchModeEngine);
-    this._filterOnHost = engine.getResultDomain();
+    this._filterOnHost = engine.searchUrlDomain;
   }
 
-  this._userContextId = lazy.UrlbarProviderOpenTabs.getUserContextIdForOpenPagesTable(
-    this._userContextId,
-    this._inPrivateWindow
-  );
+  this._userContextId =
+    lazy.UrlbarProviderOpenTabs.getUserContextIdForOpenPagesTable(
+      this._userContextId,
+      this._inPrivateWindow
+    );
 
   // Use the original string here, not the stripped one, so the tokenizer can
   // properly recognize token types.
@@ -466,9 +461,15 @@ function Search(queryContext, listener, provider) {
       this._leadingRestrictionToken = tokens[0].value;
     }
 
-    // Check if the first token has a strippable prefix and remove it, but don't
-    // create an empty token.
-    if (prefix && tokens[0].value.length > prefix.length) {
+    // Check if the first token has a strippable prefix other than "about:"
+    // and remove it, but don't create an empty token. We preserve "about:"
+    // so that the about pages provider will run and ultimately only suggest
+    // about pages when a user types "about:" into the address bar.
+    if (
+      prefix &&
+      prefix != "about:" &&
+      tokens[0].value.length > prefix.length
+    ) {
       tokens[0].value = tokens[0].value.substring(prefix.length);
     }
   }
@@ -559,9 +560,9 @@ Search.prototype = {
    * Given an array of tokens, this function determines which query should be
    * ran.  It also removes any special search tokens.
    *
-   * @param {array} tokens
+   * @param {Array} tokens
    *        An array of search tokens.
-   * @returns {array} A new, filtered array of tokens.
+   * @returns {Array} A new, filtered array of tokens.
    */
   filterTokens(tokens) {
     let foundToken = false;
@@ -621,6 +622,7 @@ Search.prototype = {
 
   /**
    * Execute the search and populate results.
+   *
    * @param {mozIStorageAsyncConnection} conn
    *        The Sqlite connection.
    */
@@ -668,7 +670,7 @@ Search.prototype = {
         /\s*\S?$/.test(this._trimmedOriginalSearchString);
       if (
         emptySearchRestriction ||
-        (tokenAliasEngines &&
+        (tokenAliasEngines.length &&
           this._trimmedOriginalSearchString.startsWith("@")) ||
         (this.hasBehavior("search") && this.hasBehavior("restrict"))
       ) {
@@ -736,55 +738,6 @@ Search.prototype = {
     return false;
   },
 
-  /**
-   * Adds a search engine match.
-   *
-   * @param {nsISearchEngine} engine
-   *        The search engine associated with the match.
-   * @param {string} [query]
-   *        The search query string.
-   * @param {string} [alias]
-   *        The search engine alias associated with the match, if any.
-   * @param {boolean} [historical]
-   *        True if you're adding a suggestion match and the suggestion is from
-   *        the user's local history (and not the search engine).
-   */
-  _addSearchEngineMatch({
-    engine,
-    query = "",
-    alias = undefined,
-    historical = false,
-  }) {
-    let actionURLParams = {
-      engineName: engine.name,
-      searchQuery: query,
-    };
-
-    if (alias && !query) {
-      // `input` should have a trailing space so that when the user selects the
-      // result, they can start typing their query without first having to enter
-      // a space between the alias and query.
-      actionURLParams.input = `${alias} `;
-    } else {
-      actionURLParams.input = this._originalSearchString;
-    }
-
-    let match = {
-      comment: engine.name,
-      icon: engine.iconURI ? engine.iconURI.spec : null,
-      style: "action searchengine",
-      frecency: FRECENCY_DEFAULT,
-    };
-
-    if (alias) {
-      actionURLParams.alias = alias;
-      match.style += " alias";
-    }
-
-    match.value = makeActionUrl("searchengine", actionURLParams);
-    this._addMatch(match);
-  },
-
   _onResultRow(row, cancel) {
     let queryType = row.getResultByIndex(QUERYINDEX_QUERYTYPE);
     switch (queryType) {
@@ -811,13 +764,15 @@ Search.prototype = {
    * indicate the search is not a first-page web SERP (as opposed to a image or
    * other non-web SERP).
    *
-   * @param {object} match
-   * @returns {boolean} True if the match can be restyled, false otherwise.
-   * @note We will mistakenly dedupe SERPs for engines that have the same
+   * Note: We will mistakenly dedupe SERPs for engines that have the same
    *   hostname as another engine. One example is if the user installed a
    *   Google Image Search engine. That engine's search URLs might only be
    *   distinguished by query params from search URLs from the default Google
    *   engine.
+   *
+   * @param {object} match
+   *   The match to maybe restyle.
+   * @returns {boolean} True if the match can be restyled, false otherwise.
    */
   _maybeRestyleSearchMatch(match) {
     // Return if the URL does not represent a search result.
@@ -920,20 +875,25 @@ Search.prototype = {
   },
 
   /**
+   * @typedef {object} MatchPositionInformation
+   * @property {number} index
+   *   The index the match should take in the results. Return -1 if the match
+   *   should be discarded.
+   * @property {boolean} replace
+   *   True if the match should replace the result already at
+   *   matchPosition.index.
+   */
+
+  /**
    * Check for duplicates and either discard the duplicate or replace the
    * original match, in case the new one is more specific. For example,
    * a Remote Tab wins over History, and a Switch to Tab wins over a Remote Tab.
    * We must check both id and url for duplication, because keywords may change
    * the url by replacing the %s placeholder.
-   * @param {object} match
-   * @returns {object} matchPosition
-   * @returns {number} matchPosition.index
-   *   The index the match should take in the results. Return -1 if the match
-   *   should be discarded.
-   * @returns {boolean} matchPosition.replace
-   *   True if the match should replace the result already at
-   *   matchPosition.index.
    *
+   * @param {object} match
+   *   The match to insert.
+   * @returns {MatchPositionInformation}
    */
   _getInsertIndexForMatch(match) {
     let [urlMapKey, prefix, action] = makeKeyForMatch(match);
@@ -1031,7 +991,7 @@ Search.prototype = {
     let index = 0;
     if (!this._groups) {
       this._groups = [];
-      this._makeGroups(lazy.UrlbarPrefs.get("resultGroups"), this._maxResults);
+      this._makeGroups(lazy.UrlbarPrefs.resultGroups, this._maxResults);
     }
 
     let replace = 0;
@@ -1266,6 +1226,7 @@ Search.prototype = {
   /**
    * If the user-provided string starts with a keyword that gave a heuristic
    * result, this will strip it.
+   *
    * @returns {string} The filtered search string.
    */
   get _keywordFilteredSearchString() {
@@ -1280,7 +1241,7 @@ Search.prototype = {
    * Obtains the search query to be used based on the previously set search
    * preferences (accessed by this.hasBehavior).
    *
-   * @returns {array}
+   * @returns {Array}
    *   An array consisting of the correctly optimized query to search the
    *   database with and an object containing the params to bound.
    */
@@ -1307,7 +1268,7 @@ Search.prototype = {
   /**
    * Obtains the query to search for switch-to-tab entries.
    *
-   * @returns {array}
+   * @returns {Array}
    *   An array consisting of the correctly optimized query to search the
    *   database with and an object containing the params to bound.
    */
@@ -1377,6 +1338,7 @@ class ProviderPlaces extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -1385,6 +1347,7 @@ class ProviderPlaces extends UrlbarProvider {
 
   /**
    * Returns the type of this provider.
+   *
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
@@ -1394,9 +1357,9 @@ class ProviderPlaces extends UrlbarProvider {
   /**
    * Gets a Sqlite database handle.
    *
-   * @returns {Promise}
-   * @resolves to the Sqlite database handle (according to Sqlite.jsm).
-   * @rejects javascript exception.
+   * @returns {Promise<OpenedConnection>}
+   *   A connection to the Sqlite database handle (according to {@link Sqlite.sys.mjs}).
+   * @throws A javascript exception
    */
   getDatabaseHandle() {
     if (!this._promiseDatabase) {
@@ -1424,6 +1387,7 @@ class ProviderPlaces extends UrlbarProvider {
    * Whether this provider should be invoked for the given context.
    * If this method returns false, the providers manager won't start a query
    * with this provider, to save on resources.
+   *
    * @param {UrlbarQueryContext} queryContext The query context object
    * @returns {boolean} Whether this provider should be invoked for the search.
    */
@@ -1440,8 +1404,9 @@ class ProviderPlaces extends UrlbarProvider {
 
   /**
    * Starts querying.
+   *
    * @param {object} queryContext The query context object
-   * @param {function} addCallback Callback invoked by the provider to add a new
+   * @param {Function} addCallback Callback invoked by the provider to add a new
    *        result.
    * @returns {Promise} resolved when the query stops.
    */
@@ -1462,6 +1427,7 @@ class ProviderPlaces extends UrlbarProvider {
 
   /**
    * Cancels a running query.
+   *
    * @param {object} queryContext The query context object
    */
   cancelQuery(queryContext) {
@@ -1506,6 +1472,32 @@ class ProviderPlaces extends UrlbarProvider {
     // Thus, ensure that notifyResult is the last call in this method,
     // otherwise you might be touching the wrong search.
     search.notifyResult(false);
+  }
+
+  onEngagement(state, queryContext, details, controller) {
+    let { result } = details;
+    if (result?.providerName != this.name) {
+      return;
+    }
+
+    if (details.selType == "dismiss") {
+      switch (result.type) {
+        case UrlbarUtils.RESULT_TYPE.SEARCH:
+          // URL restyled as a search suggestion. Generate the URL and remove it
+          // from browsing history.
+          let { url } = UrlbarUtils.getUrlFromResult(result);
+          lazy.PlacesUtils.history.remove(url).catch(console.error);
+          controller.removeResult(result);
+          break;
+        case UrlbarUtils.RESULT_TYPE.URL:
+          // Remove browsing history entries from Places.
+          lazy.PlacesUtils.history
+            .remove(result.payload.url)
+            .catch(console.error);
+          controller.removeResult(result);
+          break;
+      }
+    }
   }
 
   _startLegacyQuery(queryContext, callback) {

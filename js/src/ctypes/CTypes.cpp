@@ -60,6 +60,7 @@
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 
+#include "gc/GCContext-inl.h"
 #include "vm/JSObject-inl.h"
 
 using std::numeric_limits;
@@ -2080,8 +2081,9 @@ static JSObject* InitInt64Class(JSContext* cx, HandleObject parent,
                                 const JSFunctionSpec* fs,
                                 const JSFunctionSpec* static_fs) {
   // Init type class and constructor
-  RootedObject prototype(cx, JS_InitClass(cx, parent, nullptr, clasp, construct,
-                                          0, nullptr, fs, nullptr, static_fs));
+  RootedObject prototype(
+      cx, JS_InitClass(cx, parent, clasp, nullptr, clasp->name, construct, 0,
+                       nullptr, fs, nullptr, static_fs));
   if (!prototype) {
     return nullptr;
   }
@@ -8009,8 +8011,7 @@ static bool ReadTypedArrayCommon(JSContext* cx, unsigned argc, Value* vp,
 
   CheckedInt<size_t> size = *length;
   size *= CType::GetSize(baseType);
-  if (!size.isValid() ||
-      size.value() > ArrayBufferObject::maxBufferByteLength()) {
+  if (!size.isValid() || size.value() > ArrayBufferObject::MaxByteLength) {
     return SizeOverflow(cx, "data", "typed array");
   }
 

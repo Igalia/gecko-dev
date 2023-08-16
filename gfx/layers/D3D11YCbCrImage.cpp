@@ -33,7 +33,7 @@ bool D3D11YCbCrImage::SetData(KnowsCompositor* aAllocator,
   mColorRange = aData.mColorRange;
   mChromaSubsampling = aData.mChromaSubsampling;
 
-  D3D11YCbCrRecycleAllocator* allocator =
+  RefPtr<D3D11YCbCrRecycleAllocator> allocator =
       aContainer->GetD3D11YCbCrRecycleAllocator(aAllocator);
   if (!allocator) {
     return false;
@@ -379,13 +379,7 @@ already_AddRefed<TextureClient> DXGIYCbCrTextureAllocationHelper::Allocate(
                                     ? DXGI_FORMAT_R8_UNORM
                                     : DXGI_FORMAT_R16_UNORM,
                                 ySize.width, ySize.height, 1, 1);
-  // WebRender requests keyed mutex
-  if (mDevice == gfx::DeviceManagerDx::Get()->GetCompositorDevice() &&
-      !gfxVars::UseWebRender()) {
-    newDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
-  } else {
-    newDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
-  }
+  newDesc.MiscFlags = D3D11_RESOURCE_MISC_SHARED_KEYEDMUTEX;
 
   RefPtr<ID3D10Multithread> mt;
   HRESULT hr = mDevice->QueryInterface((ID3D10Multithread**)getter_AddRefs(mt));

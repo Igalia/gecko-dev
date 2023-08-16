@@ -5,24 +5,21 @@
 
 #include "HTMLFormControlAccessible.h"
 
+#include "CacheConstants.h"
 #include "DocAccessible-inl.h"
 #include "LocalAccessible-inl.h"
 #include "nsAccUtils.h"
 #include "nsEventShell.h"
 #include "nsTextEquivUtils.h"
 #include "Relation.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "nsContentList.h"
 #include "mozilla/dom/HTMLInputElement.h"
 #include "mozilla/dom/HTMLTextAreaElement.h"
 #include "nsIFormControl.h"
-#include "nsITextControlFrame.h"
-#include "nsNameSpaceManager.h"
-#include "mozilla/dom/ScriptSettings.h"
 
-#include "mozilla/EditorBase.h"
 #include "mozilla/FloatingPoint.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/TextEditor.h"
@@ -90,6 +87,21 @@ void HTMLRadioButtonAccessible::GetPositionAndSetSize(int32_t* aPosInSet,
   Unused << ComputeGroupAttributes(aPosInSet, aSetSize);
 }
 
+void HTMLRadioButtonAccessible::DOMAttributeChanged(
+    int32_t aNameSpaceID, nsAtom* aAttribute, int32_t aModType,
+    const nsAttrValue* aOldValue, uint64_t aOldState) {
+  if (aAttribute == nsGkAtoms::name) {
+    // If our name changed, it's possible our MEMBER_OF relation
+    // also changed. Push a cache update for Relations.
+    mDoc->QueueCacheUpdate(this, CacheDomain::Relations);
+  } else {
+    // Otherwise, handle this attribute change the way our parent
+    // class wants us to handle it.
+    RadioButtonAccessible::DOMAttributeChanged(aNameSpaceID, aAttribute,
+                                               aModType, aOldValue, aOldState);
+  }
+}
+
 Relation HTMLRadioButtonAccessible::ComputeGroupAttributes(
     int32_t* aPosInSet, int32_t* aSetSize) const {
   Relation rel = Relation();
@@ -98,9 +110,9 @@ Relation HTMLRadioButtonAccessible::ComputeGroupAttributes(
   mContent->NodeInfo()->GetName(tagName);
 
   nsAutoString type;
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::type, type);
+  mContent->AsElement()->GetAttr(nsGkAtoms::type, type);
   nsAutoString name;
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::name, name);
+  mContent->AsElement()->GetAttr(nsGkAtoms::name, name);
 
   RefPtr<nsContentList> inputElms;
 
@@ -205,9 +217,8 @@ ENameValueFlag HTMLButtonAccessible::NativeName(nsString& aName) const {
     return nameFlag;
   }
 
-  if (!mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::alt,
-                                      aName)) {
-    mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::value, aName);
+  if (!mContent->AsElement()->GetAttr(nsGkAtoms::alt, aName)) {
+    mContent->AsElement()->GetAttr(nsGkAtoms::value, aName);
   }
 
   aName.CompressWhitespace();
@@ -227,9 +238,9 @@ void HTMLButtonAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
     if (elm->IsHTMLElement(nsGkAtoms::input) ||
         (elm->AttrValueIs(kNameSpaceID_None, nsGkAtoms::type, nsGkAtoms::image,
                           eCaseMatters) &&
-         !elm->HasAttr(kNameSpaceID_None, nsGkAtoms::alt))) {
-      if (!elm->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_labelledby) &&
-          !elm->HasAttr(kNameSpaceID_None, nsGkAtoms::aria_label)) {
+         !elm->HasAttr(nsGkAtoms::alt))) {
+      if (!nsAccUtils::HasARIAAttr(elm, nsGkAtoms::aria_labelledby) &&
+          !nsAccUtils::HasARIAAttr(elm, nsGkAtoms::aria_label)) {
         mDoc->FireDelayedEvent(nsIAccessibleEvent::EVENT_NAME_CHANGE, this);
       }
     }
@@ -258,7 +269,7 @@ role HTMLTextFieldAccessible::NativeRole() const {
   if (mType == eHTMLTextPasswordFieldType) {
     return roles::PASSWORD_TEXT;
   }
-  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::list_)) {
+  if (mContent->AsElement()->HasAttr(nsGkAtoms::list_)) {
     return roles::EDITCOMBOBOX;
   }
   return roles::ENTRY;
@@ -283,8 +294,7 @@ already_AddRefed<AccAttributes> HTMLTextFieldAccessible::NativeAttributes() {
   // If this element  has the placeholder attribute set,
   // and if that is not identical to the name, expose it as an object attribute.
   nsString placeholderText;
-  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::placeholder,
-                                     placeholderText)) {
+  if (mContent->AsElement()->GetAttr(nsGkAtoms::placeholder, placeholderText)) {
     nsAutoString name;
     const_cast<HTMLTextFieldAccessible*>(this)->Name(name);
     if (!name.Equals(placeholderText)) {
@@ -303,8 +313,7 @@ ENameValueFlag HTMLTextFieldAccessible::NativeName(nsString& aName) const {
   if (!aName.IsEmpty()) return eNameOK;
 
   // text inputs and textareas might have useful placeholder text
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::placeholder,
-                                 aName);
+  mContent->AsElement()->GetAttr(nsGkAtoms::placeholder, aName);
   return eNameOK;
 }
 
@@ -355,7 +364,7 @@ uint64_t HTMLTextFieldAccessible::NativeState() const {
     state |= states::PROTECTED;
   }
 
-  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::readonly)) {
+  if (mContent->AsElement()->HasAttr(nsGkAtoms::readonly)) {
     state |= states::READONLY;
   }
 
@@ -370,7 +379,7 @@ uint64_t HTMLTextFieldAccessible::NativeState() const {
   }
 
   // Expose autocomplete state if it has associated autocomplete list.
-  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::list_)) {
+  if (mContent->AsElement()->HasAttr(nsGkAtoms::list_)) {
     return state | states::SUPPORTS_AUTOCOMPLETION | states::HASPOPUP;
   }
 
@@ -381,14 +390,12 @@ uint64_t HTMLTextFieldAccessible::NativeState() const {
     // we're talking here is based on what the user types, where a popup of
     // possible choices comes up.
     nsAutoString autocomplete;
-    mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::autocomplete,
-                                   autocomplete);
+    mContent->AsElement()->GetAttr(nsGkAtoms::autocomplete, autocomplete);
 
     if (!autocomplete.LowerCaseEqualsLiteral("off")) {
       Element* formElement = input->GetForm();
       if (formElement) {
-        formElement->GetAttr(kNameSpaceID_None, nsGkAtoms::autocomplete,
-                             autocomplete);
+        formElement->GetAttr(nsGkAtoms::autocomplete, autocomplete);
       }
 
       if (!formElement || !autocomplete.LowerCaseEqualsLiteral("off")) {
@@ -436,10 +443,7 @@ already_AddRefed<EditorBase> HTMLTextFieldAccessible::GetEditor() const {
 bool HTMLTextFieldAccessible::IsWidget() const { return true; }
 
 LocalAccessible* HTMLTextFieldAccessible::ContainerWidget() const {
-  if (!mParent || mParent->Role() != roles::AUTOCOMPLETE) {
-    return nullptr;
-  }
-  return mParent;
+  return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -516,28 +520,28 @@ void HTMLSpinnerAccessible::Value(nsString& aValue) const {
 
 double HTMLSpinnerAccessible::MaxValue() const {
   double value = HTMLTextFieldAccessible::MaxValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetMaximum().toDouble();
 }
 
 double HTMLSpinnerAccessible::MinValue() const {
   double value = HTMLTextFieldAccessible::MinValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetMinimum().toDouble();
 }
 
 double HTMLSpinnerAccessible::Step() const {
   double value = HTMLTextFieldAccessible::Step();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetStep().toDouble();
 }
 
 double HTMLSpinnerAccessible::CurValue() const {
   double value = HTMLTextFieldAccessible::CurValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetValueAsDecimal().toDouble();
 }
@@ -567,28 +571,28 @@ void HTMLRangeAccessible::Value(nsString& aValue) const {
 
 double HTMLRangeAccessible::MaxValue() const {
   double value = LeafAccessible::MaxValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetMaximum().toDouble();
 }
 
 double HTMLRangeAccessible::MinValue() const {
   double value = LeafAccessible::MinValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetMinimum().toDouble();
 }
 
 double HTMLRangeAccessible::Step() const {
   double value = LeafAccessible::Step();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetStep().toDouble();
 }
 
 double HTMLRangeAccessible::CurValue() const {
   double value = LeafAccessible::CurValue();
-  if (!IsNaN(value)) return value;
+  if (!std::isnan(value)) return value;
 
   return HTMLInputElement::FromNode(mContent)->GetValueAsDecimal().toDouble();
 }
@@ -737,8 +741,7 @@ uint64_t HTMLProgressAccessible::NativeState() const {
 
   // An undetermined progressbar (i.e. without a value) has a mixed state.
   nsAutoString attrValue;
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::value,
-                                 attrValue);
+  mContent->AsElement()->GetAttr(nsGkAtoms::value, attrValue);
   if (attrValue.IsEmpty()) {
     state |= states::MIXED;
   }
@@ -755,12 +758,12 @@ void HTMLProgressAccessible::Value(nsString& aValue) const {
   }
 
   double maxValue = MaxValue();
-  if (IsNaN(maxValue) || maxValue == 0) {
+  if (std::isnan(maxValue) || maxValue == 0) {
     return;
   }
 
   double curValue = CurValue();
-  if (IsNaN(curValue)) {
+  if (std::isnan(curValue)) {
     return;
   }
 
@@ -774,13 +777,12 @@ void HTMLProgressAccessible::Value(nsString& aValue) const {
 
 double HTMLProgressAccessible::MaxValue() const {
   double value = LeafAccessible::MaxValue();
-  if (!IsNaN(value)) {
+  if (!std::isnan(value)) {
     return value;
   }
 
   nsAutoString strValue;
-  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::max,
-                                     strValue)) {
+  if (mContent->AsElement()->GetAttr(nsGkAtoms::max, strValue)) {
     nsresult result = NS_OK;
     value = strValue.ToDouble(&result);
     if (NS_SUCCEEDED(result)) {
@@ -793,23 +795,22 @@ double HTMLProgressAccessible::MaxValue() const {
 
 double HTMLProgressAccessible::MinValue() const {
   double value = LeafAccessible::MinValue();
-  return IsNaN(value) ? 0 : value;
+  return std::isnan(value) ? 0 : value;
 }
 
 double HTMLProgressAccessible::Step() const {
   double value = LeafAccessible::Step();
-  return IsNaN(value) ? 0 : value;
+  return std::isnan(value) ? 0 : value;
 }
 
 double HTMLProgressAccessible::CurValue() const {
   double value = LeafAccessible::CurValue();
-  if (!IsNaN(value)) {
+  if (!std::isnan(value)) {
     return value;
   }
 
   nsAutoString attrValue;
-  if (!mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::value,
-                                      attrValue)) {
+  if (!mContent->AsElement()->GetAttr(nsGkAtoms::value, attrValue)) {
     return UnspecifiedNaN<double>();
   }
 
@@ -867,7 +868,7 @@ void HTMLMeterAccessible::Value(nsString& aValue) const {
 
   // If no inner text is found, use curValue
   double curValue = CurValue();
-  if (IsNaN(curValue)) {
+  if (std::isnan(curValue)) {
     return;
   }
 
@@ -878,14 +879,13 @@ double HTMLMeterAccessible::MaxValue() const {
   double max = LeafAccessible::MaxValue();
   double min = MinValue();
 
-  if (!IsNaN(max)) {
+  if (!std::isnan(max)) {
     return max > min ? max : min;
   }
 
   // If we didn't find a max value, check for the max attribute
   nsAutoString strValue;
-  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::max,
-                                     strValue)) {
+  if (mContent->AsElement()->GetAttr(nsGkAtoms::max, strValue)) {
     nsresult result = NS_OK;
     max = strValue.ToDouble(&result);
     if (NS_SUCCEEDED(result)) {
@@ -898,13 +898,12 @@ double HTMLMeterAccessible::MaxValue() const {
 
 double HTMLMeterAccessible::MinValue() const {
   double min = LeafAccessible::MinValue();
-  if (!IsNaN(min)) {
+  if (!std::isnan(min)) {
     return min;
   }
 
   nsAutoString strValue;
-  if (mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::min,
-                                     strValue)) {
+  if (mContent->AsElement()->GetAttr(nsGkAtoms::min, strValue)) {
     nsresult result = NS_OK;
     min = strValue.ToDouble(&result);
     if (NS_SUCCEEDED(result)) {
@@ -919,12 +918,11 @@ double HTMLMeterAccessible::CurValue() const {
   double value = LeafAccessible::CurValue();
   double minValue = MinValue();
 
-  if (IsNaN(value)) {
+  if (std::isnan(value)) {
     /* If we didn't find a value from the LeafAccessible call above, check
      * for a value attribute */
     nsAutoString attrValue;
-    if (!mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::value,
-                                        attrValue)) {
+    if (!mContent->AsElement()->GetAttr(nsGkAtoms::value, attrValue)) {
       return minValue;
     }
 

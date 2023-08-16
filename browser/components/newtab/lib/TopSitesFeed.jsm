@@ -7,17 +7,18 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
-const { actionCreators: ac, actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionCreators: ac, actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
-const { TippyTopProvider } = ChromeUtils.import(
-  "resource://activity-stream/lib/TippyTopProvider.jsm"
+const { TippyTopProvider } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/TippyTopProvider.sys.mjs"
 );
-const { insertPinned, TOP_SITES_MAX_SITES_PER_ROW } = ChromeUtils.import(
-  "resource://activity-stream/common/Reducers.jsm"
-);
-const { Dedupe } = ChromeUtils.import(
-  "resource://activity-stream/common/Dedupe.jsm"
+const { insertPinned, TOP_SITES_MAX_SITES_PER_ROW } =
+  ChromeUtils.importESModule(
+    "resource://activity-stream/common/Reducers.sys.mjs"
+  );
+const { Dedupe } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Dedupe.sys.mjs"
 );
 const { shortURL } = ChromeUtils.import(
   "resource://activity-stream/lib/ShortURL.jsm"
@@ -33,7 +34,9 @@ const {
   checkHasSearchEngine,
   getSearchProvider,
   getSearchFormURL,
-} = ChromeUtils.import("resource://activity-stream/lib/SearchShortcuts.jsm");
+} = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/SearchShortcuts.sys.mjs"
+);
 
 const lazy = {};
 
@@ -42,46 +45,37 @@ ChromeUtils.defineModuleGetter(
   "FilterAdult",
   "resource://activity-stream/lib/FilterAdult.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LinksCache",
-  "resource://activity-stream/lib/LinksCache.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  LinksCache: "resource://activity-stream/lib/LinksCache.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PageThumbs: "resource://gre/modules/PageThumbs.sys.mjs",
+  Region: "resource://gre/modules/Region.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  Sampling: "resource://gre/modules/components-utils/Sampling.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "Screenshots",
   "resource://activity-stream/lib/Screenshots.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PageThumbs",
-  "resource://gre/modules/PageThumbs.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "RemoteSettings",
-  "resource://services-settings/remote-settings.js"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "Region",
-  "resource://gre/modules/Region.jsm"
-);
 
 XPCOMUtils.defineLazyGetter(lazy, "log", () => {
-  const { Logger } = ChromeUtils.import(
-    "resource://messaging-system/lib/Logger.jsm"
+  const { Logger } = ChromeUtils.importESModule(
+    "resource://messaging-system/lib/Logger.sys.mjs"
   );
   return new Logger("TopSitesFeed");
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+// `contextId` is a unique identifier used by Contextual Services
+const CONTEXT_ID_PREF = "browser.contextual-services.contextId";
+XPCOMUtils.defineLazyGetter(lazy, "contextId", () => {
+  let _contextId = Services.prefs.getStringPref(CONTEXT_ID_PREF, null);
+  if (!_contextId) {
+    _contextId = String(Services.uuid.generateUUID());
+    Services.prefs.setStringPref(CONTEXT_ID_PREF, _contextId);
+  }
+  return _contextId;
 });
 
 const DEFAULT_SITES_PREF = "default.sites";
@@ -98,7 +92,22 @@ const PINNED_FAVICON_PROPS_TO_MIGRATE = [
 const SECTION_ID = "topsites";
 const ROWS_PREF = "topSitesRows";
 const SHOW_SPONSORED_PREF = "showSponsoredTopSites";
+// The default total number of sponsored top sites to fetch from Contile
+// and Pocket.
 const MAX_NUM_SPONSORED = 2;
+// Nimbus variable for the total number of sponsored top sites including
+// both Contile and Pocket sources.
+// The default will be `MAX_NUM_SPONSORED` if this variable is unspecified.
+const NIMBUS_VARIABLE_MAX_SPONSORED = "topSitesMaxSponsored";
+// Nimbus variable to allow more than two sponsored tiles from Contile to be
+//considered for Top Sites.
+const NIMBUS_VARIABLE_ADDITIONAL_TILES =
+  "topSitesUseAdditionalTilesFromContile";
+// Nimbus variable to enable the SOV feature for sponsored tiles.
+const NIMBUS_VARIABLE_CONTILE_SOV_ENABLED = "topSitesContileSovEnabled";
+// Nimbu variable for the total number of sponsor topsite that come from Contile
+// The default will be `CONTILE_MAX_NUM_SPONSORED` if variable is unspecified.
+const NIMBUS_VARIABLE_CONTILE_MAX_NUM_SPONSORED = "topSitesContileMaxSponsored";
 
 // Search experiment stuff
 const FILTER_DEFAULT_SEARCH_PREF = "improvesearch.noDefaultSearchTile";
@@ -122,7 +131,20 @@ const DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH = "browser.topsites.experiment.";
 const NIMBUS_VARIABLE_CONTILE_ENABLED = "topSitesContileEnabled";
 const CONTILE_ENDPOINT_PREF = "browser.topsites.contile.endpoint";
 const CONTILE_UPDATE_INTERVAL = 15 * 60 * 1000; // 15 minutes
+// The maximum number of sponsored top sites to fetch from Contile.
+const CONTILE_MAX_NUM_SPONSORED = 2;
 const TOP_SITES_BLOCKED_SPONSORS_PREF = "browser.topsites.blockedSponsors";
+const CONTILE_CACHE_PREF = "browser.topsites.contile.cachedTiles";
+const CONTILE_CACHE_VALID_FOR_PREF = "browser.topsites.contile.cacheValidFor";
+const CONTILE_CACHE_LAST_FETCH_PREF = "browser.topsites.contile.lastFetch";
+
+// Partners of sponsored tiles.
+const SPONSORED_TILE_PARTNER_AMP = "amp";
+const SPONSORED_TILE_PARTNER_MOZ_SALES = "moz-sales";
+const SPONSORED_TILE_PARTNERS = new Set([
+  SPONSORED_TILE_PARTNER_AMP,
+  SPONSORED_TILE_PARTNER_MOZ_SALES,
+]);
 
 function getShortURLForCurrentSearch() {
   const url = shortURL({ url: Services.search.defaultEngine.searchForm });
@@ -134,10 +156,16 @@ class ContileIntegration {
     this._topSitesFeed = topSitesFeed;
     this._lastPeriodicUpdate = 0;
     this._sites = [];
+    // The Share-of-Voice object managed by Shepherd and sent via Contile.
+    this._sov = null;
   }
 
   get sites() {
     return this._sites;
+  }
+
+  get sov() {
+    return this._sov;
   }
 
   periodicUpdate() {
@@ -156,6 +184,15 @@ class ContileIntegration {
   }
 
   /**
+   * Clear Contile Cache Prefs.
+   */
+  _resetContileCachePrefs() {
+    Services.prefs.clearUserPref(CONTILE_CACHE_PREF);
+    Services.prefs.clearUserPref(CONTILE_CACHE_LAST_FETCH_PREF);
+    Services.prefs.clearUserPref(CONTILE_CACHE_VALID_FOR_PREF);
+  }
+
+  /**
    * Filter the tiles whose sponsor is on the Top Sites sponsor blocklist.
    *
    * @param {array} tiles
@@ -166,6 +203,64 @@ class ContileIntegration {
       Services.prefs.getStringPref(TOP_SITES_BLOCKED_SPONSORS_PREF, "[]")
     );
     return tiles.filter(tile => !blocklist.includes(shortURL(tile)));
+  }
+
+  /**
+   * Calculate the time Contile response is valid for based on cache-control header
+   *
+   * @param {string} cacheHeader
+   *   string value of the Contile resposne cache-control header
+   */
+  _extractCacheValidFor(cacheHeader) {
+    if (!cacheHeader) {
+      lazy.log.warn("Contile response cache control header is empty");
+      return 0;
+    }
+    const [, staleIfError] = cacheHeader.match(/stale-if-error=\s*([0-9]+)/i);
+    const [, maxAge] = cacheHeader.match(/max-age=\s*([0-9]+)/i);
+    const validFor =
+      Number.parseInt(staleIfError, 10) + Number.parseInt(maxAge, 10);
+    return isNaN(validFor) ? 0 : validFor;
+  }
+
+  /**
+   * Load Tiles from Contile Cache Prefs
+   */
+  _loadTilesFromCache() {
+    lazy.log.info("Contile client is trying to load tiles from local cache.");
+    const now = Math.round(Date.now() / 1000);
+    const lastFetch = Services.prefs.getIntPref(
+      CONTILE_CACHE_LAST_FETCH_PREF,
+      0
+    );
+    const validFor = Services.prefs.getIntPref(CONTILE_CACHE_VALID_FOR_PREF, 0);
+    if (now <= lastFetch + validFor) {
+      try {
+        let cachedTiles = JSON.parse(
+          Services.prefs.getStringPref(CONTILE_CACHE_PREF)
+        );
+        cachedTiles = this._filterBlockedSponsors(cachedTiles);
+        this._sites = cachedTiles;
+        lazy.log.info("Local cache loaded.");
+        return true;
+      } catch (error) {
+        lazy.log.warn(`Failed to load tiles from local cache: ${error}.`);
+        return false;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Determine number of Tiles to get from Contile
+   */
+  _getMaxNumFromContile() {
+    return (
+      lazy.NimbusFeatures.pocketNewtab.getVariable(
+        NIMBUS_VARIABLE_CONTILE_MAX_NUM_SPONSORED
+      ) ?? CONTILE_MAX_NUM_SPONSORED
+    );
   }
 
   async _fetchSites() {
@@ -188,32 +283,73 @@ class ContileIntegration {
         lazy.log.warn(
           `Contile endpoint returned unexpected status: ${response.status}`
         );
+        if (response.status === 304 || response.status >= 500) {
+          return this._loadTilesFromCache();
+        }
       }
 
+      const lastFetch = Math.round(Date.now() / 1000);
+      Services.prefs.setIntPref(CONTILE_CACHE_LAST_FETCH_PREF, lastFetch);
+
       // Contile returns 204 indicating there is no content at the moment.
-      // If this happens, just return without signifying the change so that the
-      // existing tiles (`this._sites`) could retain. We might want to introduce
-      // other handling for this in the future.
+      // If this happens, it will clear `this._sites` reset the cached tiles
+      // to an empty array.
       if (response.status === 204) {
+        if (this._sites.length) {
+          this._sites = [];
+          Services.prefs.setStringPref(
+            CONTILE_CACHE_PREF,
+            JSON.stringify(this._sites)
+          );
+          return true;
+        }
         return false;
       }
       const body = await response.json();
+
+      if (body?.sov) {
+        this._sov = JSON.parse(atob(body.sov));
+      }
       if (body?.tiles && Array.isArray(body.tiles)) {
+        const useAdditionalTiles = lazy.NimbusFeatures.newtab.getVariable(
+          NIMBUS_VARIABLE_ADDITIONAL_TILES
+        );
+
+        const maxNumFromContile = this._getMaxNumFromContile();
+
         let { tiles } = body;
+        if (
+          useAdditionalTiles !== undefined &&
+          !useAdditionalTiles &&
+          tiles.length > maxNumFromContile
+        ) {
+          tiles.length = maxNumFromContile;
+        }
         tiles = this._filterBlockedSponsors(tiles);
-        if (tiles.length > MAX_NUM_SPONSORED) {
-          lazy.log.warn(
-            `Contile provided more links than permitted. (${tiles.length} received, limit is ${MAX_NUM_SPONSORED})`
-          );
-          tiles.length = MAX_NUM_SPONSORED;
+        if (tiles.length > maxNumFromContile) {
+          lazy.log.info("Remove unused links from Contile");
+          tiles.length = maxNumFromContile;
         }
         this._sites = tiles;
+        Services.prefs.setStringPref(
+          CONTILE_CACHE_PREF,
+          JSON.stringify(this._sites)
+        );
+        Services.prefs.setIntPref(
+          CONTILE_CACHE_VALID_FOR_PREF,
+          this._extractCacheValidFor(
+            response.headers.get("cache-control") ||
+              response.headers.get("Cache-Control")
+          )
+        );
+
         return true;
       }
     } catch (error) {
       lazy.log.warn(
         `Failed to fetch data from Contile server: ${error.message}`
       );
+      return this._loadTilesFromCache();
     }
     return false;
   }
@@ -282,7 +418,7 @@ class TopSitesFeed {
     Services.prefs.removeObserver(REMOTE_SETTING_DEFAULTS_PREF, this);
     Services.prefs.removeObserver(DEFAULT_SITES_OVERRIDE_PREF, this);
     Services.prefs.removeObserver(DEFAULT_SITES_EXPERIMENTS_PREF_BRANCH, this);
-    lazy.NimbusFeatures.newtab.off(this._nimbusChangeListener);
+    lazy.NimbusFeatures.newtab.offUpdate(this._nimbusChangeListener);
   }
 
   observe(subj, topic, data) {
@@ -368,6 +504,7 @@ class TopSitesFeed {
           sponsored_click_url: site.click_url,
           sponsored_impression_url: site.impression_url,
           sponsored_tile_id: site.id,
+          partner: SPONSORED_TILE_PARTNER_AMP,
         };
         if (site.image_url && site.image_size >= MIN_FAVICON_SIZE) {
           // Only use the image from Contile if it's hi-res, otherwise, fallback
@@ -477,11 +614,11 @@ class TopSitesFeed {
     try {
       result = await this._remoteConfig.get();
     } catch (ex) {
-      Cu.reportError(ex);
+      console.error(ex);
       failed = true;
     }
     if (!result.length) {
-      Cu.reportError("Received empty top sites configuration!");
+      console.error("Received empty top sites configuration!");
       failed = true;
     }
     // If we failed, or the result is empty, try loading from the local dump.
@@ -661,6 +798,84 @@ class TopSitesFeed {
     return false;
   }
 
+  /**
+   * Fetch topsites spocs from the DiscoveryStream feed.
+   *
+   * @returns {Array} An array of sponsored tile objects.
+   */
+  fetchDiscoveryStreamSpocs() {
+    let sponsored = [];
+    const { DiscoveryStream } = this.store.getState();
+    if (DiscoveryStream) {
+      const discoveryStreamSpocs =
+        DiscoveryStream.spocs.data["sponsored-topsites"]?.items || [];
+      // Find the first component of a type and remove it from layout
+      const findSponsoredTopsitesPositions = name => {
+        for (const row of DiscoveryStream.layout) {
+          for (const component of row.components) {
+            if (component.placement?.name === name) {
+              return component.spocs.positions;
+            }
+          }
+        }
+        return null;
+      };
+
+      // Get positions from layout for now. This could be improved if we store position data in state.
+      const discoveryStreamSpocPositions =
+        findSponsoredTopsitesPositions("sponsored-topsites");
+
+      if (discoveryStreamSpocPositions?.length) {
+        function reformatImageURL(url, width, height) {
+          // Change the image URL to request a size tailored for the parent container width
+          // Also: force JPEG, quality 60, no upscaling, no EXIF data
+          // Uses Thumbor: https://thumbor.readthedocs.io/en/latest/usage.html
+          // For now we wrap this in single quotes because this is being used in a url() css rule, and otherwise would cause a parsing error.
+          return `'https://img-getpocket.cdn.mozilla.net/${width}x${height}/filters:format(jpeg):quality(60):no_upscale():strip_exif()/${encodeURIComponent(
+            url
+          )}'`;
+        }
+
+        // We need to loop through potential spocs and set their positions.
+        // If we run out of spocs or positions, we stop.
+        // First, we need to know which array is shortest. This is our exit condition.
+        const minLength = Math.min(
+          discoveryStreamSpocPositions.length,
+          discoveryStreamSpocs.length
+        );
+        // Loop until we run out of spocs or positions.
+        for (let i = 0; i < minLength; i++) {
+          const positionIndex = discoveryStreamSpocPositions[i].index;
+          const spoc = discoveryStreamSpocs[i];
+          const link = {
+            favicon: reformatImageURL(spoc.raw_image_src, 96, 96),
+            faviconSize: 96,
+            type: "SPOC",
+            label: spoc.title || spoc.sponsor,
+            title: spoc.title || spoc.sponsor,
+            url: spoc.url,
+            flightId: spoc.flight_id,
+            id: spoc.id,
+            guid: spoc.id,
+            shim: spoc.shim,
+            // For now we are assuming position based on intended position.
+            // Actual position can shift based on other content.
+            // We send the intended position in the ping.
+            pos: positionIndex,
+            // Set this so that SPOC topsites won't be shown in the URL bar.
+            // See Bug 1822027. Note that `sponsored_position` is 1-based.
+            sponsored_position: positionIndex + 1,
+            // This is used for topsites deduping.
+            hostname: shortURL({ url: spoc.url }),
+            partner: SPONSORED_TILE_PARTNER_MOZ_SALES,
+          };
+          sponsored.push(link);
+        }
+      }
+    }
+    return sponsored;
+  }
+
   // eslint-disable-next-line max-statements
   async getLinksWithDefaults(isStartup = false) {
     const prefValues = this.store.getState().Prefs.values;
@@ -690,15 +905,8 @@ class TopSitesFeed {
     }
 
     // Get defaults.
-    let date = new Date();
-    let pad = number => number.toString().padStart(2, "0");
-    let yyyymmddhh =
-      String(date.getFullYear()) +
-      pad(date.getMonth() + 1) +
-      pad(date.getDate()) +
-      pad(date.getHours());
+    let contileSponsored = [];
     let notBlockedDefaultSites = [];
-    let sponsored = [];
     for (let link of DEFAULT_TOP_SITES) {
       // For sponsored Yandex links, default filtering is reversed: we only
       // show them if Yandex is the default search engine.
@@ -717,24 +925,6 @@ class TopSitesFeed {
       ) {
         continue;
       }
-      // Process %YYYYMMDDHH% tag in the URL.
-      let url_end;
-      let url_start;
-      if (this._useRemoteSetting) {
-        [url_start, url_end] = link.url.split("%YYYYMMDDHH%");
-      }
-      if (typeof url_end === "string") {
-        link = {
-          ...link,
-          // Save original URL without %YYYYMMDDHH% replaced so it can be
-          // blocked properly.
-          original_url: link.url,
-          url: url_start + yyyymmddhh + url_end,
-        };
-        if (link.url_urlbar) {
-          link.url_urlbar = link.url_urlbar.replace("%YYYYMMDDHH%", yyyymmddhh);
-        }
-      }
       // If we've previously blocked a search shortcut, remove the default top site
       // that matches the hostname
       const searchProvider = getSearchProvider(shortURL(link));
@@ -748,7 +938,7 @@ class TopSitesFeed {
         if (!prefValues[SHOW_SPONSORED_PREF]) {
           continue;
         }
-        sponsored[link.sponsored_position - 1] = link;
+        contileSponsored[link.sponsored_position - 1] = link;
 
         // Unpin search shortcut if present for the sponsored link to be shown
         // instead.
@@ -761,6 +951,15 @@ class TopSitesFeed {
         );
       }
     }
+
+    const discoverySponsored = this.fetchDiscoveryStreamSpocs();
+
+    const sponsored = await this._mergeSponsoredLinks({
+      [SPONSORED_TILE_PARTNER_AMP]: contileSponsored,
+      [SPONSORED_TILE_PARTNER_MOZ_SALES]: discoverySponsored,
+    });
+
+    this._maybeCapSponsoredLinks(sponsored);
 
     // Get pinned links augmented with desired properties
     let plainPinned = await this.pinnedCache.request();
@@ -828,12 +1027,8 @@ class TopSitesFeed {
     );
 
     // Remove any duplicates from frecent and default sites
-    const [
-      ,
-      dedupedSponsored,
-      dedupedFrecent,
-      dedupedDefaults,
-    ] = this.dedupe.group(pinned, sponsored, frecent, notBlockedDefaultSites);
+    const [, dedupedSponsored, dedupedFrecent, dedupedDefaults] =
+      this.dedupe.group(pinned, sponsored, frecent, notBlockedDefaultSites);
     const dedupedUnpinned = [...dedupedFrecent, ...dedupedDefaults];
 
     // Remove adult sites if we need to
@@ -847,12 +1042,16 @@ class TopSitesFeed {
         return;
       }
       let index = link.sponsored_position - 1;
-      if (index > withPinned.length) {
+      if (index >= withPinned.length) {
+        withPinned[index] = link;
+      } else if (withPinned[index]?.sponsored_position) {
+        // We currently want DiscoveryStream spocs to replace existing spocs.
         withPinned[index] = link;
       } else {
         withPinned.splice(index, 0, link);
       }
     });
+
     // Remove excess items after we inserted sponsored ones.
     withPinned = withPinned.slice(0, numItems);
 
@@ -879,6 +1078,119 @@ class TopSitesFeed {
     this._linksWithDefaults = withPinned;
 
     return withPinned;
+  }
+
+  /**
+   * Cap sponsored links if they're more than the specified maximum.
+   *
+   * @param {Array} links An array of sponsored links. Capping will be performed in-place.
+   */
+  _maybeCapSponsoredLinks(links) {
+    // Set maximum sponsored top sites
+    const maxSponsored =
+      lazy.NimbusFeatures.pocketNewtab.getVariable(
+        NIMBUS_VARIABLE_MAX_SPONSORED
+      ) ?? MAX_NUM_SPONSORED;
+    if (links.length > maxSponsored) {
+      links.length = maxSponsored;
+    }
+  }
+
+  /**
+   * Merge sponsored links from all the partners using SOV if present.
+   * For each tile position, the user is assigned to one partner via stable sampling.
+   * If the chosen partner doesn't have a tile to serve, another tile from a different
+   * partner is used as the replacement.
+   *
+   * @param {Object} sponsoredLinks An object with sponsored links from all the partners.
+   * @returns {Array} An array of merged sponsored links.
+   */
+  async _mergeSponsoredLinks(sponsoredLinks) {
+    if (
+      !this._contile.sov ||
+      !lazy.NimbusFeatures.pocketNewtab.getVariable(
+        NIMBUS_VARIABLE_CONTILE_SOV_ENABLED
+      )
+    ) {
+      return Object.values(sponsoredLinks).flat();
+    }
+
+    // AMP links might have empty slots, remove them as SOV doesn't need those.
+    sponsoredLinks[SPONSORED_TILE_PARTNER_AMP] =
+      sponsoredLinks[SPONSORED_TILE_PARTNER_AMP].filter(Boolean);
+
+    const sampleInput = `${lazy.contextId}-${this._contile.sov.name}`;
+    let sponsored = [];
+    let chosenPartners = [];
+    for (const allocation of this._contile.sov.allocations) {
+      let link = null;
+      let assignedPartner = null;
+      const ratios = allocation.allocation.map(alloc => alloc.percentage);
+      if (ratios.length) {
+        const index = await lazy.Sampling.ratioSample(sampleInput, ratios);
+        assignedPartner = allocation.allocation[index].partner;
+        // Unknown partners are allowed so that new parters can be added to Shepherd
+        // sooner without waiting for client changes.
+        link = sponsoredLinks[assignedPartner]?.shift();
+      }
+
+      if (!link) {
+        // If the chosen partner doesn't have a tile for this postion, choose any
+        // one from another group. For simplicity, we do _not_ do resampling here
+        // against the remaining partners.
+        for (const partner of SPONSORED_TILE_PARTNERS) {
+          if (
+            partner === assignedPartner ||
+            sponsoredLinks[partner].length === 0
+          ) {
+            continue;
+          }
+          link = sponsoredLinks[partner].shift();
+          break;
+        }
+
+        if (!link) {
+          // No more links to be added across all the partners, just return.
+          if (chosenPartners.length) {
+            Glean.newtab.sovAllocation.set(
+              chosenPartners.map(entry => JSON.stringify(entry))
+            );
+          }
+          return sponsored;
+        }
+      }
+
+      // Update the position fields. Note that postion is also 1-based in SOV.
+      link.sponsored_position = allocation.position;
+      if (link.pos !== undefined) {
+        // Pocket `pos` is 0-based.
+        link.pos = allocation.position - 1;
+      }
+      sponsored.push(link);
+
+      chosenPartners.push({
+        pos: allocation.position,
+        assigned: assignedPartner, // The assigned partner based on SOV
+        chosen: link.partner,
+      });
+    }
+    // Record chosen partners to glean
+    if (chosenPartners.length) {
+      Glean.newtab.sovAllocation.set(
+        chosenPartners.map(entry => JSON.stringify(entry))
+      );
+    }
+
+    // add the remaining contile sponsoredLinks when nimbus variable present
+    if (
+      lazy.NimbusFeatures.pocketNewtab.getVariable(
+        NIMBUS_VARIABLE_CONTILE_MAX_NUM_SPONSORED
+      )
+    ) {
+      return sponsored.concat(sponsoredLinks[SPONSORED_TILE_PARTNER_AMP]);
+    }
+
+    return sponsored;
   }
 
   /**
@@ -930,7 +1242,7 @@ class TopSitesFeed {
       storedPrefs = (await this._storage.get(SECTION_ID)) || {};
     } catch (e) {
       storedPrefs = {};
-      Cu.reportError("Problem getting stored prefs for TopSites");
+      console.error("Problem getting stored prefs for TopSites");
     }
     newAction.data.pref = getDefaultOptions(storedPrefs);
 
@@ -1207,8 +1519,10 @@ class TopSitesFeed {
     // fixed.
     let adjustedIndex = index;
     for (let i = 0; i < index; i++) {
+      const link = this._linksWithDefaults[i];
       if (
-        this._linksWithDefaults[i]?.sponsored_position &&
+        link &&
+        link.sponsored_position &&
         this._linksWithDefaults[i]?.url !== site.url
       ) {
         adjustedIndex--;
@@ -1366,6 +1680,10 @@ class TopSitesFeed {
             } else {
               this.refresh({ broadcast: true });
             }
+            if (!action.data.value) {
+              this._contile._resetContileCachePrefs();
+            }
+
             break;
           case SEARCH_SHORTCUTS_EXPERIMENT:
             if (action.data.value) {
@@ -1400,6 +1718,10 @@ class TopSitesFeed {
         break;
       case at.UPDATE_PINNED_SEARCH_SHORTCUTS:
         this.updatePinnedSearchShortcuts(action.data);
+        break;
+      case at.DISCOVERY_STREAM_SPOCS_UPDATE:
+        // Refresh to update sponsored topsites.
+        this.refresh({ broadcast: true, isStartup: action.meta.isStartup });
         break;
       case at.UNINIT:
         this.uninit();

@@ -107,7 +107,7 @@ struct UpdateServerThreadArgs {
 #  define stat64 stat
 #endif
 
-#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && !defined(XP_MACOSX)
+#if defined(MOZ_VERIFY_MAR_SIGNATURE) && defined(MAR_NSS)
 #  include "nss.h"
 #  include "prerror.h"
 #endif
@@ -2633,23 +2633,21 @@ static void UpdateThreadFunc(void* param) {
     }
 
     if (rv == OK) {
-      if (rv == OK) {
-        NS_tchar updateSettingsPath[MAXPATHLEN];
-        NS_tsnprintf(updateSettingsPath,
-                     sizeof(updateSettingsPath) / sizeof(updateSettingsPath[0]),
+      NS_tchar updateSettingsPath[MAXPATHLEN];
+      NS_tsnprintf(updateSettingsPath,
+                   sizeof(updateSettingsPath) / sizeof(updateSettingsPath[0]),
 #  ifdef XP_MACOSX
-                     NS_T("%s/Contents/Resources/update-settings.ini"),
+                   NS_T("%s/Contents/Resources/update-settings.ini"),
 #  else
-                     NS_T("%s/update-settings.ini"),
+                   NS_T("%s/update-settings.ini"),
 #  endif
-                     gInstallDirPath);
-        MARChannelStringTable MARStrings;
-        if (ReadMARChannelIDs(updateSettingsPath, &MARStrings) != OK) {
-          rv = UPDATE_SETTINGS_FILE_CHANNEL;
-        } else {
-          rv = gArchiveReader.VerifyProductInformation(
-              MARStrings.MARChannelID.get(), MOZ_APP_VERSION);
-        }
+                   gInstallDirPath);
+      MARChannelStringTable MARStrings;
+      if (ReadMARChannelIDs(updateSettingsPath, &MARStrings) != OK) {
+        rv = UPDATE_SETTINGS_FILE_CHANNEL;
+      } else {
+        rv = gArchiveReader.VerifyProductInformation(
+            MARStrings.MARChannelID.get(), MOZ_APP_VERSION);
       }
     }
 #endif
@@ -2725,6 +2723,12 @@ static void UpdateThreadFunc(void* param) {
     putenv(const_cast<char*>("MOZ_TEST_PROCESS_UPDATES="));
 #endif
   } else {
+#ifdef TEST_UPDATER
+    const char* forceErrorCodeString = getenv("MOZ_FORCE_ERROR_CODE");
+    if (forceErrorCodeString && *forceErrorCodeString) {
+      rv = atoi(forceErrorCodeString);
+    }
+#endif
     if (rv) {
       LOG(("failed: %d", rv));
     } else {
@@ -2888,11 +2892,9 @@ int NS_main(int argc, NS_tchar** argv) {
   if (!isDMGInstall) {
     // Skip update-related code path for DMG installs.
 
-#if defined(MOZ_VERIFY_MAR_SIGNATURE) && !defined(XP_WIN) && !defined(XP_MACOSX)
-    // On Windows and Mac we rely on native APIs to do verifications so we don't
-    // need to initialize NSS at all there.
-    // Otherwise, minimize the amount of NSS we depend on by avoiding all the
-    // NSS databases.
+#if defined(MOZ_VERIFY_MAR_SIGNATURE) && defined(MAR_NSS)
+    // If using NSS for signature verification, initialize NSS but minimize
+    // the portion we depend on by avoiding all of the NSS databases.
     if (NSS_NoDB_Init(nullptr) != SECSuccess) {
       PRErrorCode error = PR_GetError();
       fprintf(stderr, "Could not initialize NSS: %s (%d)",

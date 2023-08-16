@@ -18,10 +18,12 @@ registerCleanupFunction(() => {
 
 const INITIAL_LOGS_NUMBER = 5;
 
-const { MESSAGE_TYPE } = require("devtools/client/webconsole/constants");
+const {
+  MESSAGE_TYPE,
+} = require("resource://devtools/client/webconsole/constants.js");
 const {
   WILL_NAVIGATE_TIME_SHIFT,
-} = require("devtools/server/actors/webconsole/listeners/document-events");
+} = require("resource://devtools/server/actors/webconsole/listeners/document-events.js");
 
 async function logAndAssertInitialMessages(hud) {
   await SpecialPowers.spawn(
@@ -35,7 +37,7 @@ async function logAndAssertInitialMessages(hud) {
   ok(true, "Messages showed up initially");
 }
 
-add_task(async function() {
+add_task(async function () {
   info("Testing that messages disappear on a refresh if logs aren't persisted");
   const hud = await openNewTabAndConsole(TEST_COM_URI);
 
@@ -52,7 +54,7 @@ add_task(async function() {
   await closeToolbox();
 });
 
-add_task(async function() {
+add_task(async function () {
   info(
     "Testing that messages disappear on a cross origin navigation if logs aren't persisted"
   );
@@ -67,7 +69,7 @@ add_task(async function() {
   await closeToolbox();
 });
 
-add_task(async function() {
+add_task(async function () {
   info("Testing that messages disappear on bfcache navigations");
   const firstLocation =
     "data:text/html,<!DOCTYPE html><script>console.log('first document load');window.onpageshow=()=>console.log('first document show');</script>";
@@ -178,7 +180,7 @@ add_task(async function() {
   await closeToolbox();
 });
 
-add_task(async function() {
+add_task(async function () {
   info("Testing that messages persist on a refresh if logs are persisted");
 
   const hud = await openNewTabAndConsole(TEST_COM_URI);
@@ -261,11 +263,41 @@ add_task(async function() {
   await closeToolbox();
 });
 
+add_task(async function consoleClearPersist() {
+  info("Testing that messages persist on console.clear if logs are persisted");
+
+  await pushPref("devtools.webconsole.persistlog", true);
+  const hud = await openNewTabAndConsole(TEST_COM_URI);
+
+  await logAndAssertInitialMessages(hud);
+
+  info("Send a console.clear() and another log from the content page");
+  const onConsoleClearPrevented = waitForMessageByType(
+    hud,
+    "console.clear() was prevented",
+    ".console-api"
+  );
+  SpecialPowers.spawn(gBrowser.selectedBrowser, [], () => {
+    content.wrappedJSObject.console.clear();
+    content.wrappedJSObject.console.log("after clear");
+  });
+
+  await waitForMessageByType(hud, "after clear", ".log");
+  await onConsoleClearPrevented;
+  ok(true, "console.clear was handled by the client");
+
+  ok(
+    findAllMessages(hud).length === INITIAL_LOGS_NUMBER + 2,
+    "All initial messages are still displayed, with the 2 new ones"
+  );
+
+  await closeToolbox();
+});
+
 function assertLastMessageIsNavigationMessage(hud, timeBeforeNavigation, url) {
-  const {
-    visibleMessages,
-    mutableMessagesById,
-  } = hud.ui.wrapper.getStore().getState().messages;
+  const { visibleMessages, mutableMessagesById } = hud.ui.wrapper
+    .getStore()
+    .getState().messages;
   const lastMessageId = visibleMessages.at(-1);
   const lastMessage = mutableMessagesById.get(lastMessageId);
 

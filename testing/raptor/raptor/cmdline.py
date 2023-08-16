@@ -1,16 +1,19 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import, print_function
-
-import six
 import argparse
 import os
-import platform
 
+import six
 from mozlog.commandline import add_logging_group
 
-(FIREFOX, CHROME, CHROMIUM) = DESKTOP_APPS = ["firefox", "chrome", "chromium"]
+(FIREFOX, CHROME, CHROMIUM, SAFARI, CHROMIUM_RELEASE) = DESKTOP_APPS = [
+    "firefox",
+    "chrome",
+    "chromium",
+    "safari",
+    "custom-car",
+]
 (GECKOVIEW, REFBROW, FENIX, CHROME_ANDROID) = FIREFOX_ANDROID_APPS = [
     "geckoview",
     "refbrow",
@@ -23,6 +26,8 @@ APPS = {
     FIREFOX: {"long_name": "Firefox Desktop"},
     CHROME: {"long_name": "Google Chrome Desktop"},
     CHROMIUM: {"long_name": "Google Chromium Desktop"},
+    SAFARI: {"long_name": "Safari Desktop"},
+    CHROMIUM_RELEASE: {"long_name": "Custom Chromium-as-Release desktop"},
     GECKOVIEW: {
         "long_name": "Firefox GeckoView on Android",
         "default_activity": "org.mozilla.geckoview_example.GeckoViewActivity",
@@ -115,26 +120,7 @@ def create_parser(mach_interface=False):
         "loaded from the environment variable HOST_IP.",
         default="127.0.0.1",
     )
-    add_arg(
-        "--power-test",
-        dest="power_test",
-        action="store_true",
-        help="Use Raptor to measure power usage on Android browsers (Geckoview Example, "
-        "Fenix, and Refbrow) as well as on Intel-based MacOS machines that have "
-        "Intel Power Gadget installed.",
-    )
-    add_arg(
-        "--memory-test",
-        dest="memory_test",
-        action="store_true",
-        help="Use Raptor to measure memory usage.",
-    )
-    add_arg(
-        "--cpu-test",
-        dest="cpu_test",
-        action="store_true",
-        help="Use Raptor to measure CPU usage. Currently supported for Android only.",
-    )
+
     add_arg(
         "--live-sites",
         dest="live_sites",
@@ -215,6 +201,13 @@ def create_parser(mach_interface=False):
         dest="gecko_profile_features",
         type=str,
         help="What features to enable in the profiler",
+    )
+    add_arg(
+        "--extra-profiler-run",
+        dest="extra_profiler_run",
+        action="store_true",
+        default=False,
+        help="Run the tests again with profiler enabled after the main run.",
     )
     add_arg(
         "--symbolsPath",
@@ -328,6 +321,12 @@ def create_parser(mach_interface=False):
             default=None,
             help="Browser-build obj_path (received when running in production)",
         )
+        add_arg(
+            "--mozbuild-path",
+            dest="mozbuild_path",
+            default=None,
+            help="This contains the path to mozbuild.",
+        )
     add_arg(
         "--noinstall",
         dest="noinstall",
@@ -356,14 +355,6 @@ def create_parser(mach_interface=False):
         type=str,
         help="Name of conditioned profile to use. Prefix with `artifact:` "
         "if we should obtain the profile from CI.",
-    )
-    add_arg(
-        "--webext",
-        dest="webext",
-        action="store_true",
-        default=False,
-        help="Whether to use webextension to execute pageload tests "
-        "(WebExtension is being deprecated).",
     )
     add_arg(
         "--test-bytecode-cache",
@@ -485,6 +476,37 @@ def create_parser(mach_interface=False):
         help="If set, the test will collect perfstats in addition to "
         "the regular metrics it gathers.",
     )
+    add_arg(
+        "--extra-summary-methods",
+        dest="extra_summary_methods",
+        action="append",
+        default=[],
+        metavar="OPTION",
+        help="Alternative methods for summarizing technical and visual pageload metrics. "
+        "Options: median.",
+    )
+    add_arg(
+        "--benchmark-repository",
+        dest="benchmark_repository",
+        default=None,
+        type=str,
+        help="Repository that should be used for a particular benchmark test. "
+        "e.g. https://github.com/mozilla-mobile/firefox-android",
+    )
+    add_arg(
+        "--benchmark-revision",
+        dest="benchmark_revision",
+        default=None,
+        type=str,
+        help="Repository revision that should be used for a particular benchmark test.",
+    )
+    add_arg(
+        "--benchmark-branch",
+        dest="benchmark_branch",
+        default=None,
+        type=str,
+        help="Repository branch that should be used for a particular benchmark test.",
+    )
 
     add_logging_group(parser)
     return parser
@@ -498,10 +520,6 @@ def verify_options(parser, args):
     # Debug-mode is disabled in CI (check for attribute in case of mach_interface issues)
     if hasattr(args, "run_local") and (not args.run_local and args.debug_mode):
         parser.error("Cannot run debug mode in CI")
-
-    # If running on webextension, browsertime flag is changed (browsertime is run by default)
-    if args.webext:
-        args.browsertime = False
 
     # make sure that browsertime_video is set if visual metrics are requested
     if args.browsertime_visualmetrics and not args.browsertime_video:
@@ -543,40 +561,9 @@ def verify_options(parser, args):
     if args.gecko_profile and args.app in CHROMIUM_DISTROS:
         parser.error("Gecko profiling is not supported on Chrome/Chromium!")
 
-    if args.power_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            if platform.system().lower() not in ("darwin",):
-                parser.error(
-                    "Power tests are only available on MacOS desktop machines or "
-                    "Firefox android browers. App requested: %s. Platform "
-                    "detected: %s." % (args.app, platform.system().lower())
-                )
-
-    if args.cpu_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            parser.error(
-                "CPU test is only supported when running Raptor on Firefox Android "
-                "browsers!"
-            )
-
-    if args.memory_test:
-        if args.app not in ["geckoview", "refbrow", "fenix"]:
-            parser.error(
-                "Memory test is only supported when running Raptor on Firefox Android "
-                "browsers!"
-            )
-
     if args.fission:
-        if args.app not in DESKTOP_APPS and not args.fission_mobile:
-            print(
-                "Fission is currently disabled by default in mobile, "
-                "use --enable-fission-mobile to enable it"
-            )
-            args.fission = False
-            args.extra_prefs.append("fission.autostart=false")
-        else:
-            print("Fission enabled through browser preferences")
-            args.extra_prefs.append("fission.autostart=true")
+        print("Fission enabled through browser preferences")
+        args.extra_prefs.append("fission.autostart=true")
     else:
         print("Fission disabled through browser preferences")
         args.extra_prefs.append("fission.autostart=false")
@@ -597,6 +584,12 @@ def verify_options(parser, args):
             else:
                 # otherwise fail out
                 parser.error("--intent command-line argument is required!")
+
+    if args.benchmark_repository:
+        if not args.benchmark_revision:
+            parser.error(
+                "When a benchmark repository is provided, a revision is also required."
+            )
 
 
 def parse_args(argv=None):

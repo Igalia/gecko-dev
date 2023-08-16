@@ -93,15 +93,26 @@ impl rpccore::Server for CallbackServer {
 
                 run_in_callback(|| {
                     let nframes = unsafe {
+                        let input_ptr = if input_frame_size > 0 {
+                            if let Some(buf) = &mut self.duplex_input {
+                                buf.as_ptr()
+                            } else {
+                                self.shm.get_slice(input_nbytes).unwrap().as_ptr()
+                            }
+                        } else {
+                            ptr::null()
+                        };
+                        let output_ptr = if output_frame_size > 0 {
+                            self.shm.get_mut_slice(output_nbytes).unwrap().as_mut_ptr()
+                        } else {
+                            ptr::null_mut()
+                        };
+
                         self.data_cb.unwrap()(
                             ptr::null_mut(), // https://github.com/kinetiknz/cubeb/issues/518
                             self.user_ptr as *mut c_void,
-                            if let Some(buf) = &mut self.duplex_input {
-                                buf.as_mut_ptr()
-                            } else {
-                                self.shm.get_slice(input_nbytes).unwrap().as_ptr()
-                            } as *const _,
-                            self.shm.get_mut_slice(output_nbytes).unwrap().as_mut_ptr() as *mut _,
+                            input_ptr as *const _,
+                            output_ptr as *mut _,
                             nframes as _,
                         )
                     };
@@ -227,8 +238,7 @@ impl<'ctx> ClientStream<'ctx> {
 impl Drop for ClientStream<'_> {
     fn drop(&mut self) {
         debug!("ClientStream drop");
-        let rpc = self.context.rpc();
-        let _ = send_recv!(rpc, StreamDestroy(self.token) => StreamDestroyed);
+        let _ = send_recv!(self.context.rpc(), StreamDestroy(self.token) => StreamDestroyed);
         debug!("ClientStream drop - stream destroyed");
         // Wait for CallbackServer to shutdown.  The remote server drops the RPC
         // connection during StreamDestroy, which will cause CallbackServer to drop

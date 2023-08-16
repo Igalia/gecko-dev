@@ -2,47 +2,36 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
+import errno
 import io
 import json
 import logging
-import mozpack.path as mozpath
 import multiprocessing
 import os
-import six
 import subprocess
 import sys
-import errno
 from pathlib import Path
 
+import mozpack.path as mozpath
+import six
 from mach.mixin.process import ProcessExecutionMixin
 from mozboot.mozconfig import MozconfigFindException
 from mozfile import which
 from mozversioncontrol import (
-    get_repository_from_build_config,
-    get_repository_object,
     GitRepository,
     HgRepository,
     InvalidRepoPath,
     MissingConfigureInfo,
     MissingVCSTool,
+    get_repository_from_build_config,
+    get_repository_object,
 )
 
-from .backend.configenvironment import (
-    ConfigEnvironment,
-    ConfigStatusFailure,
-)
+from .backend.configenvironment import ConfigEnvironment, ConfigStatusFailure
 from .configure import ConfigureSandbox
 from .controller.clobber import Clobberer
-from .mozconfig import (
-    MozconfigLoadException,
-    MozconfigLoader,
-)
-from .util import (
-    memoize,
-    memoized_property,
-)
+from .mozconfig import MozconfigLoader, MozconfigLoadException
+from .util import memoize, memoized_property
 
 try:
     import psutil
@@ -106,14 +95,14 @@ class MozbuildObject(ProcessExecutionMixin):
         and a LogManager instance. The topobjdir may be passed in as well. If
         it isn't, it will be calculated from the active mozconfig.
         """
-        self.topsrcdir = mozpath.normsep(topsrcdir)
+        self.topsrcdir = mozpath.realpath(topsrcdir)
         self.settings = settings
 
         self.populate_logger()
         self.log_manager = log_manager
 
         self._make = None
-        self._topobjdir = mozpath.normsep(topobjdir) if topobjdir else topobjdir
+        self._topobjdir = mozpath.realpath(topobjdir) if topobjdir else topobjdir
         self._mozconfig = mozconfig
         self._config_environment = None
         self._virtualenv_name = virtualenv_name or "common"
@@ -180,9 +169,9 @@ class MozbuildObject(ProcessExecutionMixin):
         if not topsrcdir:
             topsrcdir = str(Path(__file__).parent.parent.parent.parent.resolve())
 
-        topsrcdir = mozpath.normsep(topsrcdir)
+        topsrcdir = mozpath.realpath(topsrcdir)
         if topobjdir:
-            topobjdir = mozpath.normsep(os.path.normpath(topobjdir))
+            topobjdir = mozpath.realpath(topobjdir)
 
             if topsrcdir == topobjdir:
                 raise BadEnvironmentException(
@@ -198,7 +187,7 @@ class MozbuildObject(ProcessExecutionMixin):
         )
 
     def resolve_mozconfig_topobjdir(self, default=None):
-        topobjdir = self.mozconfig["topobjdir"] or default
+        topobjdir = self.mozconfig.get("topobjdir") or default
         if not topobjdir:
             return None
 
@@ -265,7 +254,7 @@ class MozbuildObject(ProcessExecutionMixin):
     @property
     def virtualenv_manager(self):
         from mach.site import CommandSiteManager
-        from mozboot.util import get_state_dir
+        from mach.util import get_state_dir, get_virtualenv_base_dir
 
         if self._virtualenv_manager is None:
             self._virtualenv_manager = CommandSiteManager.from_environment(
@@ -274,10 +263,14 @@ class MozbuildObject(ProcessExecutionMixin):
                     specific_to_topsrcdir=True, topsrcdir=self.topsrcdir
                 ),
                 self._virtualenv_name,
-                os.path.join(self.topobjdir, "_virtualenvs"),
+                get_virtualenv_base_dir(self.topsrcdir),
             )
 
         return self._virtualenv_manager
+
+    @virtualenv_manager.setter
+    def virtualenv_manager(self, command_site_manager):
+        self._virtualenv_manager = command_site_manager
 
     @staticmethod
     @memoize
@@ -477,12 +470,9 @@ class MozbuildObject(ProcessExecutionMixin):
         ``vcs_check_clean`` is False. This prevents confusion due to uncommitted
         file changes not being reflected in the reader.
         """
-        from mozbuild.frontend.reader import (
-            default_finder,
-            BuildReader,
-            EmptyConfig,
-        )
         from mozpack.files import MercurialRevisionFinder
+
+        from mozbuild.frontend.reader import BuildReader, EmptyConfig, default_finder
 
         if config_mode == "build":
             config = self.config_environment
@@ -496,7 +486,12 @@ class MozbuildObject(ProcessExecutionMixin):
         except InvalidRepoPath:
             repo = None
 
-        if repo and not vcs_revision and repo.sparse_checkout_present():
+        if (
+            repo
+            and repo != "SOURCE"
+            and not vcs_revision
+            and repo.sparse_checkout_present()
+        ):
             vcs_revision = "."
 
         if vcs_revision is None:
@@ -605,8 +600,8 @@ class MozbuildObject(ProcessExecutionMixin):
                     ensure_exit_code=False,
                 )
             elif sys.platform.startswith("win"):
-                from ctypes import Structure, windll, POINTER, sizeof, WINFUNCTYPE
-                from ctypes.wintypes import DWORD, HANDLE, BOOL, UINT
+                from ctypes import POINTER, WINFUNCTYPE, Structure, sizeof, windll
+                from ctypes.wintypes import BOOL, DWORD, HANDLE, UINT
 
                 class FLASHWINDOW(Structure):
                     _fields_ = [

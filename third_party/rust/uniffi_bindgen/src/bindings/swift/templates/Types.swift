@@ -12,7 +12,7 @@
  # Rust code.
  #
  #   - When adding additional types here, make sure to also add a match arm to that function.
- #   - To keep things managable, let's try to limit ourselves to these 2 mega-matches
+ #   - To keep things manageable, let's try to limit ourselves to these 2 mega-matches
  #}
 {%- match type_ %}
 
@@ -21,6 +21,9 @@
 
 {%- when Type::String %}
 {%- include "StringHelper.swift" %}
+
+{%- when Type::Bytes %}
+{%- include "DataHelper.swift" %}
 
 {%- when Type::Int8 %}
 {%- include "Int8Helper.swift" %}
@@ -61,16 +64,21 @@
 {%- when Type::CallbackInterface(name) %}
 {%- include "CallbackInterfaceTemplate.swift" %}
 
+{%- when Type::ForeignExecutor %}
+{%- include "ForeignExecutorTemplate.swift" %}
+
 {%- when Type::Custom { name, builtin } %}
 {%- include "CustomType.swift" %}
 
 {%- when Type::Enum(name) %}
-{%- include "EnumTemplate.swift" %}
-
-{%- when Type::Error(name) %}
+{%- let e = ci.get_enum_definition(name).unwrap() %}
+{%- if ci.is_name_used_as_error(name) %}
 {%- include "ErrorTemplate.swift" %}
+{%- else %}
+{%- include "EnumTemplate.swift" %}
+{% endif %}
 
-{%- when Type::Object(name) %}
+{%- when Type::Object{ name, imp } %}
 {%- include "ObjectTemplate.swift" %}
 
 {%- when Type::Record(name) %}
@@ -85,7 +93,10 @@
 {%- when Type::Map(key_type, value_type) %}
 {%- include "MapTemplate.swift" %}
 
-
 {%- else %}
 {%- endmatch %}
 {%- endfor %}
+
+{%- if ci.has_async_fns() %}
+{%- include "AsyncTypes.swift" %}
+{%- endif %}

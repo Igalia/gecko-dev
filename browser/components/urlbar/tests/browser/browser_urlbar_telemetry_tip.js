@@ -37,7 +37,7 @@ function assertTelemetryResults(histograms, type, index, method) {
   );
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       // Disable search suggestions in the urlbar.
@@ -58,10 +58,15 @@ add_task(async function test() {
         UrlbarUtils.RESULT_TYPE.TIP,
         UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
         {
-          icon: "",
-          text: "This is a test tip.",
-          buttonText: "OK",
+          helpUrl: "https://example.com/",
           type: "test",
+          titleL10n: { id: "urlbar-search-tips-confirm" },
+          buttons: [
+            {
+              url: "https://example.com/",
+              l10n: { id: "urlbar-search-tips-confirm" },
+            },
+          ],
         }
       ),
       { heuristic: true }

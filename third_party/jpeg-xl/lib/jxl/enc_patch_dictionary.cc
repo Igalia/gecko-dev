@@ -27,7 +27,9 @@
 #include "lib/jxl/dec_cache.h"
 #include "lib/jxl/dec_frame.h"
 #include "lib/jxl/enc_ans.h"
+#include "lib/jxl/enc_aux_out.h"
 #include "lib/jxl/enc_cache.h"
+#include "lib/jxl/enc_debug_image.h"
 #include "lib/jxl/enc_dot_dictionary.h"
 #include "lib/jxl/enc_frame.h"
 #include "lib/jxl/entropy_coder.h"
@@ -38,6 +40,8 @@
 #include "lib/jxl/patch_dictionary_internal.h"
 
 namespace jxl {
+
+static constexpr size_t kPatchFrameReferenceId = 3;
 
 // static
 void PatchDictionaryEncoder::Encode(const PatchDictionary& pdic,
@@ -116,15 +120,12 @@ void PatchDictionaryEncoder::SubtractFrom(const PatchDictionary& pdic,
   size_t num_ec = pdic.shared_->metadata->m.num_extra_channels;
   // TODO(veluca): this can likely be optimized knowing it runs on full images.
   for (size_t y = 0; y < opsin->ysize(); y++) {
-    if (y + 1 >= pdic.patch_starts_.size()) continue;
     float* JXL_RESTRICT rows[3] = {
         opsin->PlaneRow(0, y),
         opsin->PlaneRow(1, y),
         opsin->PlaneRow(2, y),
     };
-    for (size_t id = pdic.patch_starts_[y]; id < pdic.patch_starts_[y + 1];
-         id++) {
-      const size_t pos_idx = pdic.sorted_patches_[id];
+    for (size_t pos_idx : pdic.GetPatchesForRow(y)) {
       const size_t blending_idx = pos_idx * (num_ec + 1);
       const PatchPosition& pos = pdic.positions_[pos_idx];
       const PatchReferencePosition& ref_pos =
@@ -138,13 +139,13 @@ void PatchDictionaryEncoder::SubtractFrom(const PatchDictionary& pdic,
       size_t iy = y - by;
       size_t ref = ref_pos.ref;
       const float* JXL_RESTRICT ref_rows[3] = {
-          pdic.shared_->reference_frames[ref].frame->color()->ConstPlaneRow(
+          pdic.shared_->reference_frames[ref].frame.color().ConstPlaneRow(
               0, ref_pos.y0 + iy) +
               ref_pos.x0,
-          pdic.shared_->reference_frames[ref].frame->color()->ConstPlaneRow(
+          pdic.shared_->reference_frames[ref].frame.color().ConstPlaneRow(
               1, ref_pos.y0 + iy) +
               ref_pos.x0,
-          pdic.shared_->reference_frames[ref].frame->color()->ConstPlaneRow(
+          pdic.shared_->reference_frames[ref].frame.color().ConstPlaneRow(
               2, ref_pos.y0 + iy) +
               ref_pos.x0,
       };
@@ -157,7 +158,8 @@ void PatchDictionaryEncoder::SubtractFrom(const PatchDictionary& pdic,
           } else if (mode == PatchBlendMode::kNone) {
             // Nothing to do.
           } else {
-            JXL_ABORT("Blending mode %u not yet implemented", (uint32_t)mode);
+            JXL_UNREACHABLE("Blending mode %u not yet implemented",
+                            (uint32_t)mode);
           }
         }
       }
@@ -207,8 +209,9 @@ struct PatchColorspaceInfo {
 };
 
 std::vector<PatchInfo> FindTextLikePatches(
-    const Image3F& opsin, const PassesEncoderState* JXL_RESTRICT state,
-    ThreadPool* pool, AuxOut* aux_out, bool is_xyb) {
+    const CompressParams& cparams, const Image3F& opsin,
+    const PassesEncoderState* JXL_RESTRICT state, ThreadPool* pool,
+    AuxOut* aux_out, bool is_xyb) {
   if (state->cparams.patches == Override::kOff) return {};
 
   PatchColorspaceInfo pci(is_xyb);
@@ -297,8 +300,8 @@ std::vector<PatchInfo> FindTextLikePatches(
                       process_row, "IsScreenshotLike"));
 
   // TODO(veluca): also parallelize the rest of this function.
-  if (WantDebugOutput(aux_out)) {
-    aux_out->DumpPlaneNormalized("screenshot_like", is_screenshot_like);
+  if (WantDebugOutput(cparams)) {
+    DumpPlaneNormalized(cparams, "screenshot_like", is_screenshot_like);
   }
 
   constexpr int kSearchRadius = 1;
@@ -378,12 +381,12 @@ std::vector<PatchInfo> FindTextLikePatches(
   ImageF ccs;
   Rng rng(0);
   bool paint_ccs = false;
-  if (WantDebugOutput(aux_out)) {
-    aux_out->DumpPlaneNormalized("is_background", is_background);
+  if (WantDebugOutput(cparams)) {
+    DumpPlaneNormalized(cparams, "is_background", is_background);
     if (is_xyb) {
-      aux_out->DumpXybImage("background", background);
+      DumpXybImage(cparams, "background", background);
     } else {
-      aux_out->DumpImage("background", background);
+      DumpImage(cparams, "background", background);
     }
     ccs = ImageF(opsin.xsize(), opsin.ysize());
     ZeroFillImage(&ccs);
@@ -519,15 +522,15 @@ std::vector<PatchInfo> FindTextLikePatches(
   }
 
   if (paint_ccs) {
-    JXL_ASSERT(WantDebugOutput(aux_out));
-    aux_out->DumpPlaneNormalized("ccs", ccs);
+    JXL_ASSERT(WantDebugOutput(cparams));
+    DumpPlaneNormalized(cparams, "ccs", ccs);
   }
   if (info.empty()) {
     return {};
   }
 
   // Remove duplicates.
-  constexpr size_t kMinPatchOccurences = 2;
+  constexpr size_t kMinPatchOccurrences = 2;
   std::sort(info.begin(), info.end());
   size_t unique = 0;
   for (size_t i = 1; i < info.size(); i++) {
@@ -535,13 +538,13 @@ std::vector<PatchInfo> FindTextLikePatches(
       info[unique].second.insert(info[unique].second.end(),
                                  info[i].second.begin(), info[i].second.end());
     } else {
-      if (info[unique].second.size() >= kMinPatchOccurences) {
+      if (info[unique].second.size() >= kMinPatchOccurrences) {
         unique++;
       }
       info[unique] = info[i];
     }
   }
-  if (info[unique].second.size() >= kMinPatchOccurences) {
+  if (info[unique].second.size() >= kMinPatchOccurrences) {
     unique++;
   }
   info.resize(unique);
@@ -567,7 +570,7 @@ void FindBestPatchDictionary(const Image3F& opsin,
                              const JxlCmsInterface& cms, ThreadPool* pool,
                              AuxOut* aux_out, bool is_xyb) {
   std::vector<PatchInfo> info =
-      FindTextLikePatches(opsin, state, pool, aux_out, is_xyb);
+      FindTextLikePatches(state->cparams, opsin, state, pool, aux_out, is_xyb);
 
   // TODO(veluca): this doesn't work if both dots and patches are enabled.
   // For now, since dots and patches are not likely to occur in the same kind of
@@ -695,7 +698,7 @@ void FindBestPatchDictionary(const Image3F& opsin,
     ref_pos.ysize = info[i].first.ysize;
     ref_pos.x0 = ref_positions[i].first;
     ref_pos.y0 = ref_positions[i].second;
-    ref_pos.ref = 0;
+    ref_pos.ref = kPatchFrameReferenceId;
     for (size_t y = 0; y < ref_pos.ysize; y++) {
       for (size_t x = 0; x < ref_pos.xsize; x++) {
         for (size_t c = 0; c < 3; c++) {
@@ -720,8 +723,8 @@ void FindBestPatchDictionary(const Image3F& opsin,
   // Recursive application of patches could create very weird issues.
   cparams.patches = Override::kOff;
 
-  RoundtripPatchFrame(&reference_frame, state, 0, cparams, cms, pool, aux_out,
-                      /*subtract=*/true);
+  RoundtripPatchFrame(&reference_frame, state, kPatchFrameReferenceId, cparams,
+                      cms, pool, aux_out, /*subtract=*/true);
 
   // TODO(veluca): this assumes that applying patches is commutative, which is
   // not true for all blending modes. This code only produces kAdd patches, so
@@ -796,7 +799,7 @@ void RoundtripPatchFrame(Image3F* reference_frame,
     frame_start += decoded.decoded_bytes();
     encoded_size -= decoded.decoded_bytes();
     size_t ref_xsize =
-        dec_state.shared_storage.reference_frames[idx].storage.color()->xsize();
+        dec_state.shared_storage.reference_frames[idx].frame.color()->xsize();
     // if the frame itself uses patches, we need to decode another frame
     if (!ref_xsize) {
       JXL_CHECK(DecodeFrame(&dec_state, pool, frame_start, encoded_size,
@@ -806,10 +809,8 @@ void RoundtripPatchFrame(Image3F* reference_frame,
     state->shared.reference_frames[idx] =
         std::move(dec_state.shared_storage.reference_frames[idx]);
   } else {
-    state->shared.reference_frames[idx].storage = std::move(ib);
+    state->shared.reference_frames[idx].frame = std::move(ib);
   }
-  state->shared.reference_frames[idx].frame =
-      &state->shared.reference_frames[idx].storage;
 }
 
 }  // namespace jxl

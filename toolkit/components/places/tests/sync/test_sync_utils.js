@@ -1,8 +1,6 @@
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+});
 
 var makeGuid = PlacesUtils.history.makeGuid;
 
@@ -83,7 +81,7 @@ var populateTree = async function populate(parentGuid, ...items) {
   return guids;
 };
 
-var moveSyncedBookmarksToUnsyncedParent = async function() {
+var moveSyncedBookmarksToUnsyncedParent = async function () {
   info("Insert synced bookmarks");
   let syncedGuids = await populateTree(
     PlacesUtils.bookmarks.menuGuid,
@@ -131,14 +129,14 @@ var moveSyncedBookmarksToUnsyncedParent = async function() {
   return { syncedGuids, unsyncedFolder };
 };
 
-var setChangesSynced = async function(changes) {
+var setChangesSynced = async function (changes) {
   for (let recordId in changes) {
     changes[recordId].synced = true;
   }
   await PlacesSyncUtils.bookmarks.pushChanges(changes);
 };
 
-var ignoreChangedRoots = async function() {
+var ignoreChangedRoots = async function () {
   let changes = await PlacesSyncUtils.bookmarks.pullChanges();
   let expectedRoots = ["menu", "mobile", "toolbar", "unfiled"];
   if (!ObjectUtils.deepEqual(Object.keys(changes).sort(), expectedRoots)) {
@@ -624,7 +622,7 @@ add_task(async function test_pullChanges_tags() {
     index: 0,
   });
   let tagFolderGuid = tagBm.guid;
-  let tagFolderId = await PlacesUtils.promiseItemId(tagFolderGuid);
+  let tagFolderId = await PlacesTestUtils.promiseItemId(tagFolderGuid);
 
   info("Tagged bookmarks should be in changeset");
   {
@@ -1240,10 +1238,8 @@ add_task(async function test_fetch() {
 add_task(async function test_pullChanges_new_parent() {
   await ignoreChangedRoots();
 
-  let {
-    syncedGuids,
-    unsyncedFolder,
-  } = await moveSyncedBookmarksToUnsyncedParent();
+  let { syncedGuids, unsyncedFolder } =
+    await moveSyncedBookmarksToUnsyncedParent();
 
   info("Unsynced parent and synced items should be tracked");
   let changes = await PlacesSyncUtils.bookmarks.pullChanges();
@@ -1266,10 +1262,8 @@ add_task(async function test_pullChanges_new_parent() {
 add_task(async function test_pullChanges_deleted_folder() {
   await ignoreChangedRoots();
 
-  let {
-    syncedGuids,
-    unsyncedFolder,
-  } = await moveSyncedBookmarksToUnsyncedParent();
+  let { syncedGuids, unsyncedFolder } =
+    await moveSyncedBookmarksToUnsyncedParent();
 
   info("Remove unsynced new folder");
   await PlacesUtils.bookmarks.remove(unsyncedFolder.guid);
@@ -1617,7 +1611,7 @@ add_task(async function test_pullChanges_tombstones() {
   info("Manually insert conflicting tombstone for new bookmark");
   await PlacesUtils.withConnectionWrapper(
     "test_pullChanges_tombstones",
-    async function(db) {
+    async function (db) {
       await db.executeCached(
         `
         INSERT INTO moz_bookmarks_deleted(guid)
@@ -1934,9 +1928,8 @@ add_task(async function test_separator() {
     childBmk.recordId
   );
   let parentGuid = await await PlacesSyncUtils.bookmarks.recordIdToGuid("menu");
-  let separatorGuid = PlacesSyncUtils.bookmarks.recordIdToGuid(
-    separatorRecordId
-  );
+  let separatorGuid =
+    PlacesSyncUtils.bookmarks.recordIdToGuid(separatorRecordId);
 
   info("Move a bookmark around the separator");
   await PlacesUtils.bookmarks.update({
@@ -2086,22 +2079,20 @@ add_task(async function test_remove_partial() {
     parentRecordId: childFolder.recordId,
     recordId: makeGuid(),
   });
-  let greatGrandChildPrevSiblingBmk = await PlacesSyncUtils.test.bookmarks.insert(
-    {
+  let greatGrandChildPrevSiblingBmk =
+    await PlacesSyncUtils.test.bookmarks.insert({
       kind: "bookmark",
       parentRecordId: grandChildFolder.recordId,
       recordId: makeGuid(),
       url: "http://getfirefox.com",
-    }
-  );
-  let greatGrandChildNextSiblingBmk = await PlacesSyncUtils.test.bookmarks.insert(
-    {
+    });
+  let greatGrandChildNextSiblingBmk =
+    await PlacesSyncUtils.test.bookmarks.insert({
       kind: "bookmark",
       parentRecordId: grandChildFolder.recordId,
       recordId: makeGuid(),
       url: "http://getthunderbird.com",
-    }
-  );
+    });
   let menuBmk = await PlacesSyncUtils.test.bookmarks.insert({
     kind: "bookmark",
     parentRecordId: "menu",
@@ -2171,7 +2162,7 @@ add_task(async function test_migrateOldTrackerEntries() {
   let timerPrecision = Preferences.get("privacy.reduceTimerPrecision");
   Preferences.set("privacy.reduceTimerPrecision", false);
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     Preferences.set("privacy.reduceTimerPrecision", timerPrecision);
   });
 

@@ -1,5 +1,5 @@
-//! Subscribers collect and record trace data.
-use crate::{span, Event, LevelFilter, Metadata};
+//! Collectors collect and record trace data.
+use crate::{span, Dispatch, Event, LevelFilter, Metadata};
 
 use crate::stdlib::{
     any::{Any, TypeId},
@@ -60,6 +60,9 @@ use crate::stdlib::{
 ///   See also the [documentation on the callsite registry][cs-reg] for details
 ///   on [`register_callsite`].
 ///
+/// - [`event_enabled`] is called once before every call to the [`event`]
+///   method. This can be used to implement filtering on events once their field
+///   values are known, but before any processing is done in the `event` method.
 /// - [`clone_span`] is called every time a span ID is cloned, and [`try_close`]
 ///   is called when a span ID is dropped. By default, these functions do
 ///   nothing. However, they can be used to implement reference counting for
@@ -75,8 +78,31 @@ use crate::stdlib::{
 /// [`clone_span`]: Subscriber::clone_span
 /// [`try_close`]: Subscriber::try_close
 /// [cs-reg]: crate::callsite#registering-callsites
+/// [`event`]: Subscriber::event
+/// [`event_enabled`]: Subscriber::event_enabled
 pub trait Subscriber: 'static {
-    // === Span registry methods ==============================================
+    /// Invoked when this subscriber becomes a [`Dispatch`].
+    ///
+    /// ## Avoiding Memory Leaks
+    ///
+    /// `Subscriber`s should not store their own [`Dispatch`]. Because the
+    /// `Dispatch` owns the `Subscriber`, storing the `Dispatch` within the
+    /// `Subscriber` will create a reference count cycle, preventing the `Dispatch`
+    /// from ever being dropped.
+    ///
+    /// Instead, when it is necessary to store a cyclical reference to the
+    /// `Dispatch` within a `Subscriber`, use [`Dispatch::downgrade`] to convert a
+    /// `Dispatch` into a [`WeakDispatch`]. This type is analogous to
+    /// [`std::sync::Weak`], and does not create a reference count cycle. A
+    /// [`WeakDispatch`] can be stored within a `Subscriber` without causing a
+    /// memory leak, and can be [upgraded] into a `Dispatch` temporarily when
+    /// the `Dispatch` must be accessed by the `Subscriber`.
+    ///
+    /// [`WeakDispatch`]: crate::dispatcher::WeakDispatch
+    /// [upgraded]: crate::dispatcher::WeakDispatch::upgrade
+    fn on_register_dispatch(&self, subscriber: &Dispatch) {
+        let _ = subscriber;
+    }
 
     /// Registers a new [callsite] with this subscriber, returning whether or not
     /// the subscriber is interested in being notified about the callsite.
@@ -291,6 +317,17 @@ pub trait Subscriber: 'static {
     /// follow from _b_), it may silently do nothing.
     fn record_follows_from(&self, span: &span::Id, follows: &span::Id);
 
+    /// Determine if an [`Event`] should be recorded.
+    ///
+    /// By default, this returns `true` and `Subscriber`s can filter events in
+    /// [`event`][Self::event] without any penalty. However, when `event` is
+    /// more complicated, this can be used to determine if `event` should be
+    /// called at all, separating out the decision from the processing.
+    fn event_enabled(&self, event: &Event<'_>) -> bool {
+        let _ = event;
+        true
+    }
+
     /// Records that an [`Event`] has occurred.
     ///
     /// This method will be invoked when an Event is constructed by
@@ -484,6 +521,66 @@ impl dyn Subscriber {
     }
 }
 
+impl dyn Subscriber + Send {
+    /// Returns `true` if this [`Subscriber`] is the same type as `T`.
+    pub fn is<T: Any>(&self) -> bool {
+        self.downcast_ref::<T>().is_some()
+    }
+
+    /// Returns some reference to this [`Subscriber`] value if it is of type `T`,
+    /// or `None` if it isn't.
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        unsafe {
+            let raw = self.downcast_raw(TypeId::of::<T>())?;
+            if raw.is_null() {
+                None
+            } else {
+                Some(&*(raw as *const _))
+            }
+        }
+    }
+}
+
+impl dyn Subscriber + Sync {
+    /// Returns `true` if this [`Subscriber`] is the same type as `T`.
+    pub fn is<T: Any>(&self) -> bool {
+        self.downcast_ref::<T>().is_some()
+    }
+
+    /// Returns some reference to this `[`Subscriber`] value if it is of type `T`,
+    /// or `None` if it isn't.
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        unsafe {
+            let raw = self.downcast_raw(TypeId::of::<T>())?;
+            if raw.is_null() {
+                None
+            } else {
+                Some(&*(raw as *const _))
+            }
+        }
+    }
+}
+
+impl dyn Subscriber + Send + Sync {
+    /// Returns `true` if this [`Subscriber`] is the same type as `T`.
+    pub fn is<T: Any>(&self) -> bool {
+        self.downcast_ref::<T>().is_some()
+    }
+
+    /// Returns some reference to this [`Subscriber`] value if it is of type `T`,
+    /// or `None` if it isn't.
+    pub fn downcast_ref<T: Any>(&self) -> Option<&T> {
+        unsafe {
+            let raw = self.downcast_raw(TypeId::of::<T>())?;
+            if raw.is_null() {
+                None
+            } else {
+                Some(&*(raw as *const _))
+            }
+        }
+    }
+}
+
 /// Indicates a [`Subscriber`]'s interest in a particular callsite.
 ///
 /// `Subscriber`s return an `Interest` from their [`register_callsite`] methods
@@ -602,7 +699,10 @@ impl Subscriber for NoSubscriber {
     fn exit(&self, _span: &span::Id) {}
 }
 
-impl Subscriber for Box<dyn Subscriber + Send + Sync + 'static> {
+impl<S> Subscriber for Box<S>
+where
+    S: Subscriber + ?Sized,
+{
     #[inline]
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
         self.as_ref().register_callsite(metadata)
@@ -631,6 +731,11 @@ impl Subscriber for Box<dyn Subscriber + Send + Sync + 'static> {
     #[inline]
     fn record_follows_from(&self, span: &span::Id, follows: &span::Id) {
         self.as_ref().record_follows_from(span, follows)
+    }
+
+    #[inline]
+    fn event_enabled(&self, event: &Event<'_>) -> bool {
+        self.as_ref().event_enabled(event)
     }
 
     #[inline]
@@ -679,7 +784,10 @@ impl Subscriber for Box<dyn Subscriber + Send + Sync + 'static> {
     }
 }
 
-impl Subscriber for Arc<dyn Subscriber + Send + Sync + 'static> {
+impl<S> Subscriber for Arc<S>
+where
+    S: Subscriber + ?Sized,
+{
     #[inline]
     fn register_callsite(&self, metadata: &'static Metadata<'static>) -> Interest {
         self.as_ref().register_callsite(metadata)
@@ -708,6 +816,11 @@ impl Subscriber for Arc<dyn Subscriber + Send + Sync + 'static> {
     #[inline]
     fn record_follows_from(&self, span: &span::Id, follows: &span::Id) {
         self.as_ref().record_follows_from(span, follows)
+    }
+
+    #[inline]
+    fn event_enabled(&self, event: &Event<'_>) -> bool {
+        self.as_ref().event_enabled(event)
     }
 
     #[inline]

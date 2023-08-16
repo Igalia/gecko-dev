@@ -11,15 +11,12 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
   UrlbarProviderExtension:
     "resource:///modules/UrlbarProviderExtension.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
   UrlbarView: "resource:///modules/UrlbarView.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  Preferences: "resource://gre/modules/Preferences.jsm",
 });
 
 XPCOMUtils.defineLazyGetter(
@@ -103,7 +100,7 @@ this.experiments_urlbar = class extends ExtensionAPI {
           value: Preferences.get(pref),
 
           // Nothing actually uses this, but on debug builds there are extra
-          // checks enabled in Schema.jsm that fail if it's not present.  The
+          // checks enabled in Schema.sys.mjs that fail if it's not present.  The
           // value doesn't matter.
           levelOfControl: "controllable_by_this_extension",
         };

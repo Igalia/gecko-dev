@@ -144,11 +144,12 @@ class MediaTrackGraphImpl : public MediaTrackGraph,
                                nsISerialEventTarget* aMainThread);
   static MediaTrackGraphImpl* GetInstance(
       GraphDriverType aGraphDriverRequested, uint64_t aWindowID,
-      TrackRate aSampleRate, CubebUtils::AudioDeviceID aOutputDeviceID,
+      bool aShouldResistFingerprinting, TrackRate aSampleRate,
+      CubebUtils::AudioDeviceID aOutputDeviceID,
       nsISerialEventTarget* aMainThread);
   static MediaTrackGraphImpl* GetInstanceIfExists(
-      uint64_t aWindowID, TrackRate aSampleRate,
-      CubebUtils::AudioDeviceID aOutputDeviceID);
+      uint64_t aWindowID, bool aShouldResistFingerprinting,
+      TrackRate aSampleRate, CubebUtils::AudioDeviceID aOutputDeviceID);
 
   // Intended only for assertions, either on graph thread or not running (in
   // which case we must be on the main thread).
@@ -414,6 +415,10 @@ class MediaTrackGraphImpl : public MediaTrackGraph,
    * Queue audio (mix of track audio and silence for blocked intervals)
    * to the audio output track. Returns the number of frames played.
    */
+  struct TrackAndKey {
+    MediaTrack* mTrack;
+    void* mKey;
+  };
   struct TrackKeyAndVolume {
     MediaTrack* mTrack;
     void* mKey;
@@ -1045,5 +1050,17 @@ class MediaTrackGraphImpl : public MediaTrackGraph,
 };
 
 }  // namespace mozilla
+
+template <>
+class nsDefaultComparator<mozilla::MediaTrackGraphImpl::TrackKeyAndVolume,
+                          mozilla::MediaTrackGraphImpl::TrackAndKey> {
+ public:
+  bool Equals(
+      const mozilla::MediaTrackGraphImpl::TrackKeyAndVolume& aElement,
+      const mozilla::MediaTrackGraphImpl::TrackAndKey& aTrackAndKey) const {
+    return aElement.mTrack == aTrackAndKey.mTrack &&
+           aElement.mKey == aTrackAndKey.mKey;
+  }
+};
 
 #endif /* MEDIATRACKGRAPHIMPL_H_ */

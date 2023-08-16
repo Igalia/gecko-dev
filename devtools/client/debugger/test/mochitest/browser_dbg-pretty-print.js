@@ -8,7 +8,7 @@
 
 requestLongerTimeout(2);
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-minified.html", "math.min.js");
 
   await selectSource(dbg, "math.min.js", 2);
@@ -31,16 +31,23 @@ add_task(async function() {
 
   await stepOver(dbg);
 
-  assertPausedAtSourceAndLine(dbg, ppSrc.id, 27);
+  assertPausedAtSourceAndLine(dbg, ppSrc.id, 39);
 
   await resume(dbg);
 
-  // The pretty-print button should go away in the pretty-printed
-  // source.
-  ok(!findElement(dbg, "prettyPrintButton"), "Pretty Print Button is hidden");
+  // The pretty-print button should be disabled in the pretty-printed source.
+  ok(
+    findElement(dbg, "prettyPrintButton").disabled,
+    "Pretty Print Button should be disabled"
+  );
 
   await selectSource(dbg, "math.min.js");
-  ok(findElement(dbg, "prettyPrintButton"), "Pretty Print Button is visible");
+  await waitForSelectedSource(dbg, "math.min.js");
+
+  ok(
+    !findElement(dbg, "prettyPrintButton").disabled,
+    "Pretty Print Button should be enabled"
+  );
 });
 
 add_task(async function testPrivateFields() {
@@ -49,7 +56,7 @@ add_task(async function testPrivateFields() {
   httpServer.registerContentType("html", "text/html");
   httpServer.registerContentType("js", "application/javascript");
 
-  httpServer.registerPathHandler(`/`, function(request, response) {
+  httpServer.registerPathHandler(`/`, function (request, response) {
     response.setStatusLine(request.httpVersion, 200, "OK");
     response.write(`
       <html>
@@ -58,12 +65,11 @@ add_task(async function testPrivateFields() {
       </html>`);
   });
 
-  httpServer.registerPathHandler("/class-with-private-fields.js", function(
-    request,
-    response
-  ) {
-    response.setHeader("Content-Type", "application/javascript");
-    response.write(`
+  httpServer.registerPathHandler(
+    "/class-with-private-fields.js",
+    function (request, response) {
+      response.setHeader("Content-Type", "application/javascript");
+      response.write(`
       class MyClass {
         constructor(a) {
           this.#a = a;this.#b = Math.random();this.ab = this.#getAB();
@@ -80,7 +86,8 @@ add_task(async function testPrivateFields() {
         }
       }
   `);
-  });
+    }
+  );
   const port = httpServer.identity.primaryPort;
   const TEST_URL = `http://localhost:${port}/`;
 

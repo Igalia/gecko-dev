@@ -19,12 +19,12 @@ add_task(async () => {
       background() {
         const open = indexedDB.open("TestDatabase", 1);
 
-        open.onupgradeneeded = function() {
+        open.onupgradeneeded = function () {
           const db = open.result;
           db.createObjectStore("TestStore", { keyPath: "id" });
         };
 
-        open.onsuccess = function() {
+        open.onsuccess = function () {
           const db = open.result;
           const tx = db.transaction("TestStore", "readwrite");
           const store = tx.objectStore("TestStore");
@@ -40,7 +40,7 @@ add_task(async () => {
     document
   );
 
-  const { devtoolsTab, devtoolsWindow } = await openAboutDevtoolsToolbox(
+  const { devtoolsWindow } = await openAboutDevtoolsToolbox(
     document,
     tab,
     window,
@@ -84,7 +84,7 @@ add_task(async () => {
   is(user2.name, "Bob", "user 2 has the expected name");
   is(user2.age, 24, "user 2 has the expected age");
 
-  await closeAboutDevtoolsToolbox(document, devtoolsTab, window);
+  await closeWebExtAboutDevtoolsToolbox(devtoolsWindow, window);
   await removeTemporaryExtension(EXTENSION_NAME, document);
   await removeTab(tab);
 });

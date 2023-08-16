@@ -203,6 +203,7 @@ already_AddRefed<MediaTransportHandler> MediaTransportHandler::Create(
   } else {
     result = new MediaTransportHandlerSTS(aCallbackThread);
   }
+  result->Initialize();
   return result.forget();
 }
 
@@ -695,8 +696,9 @@ void MediaTransportHandlerSTS::Destroy() {
   CSFLogDebug(LOGTAG, "%s %p", __func__, this);
   // Our "destruction tour" starts on main, because we need to deregister.
   if (!NS_IsMainThread()) {
-    GetMainThreadEventTarget()->Dispatch(NewNonOwningRunnableMethod(
-        __func__, this, &MediaTransportHandlerSTS::Destroy));
+    GetMainThreadSerialEventTarget()->Dispatch(
+        NewNonOwningRunnableMethod("MediaTransportHandlerSTS::Destroy", this,
+                                   &MediaTransportHandlerSTS::Destroy));
     return;
   }
 
@@ -710,8 +712,9 @@ void MediaTransportHandlerSTS::Destroy() {
   // and clean up there. However, by the time _that_ happens, we may have
   // dispatched a signal callback to mCallbackThread, so we have to dispatch
   // the final destruction to mCallbackThread.
-  nsresult rv = mStsThread->Dispatch(NewNonOwningRunnableMethod(
-      __func__, this, &MediaTransportHandlerSTS::Destroy_s));
+  nsresult rv = mStsThread->Dispatch(
+      NewNonOwningRunnableMethod("MediaTransportHandlerSTS::Destroy_s", this,
+                                 &MediaTransportHandlerSTS::Destroy_s));
   if (NS_WARN_IF(NS_FAILED(rv))) {
     CSFLogError(LOGTAG,
                 "Unable to dispatch to STS: why has the XPCOM shutdown handler "
@@ -1275,20 +1278,17 @@ RefPtr<dom::RTCStatsPromise> MediaTransportHandlerSTS::GetIceStats(
     const std::string& aTransportId, DOMHighResTimeStamp aNow) {
   MOZ_RELEASE_ASSERT(mInitPromise);
 
-  return mInitPromise->Then(
-      mStsThread, __func__,
-      [=, self = RefPtr<MediaTransportHandlerSTS>(this)]() {
-        UniquePtr<dom::RTCStatsCollection> stats(new dom::RTCStatsCollection);
-        if (mIceCtx) {
-          for (const auto& stream : mIceCtx->GetStreams()) {
-            if (aTransportId.empty() || aTransportId == stream->GetId()) {
-              GetIceStats(*stream, aNow, stats.get());
-            }
-          }
+  return mInitPromise->Then(mStsThread, __func__, [=, self = RefPtr(this)]() {
+    UniquePtr<dom::RTCStatsCollection> stats(new dom::RTCStatsCollection);
+    if (mIceCtx) {
+      for (const auto& stream : mIceCtx->GetStreams()) {
+        if (aTransportId.empty() || aTransportId == stream->GetId()) {
+          GetIceStats(*stream, aNow, stats.get());
         }
-        return dom::RTCStatsPromise::CreateAndResolve(std::move(stats),
-                                                      __func__);
-      });
+      }
+    }
+    return dom::RTCStatsPromise::CreateAndResolve(std::move(stats), __func__);
+  });
 }
 
 RefPtr<MediaTransportHandler::IceLogPromise>

@@ -27,14 +27,11 @@ def set_defaults(config, jobs):
         job["treeherder"].setdefault("kind", "build")
         job["treeherder"].setdefault("tier", 1)
         _, worker_os = worker_type_implementation(
-            config.graph_config, job["worker-type"]
+            config.graph_config, config.params, job["worker-type"]
         )
         worker = job.setdefault("worker", {})
         worker.setdefault("env", {})
         worker["chain-of-trust"] = True
-        if worker_os == "linux":
-            worker.setdefault("docker-image", {"in-tree": "debian11-amd64-build"})
-
         yield job
 
 
@@ -172,11 +169,16 @@ def use_profile_data(config, jobs):
         job["worker"]["env"].update({"TASKCLUSTER_PGO_PROFILE_USE": "1"})
 
         _, worker_os = worker_type_implementation(
-            config.graph_config, job["worker-type"]
+            config.graph_config, config.params, job["worker-type"]
         )
         if worker_os == "linux":
             # LTO linkage needs more open files than the default from run-task.
             job["worker"]["env"].update({"MOZ_LIMIT_NOFILE": "8192"})
+
+        if job.get("use-sccache"):
+            raise Exception(
+                "use-sccache is incompatible with use-pgo in {}".format(job["name"])
+            )
 
         yield job
 
@@ -199,6 +201,7 @@ def enable_full_crashsymbols(config, jobs):
     'enable-full-crashsymbols' set to True and on release branches, or
     on try"""
     branches = RELEASE_PROJECTS | {
+        "toolchains",
         "try",
     }
     for job in jobs:
@@ -209,4 +212,24 @@ def enable_full_crashsymbols(config, jobs):
         else:
             logger.debug("Disabling full symbol generation for %s", job["name"])
             job["attributes"].pop("enable-full-crashsymbols", None)
+        yield job
+
+
+@transforms.add
+def set_expiry(config, jobs):
+    for job in jobs:
+        attributes = job["attributes"]
+        if (
+            "shippable" in attributes
+            and attributes["shippable"]
+            and config.kind
+            in {
+                "build",
+            }
+        ):
+            expiration_policy = "long"
+        else:
+            expiration_policy = "medium"
+
+        job["expiration-policy"] = expiration_policy
         yield job

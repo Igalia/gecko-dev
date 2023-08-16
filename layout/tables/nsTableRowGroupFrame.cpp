@@ -6,6 +6,7 @@
 
 #include "mozilla/ComputedStyle.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/StaticPrefs_layout.h"
 
 #include "nsCOMPtr.h"
 #include "nsTableRowFrame.h"
@@ -63,10 +64,7 @@ nsTableRowGroupFrame::~nsTableRowGroupFrame() = default;
 
 void nsTableRowGroupFrame::DestroyFrom(nsIFrame* aDestructRoot,
                                        PostDestroyData& aPostDestroyData) {
-  if (HasAnyStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN)) {
-    nsTableFrame::UnregisterPositionedTablePart(this, aDestructRoot);
-  }
-
+  nsTableFrame::MaybeUnregisterPositionedTablePart(this, aDestructRoot);
   nsContainerFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
 }
 
@@ -76,11 +74,10 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 int32_t nsTableRowGroupFrame::GetRowCount() const {
 #ifdef DEBUG
-  for (nsFrameList::Enumerator e(mFrames); !e.AtEnd(); e.Next()) {
-    NS_ASSERTION(
-        e.get()->StyleDisplay()->mDisplay == mozilla::StyleDisplay::TableRow,
-        "Unexpected display");
-    NS_ASSERTION(e.get()->IsTableRowFrame(), "Unexpected frame type");
+  for (nsIFrame* f : mFrames) {
+    NS_ASSERTION(f->StyleDisplay()->mDisplay == mozilla::StyleDisplay::TableRow,
+                 "Unexpected display");
+    NS_ASSERTION(f->IsTableRowFrame(), "Unexpected frame type");
   }
 #endif
 
@@ -378,7 +375,6 @@ void nsTableRowGroupFrame::ReflowChildren(
       nsRect oldKidInkOverflow = kidFrame->InkOverflowRect();
 
       ReflowOutput desiredSize(aReflowInput.reflowInput);
-      desiredSize.ClearSize();
 
       // Reflow the child into the available space, giving it as much bsize as
       // it wants. We'll deal with splitting later after we've computed the row
@@ -944,7 +940,8 @@ void nsTableRowGroupFrame::CreateContinuingRowFrame(nsIFrame& aRowFrame,
   mFrames.InsertFrame(nullptr, &aRowFrame, *aContRowFrame);
 
   // Push the continuing row frame and the frames that follow
-  PushChildren(*aContRowFrame, &aRowFrame);
+  // This needs to match `UndoContinuedRow`.
+  PushChildrenToOverflow(*aContRowFrame, &aRowFrame);
 }
 
 // Reflow the cells with rowspan > 1 which originate between aFirstRow
@@ -1051,6 +1048,8 @@ void nsTableRowGroupFrame::UndoContinuedRow(nsPresContext* aPresContext,
   MOZ_ASSERT(mFrames.ContainsFrame(rowBefore),
              "rowBefore not in our frame list?");
 
+  // Needs to match `CreateContinuingRowFrame` - we're assuming that continued
+  // frames always go into overflow frames list.
   AutoFrameListPtr overflows(aPresContext, StealOverflowFrames());
   if (!rowBefore || !overflows || overflows->IsEmpty() ||
       overflows->FirstChild() != aRow) {
@@ -1064,7 +1063,7 @@ void nsTableRowGroupFrame::UndoContinuedRow(nsPresContext* aPresContext,
 
   // Put the overflow rows into our child list
   if (!overflows->IsEmpty()) {
-    mFrames.InsertFrames(nullptr, rowBefore, *overflows);
+    mFrames.InsertFrames(nullptr, rowBefore, std::move(*overflows));
   }
 }
 
@@ -1437,9 +1436,11 @@ bool nsTableRowGroupFrame::ComputeCustomOverflow(
 void nsTableRowGroupFrame::DidSetComputedStyle(
     ComputedStyle* aOldComputedStyle) {
   nsContainerFrame::DidSetComputedStyle(aOldComputedStyle);
+  nsTableFrame::PositionedTablePartMaybeChanged(this, aOldComputedStyle);
 
-  if (!aOldComputedStyle)  // avoid this on init
-    return;
+  if (!aOldComputedStyle) {
+    return;  // avoid the following on init
+  }
 
   nsTableFrame* tableFrame = GetTableFrame();
   if (tableFrame->IsBorderCollapse() &&
@@ -1451,8 +1452,8 @@ void nsTableRowGroupFrame::DidSetComputedStyle(
 }
 
 void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
-                                        nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                        nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   DrainSelfOverflowList();  // ensure the last frame is in mFrames
   ClearRowCursor();
@@ -1460,12 +1461,12 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
   // collect the new row frames in an array
   // XXXbz why are we doing the QI stuff?  There shouldn't be any non-rows here.
   AutoTArray<nsTableRowFrame*, 8> rows;
-  for (nsFrameList::Enumerator e(aFrameList); !e.AtEnd(); e.Next()) {
-    nsTableRowFrame* rowFrame = do_QueryFrame(e.get());
+  for (nsIFrame* f : aFrameList) {
+    nsTableRowFrame* rowFrame = do_QueryFrame(f);
     NS_ASSERTION(rowFrame, "Unexpected frame; frame constructor screwed up");
     if (rowFrame) {
       NS_ASSERTION(
-          mozilla::StyleDisplay::TableRow == e.get()->StyleDisplay()->mDisplay,
+          mozilla::StyleDisplay::TableRow == f->StyleDisplay()->mDisplay,
           "wrong display type on rowframe");
       rows.AppendElement(rowFrame);
     }
@@ -1473,12 +1474,12 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
 
   int32_t rowIndex = GetRowCount();
   // Append the frames to the sibling chain
-  mFrames.AppendFrames(nullptr, aFrameList);
+  mFrames.AppendFrames(nullptr, std::move(aFrameList));
 
   if (rows.Length() > 0) {
     nsTableFrame* tableFrame = GetTableFrame();
     tableFrame->AppendRows(this, rowIndex, rows);
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_HAS_DIRTY_CHILDREN);
     tableFrame->SetGeometryDirty();
   }
@@ -1486,8 +1487,8 @@ void nsTableRowGroupFrame::AppendFrames(ChildListID aListID,
 
 void nsTableRowGroupFrame::InsertFrames(
     ChildListID aListID, nsIFrame* aPrevFrame,
-    const nsLineList::iterator* aPrevFrameLine, nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+    const nsLineList::iterator* aPrevFrameLine, nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");
 
@@ -1499,12 +1500,12 @@ void nsTableRowGroupFrame::InsertFrames(
   nsTableFrame* tableFrame = GetTableFrame();
   nsTArray<nsTableRowFrame*> rows;
   bool gotFirstRow = false;
-  for (nsFrameList::Enumerator e(aFrameList); !e.AtEnd(); e.Next()) {
-    nsTableRowFrame* rowFrame = do_QueryFrame(e.get());
+  for (nsIFrame* f : aFrameList) {
+    nsTableRowFrame* rowFrame = do_QueryFrame(f);
     NS_ASSERTION(rowFrame, "Unexpected frame; frame constructor screwed up");
     if (rowFrame) {
       NS_ASSERTION(
-          mozilla::StyleDisplay::TableRow == e.get()->StyleDisplay()->mDisplay,
+          mozilla::StyleDisplay::TableRow == f->StyleDisplay()->mDisplay,
           "wrong display type on rowframe");
       rows.AppendElement(rowFrame);
       if (!gotFirstRow) {
@@ -1517,7 +1518,7 @@ void nsTableRowGroupFrame::InsertFrames(
 
   int32_t startRowIndex = GetStartRowIndex();
   // Insert the frames in the sibling chain
-  mFrames.InsertFrames(nullptr, aPrevFrame, aFrameList);
+  mFrames.InsertFrames(nullptr, aPrevFrame, std::move(aFrameList));
 
   int32_t numRows = rows.Length();
   if (numRows > 0) {
@@ -1527,7 +1528,7 @@ void nsTableRowGroupFrame::InsertFrames(
     int32_t rowIndex = (prevRow) ? prevRow->GetRowIndex() + 1 : startRowIndex;
     tableFrame->InsertRows(this, rows, rowIndex, true);
 
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_HAS_DIRTY_CHILDREN);
     tableFrame->SetGeometryDirty();
   }
@@ -1535,7 +1536,7 @@ void nsTableRowGroupFrame::InsertFrames(
 
 void nsTableRowGroupFrame::RemoveFrame(ChildListID aListID,
                                        nsIFrame* aOldFrame) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   ClearRowCursor();
 
@@ -1546,7 +1547,7 @@ void nsTableRowGroupFrame::RemoveFrame(ChildListID aListID,
     // remove the rows from the table (and flag a rebalance)
     tableFrame->RemoveRows(*rowFrame, 1, true);
 
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_HAS_DIRTY_CHILDREN);
     tableFrame->SetGeometryDirty();
   }
@@ -1677,9 +1678,8 @@ void nsTableRowGroupFrame::SetContinuousBCBorderWidth(LogicalSide aForSide,
 // nsILineIterator methods
 int32_t nsTableRowGroupFrame::GetNumLines() const { return GetRowCount(); }
 
-bool nsTableRowGroupFrame::GetDirection() {
-  return (StyleDirection::Rtl ==
-          GetTableFrame()->StyleVisibility()->mDirection);
+bool nsTableRowGroupFrame::IsLineIteratorFlowRTL() {
+  return StyleDirection::Rtl == GetTableFrame()->StyleVisibility()->mDirection;
 }
 
 Result<nsILineIterator::LineInfo, nsresult> nsTableRowGroupFrame::GetLine(
@@ -1741,10 +1741,6 @@ nsTableRowGroupFrame::FindFrameAt(int32_t aLineNumber, nsPoint aPos,
   nsTableFrame* table = GetTableFrame();
   nsTableCellMap* cellMap = table->GetCellMap();
 
-  WritingMode wm = table->GetWritingMode();
-  nsSize containerSize = table->GetSize();
-  LogicalPoint pos(wm, aPos, containerSize);
-
   *aFrameFound = nullptr;
   *aPosIsBeforeFirstFrame = true;
   *aPosIsAfterLastFrame = false;
@@ -1765,58 +1761,20 @@ nsTableRowGroupFrame::FindFrameAt(int32_t aLineNumber, nsPoint aPos,
     }
   }
   NS_ASSERTION(frame, "cellmap is lying");
-  bool isRTL = (StyleDirection::Rtl == table->StyleVisibility()->mDirection);
+  bool isRTL = StyleDirection::Rtl == table->StyleVisibility()->mDirection;
 
-  nsIFrame* closestFromStart = nullptr;
-  nsIFrame* closestFromEnd = nullptr;
+  LineFrameFinder finder(aPos, table->GetSize(), table->GetWritingMode(),
+                         isRTL);
+
   int32_t n = numCells;
-  nsIFrame* firstFrame = frame;
   while (n--) {
-    LogicalRect rect = frame->GetLogicalRect(wm, containerSize);
-    if (rect.ISize(wm) > 0) {
-      // If pos.I() is inside this frame - this is it
-      if (rect.IStart(wm) <= pos.I(wm) && rect.IEnd(wm) > pos.I(wm)) {
-        closestFromStart = closestFromEnd = frame;
-        break;
-      }
-      if (rect.IStart(wm) < pos.I(wm)) {
-        if (!closestFromStart ||
-            rect.IEnd(wm) >
-                closestFromStart->GetLogicalRect(wm, containerSize).IEnd(wm))
-          closestFromStart = frame;
-      } else {
-        if (!closestFromEnd ||
-            rect.IStart(wm) <
-                closestFromEnd->GetLogicalRect(wm, containerSize).IStart(wm))
-          closestFromEnd = frame;
-      }
+    finder.Scan(frame);
+    if (finder.IsDone()) {
+      break;
     }
     frame = frame->GetNextSibling();
   }
-  if (!closestFromStart && !closestFromEnd) {
-    // All frames were zero-width. Just take the first one.
-    closestFromStart = closestFromEnd = firstFrame;
-  }
-  *aPosIsBeforeFirstFrame = isRTL ? !closestFromEnd : !closestFromStart;
-  *aPosIsAfterLastFrame = isRTL ? !closestFromStart : !closestFromEnd;
-  if (closestFromStart == closestFromEnd) {
-    *aFrameFound = closestFromStart;
-  } else if (!closestFromStart) {
-    *aFrameFound = closestFromEnd;
-  } else if (!closestFromEnd) {
-    *aFrameFound = closestFromStart;
-  } else {  // we're between two frames
-    nscoord delta =
-        closestFromEnd->GetLogicalRect(wm, containerSize).IStart(wm) -
-        closestFromStart->GetLogicalRect(wm, containerSize).IEnd(wm);
-    if (pos.I(wm) <
-        closestFromStart->GetLogicalRect(wm, containerSize).IEnd(wm) +
-            delta / 2) {
-      *aFrameFound = closestFromStart;
-    } else {
-      *aFrameFound = closestFromEnd;
-    }
-  }
+  finder.Finish(aFrameFound, aPosIsBeforeFirstFrame, aPosIsAfterLastFrame);
   return NS_OK;
 }
 

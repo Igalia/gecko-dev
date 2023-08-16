@@ -4,13 +4,15 @@
 
 "use strict";
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { PromiseUtils } = ChromeUtils.import(
-  "resource://gre/modules/PromiseUtils.jsm"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
+const { PromiseUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/PromiseUtils.sys.mjs"
 );
 
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 let h2Port, trrServer1, trrServer2, trrList;
@@ -46,10 +48,7 @@ function ensureNoTelemetry() {
 }
 
 function setup() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  h2Port = env.get("MOZHTTP2_PORT");
+  h2Port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(h2Port, null);
   Assert.notEqual(h2Port, "");
 
@@ -84,8 +83,8 @@ function setup() {
     "firefox-dns-perf-test.net."
   );
 
-  let TRRPerformance = ChromeUtils.import(
-    "resource:///modules/TRRPerformance.jsm"
+  let TRRPerformance = ChromeUtils.importESModule(
+    "resource:///modules/TRRPerformance.sys.mjs"
   );
 
   DNSLookup = TRRPerformance.DNSLookup;

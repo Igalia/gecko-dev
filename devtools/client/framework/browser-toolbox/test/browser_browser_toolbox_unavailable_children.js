@@ -3,12 +3,11 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
-/* import-globals-from ../../../inspector/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/test/shared-head.js",
   this
@@ -21,7 +20,7 @@ requestLongerTimeout(4);
 // browser elements when switching from Multi Process mode to Parent Process
 // mode.
 
-add_task(async function() {
+add_task(async function () {
   // Forces the Browser Toolbox to open on the inspector by default
   await pushPref("devtools.browsertoolbox.panel", "inspector");
   await pushPref("devtools.browsertoolbox.scope", "everything");
@@ -31,9 +30,7 @@ add_task(async function() {
   );
   tab.linkedBrowser.setAttribute("test-tab", "true");
 
-  const ToolboxTask = await initBrowserToolboxTask({
-    enableBrowserToolboxFission: true,
-  });
+  const ToolboxTask = await initBrowserToolboxTask();
 
   await ToolboxTask.importFunctions({
     waitUntil,
@@ -65,7 +62,7 @@ add_task(async function() {
       async function expandContainer(container, expectedChildName) {
         info(`Expand the node expected to contain a ${expectedChildName}`);
         await inspector.markup.expandNode(container.node);
-        await waitUntil(() => container.getChildContainers().length > 0);
+        await waitUntil(() => !!container.getChildContainers().length);
 
         const children = container
           .getChildContainers()

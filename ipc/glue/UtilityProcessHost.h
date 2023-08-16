@@ -84,7 +84,6 @@ class UtilityProcessHost final : public mozilla::ipc::GeckoChildProcessHost {
 
   // Called on the IO thread.
   void OnChannelConnected(base::ProcessId peer_pid) override;
-  void OnChannelError() override;
 
 #if defined(XP_MACOSX) && defined(MOZ_SANDBOX)
   // Return the sandbox type to be used with this process type.
@@ -130,7 +129,6 @@ class UtilityProcessHost final : public mozilla::ipc::GeckoChildProcessHost {
   UniquePtr<ipc::SharedPreferenceSerializer> mPrefSerializer{};
 
   bool mShutdownRequested = false;
-  bool mChannelClosed = false;
 
   void RejectPromise();
   void ResolvePromise();
@@ -145,10 +143,9 @@ class UtilityProcessHost final : public mozilla::ipc::GeckoChildProcessHost {
 
   RefPtr<GenericNonExclusivePromise::Private> mLaunchPromise{};
   bool mLaunchPromiseSettled = false;
-  // Will be set to true if we've exceeded the allowed startup time or if the
-  // Utility process as successfully started. This is used to determine if the
-  // timeout runnable needs to execute code or not.
-  bool mTimerChecked = false;
+  bool mLaunchPromiseLaunched = false;
+  // Will be set to true if the Utility process as successfully started.
+  bool mLaunchCompleted = false;
 
 #if defined(XP_LINUX) && defined(MOZ_SANDBOX)
   UniquePtr<SandboxBroker> mSandboxBroker{};

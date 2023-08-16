@@ -40,14 +40,14 @@ impl Default for PrecomputedHasher {
 ///
 /// We can avoid selector-matching those global rules for all elements without
 /// these pseudo-class states.
-const RARE_PSEUDO_CLASS_STATES: ElementState = ElementState::from_bits_truncate(
+const RARE_PSEUDO_CLASS_STATES: ElementState = ElementState::from_bits_retain(
     ElementState::FULLSCREEN.bits() |
-    ElementState::VISITED_OR_UNVISITED.bits() |
-    ElementState::URLTARGET.bits() |
-    ElementState::INERT.bits() |
-    ElementState::FOCUS.bits() |
-    ElementState::FOCUSRING.bits() |
-    ElementState::TOPMOST_MODAL.bits()
+        ElementState::VISITED_OR_UNVISITED.bits() |
+        ElementState::URLTARGET.bits() |
+        ElementState::INERT.bits() |
+        ElementState::FOCUS.bits() |
+        ElementState::FOCUSRING.bits() |
+        ElementState::TOPMOST_MODAL.bits(),
 );
 
 /// A simple alias for a hashmap using PrecomputedHasher.
@@ -290,7 +290,10 @@ impl SelectorMap<Rule> {
             )
         }
 
-        if rule_hash_target.state().intersects(RARE_PSEUDO_CLASS_STATES) {
+        if rule_hash_target
+            .state()
+            .intersects(RARE_PSEUDO_CLASS_STATES)
+        {
             SelectorMap::get_matching_rules(
                 element,
                 &self.rare_pseudo_classes,
@@ -349,13 +352,17 @@ impl SelectorMap<Rule> {
             }
 
             if rule.container_condition_id != ContainerConditionId::none() {
-                if !cascade_data.container_condition_matches(rule.container_condition_id, stylist, element) {
+                if !cascade_data.container_condition_matches(
+                    rule.container_condition_id,
+                    stylist,
+                    element,
+                    matching_context,
+                ) {
                     continue;
                 }
             }
 
-            matching_rules
-                .push(rule.to_applicable_declaration_block(cascade_level, cascade_data));
+            matching_rules.push(rule.to_applicable_declaration_block(cascade_level, cascade_data));
         }
     }
 }
@@ -675,6 +682,11 @@ impl<'a> Bucket<'a> {
     }
 
     #[inline]
+    fn more_or_equally_specific_than(&self, other: &Self) -> bool {
+        self.specificity() >= other.specificity()
+    }
+
+    #[inline]
     fn more_specific_than(&self, other: &Self) -> bool {
         self.specificity() > other.specificity()
     }
@@ -741,9 +753,9 @@ fn specific_bucket_for<'a>(
         },
         Component::Is(ref list) | Component::Where(ref list) => {
             if list.len() == 1 {
-                find_bucket(list[0].iter(), disjoint_buckets, bucket_attributes)
+                find_bucket(list.slice()[0].iter(), disjoint_buckets, bucket_attributes)
             } else {
-                for selector in &**list {
+                for selector in list.slice() {
                     let bucket = find_bucket(selector.iter(), disjoint_buckets, bucket_attributes);
                     disjoint_buckets.push(bucket);
                 }
@@ -777,7 +789,9 @@ fn find_bucket<'a>(
     loop {
         for ss in &mut iter {
             let new_bucket = specific_bucket_for(ss, disjoint_buckets, bucket_attributes);
-            if new_bucket.more_specific_than(&current_bucket) {
+            // NOTE: When presented with the choice of multiple specific selectors, use the
+            // rightmost, on the assumption that that's less common, see bug 1829540.
+            if new_bucket.more_or_equally_specific_than(&current_bucket) {
                 current_bucket = new_bucket;
             }
         }
@@ -794,9 +808,7 @@ fn find_bucket<'a>(
 
 /// Wrapper for PrecomputedHashMap that does ASCII-case-insensitive lookup in quirks mode.
 #[derive(Clone, Debug, MallocSizeOf)]
-pub struct MaybeCaseInsensitiveHashMap<K: PrecomputedHash + Hash + Eq, V>(
-    PrecomputedHashMap<K, V>,
-);
+pub struct MaybeCaseInsensitiveHashMap<K: PrecomputedHash + Hash + Eq, V>(PrecomputedHashMap<K, V>);
 
 impl<V> Default for MaybeCaseInsensitiveHashMap<Atom, V> {
     #[inline]

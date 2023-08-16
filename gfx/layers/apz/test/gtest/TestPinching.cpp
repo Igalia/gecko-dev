@@ -10,11 +10,30 @@
 #include "mozilla/StaticPrefs_apz.h"
 
 class APZCPinchTester : public APZCBasicTester {
+ private:
+  // This (multiplied by apz.touch_start_tolerance) needs to be the hypotenuse
+  // in a Pythagorean triple, along with overcomeTouchToleranceX and
+  // overcomeTouchToleranceY from APZCTesterBase::Pan().
+  // This is because APZCTesterBase::Pan(), when run without the
+  // PanOptions::ExactCoordinates option, will need to first overcome the
+  // touch start tolerance by performing a move of exactly
+  // (apz.touch_start_tolerance * DPI) length.
+  // When moving on both axes at once, we need to use integers for both legs
+  // (overcomeTouchToleranceX and overcomeTouchToleranceY) while making sure
+  // that the hypotenuse is also a round integer number (hence Pythagorean
+  // triples). (The hypotenuse is the length of the movement in this case.)
+  static const int mDPI = 100;
+
  public:
   explicit APZCPinchTester(
       AsyncPanZoomController::GestureBehavior aGestureBehavior =
           AsyncPanZoomController::DEFAULT_GESTURES)
       : APZCBasicTester(aGestureBehavior) {}
+
+  void SetUp() override {
+    APZCBasicTester::SetUp();
+    tm->SetDPI(mDPI);
+  }
 
  protected:
   FrameMetrics GetPinchableFrameMetrics() {
@@ -138,8 +157,6 @@ class APZCPinchGestureDetectorTester : public APZCPinchTester {
 
 class APZCPinchLockingTester : public APZCPinchTester {
  private:
-  static const int mDPI = 160;
-
   ScreenIntPoint mFocus;
   float mSpan;
   int mPinchLockBufferMaxAge;
@@ -155,7 +172,6 @@ class APZCPinchLockingTester : public APZCPinchTester {
         StaticPrefs::apz_pinch_lock_buffer_max_age_AtStartup();
 
     APZCPinchTester::SetUp();
-    tm->SetDPI(mDPI);
     apzc->SetFrameMetrics(GetPinchableFrameMetrics());
     MakeApzcZoomable();
 
@@ -170,7 +186,8 @@ class APZCPinchLockingTester : public APZCPinchTester {
         StaticPrefs::apz_pinch_lock_scroll_lock_threshold() * 1.2 *
         tm->GetDPI();
 
-    mFocus = ScreenIntPoint((int)(mFocus.x + panDistance), (int)(mFocus.y));
+    mFocus = ScreenIntPoint((int)(mFocus.x.value + panDistance),
+                            (int)(mFocus.y.value));
 
     auto event = CreatePinchGestureInput(PinchGestureInput::PINCHGESTURE_SCALE,
                                          mFocus, mSpan, mSpan, mcc->Time());
@@ -284,6 +301,28 @@ TEST_F(APZCPinchGestureDetectorTester, Panning_TwoFingerFling_ZoomDisabled) {
   apzc->AssertStateIsFling();
 }
 
+TEST_F(APZCPinchGestureDetectorTester, Pinch_DoesntFling_ZoomDisabled) {
+  SCOPED_GFX_PREF_FLOAT("apz.fling_min_velocity_threshold", 0.0f);
+
+  apzc->SetFrameMetrics(GetPinchableFrameMetrics());
+  MakeApzcUnzoomable();
+
+  // Perform a pinch
+  int touchInputId = 0;
+  uint64_t blockId = 0;
+
+  PinchWithTouchInput(apzc, ScreenIntPoint(100, 200), ScreenIntPoint(100, 100),
+                      2, touchInputId, nullptr, nullptr, &blockId,
+                      PinchOptions::LiftFinger2, true);
+
+  // Lift second finger after a pause
+  mcc->AdvanceBy(TimeDuration::FromMilliseconds(50));
+  TouchUp(apzc, ScreenIntPoint(100, 100), mcc->Time());
+
+  // Pinch should not trigger a fling
+  EXPECT_EQ(apzc->GetVelocityVector().y, 0);
+}
+
 TEST_F(APZCPinchGestureDetectorTester, Panning_TwoFingerFling_ZoomEnabled) {
   SCOPED_GFX_PREF_FLOAT("apz.fling_min_velocity_threshold", 0.0f);
 
@@ -318,8 +357,31 @@ TEST_F(APZCPinchGestureDetectorTester,
   mcc->AdvanceBy(TimeDuration::FromMilliseconds(50));
   TouchUp(apzc, ScreenIntPoint(100, 100), mcc->Time());
 
-  // Expect to NOT be in flinging state
-  apzc->AssertStateIsReset();
+  // This gesture should activate the pinch lock, and result
+  // in a fling even if the page is zoomable.
+  apzc->AssertStateIsFling();
+}
+
+TEST_F(APZCPinchGestureDetectorTester,
+       Panning_TwoThenOneFingerFling_ZoomDisabled) {
+  SCOPED_GFX_PREF_FLOAT("apz.fling_min_velocity_threshold", 0.0f);
+
+  apzc->SetFrameMetrics(GetPinchableFrameMetrics());
+  MakeApzcUnzoomable();
+
+  // Perform a two finger pan lifting only the first finger
+  int touchInputId = 0;
+  uint64_t blockId = 0;
+  PinchWithTouchInput(apzc, ScreenIntPoint(100, 200), ScreenIntPoint(100, 100),
+                      1, touchInputId, nullptr, nullptr, &blockId,
+                      PinchOptions::LiftFinger2);
+
+  // Lift second finger after a pause
+  mcc->AdvanceBy(TimeDuration::FromMilliseconds(50));
+  TouchUp(apzc, ScreenIntPoint(100, 100), mcc->Time());
+
+  // This gesture should activate the pinch lock and result in a fling
+  apzc->AssertStateIsFling();
 }
 
 TEST_F(APZCPinchTester, Panning_TwoFinger_ZoomDisabled) {

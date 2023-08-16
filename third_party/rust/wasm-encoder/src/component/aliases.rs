@@ -3,101 +3,6 @@ use crate::{
     encode_section, ComponentExportKind, ComponentSection, ComponentSectionId, Encode, ExportKind,
 };
 
-/// Represents the kinds of outer core aliasable items in a component.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum CoreOuterAliasKind {
-    /// The alias is to a core type.
-    Type,
-}
-
-impl Encode for CoreOuterAliasKind {
-    fn encode(&self, sink: &mut Vec<u8>) {
-        match self {
-            Self::Type => {
-                sink.push(CORE_TYPE_SORT);
-            }
-        }
-    }
-}
-
-/// An encoder for the core alias section of WebAssembly components.
-///
-/// # Example
-///
-/// ```rust
-/// use wasm_encoder::{Component, AliasSection, ExportKind};
-///
-/// let mut aliases = AliasSection::new();
-/// aliases.instance_export(0, ExportKind::Func, "f");
-///
-/// let mut component = Component::new();
-/// component.section(&aliases);
-///
-/// let bytes = component.finish();
-/// ```
-#[derive(Clone, Debug, Default)]
-pub struct AliasSection {
-    bytes: Vec<u8>,
-    num_added: u32,
-}
-
-impl AliasSection {
-    /// Create a new core alias section encoder.
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    /// The number of aliases in the section.
-    pub fn len(&self) -> u32 {
-        self.num_added
-    }
-
-    /// Determines if the section is empty.
-    pub fn is_empty(&self) -> bool {
-        self.num_added == 0
-    }
-
-    /// Define an alias to an instance's export.
-    pub fn instance_export(
-        &mut self,
-        instance_index: u32,
-        kind: ExportKind,
-        name: &str,
-    ) -> &mut Self {
-        kind.encode(&mut self.bytes);
-        self.bytes.push(0x00);
-        instance_index.encode(&mut self.bytes);
-        name.encode(&mut self.bytes);
-        self.num_added += 1;
-        self
-    }
-
-    /// Define an alias to an outer core item.
-    ///
-    /// The count starts at 0 to indicate the current component, 1 indicates the direct
-    /// parent, 2 the grandparent, etc.
-    pub fn outer(&mut self, count: u32, kind: CoreOuterAliasKind, index: u32) -> &mut Self {
-        kind.encode(&mut self.bytes);
-        self.bytes.push(0x01);
-        count.encode(&mut self.bytes);
-        index.encode(&mut self.bytes);
-        self.num_added += 1;
-        self
-    }
-}
-
-impl Encode for AliasSection {
-    fn encode(&self, sink: &mut Vec<u8>) {
-        encode_section(sink, self.num_added, &self.bytes);
-    }
-}
-
-impl ComponentSection for AliasSection {
-    fn id(&self) -> u8 {
-        ComponentSectionId::CoreAlias.into()
-    }
-}
-
 /// Represents the kinds of outer aliasable items in a component.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ComponentOuterAliasKind {
@@ -133,11 +38,11 @@ impl Encode for ComponentOuterAliasKind {
 /// # Example
 ///
 /// ```rust
-/// use wasm_encoder::{Component, ComponentAliasSection, ComponentExportKind, ComponentOuterAliasKind};
+/// use wasm_encoder::{Component, Alias, ComponentAliasSection, ComponentExportKind, ComponentOuterAliasKind};
 ///
 /// let mut aliases = ComponentAliasSection::new();
-/// aliases.instance_export(0, ComponentExportKind::Func, "f");
-/// aliases.outer(0, ComponentOuterAliasKind::Type, 1);
+/// aliases.alias(Alias::InstanceExport { instance: 0, kind: ComponentExportKind::Func, name: "f" });
+/// aliases.alias(Alias::Outer { count: 0, kind: ComponentOuterAliasKind::Type, index: 1 });
 ///
 /// let mut component = Component::new();
 /// component.section(&aliases);
@@ -148,6 +53,40 @@ impl Encode for ComponentOuterAliasKind {
 pub struct ComponentAliasSection {
     bytes: Vec<u8>,
     num_added: u32,
+}
+
+/// Different forms of aliases that can be inserted into a
+/// [`ComponentAliasSection`].
+#[derive(Copy, Clone, Debug)]
+pub enum Alias<'a> {
+    /// An alias of a component instance export.
+    InstanceExport {
+        /// The index of the component instance that's being aliased from.
+        instance: u32,
+        /// The kind of item that's being extracted from the component
+        /// instance.
+        kind: ComponentExportKind,
+        /// The name of the export that's being aliased.
+        name: &'a str,
+    },
+    /// Same as `InstanceExport`, but for core instances.
+    #[allow(missing_docs)]
+    CoreInstanceExport {
+        instance: u32,
+        kind: ExportKind,
+        name: &'a str,
+    },
+    /// Aliasing an item from an outer component.
+    Outer {
+        /// The kind of item being aliased, either a type or a component.
+        kind: ComponentOuterAliasKind,
+        /// Number of levels "up" to go to lookup the index within. Level 0 is
+        /// the current scope and level 1 is the enclosing scope, and so on.
+        count: u32,
+        /// The index of the item to alias within the scope referenced by
+        /// `count`.
+        index: u32,
+    },
 }
 
 impl ComponentAliasSection {
@@ -166,30 +105,9 @@ impl ComponentAliasSection {
         self.num_added == 0
     }
 
-    /// Define an alias to an instance's export.
-    pub fn instance_export(
-        &mut self,
-        instance_index: u32,
-        kind: ComponentExportKind,
-        name: &str,
-    ) -> &mut Self {
-        kind.encode(&mut self.bytes);
-        self.bytes.push(0x00);
-        instance_index.encode(&mut self.bytes);
-        name.encode(&mut self.bytes);
-        self.num_added += 1;
-        self
-    }
-
-    /// Define an alias to an outer component item.
-    ///
-    /// The count starts at 0 to indicate the current component, 1 indicates the direct
-    /// parent, 2 the grandparent, etc.
-    pub fn outer(&mut self, count: u32, kind: ComponentOuterAliasKind, index: u32) -> &mut Self {
-        kind.encode(&mut self.bytes);
-        self.bytes.push(0x01);
-        count.encode(&mut self.bytes);
-        index.encode(&mut self.bytes);
+    /// Define an alias to a component instance's export.
+    pub fn alias(&mut self, alias: Alias<'_>) -> &mut Self {
+        alias.encode(&mut self.bytes);
         self.num_added += 1;
         self
     }
@@ -204,5 +122,39 @@ impl Encode for ComponentAliasSection {
 impl ComponentSection for ComponentAliasSection {
     fn id(&self) -> u8 {
         ComponentSectionId::Alias.into()
+    }
+}
+
+impl Encode for Alias<'_> {
+    fn encode(&self, sink: &mut Vec<u8>) {
+        match self {
+            Alias::InstanceExport {
+                instance,
+                kind,
+                name,
+            } => {
+                kind.encode(sink);
+                sink.push(0x00);
+                instance.encode(sink);
+                name.encode(sink);
+            }
+            Alias::CoreInstanceExport {
+                instance,
+                kind,
+                name,
+            } => {
+                sink.push(CORE_SORT);
+                kind.encode(sink);
+                sink.push(0x01);
+                instance.encode(sink);
+                name.encode(sink);
+            }
+            Alias::Outer { kind, count, index } => {
+                kind.encode(sink);
+                sink.push(0x02);
+                count.encode(sink);
+                index.encode(sink);
+            }
+        }
     }
 }

@@ -143,11 +143,17 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "CloseEvent",
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  "CompressionStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   "CountQueuingStrategy",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "Crypto",
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  "CryptoKey",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   "CustomEvent",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "DecompressionStream",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "Directory",
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -188,6 +194,14 @@ let interfaceNamesInGlobalScope = [
   "FileList",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "FileReader",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "FileSystemDirectoryHandle" },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "FileSystemFileHandle" },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "FileSystemHandle" },
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  { name: "FileSystemWritableFileStream" },
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "FontFace",
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -297,12 +311,6 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "ReadableStreamDefaultReader",
   // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "Report", nightly: true },
-  // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "ReportBody", nightly: true },
-  // IMPORTANT: Do not change this list without review from a DOM peer!
-  { name: "ReportingObserver", nightly: true },
-  // IMPORTANT: Do not change this list without review from a DOM peer!
   "Request",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "Response",
@@ -327,7 +335,11 @@ let interfaceNamesInGlobalScope = [
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "TextDecoder",
   // IMPORTANT: Do not change this list without review from a DOM peer!
+  "TextDecoderStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
   "TextEncoder",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "TextEncoderStream",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "TextMetrics",
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -340,6 +352,18 @@ let interfaceNamesInGlobalScope = [
   "URLSearchParams",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "WebSocket",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransport",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransportBidirectionalStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransportDatagramDuplexStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransportError",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransportReceiveStream",
+  // IMPORTANT: Do not change this list without review from a DOM peer!
+  "WebTransportSendStream",
   // IMPORTANT: Do not change this list without review from a DOM peer!
   "WebGL2RenderingContext",
   // IMPORTANT: Do not change this list without review from a DOM peer!
@@ -534,7 +558,7 @@ function runTest(parentName, parent, data, ...interfaceGroups) {
   );
 }
 
-workerTestGetHelperData(function(data) {
+workerTestGetHelperData(function (data) {
   runTest("self", self, data, ecmaGlobals, interfaceNamesInGlobalScope);
   if (WebAssembly && !entryDisabled(wasmGlobalEntry, data)) {
     runTest("WebAssembly", WebAssembly, data, wasmGlobalInterfaces);

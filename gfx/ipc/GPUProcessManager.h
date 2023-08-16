@@ -96,7 +96,7 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
   // If the GPU process is enabled but has not yet been launched then this will
   // launch the process. If that is not desired then check that return value of
   // Process() is non-null before calling.
-  bool EnsureGPUReady();
+  nsresult EnsureGPUReady();
 
   already_AddRefed<CompositorSession> CreateTopLevelCompositor(
       nsBaseWidget* aWidget, WebRenderLayerManager* aLayerManager,
@@ -114,7 +114,8 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
 
   // Initialize GPU process with consuming end of PVideoBridge.
   void InitVideoBridge(
-      mozilla::ipc::Endpoint<PVideoBridgeParent>&& aVideoBridge);
+      mozilla::ipc::Endpoint<PVideoBridgeParent>&& aVideoBridge,
+      layers::VideoBridgeSource aSource);
 
   // Maps the layer tree and process together so that aOwningPID is allowed
   // to access aLayersId across process.
@@ -198,6 +199,10 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
   // Returns the process host
   GPUProcessHost* Process() { return mProcess; }
 
+  // Sets the value of mAppInForeground, and (on Windows) adjusts the priority
+  // of the GPU process accordingly.
+  void SetAppInForeground(bool aInForeground);
+
   /*
    * ** Test-only Method **
    *
@@ -279,10 +284,14 @@ class GPUProcessManager final : public GPUProcessHost::Listener {
   void EnsureVsyncIOThread();
   void ShutdownVsyncIOThread();
 
-  void EnsureProtocolsReady();
-  void EnsureCompositorManagerChild();
-  void EnsureImageBridgeChild();
-  void EnsureVRManager();
+  bool EnsureProtocolsReady();
+  bool EnsureCompositorManagerChild();
+  bool EnsureImageBridgeChild();
+  bool EnsureVRManager();
+
+#if defined(XP_WIN)
+  void SetProcessIsForeground();
+#endif
 
 #if defined(MOZ_WIDGET_ANDROID)
   already_AddRefed<UiCompositorControllerChild> CreateUiCompositorController(

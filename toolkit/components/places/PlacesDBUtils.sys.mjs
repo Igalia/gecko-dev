@@ -13,17 +13,12 @@ const CORRUPT_DB_RETAIN_DAYS = 14;
 // Seconds between maintenance runs.
 const MAINTENANCE_INTERVAL_SECONDS = 7 * 86400;
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   PlacesPreviews: "resource://gre/modules/PlacesPreviews.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  Sqlite: "resource://gre/modules/Sqlite.jsm",
+  Sqlite: "resource://gre/modules/Sqlite.sys.mjs",
 });
 
 export var PlacesDBUtils = {
@@ -44,7 +39,6 @@ export var PlacesDBUtils = {
   async maintenanceOnIdle() {
     let tasks = [
       this.checkIntegrity,
-      this.invalidateCaches,
       this.checkCoherence,
       this._refreshUI,
       this.originFrecencyStats,
@@ -81,7 +75,6 @@ export var PlacesDBUtils = {
   async checkAndFixDatabase() {
     let tasks = [
       this.checkIntegrity,
-      this.invalidateCaches,
       this.checkCoherence,
       this.expire,
       this.originFrecencyStats,
@@ -141,33 +134,6 @@ export var PlacesDBUtils = {
     return logs;
   },
 
-  invalidateCaches() {
-    let logs = [];
-    return lazy.PlacesUtils.withConnectionWrapper(
-      "PlacesDBUtils: invalidate caches",
-      async db => {
-        let idsWithStaleGuidsRows = await db.execute(
-          `SELECT id FROM moz_bookmarks
-           WHERE guid IS NULL OR
-                 NOT IS_VALID_GUID(guid) OR
-                 (type = :bookmark_type AND fk IS NULL) OR
-                 (type <> :bookmark_type AND fk NOT NULL) OR
-                 type IS NULL`,
-          { bookmark_type: lazy.PlacesUtils.bookmarks.TYPE_BOOKMARK }
-        );
-        for (let row of idsWithStaleGuidsRows) {
-          let id = row.getResultByName("id");
-          lazy.PlacesUtils.invalidateCachedGuidFor(id);
-        }
-        logs.push("The caches have been invalidated");
-        return logs;
-      }
-    ).catch(ex => {
-      PlacesDBUtils.clearPendingTasks();
-      throw new Error("Unable to invalidate caches");
-    });
-  },
-
   /**
    * Checks data coherence and tries to fix most common errors.
    *
@@ -187,7 +153,7 @@ export var PlacesDBUtils = {
             try {
               await db.execute(query, params || null);
             } catch (ex) {
-              Cu.reportError(ex);
+              console.error(ex);
               coherenceCheck = false;
             }
           }
@@ -352,12 +318,8 @@ export var PlacesDBUtils = {
                 url = OLD.url;
 
           /* Recalculate frecency for the destination. */
-          UPDATE moz_places SET
-            frecency = calculate_frecency(id)
+          UPDATE moz_places SET recalc_frecency = 1, recalc_alt_frecency = 1
           WHERE id = OLD.id;
-
-          /* Trigger frecency updates for affected origins. */
-          DELETE FROM moz_updateoriginsupdate_temp;
         END`,
       },
       {
@@ -386,25 +348,12 @@ export var PlacesDBUtils = {
         )`,
       },
 
-      // A.2 remove obsolete annotations from moz_items_annos.
-      {
-        query: `DELETE FROM moz_items_annos
-        WHERE type = 4 OR anno_attribute_id IN (
-          SELECT id FROM moz_anno_attributes
-          WHERE name = 'sync/children'
-             OR name = 'placesInternal/GUID'
-             OR name BETWEEN 'weave/' AND 'weave0'
-        )`,
-      },
-
       // A.3 remove unused attributes.
       {
         query: `DELETE FROM moz_anno_attributes WHERE id IN (
           SELECT id FROM moz_anno_attributes n
           WHERE NOT EXISTS
               (SELECT id FROM moz_annos WHERE anno_attribute_id = n.id LIMIT 1)
-            AND NOT EXISTS
-              (SELECT id FROM moz_items_annos WHERE anno_attribute_id = n.id LIMIT 1)
         )`,
       },
 
@@ -637,55 +586,19 @@ export var PlacesDBUtils = {
         },
       },
 
-      // D.10 recalculate positions
-      // This requires multiple related statements.
-      // We can detect a folder with bad position values comparing the sum of
-      // all distinct position values (+1 since position is 0-based) with the
-      // triangular numbers obtained by the number of children (n).
-      // SUM(DISTINCT position + 1) == (n * (n + 1) / 2).
-      // id is not a PRIMARY KEY on purpose, since we need a rowid that
-      // increments monotonically.
+      // D.10 fix non-consecutive positions.
       {
-        query: `CREATE TEMP TABLE IF NOT EXISTS moz_bm_reindex_temp (
-          id INTEGER
-        , parent INTEGER
-        , position INTEGER
-        )`,
+        query: `
+          WITH positions(item_id, pos, seq) AS (
+            SELECT id, position AS pos,
+                   (row_number() OVER (PARTITION BY parent ORDER BY position)) - 1 AS seq
+            FROM moz_bookmarks
+          )
+          UPDATE moz_bookmarks
+          SET position = seq
+          FROM positions
+          WHERE item_id = moz_bookmarks.id AND seq <> pos`,
       },
-      {
-        query: `INSERT INTO moz_bm_reindex_temp
-        SELECT id, parent, 0
-        FROM moz_bookmarks b
-        WHERE parent IN (
-          SELECT parent
-          FROM moz_bookmarks
-          GROUP BY parent
-          HAVING (SUM(DISTINCT position + 1) - (count(*) * (count(*) + 1) / 2)) <> 0
-        )
-        ORDER BY parent ASC, position ASC, ROWID ASC`,
-      },
-      {
-        query: `CREATE INDEX IF NOT EXISTS moz_bm_reindex_temp_index
-        ON moz_bm_reindex_temp(parent)`,
-      },
-      {
-        query: `UPDATE moz_bm_reindex_temp SET position = (
-          ROWID - (SELECT MIN(t.ROWID) FROM moz_bm_reindex_temp t
-                    WHERE t.parent = moz_bm_reindex_temp.parent)
-        )`,
-      },
-      {
-        query: `CREATE TEMP TRIGGER IF NOT EXISTS moz_bm_reindex_temp_trigger
-        BEFORE DELETE ON moz_bm_reindex_temp
-        FOR EACH ROW
-        BEGIN
-          UPDATE moz_bookmarks SET position = OLD.position WHERE id = OLD.id;
-        END`,
-      },
-      { query: `DELETE FROM moz_bm_reindex_temp` },
-      { query: `DROP INDEX moz_bm_reindex_temp_index` },
-      { query: `DROP TRIGGER moz_bm_reindex_temp_trigger` },
-      { query: `DROP TABLE moz_bm_reindex_temp` },
 
       // D.12 Fix empty-named tags.
       // Tags were allowed to have empty names due to a UI bug.  Fix them by
@@ -755,26 +668,6 @@ export var PlacesDBUtils = {
         )`,
       },
 
-      // MOZ_ITEMS_ANNOS
-      // H.1 remove item annos with an invalid attribute
-      {
-        query: `DELETE FROM moz_items_annos WHERE id IN (
-          SELECT id FROM moz_items_annos t
-          WHERE NOT EXISTS
-            (SELECT id FROM moz_anno_attributes
-              WHERE id = t.anno_attribute_id LIMIT 1)
-        )`,
-      },
-
-      // H.2 remove orphan item annos
-      {
-        query: `DELETE FROM moz_items_annos WHERE id IN (
-          SELECT id FROM moz_items_annos t
-          WHERE NOT EXISTS
-            (SELECT id FROM moz_bookmarks WHERE id = t.item_id LIMIT 1)
-        )`,
-      },
-
       // MOZ_KEYWORDS
       // I.1 remove unused keywords
       {
@@ -797,8 +690,8 @@ export var PlacesDBUtils = {
           SELECT h.id FROM moz_places h
           WHERE visit_count <> (SELECT count(*) FROM moz_historyvisits v
                                 WHERE v.place_id = h.id AND visit_type NOT IN (0,4,7,8,9))
-              OR last_visit_date <> (SELECT MAX(visit_date) FROM moz_historyvisits v
-                                    WHERE v.place_id = h.id)
+              OR last_visit_date IS NOT
+                (SELECT MAX(visit_date) FROM moz_historyvisits v WHERE v.place_id = h.id)
         )`,
       },
 
@@ -819,9 +712,7 @@ export var PlacesDBUtils = {
       {
         query: `UPDATE moz_places SET foreign_count =
           (SELECT count(*) FROM moz_bookmarks WHERE fk = moz_places.id ) +
-          (SELECT count(*) FROM moz_keywords WHERE place_id = moz_places.id ) +
-          (SELECT count(*) FROM moz_places_metadata_snapshots WHERE place_id = moz_places.id ) +
-          (SELECT count(*) FROM moz_session_to_places WHERE place_id = moz_places.id )`,
+          (SELECT count(*) FROM moz_keywords WHERE place_id = moz_places.id )`,
       },
 
       // L.5 recalculate missing hashes.
@@ -1167,18 +1058,21 @@ export var PlacesDBUtils = {
         histogram: "PLACES_SORTED_BOOKMARKS_PERC",
         query: `SELECT IFNULL(ROUND((
                       SELECT count(*) FROM moz_bookmarks b
-                      JOIN moz_bookmarks t ON t.id = b.parent
-                      AND t.parent <> :tags_folder AND t.parent > :places_root
-                      WHERE b.type  = :type_bookmark
+                      JOIN moz_bookmarks p ON p.id = b.parent
+                      JOIN moz_bookmarks g ON g.id = p.parent
+                      WHERE g.guid <> :root_guid
+                        AND g.guid <> :tags_guid
+                        AND b.type  = :type_bookmark
                       ) * 100 / (
                       SELECT count(*) FROM moz_bookmarks b
-                      JOIN moz_bookmarks t ON t.id = b.parent
-                      AND t.parent <> :tags_folder
+                      JOIN moz_bookmarks p ON p.id = b.parent
+                      JOIN moz_bookmarks g ON g.id = p.parent
+                      AND g.guid <> :tags_guid
                       WHERE b.type = :type_bookmark
                     )), 0)`,
         params: {
-          places_root: lazy.PlacesUtils.placesRootId,
-          tags_folder: lazy.PlacesUtils.tagsFolderId,
+          root_guid: lazy.PlacesUtils.bookmarks.rootGuid,
+          tags_guid: lazy.PlacesUtils.bookmarks.tagsGuid,
           type_bookmark: lazy.PlacesUtils.bookmarks.TYPE_BOOKMARK,
         },
       },
@@ -1214,23 +1108,6 @@ export var PlacesDBUtils = {
       },
 
       {
-        histogram: "PLACES_DATABASE_PAGESIZE_B",
-        query: "PRAGMA page_size /* PlacesDBUtils.jsm PAGESIZE_B */",
-      },
-
-      {
-        histogram: "PLACES_DATABASE_SIZE_PER_PAGE_B",
-        query: "PRAGMA page_count",
-        callback(aDbPageCount) {
-          // Note that the database file size would not be meaningful for this
-          // calculation, because the file grows in fixed-size chunks.
-          let dbPageSize = probeValues.PLACES_DATABASE_PAGESIZE_B;
-          let placesPageCount = probeValues.PLACES_PAGES_COUNT;
-          return Math.round((dbPageSize * aDbPageCount) / placesPageCount);
-        },
-      },
-
-      {
         histogram: "PLACES_DATABASE_FAVICONS_FILESIZE_MB",
         async callback() {
           let faviconsDbPath = PathUtils.join(
@@ -1240,11 +1117,6 @@ export var PlacesDBUtils = {
           let info = await IOUtils.stat(faviconsDbPath);
           return parseInt(info.size / BYTES_PER_MEBIBYTE);
         },
-      },
-
-      {
-        histogram: "PLACES_ANNOS_BOOKMARKS_COUNT",
-        query: "SELECT count(*) FROM moz_items_annos",
       },
 
       {
@@ -1266,6 +1138,17 @@ export var PlacesDBUtils = {
           }
         },
       },
+      {
+        scalar: "places.pages_need_frecency_recalculation",
+        query: "SELECT count(*) FROM moz_places WHERE recalc_frecency = 1",
+      },
+      {
+        scalar: "places.previousday_visits",
+        query: `SELECT COUNT(*) from moz_places
+                      WHERE hidden=0 AND last_visit_date < (strftime('%s', 'now', 'start of day') * 1000000)
+                      AND last_visit_date > (strftime('%s', 'now', 'start of day', '-1 day') * 1000000)
+                      AND last_visit_date IS NOT NULL;`,
+      },
     ];
 
     for (let probe of probes) {
@@ -1281,8 +1164,14 @@ export var PlacesDBUtils = {
       if ("callback" in probe) {
         val = await probe.callback(val);
       }
-      probeValues[probe.histogram] = val;
-      Services.telemetry.getHistogramById(probe.histogram).add(val);
+      probeValues[probe.histogram || probe.scalar] = val;
+      if (probe.histogram) {
+        Services.telemetry.getHistogramById(probe.histogram).add(val);
+      } else if (probe.scalar) {
+        Services.telemetry.scalarSet(probe.scalar, val);
+      } else {
+        throw new Error("Unknwon telemetry probe type");
+      }
     }
   },
 
@@ -1374,6 +1263,38 @@ export var PlacesDBUtils = {
       entitiesByName.set(row.getResultByName("name"), details);
     }
     return entitiesByName;
+  },
+
+  /**
+   * Gets detailed statistics about database entities and their respective row
+   * counts.
+   * @returns {Array} An array that augments each object returned by
+   *          {@link getEntitiesStats} with the following extra properties:
+   *            - entity: name of the entity
+   *            - count: row count of the entity
+   */
+  async getEntitiesStatsAndCounts() {
+    let stats = await PlacesDBUtils.getEntitiesStats();
+    let data = [];
+    let db = await lazy.PlacesUtils.promiseDBConnection();
+    for (let [entity, value] of stats) {
+      let count = "-";
+      try {
+        if (
+          entity.startsWith("moz_") &&
+          !entity.endsWith("index") &&
+          entity != "moz_places_visitcount" /* bug in index name */
+        ) {
+          count = (
+            await db.execute(`SELECT count(*) FROM ${entity}`)
+          )[0].getResultByIndex(0);
+        }
+      } catch (ex) {
+        console.error(ex);
+      }
+      data.push(Object.assign(value, { entity, count }));
+    }
+    return data;
   },
 
   /**

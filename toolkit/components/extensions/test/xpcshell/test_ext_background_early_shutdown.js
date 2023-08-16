@@ -2,8 +2,8 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { BrowserTestUtils } = ChromeUtils.import(
-  "resource://testing-common/BrowserTestUtils.jsm"
+const { BrowserTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/BrowserTestUtils.sys.mjs"
 );
 
 AddonTestUtils.init(this);
@@ -15,14 +15,11 @@ AddonTestUtils.createAppInfo(
   "43"
 );
 
-let {
-  promiseRestartManager,
-  promiseShutdownManager,
-  promiseStartupManager,
-} = AddonTestUtils;
+let { promiseRestartManager, promiseShutdownManager, promiseStartupManager } =
+  AddonTestUtils;
 
-const { Management } = ChromeUtils.import(
-  "resource://gre/modules/Extension.jsm"
+const { Management } = ChromeUtils.importESModule(
+  "resource://gre/modules/Extension.sys.mjs"
 );
 
 // Crashes a <browser>'s remote process.
@@ -147,8 +144,8 @@ add_task(async function test_unload_extension_during_background_page_startup() {
     // Prevent the background page from actually loading.
     Management.once("extension-browser-inserted", (eventName, browser) => {
       // Intercept background page load.
-      let browserLoadURI = browser.loadURI;
-      browser.loadURI = function() {
+      let browserFixupAndLoadURIString = browser.fixupAndLoadURIString;
+      browser.fixupAndLoadURIString = function () {
         Assert.equal(++backgroundLoadCount, 1, "loadURI should be called once");
         Assert.equal(
           arguments[0],
@@ -157,7 +154,7 @@ add_task(async function test_unload_extension_during_background_page_startup() {
         );
         // Reset to "about:blank" to not load the actual background page.
         arguments[0] = "about:blank";
-        browserLoadURI.apply(this, arguments);
+        browserFixupAndLoadURIString.apply(this, arguments);
 
         // And force the extension process to crash.
         if (browser.isRemote) {

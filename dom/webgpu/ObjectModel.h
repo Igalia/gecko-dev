@@ -27,9 +27,6 @@ class ChildOf {
 };
 
 class ObjectBase : public nsWrapperCache {
- private:
-  nsString mLabel;
-
  protected:
   virtual ~ObjectBase() = default;
 
@@ -53,6 +50,12 @@ class ObjectBase : public nsWrapperCache {
 
   void GetLabel(nsAString& aValue) const;
   void SetLabel(const nsAString& aLabel);
+
+  auto CLabel() const { return NS_ConvertUTF16toUTF8(mLabel); }
+
+ protected:
+  // Object label, initialized from GPUObjectDescriptorBase.label.
+  nsString mLabel;
 };
 
 }  // namespace mozilla::webgpu
@@ -61,8 +64,8 @@ class ObjectBase : public nsWrapperCache {
   JSObject* WrapObject(JSContext* cx, JS::Handle<JSObject*> givenProto) \
       override;
 
-#define GPU_DECL_CYCLE_COLLECTION(T)                     \
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_NATIVE_CLASS(T) \
+#define GPU_DECL_CYCLE_COLLECTION(T)                    \
+  NS_DECL_CYCLE_COLLECTION_NATIVE_WRAPPERCACHE_CLASS(T) \
   NS_INLINE_DECL_CYCLE_COLLECTING_NATIVE_REFCOUNTING(T)
 
 #define GPU_IMPL_JS_WRAP(T)                                                  \
@@ -73,7 +76,7 @@ class ObjectBase : public nsWrapperCache {
 // Note: we don't use `NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE` directly
 // because there is a custom action we need to always do.
 #define GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(T, ...) \
-  NS_IMPL_CYCLE_COLLECTION_CLASS(T)                    \
+  NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(T)       \
   NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(T)             \
     tmp->Cleanup();                                    \
     NS_IMPL_CYCLE_COLLECTION_UNLINK(__VA_ARGS__)       \
@@ -81,11 +84,10 @@ class ObjectBase : public nsWrapperCache {
   NS_IMPL_CYCLE_COLLECTION_UNLINK_END                  \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(T)           \
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(__VA_ARGS__)     \
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END                \
-  NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(T)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 #define GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WEAK_PTR(T, ...) \
-  NS_IMPL_CYCLE_COLLECTION_CLASS(T)                             \
+  NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(T)                \
   NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(T)                      \
     tmp->Cleanup();                                             \
     NS_IMPL_CYCLE_COLLECTION_UNLINK(__VA_ARGS__)                \
@@ -94,8 +96,7 @@ class ObjectBase : public nsWrapperCache {
   NS_IMPL_CYCLE_COLLECTION_UNLINK_END                           \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(T)                    \
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(__VA_ARGS__)              \
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END                         \
-  NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(T)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
 #define GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_INHERITED(T, P, ...) \
   NS_IMPL_CYCLE_COLLECTION_CLASS(T)                                 \
@@ -109,9 +110,7 @@ class ObjectBase : public nsWrapperCache {
     NS_IMPL_CYCLE_COLLECTION_TRAVERSE(__VA_ARGS__)                  \
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-#define GPU_IMPL_CYCLE_COLLECTION(T, ...)            \
-  NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(T, AddRef)    \
-  NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(T, Release) \
+#define GPU_IMPL_CYCLE_COLLECTION(T, ...) \
   GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(T, __VA_ARGS__)
 
 template <typename T>

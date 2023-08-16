@@ -73,8 +73,6 @@ static const uint32_t ONE_WEEK = 7U * ONE_DAY;
 static const uint32_t ONE_MONTH = 30U * ONE_DAY;
 static const uint32_t ONE_YEAR = 365U * ONE_DAY;
 
-static const uint32_t STARTUP_WINDOW = 5U * 60U;  // 5min
-
 // Version of metadata entries we expect
 static const uint32_t METADATA_VERSION = 1;
 
@@ -97,7 +95,7 @@ static const uint32_t kFlagsMask = ((1 << kRollingLoadOffset) - 1);
 // of nsIURI instead?)
 static nsresult ExtractOrigin(nsIURI* uri, nsIURI** originUri) {
   nsAutoCString s;
-  nsresult rv = nsContentUtils::GetASCIIOrigin(uri, s);
+  nsresult rv = nsContentUtils::GetWebExposedOriginSerialization(uri, s);
   NS_ENSURE_SUCCESS(rv, rv);
 
   return NS_NewURI(originUri, s);
@@ -679,7 +677,7 @@ void Predictor::PredictForLink(nsIURI* targetURI, nsIURI* sourceURI,
   nsCOMPtr<nsIPrincipal> principal =
       BasePrincipal::CreateContentPrincipal(targetURI, originAttributes);
 
-  mSpeculativeService->SpeculativeConnect(targetURI, principal, nullptr);
+  mSpeculativeService->SpeculativeConnect(targetURI, principal, nullptr, false);
   if (verifier) {
     PREDICTOR_LOG(("    sending verification"));
     verifier->OnPredictPreconnect(targetURI);
@@ -1160,7 +1158,7 @@ bool Predictor::RunPredictions(nsIURI* referrer,
     ++totalPreconnects;
     nsCOMPtr<nsIPrincipal> principal =
         BasePrincipal::CreateContentPrincipal(uri, originAttributes);
-    mSpeculativeService->SpeculativeConnect(uri, principal, this);
+    mSpeculativeService->SpeculativeConnect(uri, principal, this, false);
     predicted = true;
     if (verifier) {
       PREDICTOR_LOG(("    sending preconnect verification"));

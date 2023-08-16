@@ -12,7 +12,9 @@ DIRS += [
 ]
 
 EXTRA_JS_MODULES += [
+    "MerinoClient.sys.mjs",
     "QuickActionsLoaderDefault.sys.mjs",
+    "QuickSuggest.sys.mjs",
     "UrlbarController.sys.mjs",
     "UrlbarEventBufferer.sys.mjs",
     "UrlbarInput.sys.mjs",
@@ -23,14 +25,15 @@ EXTRA_JS_MODULES += [
     "UrlbarProviderAutofill.sys.mjs",
     "UrlbarProviderBookmarkKeywords.sys.mjs",
     "UrlbarProviderCalculator.sys.mjs",
+    "UrlbarProviderContextualSearch.sys.mjs",
     "UrlbarProviderExtension.sys.mjs",
     "UrlbarProviderHeuristicFallback.sys.mjs",
+    "UrlbarProviderHistoryUrlHeuristic.sys.mjs",
     "UrlbarProviderInputHistory.sys.mjs",
     "UrlbarProviderInterventions.sys.mjs",
     "UrlbarProviderOmnibox.sys.mjs",
     "UrlbarProviderOpenTabs.sys.mjs",
     "UrlbarProviderPlaces.sys.mjs",
-    "UrlbarProviderPreloadedSites.sys.mjs",
     "UrlbarProviderPrivateSearch.sys.mjs",
     "UrlbarProviderQuickActions.sys.mjs",
     "UrlbarProviderQuickSuggest.sys.mjs",
@@ -42,7 +45,7 @@ EXTRA_JS_MODULES += [
     "UrlbarProviderTokenAliasEngines.sys.mjs",
     "UrlbarProviderTopSites.sys.mjs",
     "UrlbarProviderUnitConversion.sys.mjs",
-    "UrlbarQuickSuggest.sys.mjs",
+    "UrlbarProviderWeather.sys.mjs",
     "UrlbarResult.sys.mjs",
     "UrlbarSearchOneOffs.sys.mjs",
     "UrlbarSearchUtils.sys.mjs",
@@ -52,7 +55,20 @@ EXTRA_JS_MODULES += [
     "UrlbarView.sys.mjs",
 ]
 
+EXTRA_JS_MODULES["urlbar/private"] += [
+    "private/AddonSuggestions.sys.mjs",
+    "private/AdmWikipedia.sys.mjs",
+    "private/BaseFeature.sys.mjs",
+    "private/BlockedSuggestions.sys.mjs",
+    "private/ImpressionCaps.sys.mjs",
+    "private/MDNSuggestions.sys.mjs",
+    "private/PocketSuggestions.sys.mjs",
+    "private/QuickSuggestRemoteSettings.sys.mjs",
+    "private/Weather.sys.mjs",
+]
+
 TESTING_JS_MODULES += [
+    "tests/quicksuggest/MerinoTestUtils.sys.mjs",
     "tests/quicksuggest/QuickSuggestTestUtils.sys.mjs",
     "tests/UrlbarTestUtils.sys.mjs",
 ]
@@ -60,6 +76,7 @@ BROWSER_CHROME_MANIFESTS += [
     "tests/browser-tips/browser.ini",
     "tests/browser-updateResults/browser.ini",
     "tests/browser/browser.ini",
+    "tests/engagementTelemetry/browser/browser.ini",
     "tests/ext/browser/browser.ini",
     "tests/quicksuggest/browser/browser.ini",
 ]

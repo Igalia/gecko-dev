@@ -1,16 +1,32 @@
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
+#![cfg_attr(feature = "nightly", feature(proc_macro_expand))]
+#![warn(rust_2018_idioms, unused_qualifications)]
 
 //! Macros for `uniffi`.
 //!
 //! Currently this is just for easily generating integration tests, but maybe
 //! we'll put some other code-annotation helper macros in here at some point.
 
-use camino::{Utf8Path, Utf8PathBuf};
-use quote::{format_ident, quote};
-use std::env;
-use syn::{bracketed, punctuated::Punctuated, LitStr, Token};
+use camino::Utf8Path;
+use proc_macro::TokenStream;
+use quote::quote;
+use syn::{parse_macro_input, LitStr};
+
+mod enum_;
+mod error;
+mod export;
+mod fnsig;
+mod object;
+mod record;
+mod test;
+mod util;
+
+use self::{
+    enum_::expand_enum, error::expand_error, export::expand_export, object::expand_object,
+    record::expand_record,
+};
 
 /// A macro to build testcases for a component's generated bindings.
 ///
@@ -22,99 +38,116 @@ use syn::{bracketed, punctuated::Punctuated, LitStr, Token};
 /// environment to let it load the component bindings, and will pass iff the script
 /// exits successfully.
 ///
-/// To use it, invoke the macro with one or more udl files as the first argument, then
-/// one or more file paths relative to the crate root directory.
-/// It will produce one `#[test]` function per file, in a manner designed to
-/// play nicely with `cargo test` and its test filtering options.
+/// To use it, invoke the macro with the name of a fixture/example crate as the first argument,
+/// then one or more file paths relative to the crate root directory. It will produce one `#[test]`
+/// function per file, in a manner designed to play nicely with `cargo test` and its test filtering
+/// options.
 #[proc_macro]
-pub fn build_foreign_language_testcases(paths: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let paths = syn::parse_macro_input!(paths as FilePaths);
-    // We resolve each path relative to the crate root directory.
-    let pkg_dir = env::var("CARGO_MANIFEST_DIR")
-        .expect("Missing $CARGO_MANIFEST_DIR, cannot build tests for generated bindings");
+pub fn build_foreign_language_testcases(tokens: TokenStream) -> TokenStream {
+    test::build_foreign_language_testcases(tokens)
+}
 
-    // Create an array of UDL files.
-    let udl_files = &paths
-        .udl_files
-        .iter()
-        .map(|file_path| {
-            let pathbuf: Utf8PathBuf = [&pkg_dir, file_path].iter().collect();
-            let path = pathbuf.to_string();
-            quote! { #path }
-        })
-        .collect::<Vec<proc_macro2::TokenStream>>();
+#[proc_macro_attribute]
+pub fn export(attr_args: TokenStream, input: TokenStream) -> TokenStream {
+    let input2 = proc_macro2::TokenStream::from(input.clone());
 
-    // For each test file found, generate a matching testcase.
-    let test_functions = paths.test_scripts
-        .iter()
-        .map(|file_path| {
-            let test_file_pathbuf: Utf8PathBuf = [&pkg_dir, file_path].iter().collect();
-            let test_file_path = test_file_pathbuf.to_string();
-            let test_file_name = test_file_pathbuf
-                .file_name()
-                .expect("Test file has no name, cannot build tests for generated bindings");
-            let test_name = format_ident!(
-                "uniffi_foreign_language_testcase_{}",
-                test_file_name.replace(|c: char| !c.is_alphanumeric(), "_")
-            );
-            let maybe_ignore = if should_skip_path(&test_file_pathbuf) {
-                quote! { #[ignore] }
-            } else {
-                quote! { }
-            };
-            quote! {
-                #maybe_ignore
-                #[test]
-                fn #test_name () -> uniffi::deps::anyhow::Result<()> {
-                    uniffi::testing::run_foreign_language_testcase(#pkg_dir, &[ #(#udl_files),* ], #test_file_path)
-                }
-            }
-        })
-        .collect::<Vec<proc_macro2::TokenStream>>();
-    let test_module = quote! {
-        #(#test_functions)*
+    let gen_output = || {
+        let mod_path = util::mod_path()?;
+        let args = syn::parse(attr_args)?;
+        let item = syn::parse(input)?;
+        expand_export(item, args, mod_path)
     };
-    proc_macro::TokenStream::from(test_module)
-}
+    let output = gen_output().unwrap_or_else(syn::Error::into_compile_error);
 
-// UNIFFI_TESTS_DISABLE_EXTENSIONS contains a comma-sep'd list of extensions (without leading `.`)
-fn should_skip_path(path: &Utf8Path) -> bool {
-    let ext = path.extension().expect("File has no extension!");
-    env::var("UNIFFI_TESTS_DISABLE_EXTENSIONS")
-        .map(|v| v.split(',').any(|look| look == ext))
-        .unwrap_or(false)
-}
-
-/// Newtype to simplifying parsing a list of file paths from macro input.
-#[derive(Debug)]
-struct FilePaths {
-    udl_files: Vec<String>,
-    test_scripts: Vec<String>,
-}
-
-impl syn::parse::Parse for FilePaths {
-    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
-        let udl_array;
-        bracketed!(udl_array in input);
-        let udl_files = Punctuated::<LitStr, Token![,]>::parse_terminated(&udl_array)?
-            .iter()
-            .map(|s| s.value())
-            .collect();
-
-        let _comma: Token![,] = input.parse()?;
-
-        let scripts_array;
-        bracketed!(scripts_array in input);
-        let test_scripts = Punctuated::<LitStr, Token![,]>::parse_terminated(&scripts_array)?
-            .iter()
-            .map(|s| s.value())
-            .collect();
-
-        Ok(FilePaths {
-            udl_files,
-            test_scripts,
-        })
+    quote! {
+        #input2
+        #output
     }
+    .into()
+}
+
+#[proc_macro_derive(Record, attributes(uniffi))]
+pub fn derive_record(input: TokenStream) -> TokenStream {
+    expand_record(parse_macro_input!(input)).into()
+}
+
+#[proc_macro_derive(Enum)]
+pub fn derive_enum(input: TokenStream) -> TokenStream {
+    expand_enum(parse_macro_input!(input)).into()
+}
+
+#[proc_macro_derive(Object)]
+pub fn derive_object(input: TokenStream) -> TokenStream {
+    let mod_path = match util::mod_path() {
+        Ok(p) => p,
+        Err(e) => return e.into_compile_error().into(),
+    };
+    let input = parse_macro_input!(input);
+
+    expand_object(input, mod_path).into()
+}
+
+#[proc_macro_derive(Error, attributes(uniffi))]
+pub fn derive_error(input: TokenStream) -> TokenStream {
+    expand_error(parse_macro_input!(input))
+        .unwrap_or_else(syn::Error::into_compile_error)
+        .into()
+}
+
+/// Generate the FfiConverter implementation for a Record
+///
+/// This is used by the Askama scaffolding code.  It this inputs a struct definition, but only
+/// outputs the `FfiConverter` implementation, not the struct.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn ffi_converter_record(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    record::expand_record_ffi_converter(
+        syn::parse_macro_input!(attrs),
+        syn::parse_macro_input!(input),
+    )
+    .into()
+}
+
+/// Generate the FfiConverter implementation for an Enum
+///
+/// This is used by the Askama scaffolding code.  It this inputs an enum definition, but only
+/// outputs the `FfiConverter` implementation, not the enum.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn ffi_converter_enum(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    enum_::expand_enum_ffi_converter(
+        syn::parse_macro_input!(attrs),
+        syn::parse_macro_input!(input),
+    )
+    .into()
+}
+
+/// Generate the FfiConverter implementation for an Error enum
+///
+/// This is used by the Askama scaffolding code.  It this inputs an enum definition, but only
+/// outputs the `FfiConverter` implementation, not the enum.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn ffi_converter_error(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    error::expand_ffi_converter_error(
+        syn::parse_macro_input!(attrs),
+        syn::parse_macro_input!(input),
+    )
+    .into()
+}
+
+/// Generate the FfiConverter implementation for an Interface
+///
+/// This is used by the Askama scaffolding code.  It this inputs an struct/enum definition, but
+/// only outputs the `FfiConverter` implementation, not the item.
+#[doc(hidden)]
+#[proc_macro_attribute]
+pub fn ffi_converter_interface(attrs: TokenStream, input: TokenStream) -> TokenStream {
+    object::expand_ffi_converter_interface(
+        syn::parse_macro_input!(attrs),
+        syn::parse_macro_input!(input),
+    )
+    .into()
 }
 
 /// A helper macro to include generated component scaffolding.
@@ -130,16 +163,32 @@ impl syn::parse::Parse for FilePaths {
 /// This will expand to the appropriate `include!` invocation to include
 /// the generated `my_component_name.uniffi.rs` (which it assumes has
 /// been successfully built by your crate's `build.rs` script).
-///
 #[proc_macro]
-pub fn include_scaffolding(component_name: proc_macro::TokenStream) -> proc_macro::TokenStream {
-    let name = syn::parse_macro_input!(component_name as syn::LitStr);
+pub fn include_scaffolding(component_name: TokenStream) -> TokenStream {
+    let name = syn::parse_macro_input!(component_name as LitStr);
     if std::env::var("OUT_DIR").is_err() {
         quote! {
             compile_error!("This macro assumes the crate has a build.rs script, but $OUT_DIR is not present");
         }
     } else {
+        let udl_name = name.value();
+        let mod_path = match util::mod_path() {
+            Ok(v) => quote! { #v },
+            Err(e) => e.into_compile_error()
+        };
+        let metadata = util::create_metadata_items(
+            "UDL",
+            &udl_name.replace('-', "_").to_ascii_uppercase(),
+            quote! {
+                    ::uniffi::MetadataBuffer::from_code(::uniffi::metadata::codes::UDL_FILE)
+                        .concat_str(#mod_path)
+                        .concat_str(#udl_name)
+            },
+            None,
+        );
         quote! {
+            #metadata
+
             include!(concat!(env!("OUT_DIR"), "/", #name, ".uniffi.rs"));
         }
     }.into()
@@ -155,21 +204,19 @@ pub fn include_scaffolding(component_name: proc_macro::TokenStream) -> proc_macr
 /// ```rs
 /// uniffi_macros::generate_and_include_scaffolding!("path/to/my/interface.udl");
 /// ```
-///
 #[proc_macro]
-pub fn generate_and_include_scaffolding(
-    udl_file: proc_macro::TokenStream,
-) -> proc_macro::TokenStream {
-    let udl_file = syn::parse_macro_input!(udl_file as syn::LitStr);
+pub fn generate_and_include_scaffolding(udl_file: TokenStream) -> TokenStream {
+    let udl_file = syn::parse_macro_input!(udl_file as LitStr);
     let udl_file_string = udl_file.value();
     let udl_file_path = Utf8Path::new(&udl_file_string);
     if std::env::var("OUT_DIR").is_err() {
         quote! {
             compile_error!("This macro assumes the crate has a build.rs script, but $OUT_DIR is not present");
         }
-    } else if uniffi_build::generate_scaffolding(udl_file_path).is_err() {
+    } else if let Err(e) = uniffi_build::generate_scaffolding(udl_file_path) {
+        let err = format!("{e:#}");
         quote! {
-            compile_error!(concat!("Failed to generate scaffolding from UDL file at ", #udl_file));
+            compile_error!(concat!("Failed to generate scaffolding from UDL file at ", #udl_file, ": ", #err));
         }
     } else {
         // We know the filename is good because `generate_scaffolding` succeeded,
@@ -179,4 +226,17 @@ pub fn generate_and_include_scaffolding(
             uniffi_macros::include_scaffolding!(#name);
         }
     }.into()
+}
+
+/// A dummy macro that does nothing.
+///
+/// This exists so `#[uniffi::export]` can emit its input verbatim without
+/// causing unexpected errors, plus some extra code in case everything is okay.
+///
+/// It is important for `#[uniffi::export]` to not raise unexpected errors if it
+/// fails to parse the input as this happens very often when the proc-macro is
+/// run on an incomplete input by rust-analyzer while the developer is typing.
+#[proc_macro_attribute]
+pub fn constructor(_attrs: TokenStream, input: TokenStream) -> TokenStream {
+    input
 }

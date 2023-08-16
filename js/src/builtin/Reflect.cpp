@@ -8,17 +8,17 @@
 
 #include "jsapi.h"
 
-#include "builtin/Array.h"
-
+#include "builtin/Object.h"
 #include "jit/InlinableNatives.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_NOT_EXPECTED_TYPE
 #include "js/PropertySpec.h"
-#include "vm/ArgumentsObject.h"
+#include "vm/GlobalObject.h"
 #include "vm/JSContext.h"
-#include "vm/Stack.h"
+#include "vm/PlainObject.h"
 
 #include "vm/GeckoProfiler-inl.h"
-#include "vm/Interpreter-inl.h"
+#include "vm/JSObject-inl.h"
+#include "vm/ObjectOperations-inl.h"
 
 using namespace js;
 
@@ -223,11 +223,7 @@ static const JSPropertySpec reflect_properties[] = {
 /*** Setup ******************************************************************/
 
 static JSObject* CreateReflectObject(JSContext* cx, JSProtoKey key) {
-  Handle<GlobalObject*> global = cx->global();
-  RootedObject proto(cx, GlobalObject::getOrCreateObjectPrototype(cx, global));
-  if (!proto) {
-    return nullptr;
-  }
+  RootedObject proto(cx, &cx->global()->getObjectPrototype());
   return NewPlainObjectWithProto(cx, proto, TenuredObject);
 }
 

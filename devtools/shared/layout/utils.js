@@ -4,20 +4,15 @@
 
 "use strict";
 
-const { Ci, Cc } = require("chrome");
-const nodeFilterConstants = require("devtools/shared/dom-node-filter-constants");
 loader.lazyRequireGetter(
   this,
   "DevToolsUtils",
-  "devtools/shared/DevToolsUtils"
+  "resource://devtools/shared/DevToolsUtils.js"
 );
-loader.lazyRequireGetter(this, "ChromeUtils");
-loader.lazyRequireGetter(
-  this,
-  "NetUtil",
-  "resource://gre/modules/NetUtil.jsm",
-  true
-);
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+});
 
 const SHEET_TYPE = {
   agent: "AGENT_SHEET",
@@ -29,7 +24,7 @@ const SHEET_TYPE = {
 loader.lazyRequireGetter(
   this,
   "setIgnoreLayoutChanges",
-  "devtools/server/actors/reflow",
+  "resource://devtools/server/actors/reflow.js",
   true
 );
 exports.setIgnoreLayoutChanges = (...args) =>
@@ -370,7 +365,7 @@ function safelyGetContentWindow(frame) {
   );
   walker.showSubDocuments = true;
   walker.showDocumentsAsNodes = true;
-  walker.init(frame, nodeFilterConstants.SHOW_ALL);
+  walker.init(frame);
   walker.currentNode = frame;
 
   const document = walker.nextNode();
@@ -554,12 +549,6 @@ exports.isAfterPseudoElement = isAfterPseudoElement;
 
 /**
  * Get the current zoom factor applied to the container window of a given node.
- * Container windows are used as a weakmap key to store the corresponding
- * nsIDOMWindowUtils instance to avoid querying it every time.
- *
- * XXXbz Given that we now have a direct getter for the DOMWindowUtils, is
- * this weakmap cache path any faster than just calling the getter?
- *
  * @param {DOMNode|DOMWindow}
  *        The node for which the zoom factor should be calculated, or its
  *        owner window.
@@ -572,7 +561,7 @@ function getCurrentZoom(node) {
     throw new Error("Unable to get the zoom from the given argument.");
   }
 
-  return utilsFor(win).fullZoom;
+  return win.browsingContext?.fullZoom || 1.0;
 }
 exports.getCurrentZoom = getCurrentZoom;
 
@@ -589,7 +578,7 @@ exports.getCurrentZoom = getCurrentZoom;
  */
 function getDisplayPixelRatio(node) {
   const win = getWindowFor(node);
-  return win.devicePixelRatio / utilsFor(win).fullZoom;
+  return win.devicePixelRatio / getCurrentZoom(node);
 }
 exports.getDisplayPixelRatio = getDisplayPixelRatio;
 
@@ -918,7 +907,7 @@ function isFrameBlockedByCSP(node) {
 
   let uri;
   try {
-    uri = NetUtil.newURI(node.src);
+    uri = lazy.NetUtil.newURI(node.src);
   } catch (e) {
     return false;
   }
@@ -926,11 +915,10 @@ function isFrameBlockedByCSP(node) {
   const res = node.ownerDocument.csp.shouldLoad(
     Ci.nsIContentPolicy.TYPE_SUBDOCUMENT,
     null, // nsICSPEventListener
+    null, // nsILoadInfo
     uri,
     null, // aOriginalURIIfRedirect
-    false, // aSendViolationReports
-    null, // aNonce
-    false // aParserCreated
+    false // aSendViolationReports
   );
 
   return res !== Ci.nsIContentPolicy.ACCEPT;

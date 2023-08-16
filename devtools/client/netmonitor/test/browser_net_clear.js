@@ -3,7 +3,6 @@
 
 "use strict";
 
-/* import-globals-from ../../webconsole/test/browser/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
   this
@@ -13,7 +12,7 @@ Services.scriptloader.loadSubScript(
  * Tests if the clear button empties the request menu.
  */
 
-add_task(async function() {
+add_task(async function () {
   Services.prefs.setBoolPref("devtools.webconsole.filter.net", true);
 
   const { monitor, toolbox } = await initNetMonitor(SIMPLE_URL, {
@@ -127,9 +126,10 @@ add_task(async function() {
   }
 
   function assertNetworkEventResourceState(expectedNoOfNetworkEventResources) {
-    const actualNoOfNetworkEventResources = toolbox.resourceCommand.getAllResources(
-      toolbox.resourceCommand.TYPES.NETWORK_EVENT
-    ).length;
+    const actualNoOfNetworkEventResources =
+      toolbox.resourceCommand.getAllResources(
+        toolbox.resourceCommand.TYPES.NETWORK_EVENT
+      ).length;
 
     is(
       actualNoOfNetworkEventResources,

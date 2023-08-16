@@ -3,7 +3,9 @@
 
 "use strict";
 
-const { DevToolsServer } = require("devtools/server/devtools-server");
+const {
+  DevToolsServer,
+} = require("resource://devtools/server/devtools-server.js");
 
 // Bug 1277805: Too slow for debug runs
 requestLongerTimeout(2);
@@ -35,7 +37,7 @@ requestLongerTimeout(2);
  */
 
 function runTools(tab) {
-  return (async function() {
+  return (async function () {
     let toolbox;
     const toolIds = await getSupportedToolIds(tab);
     for (const toolId of toolIds) {
@@ -60,7 +62,7 @@ function runTools(tab) {
 }
 
 function test() {
-  (async function() {
+  (async function () {
     toggleAllTools(true);
     const tab = await addTab("about:blank");
 

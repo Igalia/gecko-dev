@@ -2,24 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
-const { EventEmitter } = ChromeUtils.import(
-  "resource://gre/modules/EventEmitter.jsm"
-);
+import { EventEmitter } from "resource://gre/modules/EventEmitter.sys.mjs";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  E10SUtils: "resource://gre/modules/E10SUtils.jsm",
-  HiddenFrame: "resource://gre/modules/HiddenFrame.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  E10SUtils: "resource://gre/modules/E10SUtils.sys.mjs",
+  HiddenFrame: "resource://gre/modules/HiddenFrame.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
   return console.createInstance({
     prefix: "PageData",
     maxLogLevel: Services.prefs.getBoolPref("browser.pagedata.log", false)
@@ -71,11 +67,13 @@ function shift(set) {
 class HiddenBrowserManager {
   /**
    * The hidden frame if one has been created.
+   *
    * @type {HiddenFrame | null}
    */
   #frame = null;
   /**
    * The number of hidden browser elements currently in use.
+   *
    * @type {number}
    */
   #browsers = 0;
@@ -278,24 +276,28 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
 
   /**
    * The number of currently running background fetches.
+   *
    * @type {number}
    */
   #backgroundFetches = 0;
 
   /**
    * The list of urls waiting to be loaded in the background.
+   *
    * @type {Set<string>}
    */
   #backgroundQueue = new Set();
 
   /**
    * Tracks whether the user is currently idle.
+   *
    * @type {boolean}
    */
   #userIsIdle = false;
 
   /**
    * A manager for hidden browsers.
+   *
    * @type {HiddenBrowserManager}
    */
   #browserManager = new HiddenBrowserManager();
@@ -304,7 +306,7 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
    * A map of hidden browsers to a resolve function that should be passed the
    * actor that was created for the browser.
    *
-   * @type {WeakMap<Browser, (actor: PageDataParent) => void>}
+   * @type {WeakMap<Browser, function(PageDataParent): void>}
    */
   #backgroundBrowsers = new WeakMap();
 
@@ -359,9 +361,10 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
       if (!win.closed) {
         // Ask any existing tabs to report
         for (let tab of win.gBrowser.tabs) {
-          let parent = tab.linkedBrowser.browsingContext?.currentWindowGlobal.getActor(
-            "PageData"
-          );
+          let parent =
+            tab.linkedBrowser.browsingContext?.currentWindowGlobal.getActor(
+              "PageData"
+            );
 
           parent.sendAsyncMessage("PageData:CheckLoaded");
         }
@@ -554,7 +557,7 @@ export const PageDataService = new (class PageDataService extends EventEmitter {
             oa
           ),
         };
-        browser.loadURI(url, loadURIOptions);
+        browser.fixupAndLoadURIString(url, loadURIOptions);
 
         let actor = await promise;
         return await actor.collectPageData();

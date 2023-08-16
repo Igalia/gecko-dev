@@ -6,36 +6,15 @@
 :root {
   --content-area-padding-inline: 24px;
   --content-area-padding-block: 16px;
-  --sidebar-width: 200px;
   --header-spacing: 40px;
   --footer-spacing: 80px;
-  --card-border-zap-gradient: linear-gradient(90deg, #9059FF 0%, #FF4AA2 52.08%, #FFBD4F 100%);
 
+  --success-fill-color: #2AC3A2;
   --success-background-color: #87FFD1;
-  --success-border-color: #2AC3A2;
-  --success-color: #15141A;
+  --success-box-text-color: #15141A;
 
-  --colorways-figure-size: 225px;
-  --colorways-grid-template-areas:
-    "colorways-figure"
-    "colorways-header"
-    "colorways-description"
-    "colorways-button";
-  --colorways-grid-template-columns: auto auto;
-  --colorways-grid-template-rows: auto auto auto;
-  --colorways-figure-display: flex;
-  --colorways-header-flex-direction: column;
-  --colorways-no-collection-border-radius: 8px;
-  --colorways-no-collection-div-bg-position: center top;
-  --colorways-no-collection-div-bg-size: 100%;
-  --colorways-no-collection-div-padding-inline: var(--content-area-padding-inline);
-  --colorways-no-collection-div-padding-block: var(--content-area-padding-block);
-  --colorways-no-collection-notice-padding-block: 0 1em;
-  --colorways-no-collection-notice-padding-inline: 1em;
-  --colorways-no-collection-notice-height: auto;
-  --colorways-no-collection-notice-justify-content: center;
-  --colorways-no-collection-notice-margin: 0;
-  --colorways-no-collection-notice-width: auto;
+  --details-grid-column: 1;
+  --recently-closed-tabs-grid-row: 2;
 
   --info-icon-background-color: #0090ED;
 }
@@ -46,16 +25,25 @@
   font-size: 15px;
   /* override --in-content-page-background from common-shared.css */
   background-color: transparent;
+  --fxview-background-color: var(--newtab-background-color, var(--in-content-page-background));
+  --fxview-element-background-hover: color-mix(in srgb, var(--fxview-background-color) 90%, currentColor);
+  --fxview-element-background-active: color-mix(in srgb, var(--fxview-background-color) 80%, currentColor);
+  --fxview-text-primary-color: var(--newtab-text-primary-color, var(--in-content-page-color));
+  --fxview-text-color-hover: var(--newtab-text-primary-color);
+  --fxview-contrast-border: color-mix(in hsl, currentColor 45%, transparent);
+  --fxview-extra-contrast-border: color-mix(in hsl, currentColor 85%, transparent);
+  --in-content-zap-gradient: linear-gradient(var(--fxview-extra-contrast-border), var(--fxview-extra-contrast-border));
+  --card-border-zap-gradient: var(--in-content-zap-gradient);
+  --fxview-text-secondary-color: color-mix(in srgb, currentColor 70%, transparent);
+  --newtab-background-color-secondary: #FFF;
+
+  /* ensure utility button hover states match those of the rest of the page */
+  --in-content-button-background-hover: var(--fxview-element-background-hover);
+  --in-content-button-background-active: var(--fxview-element-background-active);
+  --in-content-button-text-color-hover: var(--fxview-text-color-hover);
 }
 
 body {
-  --fxview-background-color: var(--newtab-background-color, var(--in-content-page-background));
-  --fxview-element-hover-color: color-mix(in srgb, var(--fxview-background-color) 90%, currentColor);
-  --fxview-element-active-color: color-mix(in srgb, var(--fxview-background-color) 80%, currentColor);
-  --fxview-contrast-border: color-mix(in hsl, currentColor 45%, transparent);
-  --fxview-text-secondary-color: color-mix(in srgb, currentColor 80%, transparent);
-  --newtab-background-color-secondary: #FFF;
-  --colorways-no-collection-notice-bg-color: transparent;
   display: flex;
   justify-content: center;
   padding-block: var(--header-spacing) var(--footer-spacing);
@@ -66,15 +54,30 @@ body {
   color: var(--newtab-text-primary-color);
 }
 
-body[lwt-newtab-brighttext] {
-  --fxview-element-hover-color: color-mix(in srgb, var(--fxview-background-color) 80%, white);
-  --fxview-element-active-color: color-mix(in srgb, var(--fxview-background-color) 60%, white);
-  --newtab-background-color-secondary: #42414d;
+:root:not([lwt-newtab]) {
+  --in-content-zap-gradient: linear-gradient(90deg, #9059FF 0%, #FF4AA2 52.08%, #FFBD4F 100%);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fxview-element-background-hover: color-mix(in srgb, var(--fxview-background-color) 80%, white);
+    --fxview-element-background-active: color-mix(in srgb, var(--fxview-background-color) 60%, white);
+    --newtab-background-color-secondary: #42414d;
+  }
+}
+
+@media (prefers-contrast) {
+  :root {
+    --fxview-element-background-hover: ButtonText;
+    --fxview-element-background-active: ButtonText;
+    --fxview-text-color-hover: ButtonFace;
+    --fxview-text-secondary-color: currentColor;
+  }
 }
 
 h1 {
-  color: var(--newtab-text-primary-color);
-  font-weight: 500;
+  color: var(--fxview-text-primary-color);
+  font-weight: 600;
   font-size: 1.5em;
 }
 
@@ -83,29 +86,24 @@ h1 {
   padding-block: var(--content-area-padding-block);
 }
 
-body > nav {
-  flex: 0 0 var(--sidebar-width);
+#logo-container {
+  flex: 0 0 auto;
 }
 
 body > main {
   flex: 1 1 auto;
   display: grid;
   grid-template-columns: 2fr 1fr;
+  grid-template-rows: max-content 1fr;
 }
 
-body > main > section {
-  grid-column: 1;
-}
-
-body > main > aside {
-  grid-column: 2;
-  grid-row: 1 / 3;
+body > main > details {
+  grid-column: var(--details-grid-column);
 }
 
 @media (max-width: 76rem) {
   :host,
   :root {
-    --sidebar-width: 40px;
     --content-area-padding-inline: 12px;
   }
   .brand-logo > .brand-feature-name {
@@ -114,32 +112,9 @@ body > main > aside {
 }
 
 @media (max-width: 65rem) {
-  body {
-    --colorways-no-collection-notice-bg-color: var(--newtab-background-color-secondary);
-  }
-  body > main > section,
-  body > main > aside {
-    grid-column: 1 / -1;
-    grid-row: auto;
-  }
   :root {
-    --colorways-grid-template-areas:
-      "colorways-header colorways-figure"
-      "colorways-description colorways-figure"
-      "colorways-button colorways-figure";
-    --colorways-grid-template-columns: 1fr var(--colorways-figure-size);
-    --colorways-grid-template-rows: min-content min-content 1fr;
-    --colorways-header-flex-direction: row;
-    --colorways-no-collection-div-bg-position: right top;
-    --colorways-no-collection-div-bg-size: 230px;
-    --colorways-no-collection-div-padding-inline: 0 246px;
-    --colorways-no-collection-div-padding-block: 0;
-    --colorways-no-collection-notice-padding-block: 0;
-    --colorways-no-collection-notice-padding-inline: var(--colorways-no-collection-border-radius);
-    --colorways-no-collection-notice-height: 107px;
-    --colorways-no-collection-notice-justify-content: flex-start;
-    --colorways-no-collection-notice-margin: 1px;
-    --colorways-no-collection-notice-width: 100%;
+    --recently-closed-tabs-grid-row: 3;
+    --details-grid-column: 1 / -1;
   }
 }
 
@@ -148,16 +123,6 @@ body > main > aside {
   :root {
     --header-spacing: 16px;
     --footer-spacing: 16px;
-    --colorways-grid-template-areas:
-        "colorways-header"
-        "colorways-description"
-        "colorways-button";
-    --colorways-grid-template-columns: auto;
-    --colorways-grid-template-rows: auto;
-    --colorways-figure-display: none;
-    --colorways-header-flex-direction: column;
-    --colorways-no-collection-div-bg-size: 15%;
-    --colorways-no-collection-div-padding-inline: 0 15%;
   }
 }
 
@@ -171,7 +136,8 @@ body > main > aside {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  font-size: 1.5em;
+  font-size: 1.75em;
+  white-space: nowrap;
 }
 
 .brand-logo > .brand-icon {
@@ -185,118 +151,23 @@ body > main > aside {
 .brand-logo > .brand-feature-name {
   margin-inline-start: 8px;
   flex: 1 1 auto;
-}
-
-#colorways {
-  position: relative;
-  display: grid;
-  grid-template-areas: var(--colorways-grid-template-areas);
-  grid-template-columns: var(--colorways-grid-template-columns);
-  grid-template-rows: var(--colorways-grid-template-rows);
-  justify-items: start;
-  align-items: start;
-}
-
-#colorways.no-collection {
-  display: block;
-  background: linear-gradient(51.95deg, #7542E5 -8.36%, #C953F2 98.73%);
-  border-radius: var(--colorways-no-collection-border-radius);
-}
-
-#colorways.no-collection > div {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  padding-inline: var(--colorways-no-collection-div-padding-inline);
-  padding-block: var(--colorways-no-collection-div-padding-block);
-  justify-content: flex-end;
-  background: url("chrome://browser/content/colorway-background.svg");
-  background-size: var(--colorways-no-collection-div-bg-size);
-  background-position: var(--colorways-no-collection-div-bg-position);
-  background-repeat: no-repeat;
-  border-radius: inherit;
-}
-
-#colorways > header {
-  grid-area: colorways-header;
-  display: flex;
-  flex-direction: var(--colorways-header-flex-direction);
-  align-items: flex-start;
-  flex-wrap: wrap;
-}
-
-#no-current-colorway-collection-notice {
-  display: flex;
-  width: var(--colorways-no-collection-notice-width);
-  height: var(--colorways-no-collection-notice-height);
-  border-start-start-radius: calc(var(--colorways-no-collection-border-radius) - var(--colorways-no-collection-notice-margin));
-  border-end-start-radius: calc(var(--colorways-no-collection-border-radius) - var(--colorways-no-collection-notice-margin));
-  margin: var(--colorways-no-collection-notice-margin);
-  padding-block: var(--colorways-no-collection-notice-padding-block);
-  padding-inline: var(--colorways-no-collection-notice-padding-inline);
-  justify-content: var(--colorways-no-collection-notice-justify-content);
-  align-items: center;
-  font-size: 2em;
-  background-color: var(--colorways-no-collection-notice-bg-color);
-}
-
-#no-current-colorway-collection-notice,
-#colorways-collection-description {
-  grid-area: colorways-description;
-}
-
-#colorways-collection-description,
-#colorways-button {
-  margin: 0.4em 0;
-}
-
-#colorways-button {
-  grid-area: colorways-button;
-}
-
-#colorways-collection-title {
-  margin: 0;
-  margin-top: 0.3em;
-  margin-inline-end: 0.5em;
-  padding: 0;
-  font-size: 1.8em;
-  font-weight: bold;
-}
-
-#colorways-collection-expiry-date {
-  display: inline-block;
-  background: linear-gradient(to right, purple, pink, orange);
-  background-origin: border-box;
-  border-radius: 1.5em;
-  padding: 1px;
-  margin: 0.8em 0;
-}
-
-#colorways-collection-expiry-date > span {
-  display: inline-block;
-  background: var(--fxview-background-color);
-  border-radius: 1.5em;
-  padding: .3em 1em;
-}
-
-#colorways > figure {
-  display: var(--colorways-figure-display);
-  grid-area: colorways-figure;
-  align-items: center;
-  justify-content: center;
-  width: var(--colorways-figure-size);
-  height: var(--colorways-figure-size);
-  margin: 0 0 1.5em;
-}
-
-#colorways-collection-figure {
-  max-width: var(--colorways-figure-size);
-  max-height: var(--colorways-figure-size);
-  object-fit: scale-down;
+  font-weight: 600;
 }
 
 [hidden] {
   display: none !important;
+}
+
+button.ghost-button,
+button.ghost-button:not(.semi-transparent):enabled:is(:hover, :active) {
+  color: inherit;
+}
+
+@media (prefers-contrast) {
+  button.ghost-button:not(.semi-transparent):enabled:is(:hover, :active) {
+    background-color: ButtonText;
+    color: ButtonFace;
+  }
 }
 
 button.primary {
@@ -311,11 +182,16 @@ button.close {
 }
 
 .card,
-.synced-tab-li,
+.synced-tab-a,
 .synced-tab-li-placeholder,
 .empty-container {
   background-color: var(--newtab-background-color-secondary);
   border: 1px solid var(--fxview-contrast-border);
+}
+
+#collapsible-tabs-container,
+#tabpickup-tabs-container {
+  margin-block-start: 0.5em;
 }
 
 .empty-container {
@@ -324,7 +200,8 @@ button.close {
 
 .error-state {
   text-align: center;
-  padding: 0 0 20px;
+  padding-block: 0 1.3em;
+  padding-inline: 1em;
   border: 1px solid var(--fxview-contrast-border);
   border-radius: 4px;
 }
@@ -336,19 +213,65 @@ button.close {
 }
 
 .placeholder-content {
-  text-align: center;
-  padding: 24px 16px;
+  color: var(--fxview-text-secondary-color);
+  display: flex;
+  padding: 1.8em 1.1em;
+}
+
+#recently-closed-empty-image,
+#tab-pickup-empty-image {
+  margin-inline-end: 1.1em;
+  -moz-context-properties: fill, stroke, fill-opacity;
+  fill: var(--fxview-background-color);
+  stroke: var(--fxview-text-primary-color);
+  fill-opacity: 0.07;
+}
+
+@media (prefers-color-scheme: dark) {
+  #recently-closed-empty-image,
+  #tab-pickup-empty-image {
+    fill: var(--newtab-background-color-secondary);
+    fill-opacity: 0.15;
+  }
+}
+
+.placeholder-text {
+  margin: 0;
+}
+
+.placeholder-header {
+  margin-block: 0 0.27em;
+  font-weight: 600;
+}
+
+.placeholder-body {
+  margin-block: 0;
+  line-height: 1.3em;
 }
 
 .page-section-header {
-  display: grid;
-  grid-template-columns: repeat(8, 1fr);
-  grid-template-rows: 1fr auto;
   column-gap: 16px;
-
+  cursor: pointer;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: 1fr auto;
   grid-template-areas:
-      "head head head head head head head twisty"
-      "desc desc desc desc desc desc desc desc";
+      "twisty head"
+      "none desc";
+  list-style-type: none;
+  position: relative;
+  z-index: 1;
+}
+
+@media (prefers-contrast) {
+  .page-section-header {
+    color: WindowText;
+  }
+  .page-section-header:focus-visible {
+    box-shadow: none;
+    outline: var(--in-content-focus-outline);
+    outline-offset: var(--in-content-focus-outline-offset);
+  }
 }
 
 .page-section-header > h1 {
@@ -357,36 +280,91 @@ button.close {
   padding-block: 4px;
 }
 
+/* the twisty is just an ornament; the whole summary parent node is clickable */
 .page-section-header > .twisty {
+  background-image: url("chrome://global/skin/icons/arrow-right.svg");
+  display: inline-block;
   grid-area: twisty;
-  justify-self: end;
+  align-self: center;
+  justify-self: start;
+  padding-block: 4px;
+  padding-inline: 8px;
+  fill: currentColor;
+  border-radius: 4px;
   margin-block: 0;
-  min-width: 32px;
-  padding-inline: 7px;
+}
+
+[dir="rtl"] .page-section-header > .twisty {
+  background-image: url("chrome://global/skin/icons/arrow-left.svg");
+}
+
+@media (prefers-contrast) {
+  .page-section-header > .twisty {
+    border: 1px solid ButtonText;
+  }
+}
+
+details[open] > .page-section-header > .twisty {
+  background-image: url("chrome://global/skin/icons/arrow-down.svg");
+}
+
+.page-section-header:hover > .twisty {
+  background-color: var(--fxview-element-background-hover);
+  color: var(--fxview-text-color-hover);
+}
+
+.page-section-header:hover:active > .twisty {
+  background-color: var(--fxview-element-background-active);
 }
 
 .page-section-header > .section-description {
   grid-area: desc;
+  margin-block: 4px 8px;
+  font-weight: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+.card-body {
+  display: flex;
+  flex-grow: 1;
+  align-content: space-between;
+  align-items: center;
+  gap: 8px;
+}
+@media only screen and (max-width: 45rem) {
+  .card-body {
+    flex-wrap: wrap;
+  }
+}
+
+.card-body > button.primary {
+  margin-inline-start: 0;
+  z-index: 1;
+}
+
+.card-body > .step-content,
+.zap-card > button.close {
+  z-index: 1;
 }
 
 .setup-step {
   padding: var(--card-padding);
-  margin: 0 0 8px;
+  margin-block: 0.5em 1em;
 }
 
 /* Bug 1770534 - Only use the zap-gradient for built-in, color-neutral themes */
 .zap-card {
   border: none;
   position: relative;
-  z-index: 0;
 }
 .zap-card::before {
   content: "";
   position: absolute;
-  z-index: -1;
   inset: 0;
-  padding: 1px; /* the "border" thickness */
+  border: 1px solid transparent;
   border-radius: 4px;
+  background-origin: border-box;
   background-image: var(--card-border-zap-gradient);
   mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
   mask-composite: exclude;
@@ -396,15 +374,11 @@ button.close {
   margin-block: 0 8px;
 }
 
-.setup-step > .step-body {
-  display: flex;
-  align-content: space-between;
-  align-items: center;
+.setup-step > .card-body {
   margin-block: 8px;
   padding-block: 8px;
 }
-
-.setup-step > .step-body > .step-content {
+.setup-step > .card-body > .step-content {
   flex: 1 1 auto;
 }
 
@@ -414,13 +388,33 @@ button.close {
   margin-block: 0 8px;
 }
 
-.setup-step > footer > progress {
+.step-progress {
+  background-color: #E0E0E6;
+  border-radius: 8px;
+  border-style: none;
+  height: 8px;
   margin-block: 0 8px;
+  margin-inline: 0 2px;
+}
+
+.step-progress::-moz-progress-bar {
+  background-color: var(--success-fill-color);
+  border-radius: 8px;
+}
+
+@media (prefers-contrast) {
+  .step-progress {
+    background-color: SelectedItemText;
+    border: 1px solid SelectedItem;
+  }
+
+  .step-progress::-moz-progress-bar {
+    background-color: SelectedItem;
+  }
 }
 
 .message-box {
   display: flex;
-  align-content: space-between;
   align-items: center;
   margin-block: 8px;
   gap: 8px;
@@ -431,7 +425,7 @@ button.close {
 }
 
 .message-content > .message-header {
-  font-size: 1.12em;
+  font-size: 1em;
   margin-block: 0 0.33em;
 }
 
@@ -441,8 +435,8 @@ button.close {
 
 .confirmation-message-box {
   background-color: var(--success-background-color);
-  color: var(--success-color);
-  border-color: var(--success-border-color);
+  color: var(--success-box-text-color);
+  border-color: var(--success-fill-color);
 }
 .confirmation-message-box > .message-content {
   text-align: center;
@@ -451,14 +445,31 @@ button.close {
   font-size: inherit;
   display: inline;
 }
+/* ensure we get the local color values as container doesnt change color with theme */
 .confirmation-message-box > .icon-button {
-  /* ensure we get the local color value as container doesnt change color with theme */
   color: inherit;
+}
+.confirmation-message-box > button.icon-button:enabled:is(:hover, :active) {
+  background-color: color-mix(in srgb, var(--success-background-color) 90%, currentColor);
+}
+@media (prefers-contrast) {
+  .confirmation-message-box > button.icon-button {
+    border-color: ButtonText;
+  }
+  .confirmation-message-box > button.icon-button:enabled:is(:hover, :active) {
+    background-color: ButtonText;
+    color: ButtonFace;
+  }
+}
+
+#tab-pickup-container {
+  grid-row: 1;
 }
 
 /* 117px is the total height of the collapsible-tabs-container; setting that size
  for the second row stabilizes the layout so it doesn't shift when collapsibled */
 #recently-closed-tabs-container {
+  grid-row: var(--recently-closed-tabs-grid-row);
   display: grid;
   grid-template-rows: max-content 117px;
 }
@@ -483,39 +494,128 @@ button.close {
 
 .closed-tabs-list {
   padding-inline-start: 0;
+  margin-block-start: 0;
+  display: grid;
+  grid-template-columns: min-content repeat(5, 1fr) repeat(2, min-content);
+  column-gap: 8px;
+  row-gap: 8px;
 }
 
 .closed-tab-li {
   display: grid;
-  grid-template-columns: min-content repeat(8, 1fr);
-  column-gap: 16px;
-  padding: 8px;
+  grid-template-columns: subgrid;
+  grid-column: span 8;
+  margin-block-end: 0.5em;
+  border-radius: 4px;
+  align-items: center;
+}
+
+.closed-tab-li-main {
+  display: grid;
+  grid-template-columns: subgrid;
+  grid-column: span 7;
+  padding: 0.5em;
   cursor: pointer;
+  align-items: center;
+  user-select: none;
+  border-radius: 4px;
 }
 
-.closed-tab-li:hover,
-.ghost-button:hover {
-  background-color: var(--fxview-element-hover-color) !important;
+@media (prefers-contrast) {
+  span.closed-tab-li-main,
+  button.closed-tab-li-dismiss {
+    color: ButtonText;
+    border-radius: 4px;
+    border: 1px solid ButtonText;
+  }
 }
 
-.ghost-button:active,
-.closed-tab-li:active {
-  background-color: var(--fxview-element-active-color) !important;
-}
+  .closed-tab-li-main:hover {
+    background-color: var(--fxview-element-background-hover);
+    color: var(--fxview-text-color-hover);
+  }
 
-.closed-tab-li-title {
-  grid-column: span 5;
-  padding-inline-start: 2px;
-  font-weight: 500;
-}
-
-.closed-tab-li-url {
-  grid-column: span 2;
+.closed-tab-li-main:hover .closed-tab-li-title {
   text-decoration-line: underline;
 }
 
+.closed-tab-li-main:active {
+  background-color: var(--fxview-element-background-active);
+  color: var(--fxview-text-color-hover);
+}
+
+.closed-tab-li-main:focus-visible {
+  box-shadow: none;
+  outline: var(--in-content-focus-outline);
+  outline-offset: var(--in-content-focus-outline-offset);
+  border-radius: 4px;
+}
+
+.closed-tab-li-title {
+  padding-inline-start: 10px;
+  font-weight: 500;
+  grid-column: span 3;
+  color: currentColor !important;
+}
+
+.closed-tab-li-url {
+  padding-inline-start: 8px;
+  text-decoration-line: underline;
+  grid-column: span 2;
+  color: var(--fxview-text-secondary-color) !important;
+}
+
 .closed-tab-li-time {
+  white-space: nowrap;
   text-align: end;
+}
+
+.closed-tab-li-dismiss {
+  background-image: url("chrome://global/skin/icons/close.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-color: transparent;
+  color: var(--fxview-text-secondary-color);
+  -moz-context-properties: fill;
+  fill: var(--fxview-text-secondary-color);
+  min-width: 33px;
+  padding: 0.5em;
+  margin: 0;
+  cursor: pointer;
+  user-select: none;
+}
+
+.closed-tab-li-dismiss:hover {
+  background-color: var(--in-content-button-background-hover);
+  fill: var(--in-content-button-text-color-hover);
+}
+
+.synced-tab-a,
+.synced-tab-a:hover,
+.synced-tab-a:active,
+.synced-tab-a:hover:active,
+.synced-tab-a:visited {
+  color: inherit;
+  text-decoration: none;
+  height: 100%;
+}
+
+@media (prefers-contrast) {
+  .synced-tab-a {
+    border-color: FieldText;
+  }
+  .synced-tab-a,
+  .synced-tab-a:hover,
+  .synced-tab-a:active,
+  .synced-tab-a:hover:active,
+  .synced-tab-a:visited {
+    color: LinkText;
+  }
+  .synced-tab-a:focus-visible {
+    box-shadow: none;
+    outline: var(--in-content-focus-outline);
+    outline-offset: var(--in-content-focus-outline-offset);
+  }
 }
 
 .closed-tab-li-url,
@@ -529,13 +629,13 @@ button.close {
 
 .closed-tab-li-title,
 .closed-tab-li-url,
-.synced-tab-li:not(:first-child) > .synced-tab-li-title,
+.synced-tab-li:not(:first-child) > .synced-tab-a > .synced-tab-li-title,
 .synced-tab-li-device {
   overflow: hidden;
 }
 
 .closed-tab-li-title,
-.synced-tab-li:not(:first-child) > .synced-tab-li-title,
+.synced-tab-li:not(:first-child) > .synced-tab-a > .synced-tab-li-title,
 .synced-tab-li-device {
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -548,6 +648,7 @@ button.close {
 
 .synced-tabs-list {
   padding: 0;
+  margin-block-start: 0;
   list-style: none;
   display: grid;
   grid-template-columns: 4fr 4fr;
@@ -559,62 +660,88 @@ button.close {
       "first third";
 }
 
-.synced-tab-li,
+@media only screen and (max-width: 43rem) {
+  .synced-tabs-list {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "first"
+      "second"
+      "third";
+  }
+
+  body {
+    flex-flow: column;
+  }
+
+  #logo-container .brand-logo {
+    justify-content: center;
+  }
+}
+
+.synced-tab-a,
 .synced-tab-li-placeholder {
   box-sizing: border-box;
   border-radius: 4px;
-  padding: 10px;
+  padding: 7px;
   display: grid;
+  column-gap: 8px;
+  row-gap: 2px;
+  align-items: center;
   grid-template-columns: min-content repeat(2, 1fr) minmax(min-content, auto);
-  grid-template-rows: auto;
+  grid-template-rows: auto 1fr auto;
   grid-template-areas:
-  "favicon title title title"
-  "favicon domain domain domain"
-  "favicon device device time"
+    "favicon title title title"
+    "favicon domain domain domain"
+    "favicon device device time";
 }
 
-.synced-tab-li:hover {
+.synced-tab-a:hover {
   box-shadow: 0px 2px 14px var(--fxview-contrast-border);
-  cursor: pointer;
 }
 
-.synced-tab-li:not(:first-child) {
+.synced-tab-li:not(:first-child) > .synced-tab-a {
   align-content: center;
 }
 
 @media only screen and (max-width: 60rem) {
-  .synced-tab-li {
+  .synced-tab-li > .synced-tab-a,
+  .synced-tab-li-placeholder {
     grid-template-areas:
-    "favicon title title title"
-    "favicon domain domain domain"
-    "favicon device device device"
+      "favicon title title title"
+      "favicon domain domain domain"
+      "favicon device device device";
   }
-  .synced-tab-li:not(:first-child) > .synced-tab-li-time {
+  .synced-tab-li:not(:first-child) > .synced-tab-a > .synced-tab-li-time {
     display: none;
   }
 }
 
 .synced-tab-li-placeholder {
-  padding-top: 15px;
+  row-gap: 1em;
+  grid-template-areas:
+    "favicon title title title"
+    "favicon domain domain domain";
+  grid-template-rows: auto auto;
 }
 
 .li-placeholder-favicon {
   grid-area: favicon;
+  align-self: start;
   width: 16px;
   height: 16px;
-  margin-inline-end: 10px;
 }
 
 .li-placeholder-title {
   grid-area: title;
-  height: 12px;
+  height: .8em;
+  margin-block: .1em; /* simulate line-height */
   width: 100%;
-  margin-bottom: 12px;
 }
 
 .li-placeholder-domain {
-  grid-area: url;
-  height: 8px;
+  grid-area: domain;
+  height: .6em;
+  margin-block: .1em; /* simulate line-height */
   width: 100%;
 }
 
@@ -627,15 +754,19 @@ button.close {
 }
 
 .synced-tab-li:first-child {
-  padding-top: 20px;
   grid-area: first;
+}
+
+.synced-tab-li:first-child > .synced-tab-a {
+  padding: 15px;
   grid-template-columns: repeat(4, 1fr);
-  grid-template-rows: auto;
+  grid-template-rows: auto auto 1fr auto;
   grid-template-areas:
-  "favicon favicon badge badge"
-  "title title title title"
-  "domain domain domain time"
-  "device device device time";
+    "favicon badge badge badge"
+    "title title title title"
+    "domain domain domain domain"
+    "device device device time";
+  row-gap: 4px;
 }
 
 .synced-tab-li:nth-child(2) {
@@ -648,22 +779,18 @@ button.close {
 
 .synced-tab-li-url,
 .synced-tab-li-device,
-.synced-tab-li-time,
-.synced-tab-li:not(:first-child) > .synced-tab-li-title {
+.synced-tab-li:not(:first-child) > .synced-tab-a > .synced-tab-li-title {
   font-size: .85em;
+}
+
+.synced-tab-li-time {
+  font-size: .75em;
 }
 
 .synced-tab-li-url {
   text-decoration-line: underline;
-}
-
-.synced-tab-li-url {
-  align-self: end;
   grid-area: domain;
-}
-
-.synced-tab-li:not(:first-child) > .synced-tab-li-url {
-  margin-top: 4px;
+  align-self: start;
 }
 
 .synced-tab-li-title {
@@ -671,34 +798,39 @@ button.close {
   font-weight: 500;
 }
 
-.synced-tab-li:first-child > .synced-tab-li-title {
+.synced-tab-li:first-child > .synced-tab-a > .synced-tab-li-title {
   color: inherit;
-  padding-top: 5px;
   overflow: hidden;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  height: 2.5em;
+  align-self: start;
 }
 
 .synced-tab-li-device {
   grid-area: device;
-  margin-top: 5px;
 }
 
 .synced-tab-li-time {
   grid-area: time;
   justify-self: end;
   align-self: end;
+  white-space: nowrap;
 }
 
-.synced-tab-li:first-child > .synced-tab-li-time {
+.synced-tab-li:first-child > .synced-tab-a > .synced-tab-li-time {
   align-self: center;
 }
 
 .synced-tab-li .favicon {
   grid-area: favicon;
-  margin-inline-end: 10px;
+  align-self: start;
+}
+
+@media (prefers-contrast) {
+  .synced-tab-li .favicon {
+    color: LinkText;
+  }
 }
 
 .synced-tab-li .icon {
@@ -712,15 +844,6 @@ button.close {
   display: inline-block;
   -moz-context-properties: fill;
   fill: currentColor;
-}
-
-/* the ordering of these two arrow icons is important for the toggleContainer to work correctly */
-.arrow-up {
-  background-image: url("chrome://global/skin/icons/arrow-up.svg");
-}
-
-.arrow-down {
-  background-image: url("chrome://global/skin/icons/arrow-down.svg");
 }
 
 .history {
@@ -786,27 +909,43 @@ button.close {
 
 .last-active-badge {
   height: 1.25em;
-  width: 6em;
   background-color: #E3FFF3;
   grid-area: badge;
   border-radius: 2em;
   justify-self: end;
   text-align: center;
-  padding-bottom: 5px;
+  padding: 0.3em 1em;
+  font-size: 0.75em;
+}
+
+.synced-tab-li:not(:first-child) .last-active-badge {
+  display: none;
 }
 
 .dot {
   height: 8px;
   width: 8px;
-  background-color: #2AC3A2;
+  background-color: var(--success-fill-color);
   border-radius: 50%;
   display: inline-block;
 }
 
 .badge-text {
   font-weight: 400;
-  font-size: .75em;
   letter-spacing: 0.02em;
   margin-inline-start: 4px;
   color: #000000;
+}
+
+@media (prefers-contrast) {
+  .last-active-badge {
+    border: 1px solid CanvasText;
+    background-color: Canvas;
+  }
+  .dot {
+    background-color: FieldText;
+  }
+  .badge-text {
+    color: FieldText;
+  }
 }

@@ -1,15 +1,17 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-const { FileUtils } = ChromeUtils.import(
-  "resource://gre/modules/FileUtils.jsm"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { FileUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
+);
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 const NS_ERROR_START_PROFILE_MANAGER = 0x805800c9;
@@ -63,20 +65,8 @@ ShellService.register();
 
 let gIsLegacy = false;
 
-function simulateSnapEnvironment() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  env.set("SNAP_NAME", AppConstants.MOZ_APP_NAME);
-
-  gIsLegacy = true;
-}
-
 function enableLegacyProfiles() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  env.set("MOZ_LEGACY_PROFILES", "1");
+  Services.env.set("MOZ_LEGACY_PROFILES", "1");
 
   gIsLegacy = true;
 }
@@ -585,7 +575,7 @@ function checkProfileService(
     }
   }
 
-  if (gIsLegacy) {
+  if (gIsLegacy || Services.env.get("SNAP_NAME")) {
     Assert.equal(
       service.defaultProfile,
       legacyProfile,

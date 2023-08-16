@@ -14,6 +14,7 @@
 #include "nsLayoutUtils.h"
 #include "nsPresContext.h"
 #include "nsTArray.h"
+#include "mozilla/StaticPrefs_layout.h"
 
 namespace mozilla {
 
@@ -123,10 +124,18 @@ CalcSnapPoints::CalcSnapPoints(ScrollUnit aUnit, ScrollSnapFlags aSnapFlags,
 
 SnapTarget CalcSnapPoints::GetBestEdge() const {
   return SnapTarget{
-      nsPoint(mTrackerOnX.mEdgeFound ? mTrackerOnX.mBestEdge.mPosition
-                                     : mStartPos.x,
-              mTrackerOnY.mEdgeFound ? mTrackerOnY.mBestEdge.mPosition
-                                     : mStartPos.y),
+      nsPoint(
+          mTrackerOnX.mEdgeFound ? mTrackerOnX.mBestEdge.mPosition
+          // In the case of IntendedEndPosition (i.e. the destination point is
+          // explicitely specied, e.g. scrollTo) use the destination point if we
+          // didn't find any candidates.
+          : !(mSnapFlags & ScrollSnapFlags::IntendedDirection) ? mDestination.x
+                                                               : mStartPos.x,
+          mTrackerOnY.mEdgeFound ? mTrackerOnY.mBestEdge.mPosition
+          // Same as above X axis case, use the destination point if we didn't
+          // find any candidates.
+          : !(mSnapFlags & ScrollSnapFlags::IntendedDirection) ? mDestination.y
+                                                               : mStartPos.y),
       ScrollSnapTargetIds{mTrackerOnX.mTargetIds, mTrackerOnY.mTargetIds}};
 }
 
@@ -443,10 +452,9 @@ static std::pair<Maybe<nscoord>, Maybe<nscoord>> GetCandidateInLastTargets(
         aSnapInfo.mScrollSnapStrictnessY != StyleScrollSnapStrictness::None) {
       if (aLastSnapTargetIds->mIdsOnY.Contains(target.mTargetId)) {
         if (targetIdForFocusedContent == target.mTargetId) {
-          MOZ_ASSERT(!focusedTarget || focusedTarget == &target,
-                     "If the focused target has been found on X axis, the "
-                     "target should "
-                     "be same");
+          NS_ASSERTION(!focusedTarget || focusedTarget == &target,
+                       "If the focused target has been found on X axis, the "
+                       "target should be same");
           // If we've already found the candidate on X axis other than the
           // focused one, but if snapping to the point results this target is
           // scrolled out, we can't use it.

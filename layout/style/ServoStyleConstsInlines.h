@@ -26,38 +26,33 @@
 namespace mozilla {
 
 // We need to explicitly instantiate these so that the clang plugin can see that
-// they're trivially copiable...
+// they're trivially copyable...
 //
 // https://github.com/eqrion/cbindgen/issues/402 tracks doing something like
 // this automatically from cbindgen.
-template struct StyleOwned<RawServoAnimationValueMap>;
-template struct StyleOwned<RawServoAuthorStyles>;
-template struct StyleOwned<RawServoSourceSizeList>;
-template struct StyleOwned<StyleUseCounters>;
-template struct StyleOwnedOrNull<StyleUseCounters>;
-template struct StyleOwnedOrNull<RawServoSelectorList>;
 template struct StyleStrong<ComputedStyle>;
-template struct StyleStrong<ServoCssRules>;
-template struct StyleStrong<RawServoAnimationValue>;
-template struct StyleStrong<RawServoDeclarationBlock>;
-template struct StyleStrong<RawServoStyleSheetContents>;
-template struct StyleStrong<RawServoKeyframe>;
-template struct StyleStrong<RawServoLayerBlockRule>;
-template struct StyleStrong<RawServoLayerStatementRule>;
-template struct StyleStrong<RawServoMediaList>;
-template struct StyleStrong<RawServoStyleRule>;
-template struct StyleStrong<RawServoImportRule>;
-template struct StyleStrong<RawServoKeyframesRule>;
-template struct StyleStrong<RawServoMediaRule>;
-template struct StyleStrong<RawServoMozDocumentRule>;
-template struct StyleStrong<RawServoNamespaceRule>;
-template struct StyleStrong<RawServoPageRule>;
-template struct StyleStrong<RawServoSupportsRule>;
-template struct StyleStrong<RawServoFontFeatureValuesRule>;
-template struct StyleStrong<RawServoFontFaceRule>;
-template struct StyleStrong<RawServoCounterStyleRule>;
-template struct StyleStrong<RawServoScrollTimelineRule>;
-template struct StyleStrong<RawServoContainerRule>;
+template struct StyleStrong<StyleLockedCssRules>;
+template struct StyleStrong<StyleAnimationValue>;
+template struct StyleStrong<StyleLockedDeclarationBlock>;
+template struct StyleStrong<StyleStylesheetContents>;
+template struct StyleStrong<StyleLockedKeyframe>;
+template struct StyleStrong<StyleLayerBlockRule>;
+template struct StyleStrong<StyleLayerStatementRule>;
+template struct StyleStrong<StyleLockedMediaList>;
+template struct StyleStrong<StyleLockedStyleRule>;
+template struct StyleStrong<StyleLockedImportRule>;
+template struct StyleStrong<StyleLockedKeyframesRule>;
+template struct StyleStrong<StyleMediaRule>;
+template struct StyleStrong<StyleDocumentRule>;
+template struct StyleStrong<StyleNamespaceRule>;
+template struct StyleStrong<StyleLockedPageRule>;
+template struct StyleStrong<StylePropertyRule>;
+template struct StyleStrong<StyleSupportsRule>;
+template struct StyleStrong<StyleFontFeatureValuesRule>;
+template struct StyleStrong<StyleFontPaletteValuesRule>;
+template struct StyleStrong<StyleLockedFontFaceRule>;
+template struct StyleStrong<StyleLockedCounterStyleRule>;
+template struct StyleStrong<StyleContainerRule>;
 
 template <typename T>
 inline void StyleOwnedSlice<T>::Clear() {
@@ -180,22 +175,40 @@ inline bool StyleArcInner<T>::DecrementRef() {
   return true;
 }
 
+template <typename H, typename T>
+inline bool StyleHeaderSlice<H, T>::operator==(
+    const StyleHeaderSlice& aOther) const {
+  return header == aOther.header && AsSpan() == aOther.AsSpan();
+}
+
+template <typename H, typename T>
+inline bool StyleHeaderSlice<H, T>::operator!=(
+    const StyleHeaderSlice& aOther) const {
+  return !(*this == aOther);
+}
+
+template <typename H, typename T>
+inline StyleHeaderSlice<H, T>::~StyleHeaderSlice() {
+  for (T& elem : Span(data, len)) {
+    elem.~T();
+  }
+}
+
+template <typename H, typename T>
+inline Span<const T> StyleHeaderSlice<H, T>::AsSpan() const {
+  // Explicitly specify template argument here to avoid instantiating Span<T>
+  // first and then implicitly converting to Span<const T>
+  return Span<const T>{data, len};
+}
+
 static constexpr const uint64_t kArcSliceCanary = 0xf3f3f3f3f3f3f3f3;
 
 #define ASSERT_CANARY \
-  MOZ_DIAGNOSTIC_ASSERT(_0.ptr->data.header.header == kArcSliceCanary, "Uh?");
+  MOZ_DIAGNOSTIC_ASSERT(_0.p->data.header == kArcSliceCanary, "Uh?");
 
 template <typename T>
-inline StyleArcSlice<T>::StyleArcSlice() {
-  _0.ptr = reinterpret_cast<decltype(_0.ptr)>(Servo_StyleArcSlice_EmptyPtr());
-  ASSERT_CANARY
-}
-
-template <typename T>
-inline StyleArcSlice<T>::StyleArcSlice(const StyleArcSlice& aOther) {
-  MOZ_DIAGNOSTIC_ASSERT(aOther._0.ptr);
-  _0.ptr = aOther._0.ptr;
-  _0.ptr->IncrementRef();
+inline StyleArcSlice<T>::StyleArcSlice()
+    : _0(reinterpret_cast<decltype(_0.p)>(Servo_StyleArcSlice_EmptyPtr())) {
   ASSERT_CANARY
 }
 
@@ -203,82 +216,26 @@ template <typename T>
 inline StyleArcSlice<T>::StyleArcSlice(
     const StyleForgottenArcSlicePtr<T>& aPtr) {
   // See the forget() implementation to see why reinterpret_cast() is ok.
-  _0.ptr = reinterpret_cast<decltype(_0.ptr)>(aPtr._0);
+  _0.p = reinterpret_cast<decltype(_0.p)>(aPtr._0);
   ASSERT_CANARY
 }
 
 template <typename T>
 inline size_t StyleArcSlice<T>::Length() const {
   ASSERT_CANARY
-  return _0.ptr->data.header.length;
+  return _0->Length();
 }
 
 template <typename T>
 inline bool StyleArcSlice<T>::IsEmpty() const {
   ASSERT_CANARY
-  return Length() == 0;
+  return _0->IsEmpty();
 }
 
 template <typename T>
 inline Span<const T> StyleArcSlice<T>::AsSpan() const {
   ASSERT_CANARY
-  // Explicitly specify template argument here to avoid instantiating Span<T>
-  // first and then implicitly converting to Span<const T>
-  return Span<const T>{_0.ptr->data.slice, Length()};
-}
-
-template <typename T>
-inline bool StyleArcSlice<T>::operator==(const StyleArcSlice& aOther) const {
-  ASSERT_CANARY
-  return _0.ptr == aOther._0.ptr || AsSpan() == aOther.AsSpan();
-}
-
-template <typename T>
-inline bool StyleArcSlice<T>::operator!=(const StyleArcSlice& aOther) const {
-  return !(*this == aOther);
-}
-
-template <typename T>
-inline void StyleArcSlice<T>::Release() {
-  ASSERT_CANARY
-  if (MOZ_LIKELY(!_0.ptr->DecrementRef())) {
-    return;
-  }
-  for (T& elem : Span(_0.ptr->data.slice, Length())) {
-    elem.~T();
-  }
-  free(_0.ptr);  // Drop the allocation now.
-}
-
-template <typename T>
-inline StyleArcSlice<T>::~StyleArcSlice() {
-  Release();
-}
-
-template <typename T>
-inline StyleArcSlice<T>& StyleArcSlice<T>::operator=(StyleArcSlice&& aOther) {
-  ASSERT_CANARY
-  std::swap(_0.ptr, aOther._0.ptr);
-  ASSERT_CANARY
-  return *this;
-}
-
-template <typename T>
-inline StyleArcSlice<T>& StyleArcSlice<T>::operator=(
-    const StyleArcSlice& aOther) {
-  ASSERT_CANARY
-
-  if (_0.ptr == aOther._0.ptr) {
-    return *this;
-  }
-
-  Release();
-
-  _0.ptr = aOther._0.ptr;
-  _0.ptr->IncrementRef();
-
-  ASSERT_CANARY
-  return *this;
+  return _0->AsSpan();
 }
 
 #undef ASSERT_CANARY
@@ -406,7 +363,7 @@ inline StyleUrlExtraData::~StyleUrlExtraData() {
 
 inline const URLExtraData& StyleUrlExtraData::get() const {
   if (IsShared()) {
-    return *URLExtraData::sShared[_0 >> 1].get();
+    return *URLExtraData::sShared[_0 >> 1];
   }
   return *reinterpret_cast<const URLExtraData*>(_0);
 }
@@ -723,8 +680,9 @@ bool LengthPercentage::IsDefinitelyZero() const {
   return false;
 }
 
-template <>
-CSSCoord StyleCalcNode::ResolveToCSSPixels(CSSCoord aPercentageBasis) const;
+CSSCoord StyleCalcLengthPercentage::ResolveToCSSPixels(CSSCoord aBasis) const {
+  return Servo_ResolveCalcLengthPercentage(this, aBasis);
+}
 
 template <>
 void StyleCalcNode::ScaleLengthsBy(float);
@@ -736,7 +694,7 @@ CSSCoord LengthPercentage::ResolveToCSSPixels(CSSCoord aPercentageBasis) const {
   if (IsPercentage()) {
     return AsPercentage()._0 * aPercentageBasis;
   }
-  return AsCalc().node.ResolveToCSSPixels(aPercentageBasis);
+  return AsCalc().ResolveToCSSPixels(aPercentageBasis);
 }
 
 template <typename T>
@@ -765,7 +723,7 @@ nscoord LengthPercentage::Resolve(T aPercentageGetter, U aRounder) const {
   if (IsPercentage()) {
     return aRounder(basis * AsPercentage()._0);
   }
-  return AsCalc().node.Resolve(basis, aRounder);
+  return AsCalc().Resolve(basis, aRounder);
 }
 
 // Note: the static_cast<> wrappers below are needed to disambiguate between
@@ -895,7 +853,7 @@ template <>
 inline const LengthPercentage& BorderRadius::Get(HalfCorner aCorner) const {
   static_assert(sizeof(BorderRadius) == sizeof(LengthPercentage) * 8, "");
   static_assert(alignof(BorderRadius) == alignof(LengthPercentage), "");
-  auto* self = reinterpret_cast<const LengthPercentage*>(this);
+  const auto* self = reinterpret_cast<const LengthPercentage*>(this);
   return self[aCorner];
 }
 
@@ -920,7 +878,7 @@ inline Maybe<size_t> StyleGridTemplateComponent::RepeatAutoIndex() const {
   if (!IsTrackList()) {
     return Nothing();
   }
-  auto& list = *AsTrackList();
+  const auto& list = *AsTrackList();
   return list.auto_repeat_index < list.values.Length()
              ? Some(list.auto_repeat_index)
              : Nothing();
@@ -992,9 +950,13 @@ inline const StyleImage& StyleImage::FinalImage() const {
   if (!IsImageSet()) {
     return *this;
   }
-  auto& set = AsImageSet();
-  auto& selectedItem = set->items.AsSpan()[set->selected_index];
-  return selectedItem.image.FinalImage();
+  const auto& set = *AsImageSet();
+  auto items = set.items.AsSpan();
+  if (MOZ_LIKELY(set.selected_index < items.Length())) {
+    return items[set.selected_index].image.FinalImage();
+  }
+  static auto sNone = StyleImage::None();
+  return sNone;
 }
 
 template <>
@@ -1002,14 +964,14 @@ Maybe<CSSIntSize> StyleImage::GetIntrinsicSize() const;
 
 template <>
 inline bool StyleImage::IsImageRequestType() const {
-  auto& finalImage = FinalImage();
+  const auto& finalImage = FinalImage();
   return finalImage.IsUrl() || finalImage.IsRect();
 }
 
 template <>
 inline const StyleComputedImageUrl* StyleImage::GetImageRequestURLValue()
     const {
-  auto& finalImage = FinalImage();
+  const auto& finalImage = FinalImage();
   if (finalImage.IsUrl()) {
     return &finalImage.AsUrl();
   }
@@ -1021,13 +983,13 @@ inline const StyleComputedImageUrl* StyleImage::GetImageRequestURLValue()
 
 template <>
 inline imgRequestProxy* StyleImage::GetImageRequest() const {
-  auto* url = GetImageRequestURLValue();
+  const auto* url = GetImageRequestURLValue();
   return url ? url->GetImage() : nullptr;
 }
 
 template <>
 inline bool StyleImage::IsResolved() const {
-  auto* url = GetImageRequestURLValue();
+  const auto* url = GetImageRequestURLValue();
   return !url || url->IsImageResolved();
 }
 
@@ -1078,7 +1040,14 @@ inline bool StyleFontStyle::IsOblique() const {
   return !IsItalic() && !IsNormal();
 }
 
-inline float StyleFontStyle::ObliqueAngle() const { return ToFloat(); }
+inline float StyleFontStyle::ObliqueAngle() const {
+  MOZ_ASSERT(IsOblique());
+  return ToFloat();
+}
+
+inline float StyleFontStyle::SlantAngle() const {
+  return IsNormal() ? 0 : IsItalic() ? DEFAULT_OBLIQUE_DEGREES : ObliqueAngle();
+}
 
 using FontStretch = StyleFontStretch;
 using FontSlantStyle = StyleFontStyle;
@@ -1103,6 +1072,56 @@ inline double StyleComputedTimingFunction::GetPortion(
     const Maybe<StyleComputedTimingFunction>& aFn, double aPortion,
     bool aBeforeFlag) {
   return aFn ? aFn->At(aPortion, aBeforeFlag) : aPortion;
+}
+
+/* static */
+template <>
+inline LengthPercentageOrAuto LengthPercentageOrAuto::Zero() {
+  return LengthPercentage(LengthPercentage::Zero());
+}
+
+template <>
+inline StyleViewTimelineInset::StyleGenericViewTimelineInset()
+    : start(LengthPercentageOrAuto::Auto()),
+      end(LengthPercentageOrAuto::Auto()) {}
+
+inline StyleDisplayOutside StyleDisplay::Outside() const {
+  return StyleDisplayOutside((_0 & OUTSIDE_MASK) >> OUTSIDE_SHIFT);
+}
+
+inline StyleDisplayInside StyleDisplay::Inside() const {
+  return StyleDisplayInside(_0 & INSIDE_MASK);
+}
+
+inline bool StyleDisplay::IsListItem() const { return _0 & LIST_ITEM_MASK; }
+
+inline bool StyleDisplay::IsInternalTable() const {
+  return Outside() == StyleDisplayOutside::InternalTable;
+}
+
+inline bool StyleDisplay::IsInternalTableExceptCell() const {
+  return IsInternalTable() && *this != TableCell;
+}
+
+inline bool StyleDisplay::IsInternalRuby() const {
+  return Outside() == StyleDisplayOutside::InternalRuby;
+}
+
+inline bool StyleDisplay::IsRuby() const {
+  return Inside() == StyleDisplayInside::Ruby || IsInternalRuby();
+}
+
+inline bool StyleDisplay::IsInlineFlow() const {
+  return Outside() == StyleDisplayOutside::Inline &&
+         Inside() == StyleDisplayInside::Flow;
+}
+
+inline bool StyleDisplay::IsInlineInside() const {
+  return IsInlineFlow() || IsRuby();
+}
+
+inline bool StyleDisplay::IsInlineOutside() const {
+  return Outside() == StyleDisplayOutside::Inline || IsInternalRuby();
 }
 
 }  // namespace mozilla

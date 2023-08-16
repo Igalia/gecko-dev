@@ -37,6 +37,7 @@
 #include "GLConsts.h"
 #include "GLDefs.h"
 #include "GLTypes.h"
+#include "GLVendor.h"
 #include "nsRegionFwd.h"
 #include "nsString.h"
 #include "GLContextTypes.h"
@@ -108,6 +109,7 @@ enum class GLFeature {
   packed_depth_stencil,
   prim_restart,
   prim_restart_fixed,
+  provoking_vertex,
   query_counter,
   query_objects,
   query_time_elapsed,
@@ -151,19 +153,6 @@ enum class ContextProfile : uint8_t {
   OpenGLES
 };
 
-enum class GLVendor {
-  Intel,
-  NVIDIA,
-  ATI,
-  Qualcomm,
-  Imagination,
-  Nouveau,
-  Vivante,
-  VMware,
-  ARM,
-  Other
-};
-
 enum class GLRenderer {
   Adreno200,
   Adreno205,
@@ -175,6 +164,7 @@ enum class GLRenderer {
   AdrenoTM420,
   Mali400MP,
   Mali450MP,
+  MaliT,
   SGX530,
   SGX540,
   SGX544MP,
@@ -292,6 +282,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
   }
 
   bool HasPBOState() const { return (!IsGLES() || Version() >= 300); }
+  bool IsRGBColorRenderable() { return !IsGLES() || Version() >= 300; }
 
   /**
    * If this context is double-buffered, returns TRUE.
@@ -362,6 +353,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
     ANGLE_framebuffer_multisample,
     ANGLE_instanced_arrays,
     ANGLE_multiview,
+    ANGLE_provoking_vertex,
     ANGLE_texture_compression_dxt3,
     ANGLE_texture_compression_dxt5,
     ANGLE_timer_query,
@@ -389,6 +381,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
     ARB_map_buffer_range,
     ARB_occlusion_query2,
     ARB_pixel_buffer_object,
+    ARB_provoking_vertex,
     ARB_robust_buffer_access_behavior,
     ARB_robustness,
     ARB_sampler_objects,
@@ -430,6 +423,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
     EXT_multisampled_render_to_texture,
     EXT_occlusion_query_boolean,
     EXT_packed_depth_stencil,
+    EXT_provoking_vertex,
     EXT_read_format_bgra,
     EXT_robustness,
     EXT_sRGB,
@@ -3399,6 +3393,16 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
     AFTER_GL_CALL;
   }
 
+  // -
+
+  void fProvokingVertex(GLenum mode) const {
+    BEFORE_GL_CALL;
+    mSymbols.fProvokingVertex(mode);
+    AFTER_GL_CALL;
+  }
+
+  // -
+
 #undef BEFORE_GL_CALL
 #undef AFTER_GL_CALL
 #undef ASSERT_SYMBOL_PRESENT
@@ -3540,7 +3544,7 @@ class GLContext : public GenericAtomicRefCounted, public SupportsWeakPtr {
   virtual GLenum GetPreferredARGB32Format() const { return LOCAL_GL_RGBA; }
 
   virtual GLenum GetPreferredEGLImageTextureTarget() const {
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
     return LOCAL_GL_TEXTURE_2D;
 #else
     return IsExtensionSupported(OES_EGL_image_external)

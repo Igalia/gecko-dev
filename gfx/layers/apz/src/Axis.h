@@ -30,7 +30,7 @@ const float EPSILON = 0.0001f;
  * due to floating-point operations (which can be larger than COORDINATE_EPISLON
  * for sufficiently large coordinate values).
  */
-bool FuzzyEqualsCoordinate(float aValue1, float aValue2);
+bool FuzzyEqualsCoordinate(CSSCoord aValue1, CSSCoord aValue2);
 
 struct FrameMetrics;
 class AsyncPanZoomController;
@@ -125,8 +125,8 @@ class Axis {
    * changed.
    */
   bool AdjustDisplacement(ParentLayerCoord aDisplacement,
-                          /* ParentLayerCoord */ float& aDisplacementOut,
-                          /* ParentLayerCoord */ float& aOverscrollAmountOut,
+                          ParentLayerCoord& aDisplacementOut,
+                          ParentLayerCoord& aOverscrollAmountOut,
                           bool aForceOverscroll = false);
 
   /**
@@ -229,6 +229,7 @@ class Axis {
   /**
    * Returns whether this axis can scroll any more in a particular direction.
    */
+  bool CanScroll(CSSCoord aDelta) const;
   bool CanScroll(ParentLayerCoord aDelta) const;
 
   /**
@@ -315,12 +316,15 @@ class Axis {
   virtual CSSToParentLayerScale GetAxisScale(
       const CSSToParentLayerScale2D& aScale) const = 0;
   virtual CSSCoord GetPointOffset(const CSSPoint& aPoint) const = 0;
+  virtual OuterCSSCoord GetPointOffset(const OuterCSSPoint& aPoint) const = 0;
   virtual ParentLayerCoord GetPointOffset(
       const ParentLayerPoint& aPoint) const = 0;
   virtual ParentLayerCoord GetRectLength(
       const ParentLayerRect& aRect) const = 0;
+  virtual CSSCoord GetRectLength(const CSSRect& aRect) const = 0;
   virtual ParentLayerCoord GetRectOffset(
       const ParentLayerRect& aRect) const = 0;
+  virtual CSSCoord GetRectOffset(const CSSRect& aRect) const = 0;
   virtual float GetTransformScale(
       const AsyncTransformComponentMatrix& aMatrix) const = 0;
   virtual ParentLayerCoord GetTransformTranslation(
@@ -393,10 +397,13 @@ class AxisX : public Axis {
   CSSToParentLayerScale GetAxisScale(
       const CSSToParentLayerScale2D& aScale) const override;
   CSSCoord GetPointOffset(const CSSPoint& aPoint) const override;
+  OuterCSSCoord GetPointOffset(const OuterCSSPoint& aPoint) const override;
   ParentLayerCoord GetPointOffset(
       const ParentLayerPoint& aPoint) const override;
   ParentLayerCoord GetRectLength(const ParentLayerRect& aRect) const override;
+  CSSCoord GetRectLength(const CSSRect& aRect) const override;
   ParentLayerCoord GetRectOffset(const ParentLayerRect& aRect) const override;
+  CSSCoord GetRectOffset(const CSSRect& aRect) const override;
   float GetTransformScale(
       const AsyncTransformComponentMatrix& aMatrix) const override;
   ParentLayerCoord GetTransformTranslation(
@@ -418,12 +425,15 @@ class AxisY : public Axis {
  public:
   explicit AxisY(AsyncPanZoomController* mAsyncPanZoomController);
   CSSCoord GetPointOffset(const CSSPoint& aPoint) const override;
+  OuterCSSCoord GetPointOffset(const OuterCSSPoint& aPoint) const override;
   ParentLayerCoord GetPointOffset(
       const ParentLayerPoint& aPoint) const override;
   CSSToParentLayerScale GetAxisScale(
       const CSSToParentLayerScale2D& aScale) const override;
   ParentLayerCoord GetRectLength(const ParentLayerRect& aRect) const override;
+  CSSCoord GetRectLength(const CSSRect& aRect) const override;
   ParentLayerCoord GetRectOffset(const ParentLayerRect& aRect) const override;
+  CSSCoord GetRectOffset(const CSSRect& aRect) const override;
   float GetTransformScale(
       const AsyncTransformComponentMatrix& aMatrix) const override;
   ParentLayerCoord GetTransformTranslation(

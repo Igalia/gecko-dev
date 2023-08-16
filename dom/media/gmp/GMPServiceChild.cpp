@@ -132,11 +132,12 @@ GeckoMediaPluginServiceChild::GetContentParent(
         base::ProcessId otherProcess;
         nsCString displayName;
         uint32_t pluginId = 0;
+        GMPPluginType pluginType = GMPPluginType::Unknown;
         ipc::Endpoint<PGMPContentParent> endpoint;
         nsCString errorDescription;
 
         bool ok = child->SendLaunchGMP(
-            nodeIdVariant, api, tags, alreadyBridgedTo, &pluginId,
+            nodeIdVariant, api, tags, alreadyBridgedTo, &pluginId, &pluginType,
             &otherProcess, &displayName, &endpoint, &rv, &errorDescription);
 
         if (helper && pluginId) {
@@ -169,6 +170,7 @@ GeckoMediaPluginServiceChild::GetContentParent(
         if (!alreadyBridgedTo.Contains(otherProcess)) {
           parent->SetDisplayName(displayName);
           parent->SetPluginId(pluginId);
+          parent->SetPluginType(pluginType);
         }
 
         // The content parent is no longer pending.
@@ -284,7 +286,7 @@ void GeckoMediaPluginServiceChild::BeginShutdown() {
 
 NS_IMETHODIMP
 GeckoMediaPluginServiceChild::HasPluginForAPI(const nsACString& aAPI,
-                                              nsTArray<nsCString>* aTags,
+                                              const nsTArray<nsCString>& aTags,
                                               bool* aHasPlugin) {
   StaticMutexAutoLock lock(sGMPCapabilitiesMutex);
   if (!sGMPCapabilities) {
@@ -294,7 +296,7 @@ GeckoMediaPluginServiceChild::HasPluginForAPI(const nsACString& aAPI,
 
   nsCString api(aAPI);
   for (const GMPCapabilityAndVersion& plugin : *sGMPCapabilities) {
-    if (GMPCapability::Supports(plugin.mCapabilities, api, *aTags)) {
+    if (GMPCapability::Supports(plugin.mCapabilities, api, aTags)) {
       *aHasPlugin = true;
       return NS_OK;
     }

@@ -7,7 +7,7 @@
 
 const TEST_URI = `data:text/html;charset=utf-8,<!DOCTYPE html>Web Console test top-level await when debugger paused`;
 
-add_task(async function() {
+add_task(async function () {
   // Enable await mapping.
   await pushPref("devtools.debugger.features.map-await-expression", true);
 
@@ -34,13 +34,19 @@ add_task(async function() {
 
   const awaitExpression = `await new Promise(res => {
     const result = ["res", ...inPausedExpression];
-    setTimeout(() => res(result), 1000);
+    setTimeout(() => res(result), 2000);
+    console.log("awaitExpression executed");
   })`;
 
   const onAwaitResultMessage = waitForMessageByType(
     hud,
     `[ "res", "bar" ]`,
     ".result"
+  );
+  const onAwaitExpressionExecuted = waitForMessageByType(
+    hud,
+    "awaitExpression executed",
+    ".console-api"
   );
   execute(hud, awaitExpression);
 
@@ -50,7 +56,8 @@ add_task(async function() {
   await executeAndWaitForResultMessage(hud, `"smoke"`, `"smoke"`);
 
   // Give the engine some time to evaluate the await expression before resuming.
-  await waitForTick();
+  // Otherwise the awaitExpression may be evaluate while the thread is already resumed!
+  await onAwaitExpressionExecuted;
 
   // Click on the resume button to not be paused anymore.
   await resume(dbg);
@@ -71,9 +78,9 @@ add_task(async function() {
     // Result of await
     `Array [ "res", "bar" ]`,
   ];
-  is(
-    JSON.stringify(messagesText, null, 2),
-    JSON.stringify(expectedMessages, null, 2),
+  Assert.deepEqual(
+    messagesText,
+    expectedMessages,
     "The output contains the the expected messages, in the expected order"
   );
 });

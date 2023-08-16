@@ -25,7 +25,7 @@ if (window[window.GoogleAnalyticsObject || "ga"]?.loaded === undefined) {
 
   const trackers = new Map();
 
-  const run = function(fn, ...args) {
+  const run = function (fn, ...args) {
     if (typeof fn === "function") {
       try {
         fn(...args);
@@ -162,12 +162,8 @@ if (window[window.GoogleAnalyticsObject || "ga"]?.loaded === undefined) {
   // Also process the Google Tag Manager dataLayer (bug 1713688)
   const dl = window.dataLayer;
 
-  if (Array.isArray(dl)) {
-    const oldPush = dl.push;
-    const push = function(o) {
-      if (oldPush) {
-        return oldPush.apply(dl, arguments);
-      }
+  if (Array.isArray(dl) && !dl.find(e => e["gtm.start"])) {
+    const push = function (o) {
       setTimeout(() => run(o?.eventCallback), 1);
       return true;
     };

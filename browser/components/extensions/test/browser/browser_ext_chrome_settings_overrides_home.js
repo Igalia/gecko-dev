@@ -5,21 +5,14 @@
 
 requestLongerTimeout(4);
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  ExtensionSettingsStore: "resource://gre/modules/ExtensionSettingsStore.jsm",
-  HomePage: "resource:///modules/HomePage.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  ExtensionControlledPopup:
+    "resource:///modules/ExtensionControlledPopup.sys.mjs",
+  ExtensionSettingsStore:
+    "resource://gre/modules/ExtensionSettingsStore.sys.mjs",
+  HomePage: "resource:///modules/HomePage.sys.mjs",
 });
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionControlledPopup",
-  "resource:///modules/ExtensionControlledPopup.jsm"
-);
 
 // Named this way so they correspond to the extensions
 const HOME_URI_2 = "http://example.com/";
@@ -88,9 +81,8 @@ add_task(async function test_multiple_extensions_overriding_home_page() {
           browser.test.sendMessage("homepageSet");
           break;
         case "tryClear":
-          let clearResult = await browser.browserSettings.homepageOverride.clear(
-            {}
-          );
+          let clearResult =
+            await browser.browserSettings.homepageOverride.clear({});
           browser.test.assertFalse(
             clearResult,
             "Calling homepageOverride.clear returns false."
@@ -279,7 +271,7 @@ add_task(async function test_disable() {
 
   let ext1 = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: ID,
         },
@@ -453,7 +445,7 @@ add_task(async function test_doorhanger_new_window() {
   let ext1 = ExtensionTestUtils.loadExtension({
     manifest: {
       chrome_settings_overrides: { homepage: "ext1.html" },
-      applications: {
+      browser_specific_settings: {
         gecko: { id: ext1Id },
       },
       name: "Ext1",
@@ -638,7 +630,7 @@ add_task(async function test_overriding_home_page_incognito_spanning() {
     manifest: {
       chrome_settings_overrides: { homepage: "home.html" },
       name: "private extension",
-      applications: {
+      browser_specific_settings: {
         gecko: { id: "@spanning-home" },
       },
     },
@@ -728,7 +720,7 @@ async function _test_overriding_home_page_open(manifest_version) {
       manifest_version,
       chrome_settings_overrides: { homepage: "home.html" },
       name: "homepage provider",
-      applications: {
+      browser_specific_settings: {
         gecko: { id: "homepage@mochitest" },
       },
     },

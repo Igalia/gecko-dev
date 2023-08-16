@@ -24,8 +24,7 @@ namespace mozilla::intl {
 class Collator;
 }
 
-namespace mozilla {
-namespace storage {
+namespace mozilla::storage {
 
 class Connection;
 class Service : public mozIStorageService,
@@ -129,9 +128,11 @@ class Service : public mozIStorageService,
   // The order of these members should match the order of Init calls in
   // initialize(), to ensure that the unregistration takes place in the reverse
   // order.
-  AutoVFSRegistration mTelemetrySqliteVFS;
-  AutoVFSRegistration mTelemetryExclSqliteVFS;
+  AutoVFSRegistration mBaseSqliteVFS;
+  AutoVFSRegistration mBaseExclSqliteVFS;
+  AutoVFSRegistration mQuotaSqliteVFS;
   AutoVFSRegistration mObfuscatingSqliteVFS;
+  AutoVFSRegistration mReadOnlyNoLockSqliteVFS;
 
   /**
    * Protects mConnections.
@@ -177,7 +178,6 @@ class Service : public mozIStorageService,
   mozilla::intl::Collator::Sensitivity mLastSensitivity;
 };
 
-}  // namespace storage
-}  // namespace mozilla
+}  // namespace mozilla::storage
 
 #endif /* MOZSTORAGESERVICE_H */

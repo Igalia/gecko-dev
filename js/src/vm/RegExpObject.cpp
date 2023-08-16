@@ -9,11 +9,11 @@
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/PodOperations.h"
 
-#include <algorithm>
 #include <type_traits>
 
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"  // REGEXP_*_FLAG
+#include "frontend/FrontendContext.h"    // AutoReportFrontendContext
 #include "frontend/TokenStream.h"
 #include "gc/HashUtil.h"
 #include "irregexp/RegExpAPI.h"
@@ -22,18 +22,15 @@
 #include "js/Object.h"                // JS::GetBuiltinClass
 #include "js/RegExp.h"
 #include "js/RegExpFlags.h"  // JS::RegExpFlags
-#include "js/StableStringChars.h"
 #include "util/StringBuffer.h"
 #include "vm/MatchPairs.h"
+#include "vm/PlainObject.h"
 #include "vm/RegExpStatics.h"
 #include "vm/StringType.h"
-#ifdef DEBUG
-#  include "util/Unicode.h"
-#endif
 #include "vm/WellKnownAtom.h"  // js_*_str
 
+#include "vm/JSContext-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/NativeObject-inl.h"
 #include "vm/Shape-inl.h"
 
 using namespace js;
@@ -59,6 +56,8 @@ static_assert(RegExpFlag::DotAll == REGEXP_DOTALL_FLAG,
               "self-hosted JS and /s flag bits must agree");
 static_assert(RegExpFlag::Unicode == REGEXP_UNICODE_FLAG,
               "self-hosted JS and /u flag bits must agree");
+static_assert(RegExpFlag::UnicodeSets == REGEXP_UNICODESETS_FLAG,
+              "self-hosted JS and /v flag bits must agree");
 static_assert(RegExpFlag::Sticky == REGEXP_STICKY_FLAG,
               "self-hosted JS and /y flag bits must agree");
 
@@ -148,8 +147,26 @@ bool RegExpObject::isOriginalFlagGetter(JSNative native, RegExpFlags* mask) {
     *mask = RegExpFlag::Unicode;
     return true;
   }
+  if (native == regexp_unicodeSets) {
+    *mask = RegExpFlag::UnicodeSets;
+    return true;
+  }
 
   return false;
+}
+
+static bool FinishRegExpClassInit(JSContext* cx, JS::HandleObject ctor,
+                                  JS::HandleObject proto) {
+#ifdef DEBUG
+  // Assert RegExp.prototype.exec is usually stored in a dynamic slot. The
+  // optimization in InlinableNativeIRGenerator::tryAttachIntrinsicRegExpExec
+  // depends on this.
+  Handle<NativeObject*> nproto = proto.as<NativeObject>();
+  auto prop = nproto->lookupPure(cx->names().exec);
+  MOZ_ASSERT(prop->isDataProperty());
+  MOZ_ASSERT(!nproto->isFixedSlot(prop->slot()));
+#endif
+  return true;
 }
 
 static const ClassSpec RegExpObjectClassSpec = {
@@ -158,7 +175,8 @@ static const ClassSpec RegExpObjectClassSpec = {
     nullptr,
     js::regexp_static_props,
     js::regexp_methods,
-    js::regexp_properties};
+    js::regexp_properties,
+    FinishRegExpClassInit};
 
 const JSClass RegExpObject::class_ = {
     js_RegExp_str,
@@ -206,25 +224,27 @@ RegExpObject* RegExpObject::createSyntaxChecked(JSContext* cx,
 
 RegExpObject* RegExpObject::create(JSContext* cx, Handle<JSAtom*> source,
                                    RegExpFlags flags, NewObjectKind newKind) {
-  MainThreadErrorContext ec(cx);
-  CompileOptions dummyOptions(cx);
-  frontend::DummyTokenStream dummyTokenStream(cx, &ec, dummyOptions);
+  Rooted<RegExpObject*> regexp(cx);
+  {
+    AutoReportFrontendContext fc(cx);
+    CompileOptions dummyOptions(cx);
+    frontend::DummyTokenStream dummyTokenStream(&fc, dummyOptions);
 
-  LifoAllocScope allocScope(&cx->tempLifoAlloc());
-  if (!irregexp::CheckPatternSyntax(cx, cx->stackLimitForCurrentPrincipal(),
-                                    dummyTokenStream, source, flags)) {
-    return nullptr;
+    LifoAllocScope allocScope(&cx->tempLifoAlloc());
+    if (!irregexp::CheckPatternSyntax(cx, cx->stackLimitForCurrentPrincipal(),
+                                      dummyTokenStream, source, flags)) {
+      return nullptr;
+    }
+
+    regexp = RegExpAlloc(cx, newKind);
+    if (!regexp) {
+      return nullptr;
+    }
+
+    regexp->initAndZeroLastIndex(source, flags, cx);
+
+    MOZ_ASSERT(!regexp->hasShared());
   }
-
-  Rooted<RegExpObject*> regexp(cx, RegExpAlloc(cx, newKind));
-  if (!regexp) {
-    return nullptr;
-  }
-
-  regexp->initAndZeroLastIndex(source, flags, cx);
-
-  MOZ_ASSERT(!regexp->hasShared());
-
   return regexp;
 }
 
@@ -246,8 +266,8 @@ RegExpShared* RegExpObject::createShared(JSContext* cx,
   return shared;
 }
 
-Shape* RegExpObject::assignInitialShape(JSContext* cx,
-                                        Handle<RegExpObject*> self) {
+SharedShape* RegExpObject::assignInitialShape(JSContext* cx,
+                                              Handle<RegExpObject*> self) {
   MOZ_ASSERT(self->empty());
 
   static_assert(LAST_INDEX_SLOT == 0);
@@ -259,7 +279,7 @@ Shape* RegExpObject::assignInitialShape(JSContext* cx,
     return nullptr;
   }
 
-  return self->shape();
+  return self->sharedShape();
 }
 
 void RegExpObject::initIgnoringLastIndex(JSAtom* source, RegExpFlags flags) {
@@ -424,21 +444,25 @@ JSLinearString* js::EscapeRegExpPattern(JSContext* cx, Handle<JSAtom*> src) {
 
   // We may never need to use |sb|. Start using it lazily.
   JSStringBuilder sb(cx);
-
+  bool escapeFailed = false;
   if (src->hasLatin1Chars()) {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->latin1Chars(nogc), src->length());
   } else {
     JS::AutoCheckCannotGC nogc;
-    if (!::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length())) {
-      return nullptr;
-    }
+    escapeFailed =
+        !::EscapeRegExpPattern(sb, src->twoByteChars(nogc), src->length());
+  }
+  if (escapeFailed) {
+    return nullptr;
   }
 
   // Step 3.
-  return sb.empty() ? src : sb.finishString();
+  if (sb.empty()) {
+    return src;
+  }
+  return sb.finishString();
 }
 
 // ES6 draft rev32 21.2.5.14. Optimized for RegExpObject.
@@ -480,6 +504,9 @@ JSLinearString* RegExpObject::toString(JSContext* cx,
     return nullptr;
   }
   if (obj->unicode() && !sb.append('u')) {
+    return nullptr;
+  }
+  if (obj->unicodeSets() && !sb.append('v')) {
     return nullptr;
   }
   if (obj->sticky() && !sb.append('y')) {
@@ -544,15 +571,6 @@ RegExpShared::RegExpShared(JSAtom* source, RegExpFlags flags)
     : CellWithTenuredGCPointer(source), pairCount_(0), flags(flags) {}
 
 void RegExpShared::traceChildren(JSTracer* trc) {
-  // Discard code to avoid holding onto ExecutablePools.
-  gc::GCRuntime* gc = &trc->runtime()->gc;
-  // Bug 1758095: isIncrementalGCInProgress() also returns true when called from
-  // the collector during a non-incremental GC.
-  if (trc->isMarkingTracer() && gc->isIncrementalGCInProgress() &&
-      gc->isShrinkingGC()) {
-    discardJitCode();
-  }
-
   TraceNullableCellHeaderEdge(trc, this, "RegExpShared source");
   if (kind() == RegExpShared::Kind::Atom) {
     TraceNullableEdge(trc, &patternAtom_, "RegExpShared pattern atom");
@@ -928,12 +946,10 @@ RegExpShared* RegExpZone::get(JSContext* cx, Handle<JSAtom*> source,
     return *p;
   }
 
-  auto shared = Allocate<RegExpShared>(cx);
+  auto* shared = cx->newCell<RegExpShared>(source, flags);
   if (!shared) {
     return nullptr;
   }
-
-  new (shared) RegExpShared(source, flags);
 
   if (!p.add(cx, set_, Key(source, flags), shared)) {
     return nullptr;
@@ -1001,6 +1017,9 @@ static bool ParseRegExpFlags(const CharT* chars, size_t length,
       case 'u':
         flag = RegExpFlag::Unicode;
         break;
+      case 'v':
+        flag = RegExpFlag::UnicodeSets;
+        break;
       case 'y':
         flag = RegExpFlag::Sticky;
         break;
@@ -1012,6 +1031,16 @@ static bool ParseRegExpFlags(const CharT* chars, size_t length,
       *invalidFlag = chars[i];
       return false;
     }
+
+    // /u and /v flags are mutually exclusive.
+    if (((*flagsOut & RegExpFlag::Unicode) &&
+         (flag & RegExpFlag::UnicodeSets)) ||
+        ((*flagsOut & RegExpFlag::UnicodeSets) &&
+         (flag & RegExpFlag::Unicode))) {
+      *invalidFlag = chars[i];
+      return false;
+    }
+
     *flagsOut |= flag;
   }
 
@@ -1196,21 +1225,26 @@ JS_PUBLIC_API bool JS::CheckRegExpSyntax(JSContext* cx, const char16_t* chars,
   AssertHeapIsIdle();
   CHECK_THREAD(cx);
 
-  MainThreadErrorContext ec(cx);
+  AutoReportFrontendContext fc(cx);
   CompileOptions dummyOptions(cx);
-  frontend::DummyTokenStream dummyTokenStream(cx, &ec, dummyOptions);
+  frontend::DummyTokenStream dummyTokenStream(&fc, dummyOptions);
 
   LifoAllocScope allocScope(&cx->tempLifoAlloc());
 
   mozilla::Range<const char16_t> source(chars, length);
   bool success = irregexp::CheckPatternSyntax(
-      cx, cx->stackLimitForCurrentPrincipal(), dummyTokenStream, source, flags);
+      cx->tempLifoAlloc(), cx->stackLimitForCurrentPrincipal(),
+      dummyTokenStream, source, flags);
   error.set(UndefinedValue());
   if (!success) {
+    if (!fc.convertToRuntimeErrorAndClear()) {
+      return false;
+    }
     // We can fail because of OOM or over-recursion even if the syntax is valid.
     if (cx->isThrowingOutOfMemory() || cx->isThrowingOverRecursed()) {
       return false;
     }
+
     if (!cx->getPendingException(error)) {
       return false;
     }

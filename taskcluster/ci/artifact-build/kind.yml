@@ -11,7 +11,11 @@ transforms:
     - gecko_taskgraph.transforms.build_attrs:transforms
     - gecko_taskgraph.transforms.build_lints:transforms
     - gecko_taskgraph.transforms.job:transforms
+    - gecko_taskgraph.transforms.artifact:transforms
     - gecko_taskgraph.transforms.task:transforms
+
+job-defaults:
+    use-system-python: false
 
 jobs:
     linux64-artifact/opt:
@@ -25,7 +29,7 @@ jobs:
             symbol: AB
             tier: 2
         run-on-projects: ['mozilla-central']
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             max-run-time: 3600
             env:
@@ -42,7 +46,6 @@ jobs:
             script: "mozharness/scripts/fx_desktop_build.py"
             secrets: true
             tooltool-downloads: public
-            need-xvfb: true
             keep-artifacts: false
         dependencies:
             linux64-opt: build-linux64/opt

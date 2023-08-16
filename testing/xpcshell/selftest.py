@@ -4,22 +4,18 @@
 # http://creativecommons.org/publicdomain/zero/1.0/
 #
 
-from __future__ import absolute_import, print_function
-
-import mozinfo
 import os
 import pprint
 import re
 import shutil
-import six
 import sys
 import tempfile
 import unittest
 
+import mozinfo
+import six
 from mozlog import structured
-
 from runxpcshelltests import XPCShellTests
-
 
 TEST_PASS_STRING = "TEST-PASS"
 TEST_FAIL_STRING = "TEST-UNEXPECTED-FAIL"
@@ -294,8 +290,8 @@ function run_test () {
 # A test for asynchronous cleanup functions
 ASYNC_CLEANUP = """
 function run_test() {
-  let { PromiseUtils } = ChromeUtils.import(
-    "resource://gre/modules/PromiseUtils.jsm"
+  let { PromiseUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/PromiseUtils.sys.mjs"
   );
 
   // The list of checkpoints in the order we encounter them.
@@ -419,21 +415,15 @@ add_test(function test_child_mozinfo () {
 
 HEADLESS_TRUE = """
 add_task(function headless_true() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  Assert.equal(env.get("MOZ_HEADLESS"), "1", "Check MOZ_HEADLESS");
-  Assert.equal(env.get("DISPLAY"), "77", "Check DISPLAY");
+  Assert.equal(Services.env.get("MOZ_HEADLESS"), "1", "Check MOZ_HEADLESS");
+  Assert.equal(Services.env.get("DISPLAY"), "77", "Check DISPLAY");
 });
 """
 
 HEADLESS_FALSE = """
 add_task(function headless_false() {
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  Assert.notEqual(env.get("MOZ_HEADLESS"), "1", "Check MOZ_HEADLESS");
-  Assert.notEqual(env.get("DISPLAY"), "77", "Check DISPLAY");
+  Assert.notEqual(Services.env.get("MOZ_HEADLESS"), "1", "Check MOZ_HEADLESS");
+  Assert.notEqual(Services.env.get("DISPLAY"), "77", "Check DISPLAY");
 });
 """
 
@@ -465,6 +455,7 @@ class XPCShellTestsTests(unittest.TestCase):
             )
         else:
             self.xpcshellBin = os.path.join(objdir, "dist", "bin", "xpcshell")
+
         if sys.platform == "win32":
             self.xpcshellBin += ".exe"
         self.utility_path = os.path.join(objdir, "dist", "bin")
@@ -534,6 +525,7 @@ prefs =
         returns |expected|.
         """
         kwargs = {}
+        kwargs["app_binary"] = self.app_binary
         kwargs["xpcshell"] = self.xpcshellBin
         kwargs["symbolsPath"] = self.symbols_path
         kwargs["manifest"] = self.manifest
@@ -544,6 +536,7 @@ prefs =
         kwargs["sequential"] = True
         kwargs["testingModulesDir"] = self.testing_modules
         kwargs["utility_path"] = self.utility_path
+        kwargs["repeat"] = 0
         self.assertEqual(
             expected,
             self.x.runTests(kwargs),
@@ -1147,7 +1140,7 @@ add_test({
 
     def testMissingHeadFile(self):
         """
-        Ensure that missing head file results in fatal error.
+        Ensure that missing head file results in fatal failure.
         """
         self.writeFile("test_basic.js", SIMPLE_PASSING_TEST)
         self.writeManifest([("test_basic.js", "head = missing.js")])

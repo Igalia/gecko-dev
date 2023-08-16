@@ -48,41 +48,6 @@ using namespace mozilla::unicode;
 
 using mozilla::dom::SystemFontList;
 
-// cribbed from CTFontManager.h
-enum { kAutoActivationDisabled = 1 };
-typedef uint32_t AutoActivationSetting;
-
-// bug 567552 - disable auto-activation of fonts
-
-static void DisableFontActivation() {
-  // get the main bundle identifier
-  CFBundleRef mainBundle = ::CFBundleGetMainBundle();
-  CFStringRef mainBundleID = nullptr;
-
-  if (mainBundle) {
-    mainBundleID = ::CFBundleGetIdentifier(mainBundle);
-  }
-
-  // bug 969388 and bug 922590 - mainBundlID as null is sometimes problematic
-  if (!mainBundleID) {
-    NS_WARNING("missing bundle ID, packaging set up incorrectly");
-    return;
-  }
-
-  // if possible, fetch CTFontManagerSetAutoActivationSetting
-  void (*CTFontManagerSetAutoActivationSettingPtr)(CFStringRef,
-                                                   AutoActivationSetting);
-  CTFontManagerSetAutoActivationSettingPtr =
-      (void (*)(CFStringRef, AutoActivationSetting))dlsym(
-          RTLD_DEFAULT, "CTFontManagerSetAutoActivationSetting");
-
-  // bug 567552 - disable auto-activation of fonts
-  if (CTFontManagerSetAutoActivationSettingPtr) {
-    CTFontManagerSetAutoActivationSettingPtr(mainBundleID,
-                                             kAutoActivationDisabled);
-  }
-}
-
 // A bunch of fonts for "additional language support" are shipped in a
 // "Language Support" directory, and don't show up in the standard font
 // list returned by CTFontManagerCopyAvailableFontFamilyNames unless
@@ -138,14 +103,9 @@ void gfxPlatformMac::WaitForFontRegistration() {
 }
 
 gfxPlatformMac::gfxPlatformMac() {
-  DisableFontActivation();
   mFontAntiAliasingThreshold = ReadAntiAliasingThreshold();
 
   InitBackendPrefs(GetBackendPrefs());
-
-  if (nsCocoaFeatures::OnHighSierraOrLater()) {
-    mHasNativeColrFontSupport = true;
-  }
 }
 
 gfxPlatformMac::~gfxPlatformMac() { gfxCoreTextShaper::Shutdown(); }
@@ -177,20 +137,6 @@ already_AddRefed<gfxASurface> gfxPlatformMac::CreateOffscreenSurface(
 
   RefPtr<gfxASurface> newSurface = new gfxQuartzSurface(aSize, aFormat);
   return newSurface.forget();
-}
-
-bool gfxPlatformMac::IsFontFormatSupported(uint32_t aFormatFlags) {
-  if (gfxPlatform::IsFontFormatSupported(aFormatFlags)) {
-    return true;
-  }
-
-  // If the generic method rejected the format hint, then check for any
-  // platform-specific format we know about.
-  if (aFormatFlags & gfxUserFontSet::FLAG_FORMAT_TRUETYPE_AAT) {
-    return true;
-  }
-
-  return false;
 }
 
 void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
@@ -700,6 +646,8 @@ void gfxPlatformMac::GetCommonFallbackFonts(uint32_t aCh, Script aRunScript,
     case Script::TANGSA:
     case Script::TOTO:
     case Script::VITHKUQI:
+    case Script::KAWI:
+    case Script::NAG_MUNDARI:
       break;
   }
 
@@ -1010,6 +958,24 @@ gfxPlatformMac::CreateGlobalHardwareVsyncSource() {
 
   osxVsyncSource->DisableVsync();
   return osxVsyncSource.forget();
+}
+
+bool gfxPlatformMac::SupportsHDR() {
+  // HDR has 3 requirements:
+  // 1) high peak brightness
+  // 2) high contrast ratio
+  // 3) color depth > 24
+  if (GetScreenDepth() <= 24) {
+    return false;
+  }
+  // Screen is capable. Is the OS capable?
+#ifdef EARLY_BETA_OR_EARLIER
+  // More-or-less supported in Catalina.
+  return nsCocoaFeatures::OnCatalinaOrLater();
+#else
+  // Definitely supported in Big Sur.
+  return nsCocoaFeatures::OnBigSurOrLater();
+#endif
 }
 
 nsTArray<uint8_t> gfxPlatformMac::GetPlatformCMSOutputProfileData() {

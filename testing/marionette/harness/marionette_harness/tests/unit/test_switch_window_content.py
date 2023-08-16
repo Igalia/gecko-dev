@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import sys
 from unittest import skipIf
 
@@ -42,8 +40,8 @@ class TestSwitchToWindowContent(WindowManagerMixin, MarionetteTestCase):
         with self.marionette.using_context("chrome"):
             return self.marionette.execute_script(
                 """
-                const { AppConstants } = ChromeUtils.import(
-                  "resource://gre/modules/AppConstants.jsm"
+                const { AppConstants } = ChromeUtils.importESModule(
+                  "resource://gre/modules/AppConstants.sys.mjs"
                 );
 
                 let win = null;
@@ -51,8 +49,8 @@ class TestSwitchToWindowContent(WindowManagerMixin, MarionetteTestCase):
                 if (AppConstants.MOZ_APP_NAME == "fennec") {
                   win = Services.wm.getMostRecentWindow("navigator:browser");
                 } else {
-                  const { BrowserWindowTracker } = ChromeUtils.import(
-                    "resource:///modules/BrowserWindowTracker.jsm"
+                  const { BrowserWindowTracker } = ChromeUtils.importESModule(
+                    "resource:///modules/BrowserWindowTracker.sys.mjs"
                   );
                   win = BrowserWindowTracker.getTopWindow();
                 }

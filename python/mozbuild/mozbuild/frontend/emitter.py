@@ -2,23 +2,25 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import logging
 import os
-import six
 import sys
 import time
 import traceback
+from collections import OrderedDict, defaultdict
 
-from collections import defaultdict, OrderedDict
-from mach.mixin.logging import LoggingMixin
-from mozbuild.util import memoize, OrderedDefaultDict
-
-import mozpack.path as mozpath
 import mozinfo
-import pytoml
+import mozpack.path as mozpath
+import six
+import toml
+from mach.mixin.logging import LoggingMixin
+from mozpack.chrome.manifest import Manifest
 
+from mozbuild.base import ExecutionSummary
+from mozbuild.util import OrderedDefaultDict, memoize
+
+from ..testing import REFTEST_FLAVORS, TEST_MANIFESTS, SupportFilesConverter
+from .context import Context, ObjDirPath, Path, SourcePath, SubContext
 from .data import (
     BaseRustProgram,
     ChromeManifestEntry,
@@ -27,14 +29,15 @@ from .data import (
     Defines,
     DirectoryTraversal,
     Exports,
+    ExternalSharedLibrary,
+    ExternalStaticLibrary,
     FinalTargetFiles,
     FinalTargetPreprocessedFiles,
     GeneratedFile,
-    ExternalStaticLibrary,
-    ExternalSharedLibrary,
     HostDefines,
     HostLibrary,
     HostProgram,
+    HostRustLibrary,
     HostRustProgram,
     HostSharedLibrary,
     HostSimpleProgram,
@@ -50,10 +53,8 @@ from .data import (
     ObjdirFiles,
     ObjdirPreprocessedFiles,
     PerSourceFlag,
-    WebIDLCollection,
     Program,
     RustLibrary,
-    HostRustLibrary,
     RustProgram,
     RustTests,
     SandboxedWasmLibrary,
@@ -67,18 +68,11 @@ from .data import (
     VariablePassthru,
     WasmDefines,
     WasmSources,
+    WebIDLCollection,
     XPCOMComponentManifests,
     XPIDLModule,
 )
-from mozpack.chrome.manifest import Manifest
-
 from .reader import SandboxValidationError
-
-from ..testing import TEST_MANIFESTS, REFTEST_FLAVORS, SupportFilesConverter
-
-from .context import Context, SourcePath, ObjDirPath, Path, SubContext
-
-from mozbuild.base import ExecutionSummary
 
 
 class TreeMetadataEmitter(LoggingMixin):
@@ -157,10 +151,10 @@ class TreeMetadataEmitter(LoggingMixin):
                 # Keep all contexts around, we will need them later.
                 contexts[os.path.normcase(out.objdir)] = out
 
-                start = time.time()
+                start = time.monotonic()
                 # We need to expand the generator for the timings to work.
                 objs = list(emitfn(out))
-                self._emitter_time += time.time() - start
+                self._emitter_time += time.monotonic() - start
 
                 for o in emit_objs(objs):
                     yield o
@@ -170,9 +164,9 @@ class TreeMetadataEmitter(LoggingMixin):
 
         # Don't emit Linkable objects when COMPILE_ENVIRONMENT is not set
         if self.config.substs.get("COMPILE_ENVIRONMENT"):
-            start = time.time()
+            start = time.monotonic()
             objs = list(self._emit_libs_derived(contexts))
-            self._emitter_time += time.time() - start
+            self._emitter_time += time.monotonic() - start
 
             for o in emit_objs(objs):
                 yield o
@@ -513,7 +507,7 @@ class TreeMetadataEmitter(LoggingMixin):
         else:
             return ExternalSharedLibrary(context, name)
 
-    def _parse_cargo_file(self, context):
+    def _parse_and_check_cargo_file(self, context):
         """Parse the Cargo.toml file in context and return a Python object
         representation of it.  Raise a SandboxValidationError if the Cargo.toml
         file does not exist.  Return a tuple of (config, cargo_file)."""
@@ -523,7 +517,38 @@ class TreeMetadataEmitter(LoggingMixin):
                 "No Cargo.toml file found in %s" % cargo_file, context
             )
         with open(cargo_file, "r") as f:
-            return pytoml.load(f), cargo_file
+            content = toml.load(f)
+
+        crate_name = content.get("package", {}).get("name")
+        if not crate_name:
+            raise SandboxValidationError(
+                f"{cargo_file} doesn't contain a crate name?!?", context
+            )
+
+        hack_name = "mozilla-central-workspace-hack"
+        dep = f'{hack_name} = {{ version = "0.1", features = ["{crate_name}"], optional = true }}'
+        dep_dict = toml.loads(dep)[hack_name]
+        hint = (
+            "\n\nYou may also need to adjust the build/workspace-hack/Cargo.toml"
+            f" file to add the {crate_name} feature."
+        )
+
+        workspace_hack = content.get("dependencies", {}).get(hack_name)
+        if not workspace_hack:
+            raise SandboxValidationError(
+                f"{cargo_file} doesn't contain the workspace hack.\n\n"
+                f"Add the following to dependencies:\n{dep}{hint}",
+                context,
+            )
+
+        if workspace_hack != dep_dict:
+            raise SandboxValidationError(
+                f"{cargo_file} needs an update to its {hack_name} dependency.\n\n"
+                f"Adjust the dependency to:\n{dep}{hint}",
+                context,
+            )
+
+        return content, cargo_file
 
     def _verify_deps(
         self, context, crate_dir, crate_name, dependencies, description="Dependency"
@@ -568,7 +593,7 @@ class TreeMetadataEmitter(LoggingMixin):
         self, context, libname, static_args, is_gkrust=False, cls=RustLibrary
     ):
         # We need to note any Rust library for linking purposes.
-        config, cargo_file = self._parse_cargo_file(context)
+        config, cargo_file = self._parse_and_check_cargo_file(context)
         crate_name = config["package"]["name"]
 
         if crate_name != libname:
@@ -666,7 +691,7 @@ class TreeMetadataEmitter(LoggingMixin):
 
         # Verify Rust program definitions.
         if all_rust_programs:
-            config, cargo_file = self._parse_cargo_file(context)
+            config, cargo_file = self._parse_and_check_cargo_file(context)
             bin_section = config.get("bin", None)
             if not bin_section:
                 raise SandboxValidationError(
@@ -983,17 +1008,16 @@ class TreeMetadataEmitter(LoggingMixin):
         if not (linkables or host_linkables or wasm_linkables):
             return
 
+        # TODO: objdirs with only host things in them shouldn't need target
+        # flags, but there's at least one Makefile.in (in
+        # build/unix/elfhack) that relies on the value of LDFLAGS being
+        # passed to one-off rules.
         self._compile_dirs.add(context.objdir)
 
-        if host_linkables and not all(
-            isinstance(l, HostRustLibrary) for l in host_linkables
+        if host_linkables or any(
+            isinstance(l, (RustLibrary, RustProgram)) for l in linkables
         ):
             self._host_compile_dirs.add(context.objdir)
-            # TODO: objdirs with only host things in them shouldn't need target
-            # flags, but there's at least one Makefile.in (in
-            # build/unix/elfhack) that relies on the value of LDFLAGS being
-            # passed to one-off rules.
-            self._compile_dirs.add(context.objdir)
 
         sources = defaultdict(list)
         gen_sources = defaultdict(list)

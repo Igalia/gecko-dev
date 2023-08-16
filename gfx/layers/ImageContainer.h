@@ -24,6 +24,7 @@
 #include "nsDebug.h"           // for NS_ASSERTION
 #include "nsISupportsImpl.h"   // for Image::Release, etc
 #include "nsTArray.h"          // for nsTArray
+#include "nsThreadUtils.h"     // for NS_IsMainThread
 #include "mozilla/Atomics.h"
 #include "mozilla/gfx/2D.h"
 #include "mozilla/EnumeratedArray.h"
@@ -56,6 +57,7 @@ class KnowsCompositor;
 class NVImage;
 class MemoryOrShmem;
 #ifdef XP_WIN
+class D3D11RecycleAllocator;
 class D3D11YCbCrRecycleAllocator;
 #endif
 #ifdef XP_MACOSX
@@ -77,7 +79,7 @@ class SharedRGBImage;
 class SurfaceTextureImage;
 #elif defined(XP_MACOSX)
 class MacIOSurfaceImage;
-#elif MOZ_WAYLAND
+#elif MOZ_WIDGET_GTK
 class DMABUFSurfaceImage;
 #endif
 
@@ -108,6 +110,9 @@ class Image {
     return gfx::IntRect(GetOrigin().x, GetOrigin().y, GetSize().width,
                         GetSize().height);
   }
+  virtual gfx::ColorDepth GetColorDepth() const {
+    return gfx::ColorDepth::COLOR_8;
+  }
 
   ImageBackendData* GetBackendData(LayersBackend aBackend) {
     return mBackendData[aBackend].get();
@@ -117,6 +122,9 @@ class Image {
   }
 
   int32_t GetSerial() const { return mSerial; }
+
+  bool IsDRM() const { return mIsDRM; }
+  void SetIsDRM(bool aIsDRM) { mIsDRM = aIsDRM; }
 
   virtual already_AddRefed<gfx::SourceSurface> GetAsSourceSurface() = 0;
 
@@ -139,7 +147,7 @@ class Image {
   virtual MacIOSurfaceImage* AsMacIOSurfaceImage() { return nullptr; }
 #endif
   virtual PlanarYCbCrImage* AsPlanarYCbCrImage() { return nullptr; }
-#ifdef MOZ_WAYLAND
+#ifdef MOZ_WIDGET_GTK
   virtual DMABUFSurfaceImage* AsDMABUFSurfaceImage() { return nullptr; }
 #endif
 
@@ -152,7 +160,10 @@ class Image {
       TextureClient* tcOverride = nullptr);
 
   Image(void* aImplData, ImageFormat aFormat)
-      : mImplData(aImplData), mSerial(++sSerialCounter), mFormat(aFormat) {}
+      : mImplData(aImplData),
+        mSerial(++sSerialCounter),
+        mFormat(aFormat),
+        mIsDRM(false) {}
 
   // Protected destructor, to discourage deletion outside of Release():
   virtual ~Image() = default;
@@ -165,6 +176,7 @@ class Image {
   void* mImplData;
   int32_t mSerial;
   ImageFormat mFormat;
+  bool mIsDRM;
 
   static mozilla::Atomic<int32_t> sSerialCounter;
 };
@@ -197,13 +209,14 @@ class BufferRecycleBin final {
 
   // This protects mRecycledBuffers, mRecycledBufferSize, mRecycledTextures
   // and mRecycledTextureSizes
-  Mutex mLock MOZ_UNANNOTATED;
+  Mutex mLock;
 
   // We should probably do something to prune this list on a timer so we don't
   // eat excess memory while video is paused...
-  nsTArray<mozilla::UniquePtr<uint8_t[]>> mRecycledBuffers;
+  nsTArray<mozilla::UniquePtr<uint8_t[]>> mRecycledBuffers
+      MOZ_GUARDED_BY(mLock);
   // This is only valid if mRecycledBuffers is non-empty
-  uint32_t mRecycledBufferSize;
+  uint32_t mRecycledBufferSize MOZ_GUARDED_BY(mLock);
 };
 
 /**
@@ -251,8 +264,8 @@ class ImageContainerListener final {
 
   ~ImageContainerListener();
 
-  Mutex mLock MOZ_UNANNOTATED;
-  ImageContainer* mImageContainer;
+  Mutex mLock;
+  ImageContainer* mImageContainer MOZ_GUARDED_BY(mLock);
 };
 
 /**
@@ -348,9 +361,11 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
   void SetCurrentImages(const nsTArray<NonOwningImage>& aImages);
 
   /**
-   * Clear all images. Let ImageClient release all TextureClients.
+   * Clear all images. Let ImageClient release all TextureClients. Because we
+   * may release the lock after acquiring it in this method, it cannot be called
+   * with the lock held.
    */
-  void ClearAllImages();
+  void ClearAllImages() MOZ_EXCLUDES(mRecursiveMutex);
 
   /**
    * Clear any resources that are not immediately necessary. This may be called
@@ -442,36 +457,58 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
    * Can be called on any thread. This method takes mRecursiveMutex
    * when accessing thread-shared state.
    */
-  void SetScaleHint(const gfx::IntSize& aScaleHint) { mScaleHint = aScaleHint; }
+  void SetScaleHint(const gfx::IntSize& aScaleHint) {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    mScaleHint = aScaleHint;
+  }
 
-  const gfx::IntSize& GetScaleHint() const { return mScaleHint; }
+  const gfx::IntSize GetScaleHint() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    return mScaleHint;
+  }
 
   void SetTransformHint(const gfx::Matrix& aTransformHint) {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
     mTransformHint = aTransformHint;
   }
 
-  const gfx::Matrix& GetTransformHint() const { return mTransformHint; }
+  const gfx::Matrix GetTransformHint() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    return mTransformHint;
+  }
 
-  void SetRotation(VideoInfo::Rotation aRotation) { mRotation = aRotation; }
+  void SetRotation(VideoInfo::Rotation aRotation) {
+    MOZ_ASSERT(NS_IsMainThread());
+    mRotation = aRotation;
+  }
 
-  VideoInfo::Rotation GetRotation() const { return mRotation; }
+  VideoInfo::Rotation GetRotation() const {
+    MOZ_ASSERT(NS_IsMainThread());
+    return mRotation;
+  }
 
   void SetImageFactory(ImageFactory* aFactory) {
     RecursiveMutexAutoLock lock(mRecursiveMutex);
     mImageFactory = aFactory ? aFactory : new ImageFactory();
   }
 
-  ImageFactory* GetImageFactory() const { return mImageFactory; }
+  already_AddRefed<ImageFactory> GetImageFactory() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    return do_AddRef(mImageFactory);
+  }
 
   void EnsureRecycleAllocatorForRDD(KnowsCompositor* aKnowsCompositor);
 
 #ifdef XP_WIN
-  D3D11YCbCrRecycleAllocator* GetD3D11YCbCrRecycleAllocator(
+  already_AddRefed<D3D11RecycleAllocator> GetD3D11RecycleAllocator(
+      KnowsCompositor* aKnowsCompositor, gfx::SurfaceFormat aPreferredFormat);
+  already_AddRefed<D3D11YCbCrRecycleAllocator> GetD3D11YCbCrRecycleAllocator(
       KnowsCompositor* aKnowsCompositor);
 #endif
 
 #ifdef XP_MACOSX
-  MacIOSurfaceRecycleAllocator* GetMacIOSurfaceRecycleAllocator();
+  already_AddRefed<MacIOSurfaceRecycleAllocator>
+  GetMacIOSurfaceRecycleAllocator();
 #endif
 
   /**
@@ -509,9 +546,7 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
   void NotifyComposite(const ImageCompositeNotification& aNotification);
   void NotifyDropped(uint32_t aDropped);
 
-  ImageContainerListener* GetImageContainerListener() {
-    return mNotifyCompositeListener;
-  }
+  already_AddRefed<ImageContainerListener> GetImageContainerListener() const;
 
   /**
    * Get the ImageClient associated with this container. Returns only after
@@ -538,33 +573,44 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
   // calling this function!
   void EnsureActiveImage();
 
-  void EnsureImageClient();
+  void EnsureImageClient() MOZ_REQUIRES(mRecursiveMutex);
+
+  bool HasImageClient() const {
+    RecursiveMutexAutoLock lock(mRecursiveMutex);
+    return !!mImageClient;
+  }
 
   // RecursiveMutex to protect thread safe access to the "current
   // image", and any other state which is shared between threads.
-  RecursiveMutex mRecursiveMutex MOZ_UNANNOTATED;
+  mutable RecursiveMutex mRecursiveMutex;
 
-  RefPtr<TextureClientRecycleAllocator> mRecycleAllocator;
+  RefPtr<TextureClientRecycleAllocator> mRecycleAllocator
+      MOZ_GUARDED_BY(mRecursiveMutex);
 
 #ifdef XP_WIN
-  RefPtr<D3D11YCbCrRecycleAllocator> mD3D11YCbCrRecycleAllocator;
+  RefPtr<D3D11RecycleAllocator> mD3D11RecycleAllocator
+      MOZ_GUARDED_BY(mRecursiveMutex);
+
+  RefPtr<D3D11YCbCrRecycleAllocator> mD3D11YCbCrRecycleAllocator
+      MOZ_GUARDED_BY(mRecursiveMutex);
 #endif
 #ifdef XP_MACOSX
-  RefPtr<MacIOSurfaceRecycleAllocator> mMacIOSurfaceRecycleAllocator;
+  RefPtr<MacIOSurfaceRecycleAllocator> mMacIOSurfaceRecycleAllocator
+      MOZ_GUARDED_BY(mRecursiveMutex);
 #endif
 
-  nsTArray<OwningImage> mCurrentImages;
+  nsTArray<OwningImage> mCurrentImages MOZ_GUARDED_BY(mRecursiveMutex);
 
   // Updates every time mActiveImage changes
-  uint32_t mGenerationCounter;
+  uint32_t mGenerationCounter MOZ_GUARDED_BY(mRecursiveMutex);
 
   // Number of contained images that have been painted at least once.  It's up
   // to the ImageContainer implementation to ensure accesses to this are
   // threadsafe.
-  uint32_t mPaintCount;
+  uint32_t mPaintCount MOZ_GUARDED_BY(mRecursiveMutex);
 
   // See GetPaintDelay. Accessed only with mRecursiveMutex held.
-  TimeDuration mPaintDelay;
+  TimeDuration mPaintDelay MOZ_GUARDED_BY(mRecursiveMutex);
 
   // See GetDroppedImageCount.
   mozilla::Atomic<uint32_t> mDroppedImageCount;
@@ -572,15 +618,16 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
   // This is the image factory used by this container, layer managers using
   // this container can set an alternative image factory that will be used to
   // create images for this container.
-  RefPtr<ImageFactory> mImageFactory;
+  RefPtr<ImageFactory> mImageFactory MOZ_GUARDED_BY(mRecursiveMutex);
 
-  gfx::IntSize mScaleHint;
+  gfx::IntSize mScaleHint MOZ_GUARDED_BY(mRecursiveMutex);
 
-  gfx::Matrix mTransformHint;
+  gfx::Matrix mTransformHint MOZ_GUARDED_BY(mRecursiveMutex);
 
+  // Main thread only.
   VideoInfo::Rotation mRotation = VideoInfo::Rotation::kDegree_0;
 
-  RefPtr<BufferRecycleBin> mRecycleBin;
+  RefPtr<BufferRecycleBin> mRecycleBin MOZ_GUARDED_BY(mRecursiveMutex);
 
   // This member points to an ImageClient if this ImageContainer was
   // sucessfully created with ENABLE_ASYNC, or points to null otherwise.
@@ -589,13 +636,13 @@ class ImageContainer final : public SupportsThreadSafeWeakPtr<ImageContainer> {
   // In this case the ImageContainer is perfectly usable, but it will forward
   // frames to the compositor through transactions in the main thread rather
   // than asynchronusly using the ImageBridge IPDL protocol.
-  RefPtr<ImageClient> mImageClient;
+  RefPtr<ImageClient> mImageClient MOZ_GUARDED_BY(mRecursiveMutex);
 
-  bool mIsAsync;
-  CompositableHandle mAsyncContainerHandle;
+  const bool mIsAsync;
+  CompositableHandle mAsyncContainerHandle MOZ_GUARDED_BY(mRecursiveMutex);
 
   // ProducerID for last current image(s)
-  ProducerID mCurrentProducerID;
+  ProducerID mCurrentProducerID MOZ_GUARDED_BY(mRecursiveMutex);
 
   RefPtr<ImageContainerListener> mNotifyCompositeListener;
 
@@ -633,6 +680,14 @@ class AutoLockImage {
   AutoTArray<ImageContainer::OwningImage, 4> mImages;
 };
 
+// This type is currently only used for AVIF and WebCodecs therefore makes some
+// specific assumptions (e.g., Alpha's bpc and stride is equal to Y's one)
+struct PlanarAlphaData {
+  uint8_t* mChannel = nullptr;
+  gfx::IntSize mSize = gfx::IntSize(0, 0);
+  gfx::ColorDepth mDepth = gfx::ColorDepth::COLOR_8;
+  bool mPremultiplied = false;
+};
 struct PlanarYCbCrData {
   // Luminance buffer
   uint8_t* mYChannel = nullptr;
@@ -644,11 +699,14 @@ struct PlanarYCbCrData {
   int32_t mCbCrStride = 0;
   int32_t mCbSkip = 0;
   int32_t mCrSkip = 0;
+  // Alpha buffer and its metadata
+  Maybe<PlanarAlphaData> mAlpha = Nothing();
   // Picture region
   gfx::IntRect mPictureRect = gfx::IntRect(0, 0, 0, 0);
   StereoMode mStereoMode = StereoMode::MONO;
   gfx::ColorDepth mColorDepth = gfx::ColorDepth::COLOR_8;
   gfx::YUVColorSpace mYUVColorSpace = gfx::YUVColorSpace::Default;
+  gfx::ColorSpace2 mColorPrimaries = gfx::ColorSpace2::UNKNOWN;
   gfx::TransferFunction mTransferFunction = gfx::TransferFunction::BT709;
   gfx::ColorRange mColorRange = gfx::ColorRange::LIMITED;
   gfx::ChromaSubsampling mChromaSubsampling = gfx::ChromaSubsampling::FULL;
@@ -674,15 +732,6 @@ struct PlanarYCbCrData {
   }
 
   static Maybe<PlanarYCbCrData> From(const SurfaceDescriptorBuffer&);
-};
-
-// This type is currently only used for AVIF and therefore makes some
-// AVIF-specific assumptions (e.g., Alpha's bpc and stride is equal to Y's one)
-struct PlanarAlphaData {
-  uint8_t* mChannel = nullptr;
-  gfx::IntSize mSize = gfx::IntSize(0, 0);
-  gfx::ColorDepth mDepth = gfx::ColorDepth::COLOR_8;
-  bool mPremultiplied = false;
 };
 
 /****** Image subtypes for the different formats ******/

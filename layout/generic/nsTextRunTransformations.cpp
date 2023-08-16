@@ -10,8 +10,11 @@
 
 #include "GreekCasing.h"
 #include "IrishCasing.h"
+#include "MathMLTextRunFactory.h"
 #include "mozilla/ComputedStyleInlines.h"
 #include "mozilla/MemoryReporting.h"
+#include "mozilla/StaticPrefs_layout.h"
+#include "mozilla/StaticPrefs_mathml.h"
 #include "mozilla/TextEditor.h"
 #include "mozilla/gfx/2D.h"
 #include "nsGkAtoms.h"
@@ -29,8 +32,7 @@ using namespace mozilla::gfx;
 #define LATIN_SMALL_LETTER_DOTLESS_I 0x0131
 
 // Greek sigma needs custom handling for the lowercase transform; for details
-// see comments under "case NS_STYLE_TEXT_TRANSFORM_LOWERCASE" within
-// nsCaseTransformTextRunFactory::RebuildTextRun(), and bug 740120.
+// see bug 740120.
 #define GREEK_CAPITAL_LETTER_SIGMA 0x03A3
 #define GREEK_SMALL_LETTER_FINAL_SIGMA 0x03C2
 #define GREEK_SMALL_LETTER_SIGMA 0x03C3
@@ -124,24 +126,24 @@ void MergeCharactersInTextRun(gfxTextRun* aDest, gfxTextRun* aSrc,
                               const bool* aCharsToMerge,
                               const bool* aDeletedChars) {
   MOZ_ASSERT(!aDest->TrailingGlyphRun(), "unexpected glyphRuns in aDest!");
-  gfxTextRun::GlyphRunIterator iter(aSrc, gfxTextRun::Range(aSrc));
   uint32_t offset = 0;
   AutoTArray<gfxTextRun::DetailedGlyph, 2> glyphs;
   const gfxTextRun::CompressedGlyph continuationGlyph =
       gfxTextRun::CompressedGlyph::MakeComplex(false, false);
   const gfxTextRun::CompressedGlyph* srcGlyphs = aSrc->GetCharacterGlyphs();
   gfxTextRun::CompressedGlyph* destGlyphs = aDest->GetCharacterGlyphs();
-  while (iter.NextRun()) {
-    const gfxTextRun::GlyphRun* run = iter.GetGlyphRun();
+  for (gfxTextRun::GlyphRunIterator iter(aSrc, gfxTextRun::Range(aSrc));
+       !iter.AtEnd(); iter.NextRun()) {
+    const gfxTextRun::GlyphRun* run = iter.GlyphRun();
     aDest->AddGlyphRun(run->mFont, run->mMatchType, offset, false,
                        run->mOrientation, run->mIsCJK);
 
     bool anyMissing = false;
-    uint32_t mergeRunStart = iter.GetStringStart();
+    uint32_t mergeRunStart = iter.StringStart();
     // Initialize to a copy of the first source glyph in the merge run.
     gfxTextRun::CompressedGlyph mergedGlyph = srcGlyphs[mergeRunStart];
-    uint32_t stringEnd = iter.GetStringEnd();
-    for (uint32_t k = iter.GetStringStart(); k < stringEnd; ++k) {
+    uint32_t stringEnd = iter.StringEnd();
+    for (uint32_t k = iter.StringStart(); k < stringEnd; ++k) {
       const gfxTextRun::CompressedGlyph g = srcGlyphs[k];
       if (g.IsSimpleGlyph()) {
         if (!anyMissing) {
@@ -160,7 +162,7 @@ void MergeCharactersInTextRun(gfxTextRun* aDest, gfxTextRun* aSrc,
         }
       }
 
-      if (k + 1 < iter.GetStringEnd() && aCharsToMerge[k + 1]) {
+      if (k + 1 < iter.StringEnd() && aCharsToMerge[k + 1]) {
         // next char is supposed to merge with current, so loop without
         // writing current merged glyph to the destination
         continue;
@@ -270,10 +272,11 @@ static LanguageSpecificCasingBehavior GetCasingFor(const nsAtom* aLang) {
 
 bool nsCaseTransformTextRunFactory::TransformString(
     const nsAString& aString, nsString& aConvertedString,
-    const Maybe<StyleTextTransform>& aGlobalTransform, bool aCaseTransformsOnly,
-    const nsAtom* aLanguage, nsTArray<bool>& aCharsToMergeArray,
-    nsTArray<bool>& aDeletedCharsArray, const nsTransformedTextRun* aTextRun,
-    uint32_t aOffsetInTextRun, nsTArray<uint8_t>* aCanBreakBeforeArray,
+    const Maybe<StyleTextTransform>& aGlobalTransform, char16_t aMaskChar,
+    bool aCaseTransformsOnly, const nsAtom* aLanguage,
+    nsTArray<bool>& aCharsToMergeArray, nsTArray<bool>& aDeletedCharsArray,
+    const nsTransformedTextRun* aTextRun, uint32_t aOffsetInTextRun,
+    nsTArray<uint8_t>* aCanBreakBeforeArray,
     nsTArray<RefPtr<nsTransformedCharStyle>>* aStyleArray) {
   bool auxiliaryOutputArrays = aCanBreakBeforeArray && aStyleArray;
   MOZ_ASSERT(!auxiliaryOutputArrays || aTextRun,
@@ -281,7 +284,9 @@ bool nsCaseTransformTextRunFactory::TransformString(
 
   uint32_t length = aString.Length();
   const char16_t* str = aString.BeginReading();
-  const char16_t kPasswordMask = TextEditor::PasswordMask();
+  // If an unconditional mask character was passed, we'll use it; if not, any
+  // masking called for by the textrun styles will use TextEditor's mask char.
+  const char16_t mask = aMaskChar ? aMaskChar : TextEditor::PasswordMask();
 
   bool mergeNeeded = false;
 
@@ -333,7 +338,13 @@ bool nsCaseTransformTextRunFactory::TransformString(
       }
     }
 
-    bool maskPassword = charStyle && charStyle->mMaskPassword;
+    // These should be mutually exclusive: mMaskPassword is set if we are
+    // handling <input type=password>, where the TextEditor code controls
+    // masking and we use its PasswordMask() character, in which case
+    // aMaskChar (from -webkit-text-security) is not used.
+    MOZ_ASSERT_IF(aMaskChar, !(charStyle && charStyle->mMaskPassword));
+
+    bool maskPassword = (charStyle && charStyle->mMaskPassword) || aMaskChar;
     int extraChars = 0;
     const mozilla::unicode::MultiCharMapping* mcm;
     bool inhibitBreakBefore = false;  // have we just deleted preceding hyphen?
@@ -341,6 +352,7 @@ bool nsCaseTransformTextRunFactory::TransformString(
     if (i < length - 1 && NS_IS_SURROGATE_PAIR(ch, str[i + 1])) {
       ch = SURROGATE_TO_UCS4(ch, str[i + 1]);
     }
+    const uint32_t originalCh = ch;
 
     // Skip case transform if we're masking current character.
     if (!maskPassword) {
@@ -623,6 +635,16 @@ bool nsCaseTransformTextRunFactory::TransformString(
             // to check for special uppercase (ß)
           }
 
+          // Updated mapping for German eszett, not currently reflected in the
+          // Unicode data files. This is behind a pref, as it may not work well
+          // with many (esp. older) fonts.
+          if (ch == 0x00DF &&
+              StaticPrefs::
+                  layout_css_text_transform_uppercase_eszett_enabled()) {
+            ch = 0x1E9E;
+            break;
+          }
+
           mcm = mozilla::unicode::SpecialUpper(ch);
           if (mcm) {
             int j = 0;
@@ -701,6 +723,31 @@ bool nsCaseTransformTextRunFactory::TransformString(
           }
           break;
 
+        case StyleTextTransformCase::MathAuto:
+          // text-transform: math-auto is used for automatic italicization of
+          // single-char <mi> elements. However, some legacy cases (italic style
+          // fallback and <mi> with leading/trailing whitespace) are still
+          // handled in MathMLTextRunFactory.
+          if (length == 1) {
+            uint32_t ch2 =
+                MathMLTextRunFactory::MathVariant(ch, StyleMathVariant::Italic);
+            if (StaticPrefs::mathml_mathvariant_styling_fallback_disabled()) {
+              ch = ch2;
+            } else if (ch2 != ch) {
+              // Bug 930504. Some platforms do not have fonts for Mathematical
+              // Alphanumeric Symbols. Hence we only perform the transform if a
+              // character is actually available.
+              FontMatchType matchType;
+              RefPtr<gfxFont> mathFont =
+                  aTextRun->GetFontGroup()->FindFontForChar(
+                      ch2, 0, 0, intl::Script::COMMON, nullptr, &matchType);
+              if (mathFont) {
+                ch = ch2;
+              }
+            }
+          }
+          break;
+
         default:
           MOZ_ASSERT_UNREACHABLE("all cases should be handled");
           break;
@@ -774,21 +821,24 @@ bool nsCaseTransformTextRunFactory::TransformString(
       }
 
       if (IS_IN_BMP(ch)) {
-        aConvertedString.Append(maskPassword ? kPasswordMask : ch);
+        MOZ_ASSERT(IS_IN_BMP(originalCh));
+        aConvertedString.Append(maskPassword ? mask : ch);
       } else {
         if (maskPassword) {
-          aConvertedString.Append(kPasswordMask);
+          aConvertedString.Append(mask);
           // TODO: We should show a password mask for a surrogate pair later.
-          aConvertedString.Append(kPasswordMask);
+          aConvertedString.Append(mask);
         } else {
           aConvertedString.Append(H_SURROGATE(ch));
           aConvertedString.Append(L_SURROGATE(ch));
         }
         ++extraChars;
-        ++i;
-        ++aOffsetInTextRun;
-        // Skip the trailing surrogate.
-        aDeletedCharsArray.AppendElement(true);
+        if (!IS_IN_BMP(originalCh)) {
+          // Skip the trailing surrogate.
+          ++aOffsetInTextRun;
+          ++i;
+          aDeletedCharsArray.AppendElement(true);
+        }
       }
 
       while (extraChars-- > 0) {
@@ -820,7 +870,7 @@ void nsCaseTransformTextRunFactory::RebuildTextRun(
           ? Some(StyleTextTransform{StyleTextTransformCase::Uppercase, {}})
           : Nothing();
   bool mergeNeeded = TransformString(
-      aTextRun->mString, convertedString, globalTransform,
+      aTextRun->mString, convertedString, globalTransform, mMaskChar,
       /* aCaseTransformsOnly = */ false, nullptr, charsToMergeArray,
       deletedCharsArray, aTextRun, 0, &canBreakBeforeArray, &styleArray);
 

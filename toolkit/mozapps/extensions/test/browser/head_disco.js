@@ -13,13 +13,13 @@
 
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 const {
   ExtensionUtils: { promiseEvent, promiseObserved },
-} = ChromeUtils.import("resource://gre/modules/ExtensionUtils.jsm");
+} = ChromeUtils.importESModule("resource://gre/modules/ExtensionUtils.sys.mjs");
 
 AddonTestUtils.initMochitest(this);
 
@@ -91,7 +91,9 @@ async function promiseAddonInstall(
   let xpiFile = AddonTestUtils.createTempWebExtensionFile(extensionData);
   amoServer.registerFile("/xpi", xpiFile);
 
-  let addonId = extensionData.manifest.applications.gecko.id;
+  let addonId =
+    extensionData.manifest?.browser_specific_settings?.gecko?.id ||
+    extensionData.manifest?.applications?.gecko?.id;
   let installedPromise = waitAppMenuNotificationShown(
     "addon-installed",
     addonId,

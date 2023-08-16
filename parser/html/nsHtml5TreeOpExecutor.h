@@ -131,6 +131,8 @@ class nsHtml5TreeOpExecutor final
    */
   void WillResume() override;
 
+  virtual nsIContentSink* AsExecutor() override { return this; }
+
   virtual void InitialTranslationCompleted() override;
 
   /**
@@ -243,7 +245,8 @@ class nsHtml5TreeOpExecutor final
 
   void PreloadScript(const nsAString& aURL, const nsAString& aCharset,
                      const nsAString& aType, const nsAString& aCrossOrigin,
-                     const nsAString& aMedia, const nsAString& aIntegrity,
+                     const nsAString& aMedia, const nsAString& aNonce,
+                     const nsAString& aIntegrity,
                      ReferrerPolicy aReferrerPolicy, bool aScriptFromHead,
                      bool aAsync, bool aDefer, bool aNoModule,
                      bool aLinkPreload);

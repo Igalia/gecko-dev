@@ -5,10 +5,6 @@
 """
 Runs the reftest test harness.
 """
-from __future__ import print_function
-
-from __future__ import absolute_import, print_function
-
 import json
 import multiprocessing
 import os
@@ -37,9 +33,10 @@ import mozlog
 import mozprocess
 import mozprofile
 import mozrunner
-from manifestparser import TestManifest, filters as mpf
+from manifestparser import TestManifest
+from manifestparser import filters as mpf
 from mozrunner.utils import get_stack_fixer_function, test_environment
-from mozscreenshot import printstatus, dump_screen
+from mozscreenshot import dump_screen, printstatus
 from six import reraise, string_types
 from six.moves import range
 
@@ -57,8 +54,8 @@ except ImportError as e:  # noqa
 
     Marionette = reraise_
 
-from output import OutputHandler, ReftestFormatter
 import reftestcommandline
+from output import OutputHandler, ReftestFormatter
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -256,7 +253,7 @@ class ReftestResolver(object):
                 rv = [
                     (
                         os.path.join(dirname, default_manifest),
-                        r".*(?:/|\\)%s(?:[#?].*)?$" % pathname.replace("?", "\?"),
+                        r".*%s(?:[#?].*)?$" % pathname.replace("?", "\?"),
                     )
                 ]
 
@@ -305,6 +302,7 @@ class RefTest(object):
         self.log = None
         self.outputHandler = None
         self.testDumpFile = os.path.join(tempfile.gettempdir(), "reftests.json")
+        self.currentManifest = "No test started"
 
         self.run_by_manifest = True
         if suite in ("crashtest", "jstestbrowser"):
@@ -455,7 +453,6 @@ class RefTest(object):
         # Run the "deferred" font-loader immediately, because if it finishes
         # mid-test, the extra reflow that is triggered can disrupt the test.
         prefs["gfx.font_loader.delay"] = 0
-        prefs["gfx.font_loader.interval"] = 0
         # Ensure bundled fonts are activated, even if not enabled by default
         # on the platform, so that tests can rely on them.
         prefs["gfx.bundled-fonts.activate"] = 1
@@ -514,7 +511,7 @@ class RefTest(object):
 
         # Enable tracing output for detailed failures in case of
         # failing connection attempts, and hangs (bug 1397201)
-        prefs["marionette.log.level"] = "Trace"
+        prefs["remote.log.level"] = "Trace"
 
         # Third, set preferences passed in via the command line.
         for v in options.extraPrefs:
@@ -549,10 +546,6 @@ class RefTest(object):
             xrePath=options.xrePath, debugger=options.debugger
         )
         browserEnv["XPCOM_DEBUG_BREAK"] = "stack"
-        if options.topsrcdir:
-            browserEnv["MOZ_DEVELOPER_REPO_DIR"] = options.topsrcdir
-        if hasattr(options, "topobjdir"):
-            browserEnv["MOZ_DEVELOPER_OBJ_DIR"] = options.topobjdir
 
         if mozinfo.info["asan"]:
             # Disable leak checking for reftests for now
@@ -813,7 +806,7 @@ class RefTest(object):
             "%s | application timed out after %d seconds with no output"
             % (self.lastTestSeen, int(timeout))
         )
-        self.log.error("Force-terminating active process(es).")
+        self.log.warning("Force-terminating active process(es).")
         self.killAndGetStack(
             proc, utilityPath, debuggerInfo, dump_screen=not debuggerInfo
         )
@@ -905,7 +898,7 @@ class RefTest(object):
                 self.lastTestSeen = testid(message["test"])
             elif message["action"] == "test_end":
                 if self.lastTest and message["test"] == self.lastTest:
-                    self.lastTestSeen = "Last test finished"
+                    self.lastTestSeen = self.currentManifest
                 else:
                     self.lastTestSeen = "{} (finished)".format(testid(message["test"]))
 
@@ -983,22 +976,44 @@ class RefTest(object):
         runner.process_handler = None
         self.outputHandler.proc_name = None
 
-        if status:
-            msg = (
-                "TEST-UNEXPECTED-FAIL | %s | application terminated with exit code %s"
-                % (self.lastTestSeen, status)
-            )
-            # use process_output so message is logged verbatim
-            self.log.process_output(None, msg)
-
         crashed = mozcrash.log_crashes(
             self.log,
             os.path.join(profile.profile, "minidumps"),
             options.symbolsPath,
             test=self.lastTestSeen,
         )
+
+        if crashed:
+            # log suite_end to wrap up, this is usually done with in in-browser harness
+            if not self.outputHandler.results:
+                # TODO: while .results is a defaultdict(int), it is proxied via log_actions as data, not type
+                self.outputHandler.results = {
+                    "Pass": 0,
+                    "LoadOnly": 0,
+                    "Exception": 0,
+                    "FailedLoad": 0,
+                    "UnexpectedFail": 1,
+                    "UnexpectedPass": 0,
+                    "AssertionUnexpected": 0,
+                    "AssertionUnexpectedFixed": 0,
+                    "KnownFail": 0,
+                    "AssertionKnown": 0,
+                    "Random": 0,
+                    "Skip": 0,
+                    "Slow": 0,
+                }
+            self.log.suite_end(extra={"results": self.outputHandler.results})
+
         if not status and crashed:
             status = 1
+
+        if status and not crashed:
+            msg = (
+                "TEST-UNEXPECTED-FAIL | %s | application terminated with exit code %s"
+                % (self.lastTestSeen, status)
+            )
+            # use process_output so message is logged verbatim
+            self.log.process_output(None, msg)
 
         runner.cleanup()
         self.cleanup(profile.profile)
@@ -1079,13 +1094,15 @@ class RefTest(object):
                 **kwargs
             )
 
-            mozleak.process_leak_log(
-                self.leakLogFile,
-                leak_thresholds=options.leakThresholds,
-                stack_fixer=get_stack_fixer_function(
-                    options.utilityPath, options.symbolsPath
-                ),
-            )
+            # do not process leak log when we crash/assert
+            if status == 0:
+                mozleak.process_leak_log(
+                    self.leakLogFile,
+                    leak_thresholds=options.leakThresholds,
+                    stack_fixer=get_stack_fixer_function(
+                        options.utilityPath, options.symbolsPath
+                    ),
+                )
             return status
 
         if not self.run_by_manifest:
@@ -1104,10 +1121,15 @@ class RefTest(object):
         self.log.suite_start(ids_by_manifest, name=options.suite)
 
         overall = 0
+        status = -1
         for manifest, tests in tests_by_manifest.items():
             self.log.info("Running tests in {}".format(manifest))
+            self.currentManifest = manifest
             status = run(tests=tests)
             overall = overall or status
+        if status == -1:
+            # we didn't run anything
+            overall = 1
 
         self.log.suite_end(extra={"results": self.outputHandler.results})
         return overall

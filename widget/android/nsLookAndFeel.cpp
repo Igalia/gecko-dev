@@ -119,10 +119,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
   switch (aID) {
       // These colors don't seem to be used for anything anymore in Mozilla
       // The CSS2 colors below are used.
-    case ColorID::MozMenubartext:
-      aColor = mSystemColors.colorForeground;
-      break;
-
     case ColorID::ThemedScrollbarThumbInactive:
     case ColorID::ThemedScrollbarThumb:
       // We don't need to care about the Active and Hover colors because Android
@@ -151,9 +147,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::IMESelectedRawTextUnderline:
     case ColorID::IMESelectedConvertedTextUnderline:
       aColor = NS_TRANSPARENT;
-      break;
-    case ColorID::SpellCheckerUnderline:
-      aColor = NS_RGB(0xff, 0x00, 0x00);
       break;
 
       // css2  http://www.w3.org/TR/REC-CSS2/ui.html#system-colors
@@ -197,7 +190,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       break;
     case ColorID::Infotext:
     case ColorID::Threeddarkshadow:  // 3-D shadow outer edge color
-    case ColorID::MozButtondefault:  // default button border color
       aColor = NS_RGB(0x00, 0x00, 0x00);
       break;
     case ColorID::Menu:
@@ -208,6 +200,7 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::MozButtondisabledface:
     case ColorID::Threedface:
     case ColorID::Threedlightshadow:
+    case ColorID::Buttonborder:
     case ColorID::MozDisabledfield:
       aColor = NS_RGB(0xec, 0xe7, 0xe2);
       break;
@@ -241,9 +234,6 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
     case ColorID::MozColheaderhovertext:
       aColor = NS_RGB(0x10, 0x10, 0x10);
       break;
-    case ColorID::MozDragtargetzone:
-      aColor = mSystemColors.textColorHighlight;
-      break;
     case ColorID::MozButtonhoverface:
     case ColorID::MozButtonactiveface:
       aColor = NS_RGB(0xf3, 0xf0, 0xed);
@@ -260,6 +250,11 @@ nsresult nsLookAndFeel::NativeGetColor(ColorID aID, ColorScheme aColorScheme,
       break;
     case ColorID::MozNativehyperlinktext:
       aColor = NS_RGB(0, 0, 0xee);
+      break;
+    case ColorID::Marktext:
+    case ColorID::Mark:
+    case ColorID::SpellCheckerUnderline:
+      aColor = GetStandinForNativeColor(aID, aColorScheme);
       break;
     default:
       /* default color is BLACK */
@@ -327,7 +322,7 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
       break;
 
     case IntID::SpellCheckerUnderlineStyle:
-      aResult = NS_STYLE_TEXT_DECORATION_STYLE_WAVY;
+      aResult = int32_t(StyleTextDecorationStyle::Wavy);
       break;
 
     case IntID::ScrollbarButtonAutoRepeatBehavior:
@@ -341,6 +336,14 @@ nsresult nsLookAndFeel::NativeGetInt(IntID aID, int32_t& aResult) {
 
     case IntID::PrefersReducedMotion:
       aResult = java::GeckoSystemStateListener::PrefersReducedMotion();
+      break;
+
+    case IntID::PrefersReducedTransparency:
+      aResult = 0;
+      break;
+
+    case IntID::InvertedColors:
+      aResult = java::GeckoSystemStateListener::IsInvertedColors();
       break;
 
     case IntID::PrimaryPointerCapabilities:
@@ -390,11 +393,14 @@ nsresult nsLookAndFeel::NativeGetFloat(FloatID aID, float& aResult) {
     case FloatID::IMEUnderlineRelativeSize:
       aResult = 1.0f;
       break;
-
     case FloatID::SpellCheckerUnderlineRelativeSize:
       aResult = 1.0f;
       break;
-
+    case FloatID::TextScaleFactor: {
+      java::GeckoRuntime::LocalRef runtime = java::GeckoRuntime::GetInstance();
+      aResult = runtime ? runtime->TextScaleFactor() : 1.0f;
+      break;
+    }
     default:
       aResult = -1.0;
       rv = NS_ERROR_FAILURE;

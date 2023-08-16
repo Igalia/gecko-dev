@@ -1,7 +1,4 @@
 - name: 2d.text.font.parse.basic
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
   code: |
     ctx.font = '20px serif';
     @assert ctx.font === '20px serif';
@@ -10,27 +7,21 @@
     @assert ctx.font === '20px serif'; @moz-todo
 
 - name: 2d.text.font.parse.tiny
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
   code: |
     ctx.font = '1px sans-serif';
     @assert ctx.font === '1px sans-serif';
 
 - name: 2d.text.font.parse.complex
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
-  - 2d.text.font.lineheight
   code: |
     ctx.font = 'small-caps italic 400 12px/2 Unknown Font, sans-serif';
-    @assert ctx.font === 'italic small-caps 12px "Unknown Font", sans-serif'; @moz-todo
+    @assert ['italic small-caps 12px "Unknown Font", sans-serif', 'italic small-caps 12px Unknown Font, sans-serif'].includes(ctx.font);
+
+- name: 2d.text.font.parse.complex2
+  code: |
+    ctx.font = 'small-caps italic 400 12px/2 "Unknown Font #2", sans-serif';
+    @assert ctx.font === 'italic small-caps 12px "Unknown Font #2", sans-serif';
 
 - name: 2d.text.font.parse.family
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
-  - 2d.text.font.lineheight
   code: |
     ctx.font = '20px cursive,fantasy,monospace,sans-serif,serif,UnquotedFont,"QuotedFont\\\\\\","';
     @assert ctx.font === '20px cursive, fantasy, monospace, sans-serif, serif, UnquotedFont, "QuotedFont\\\\\\","';
@@ -46,12 +37,7 @@
   #     in cm mm pt pc
 
 - name: 2d.text.font.parse.size.percentage
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
-  - 2d.text.font.fontsize
-  - 2d.text.font.size
-  canvas: 'style="font-size: 144px" width="100" height="50"'
+  canvas: 'style="font-size: 144px"'
   code: |
     ctx.font = '50% serif';
     @assert ctx.font === '72px serif'; @moz-todo
@@ -59,8 +45,6 @@
     @assert ctx.font === '72px serif'; @moz-todo
 
 - name: 2d.text.font.parse.size.percentage.default
-  testing:
-  - 2d.text.font.undefined
   code: |
     var canvas2 = document.createElement('canvas');
     var ctx2 = canvas2.getContext('2d');
@@ -69,17 +53,11 @@
 
 - name: 2d.text.font.parse.system
   desc: System fonts must be computed to explicit values
-  testing:
-  - 2d.text.font.parse
-  - 2d.text.font.get
-  - 2d.text.font.systemfonts
   code: |
     ctx.font = 'message-box';
     @assert ctx.font !== 'message-box';
 
 - name: 2d.text.font.parse.invalid
-  testing:
-  - 2d.text.font.invalid
   code: |
     ctx.font = '20px serif';
     @assert ctx.font === '20px serif';
@@ -129,14 +107,10 @@
     @assert ctx.font === '20px serif';
 
 - name: 2d.text.font.default
-  testing:
-  - 2d.text.font.default
   code: |
     @assert ctx.font === '10px sans-serif';
 
 - name: 2d.text.font.relative_size
-  testing:
-  - 2d.text.font.relative_size
   code: |
     var canvas2 = document.createElement('canvas');
     var ctx2 = canvas2.getContext('2d');
@@ -144,9 +118,6 @@
     @assert ctx2.font === '10px sans-serif';
 
 - name: 2d.text.align.valid
-  testing:
-  - 2d.text.align.get
-  - 2d.text.align.set
   code: |
     ctx.textAlign = 'start';
     @assert ctx.textAlign === 'start';
@@ -164,8 +135,6 @@
     @assert ctx.textAlign === 'center';
 
 - name: 2d.text.align.invalid
-  testing:
-  - 2d.text.align.invalid
   code: |
     ctx.textAlign = 'start';
     ctx.textAlign = 'bogus';
@@ -184,16 +153,11 @@
     @assert ctx.textAlign === 'start';
 
 - name: 2d.text.align.default
-  testing:
-  - 2d.text.align.default
   code: |
     @assert ctx.textAlign === 'start';
 
 
 - name: 2d.text.baseline.valid
-  testing:
-  - 2d.text.baseline.get
-  - 2d.text.baseline.set
   code: |
     ctx.textBaseline = 'top';
     @assert ctx.textBaseline === 'top';
@@ -214,8 +178,6 @@
     @assert ctx.textBaseline === 'bottom';
 
 - name: 2d.text.baseline.invalid
-  testing:
-  - 2d.text.baseline.invalid
   code: |
     ctx.textBaseline = 'top';
     ctx.textBaseline = 'bogus';
@@ -234,8 +196,6 @@
     @assert ctx.textBaseline === 'top';
 
 - name: 2d.text.baseline.default
-  testing:
-  - 2d.text.baseline.default
   code: |
     @assert ctx.textBaseline === 'alphabetic';
 
@@ -245,8 +205,6 @@
 
 - name: 2d.text.draw.baseline.top
   desc: textBaseline top is the top of the em square (not the bounding box)
-  testing:
-  - 2d.text.baseline.top
   fonts:
   - CanvasTest
   code: |
@@ -269,8 +227,6 @@
 
 - name: 2d.text.draw.baseline.bottom
   desc: textBaseline bottom is the bottom of the em square (not the bounding box)
-  testing:
-  - 2d.text.baseline.bottom
   fonts:
   - CanvasTest
   code: |
@@ -293,8 +249,6 @@
 
 - name: 2d.text.draw.baseline.middle
   desc: textBaseline middle is the middle of the em square (not the bounding box)
-  testing:
-  - 2d.text.baseline.middle
   fonts:
   - CanvasTest
   code: |
@@ -316,8 +270,6 @@
   expected: green
 
 - name: 2d.text.draw.baseline.alphabetic
-  testing:
-  - 2d.text.baseline.alphabetic
   fonts:
   - CanvasTest
   code: |
@@ -339,8 +291,6 @@
   expected: green
 
 - name: 2d.text.draw.baseline.ideographic
-  testing:
-  - 2d.text.baseline.ideographic
   fonts:
   - CanvasTest
   code: |
@@ -362,8 +312,6 @@
   expected: green
 
 - name: 2d.text.draw.baseline.hanging
-  testing:
-  - 2d.text.baseline.hanging
   fonts:
   - CanvasTest
   code: |
@@ -385,9 +333,7 @@
   expected: green
 
 - name: 2d.text.draw.space.collapse.space
-  desc: Space characters are converted to U+0020, and collapsed (per CSS)
-  testing:
-  - 2d.text.draw.spaces
+  desc: Space characters are converted to U+0020, and are NOT collapsed
   fonts:
   - CanvasTest
   code: |
@@ -397,16 +343,14 @@
         ctx.fillStyle = '#f00';
         ctx.fillRect(0, 0, 100, 50);
         ctx.fillStyle = '#0f0';
-        ctx.fillText('E  EE', -100, 37.5);
-        @assert pixel 25,25 ==~ 0,255,0,255; @moz-todo
-        @assert pixel 75,25 ==~ 0,255,0,255;
+        ctx.fillText('E  EE', 0, 37.5);
+        @assert pixel 25,25 ==~ 0,255,0,255;
+        @assert pixel 75,25 ==~ 255,0,0,255;
     }), 500);
   expected: green
 
 - name: 2d.text.draw.space.collapse.other
-  desc: Space characters are converted to U+0020, and collapsed (per CSS)
-  testing:
-  - 2d.text.draw.spaces
+  desc: Space characters are converted to U+0020, and are NOT collapsed
   fonts:
   - CanvasTest
   code: |
@@ -416,16 +360,14 @@
         ctx.fillStyle = '#f00';
         ctx.fillRect(0, 0, 100, 50);
         ctx.fillStyle = '#0f0';
-        ctx.fillText('E \x09\x0a\x0c\x0d  \x09\x0a\x0c\x0dEE', -100, 37.5);
-        @assert pixel 25,25 ==~ 0,255,0,255; @moz-todo
-        @assert pixel 75,25 ==~ 0,255,0,255; @moz-todo
+        ctx.fillText('E \x09\x0a\x0c\x0d  \x09\x0a\x0c\x0dEE', 0, 37.5);
+        @assert pixel 25,25 ==~ 0,255,0,255;
+        @assert pixel 75,25 ==~ 255,0,0,255;
     }), 500);
   expected: green
 
 - name: 2d.text.draw.space.collapse.start
-  desc: Space characters at the start of a line are collapsed (per CSS)
-  testing:
-  - 2d.text.draw.spaces
+  desc: Space characters at the start of a line are NOT collapsed
   fonts:
   - CanvasTest
   code: |
@@ -436,15 +378,13 @@
         ctx.fillRect(0, 0, 100, 50);
         ctx.fillStyle = '#0f0';
         ctx.fillText(' EE', 0, 37.5);
-        @assert pixel 25,25 ==~ 0,255,0,255; @moz-todo
+        @assert pixel 25,25 ==~ 255,0,0,255;
         @assert pixel 75,25 ==~ 0,255,0,255;
     }), 500);
   expected: green
 
 - name: 2d.text.draw.space.collapse.end
-  desc: Space characters at the end of a line are collapsed (per CSS)
-  testing:
-  - 2d.text.draw.spaces
+  desc: Space characters at the end of a line are NOT collapsed
   fonts:
   - CanvasTest
   code: |
@@ -457,15 +397,13 @@
         ctx.textAlign = 'right';
         ctx.fillText('EE ', 100, 37.5);
         @assert pixel 25,25 ==~ 0,255,0,255;
-        @assert pixel 75,25 ==~ 0,255,0,255; @moz-todo
+        @assert pixel 75,25 ==~ 255,0,0,255;
     }), 500);
   expected: green
 
 
 - name: 2d.text.measure.width.space
-  desc: Space characters are converted to U+0020 and collapsed (per CSS)
-  testing:
-  - 2d.text.measure.spaces
+  desc: Space characters are converted to U+0020 and NOT collapsed
   fonts:
   - CanvasTest
   code: |
@@ -477,18 +415,16 @@
             ctx.font = '50px CanvasTest';
             @assert ctx.measureText('A B').width === 150;
             @assert ctx.measureText('A  B').width === 200;
-            @assert ctx.measureText('A \x09\x0a\x0c\x0d  \x09\x0a\x0c\x0dB').width === 150; @moz-todo
+            @assert ctx.measureText('A \x09\x0a\x0c\x0d  \x09\x0a\x0c\x0dB').width === 650;
             @assert ctx.measureText('A \x0b B').width >= 200;
 
-            @assert ctx.measureText(' AB').width === 100; @moz-todo
-            @assert ctx.measureText('AB ').width === 100; @moz-todo
+            @assert ctx.measureText(' AB').width === 150;
+            @assert ctx.measureText('AB ').width === 150;
         }), 500);
     });
 
 - name: 2d.text.measure.rtl.text
   desc: Measurement should follow canvas direction instead text direction
-  testing:
-  - 2d.text.measure.rtl.text
   fonts:
   - CanvasTest
   code: |
@@ -500,8 +436,6 @@
 
 - name: 2d.text.measure.boundingBox.textAlign
   desc: Measurement should be related to textAlignment
-  testing:
-  - 2d.text.measure.boundingBox.textAlign
   code: |
     ctx.textAlign = "right";
     metrics = ctx.measureText('hello');
@@ -513,8 +447,6 @@
 
 - name: 2d.text.measure.boundingBox.direction
   desc: Measurement should follow text direction
-  testing:
-  - 2d.text.measure.boundingBox.direction
   code: |
     ctx.direction = "ltr";
     metrics = ctx.measureText('hello');

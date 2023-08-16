@@ -17,11 +17,14 @@ job-defaults:
         cron: true
         # This enables uploading symbols.
         enable-full-crashsymbols: true
+    fetches:
+        toolchain:
+            - linux64-dump_syms
     treeherder:
         platform: symbols/opt
         kind: other
         tier: 2
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE: system
@@ -51,6 +54,9 @@ jobs:
                 ./run.sh
         treeherder:
             symbol: system-symbols-mac
+        fetches:
+            toolchain:
+                - linux64-libdmg
     win:
         description: Extract windows system symbols found in crashreports
         attributes:
@@ -72,9 +78,6 @@ jobs:
                 ./run.sh
         treeherder:
             symbol: system-symbols-win
-        fetches:
-            toolchain:
-                - linux64-dump_syms
     archlinux:
         description: Extract ArchLinux system symbols found in crashreports
         attributes:
@@ -97,8 +100,6 @@ jobs:
         treeherder:
             symbol: sys-symbols-archlinux
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers
     debian:
@@ -123,8 +124,6 @@ jobs:
         treeherder:
             symbol: sys-symbols-debian
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers
     firefox-snap:
@@ -149,8 +148,30 @@ jobs:
         treeherder:
             symbol: firefox-symbols-snap
         fetches:
-            toolchain:
-                - linux64-dump_syms
+            fetch:
+                - symbol-scrapers
+    flatpak:
+        description: Extract Firefox Flatpak symbols found in crashreports
+        attributes:
+            build_platform: firefox-flatpak
+        index:
+            product: system-symbols
+            job-name: firefox-flatpak
+            type: generic
+        worker:
+            artifacts:
+                - name: public/build
+                  type: directory
+                  path: /builds/worker/artifacts/
+            docker-image: {in-tree: system-symbols-linux-scraper}
+            max-run-time: 14400
+        run:
+            using: run-task
+            command: >-
+                ./run.sh firefox-flatpak
+        treeherder:
+            symbol: firefox-symbols-fltpk
+        fetches:
             fetch:
                 - symbol-scrapers
     gnome-sdk-snap:
@@ -175,8 +196,6 @@ jobs:
         treeherder:
             symbol: gnome-sdk-symbols-snap
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers
     fedora:
@@ -201,8 +220,6 @@ jobs:
         treeherder:
             symbol: sys-symbols-fedora
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers
     opensuse:
@@ -227,8 +244,6 @@ jobs:
         treeherder:
             symbol: sys-symbols-opensuse
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers
     ubuntu:
@@ -253,7 +268,5 @@ jobs:
         treeherder:
             symbol: sys-symbols-ubuntu
         fetches:
-            toolchain:
-                - linux64-dump_syms
             fetch:
                 - symbol-scrapers

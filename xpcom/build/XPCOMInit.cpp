@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "ThreadEventTarget.h"
 #include "XPCOMModule.h"
 
 #include "base/basictypes.h"
@@ -146,8 +147,6 @@ nsresult nsLocalFileConstructor(const nsIID& aIID, void** aInstancePtr) {
 
 nsComponentManagerImpl* nsComponentManagerImpl::gComponentManager = nullptr;
 bool gXPCOMShuttingDown = false;
-mozilla::Atomic<bool, mozilla::SequentiallyConsistent> gXPCOMThreadsShutDown(
-    false);
 bool gXPCOMMainThreadEventsAreDoomed = false;
 char16_t* gGREBinPath = nullptr;
 
@@ -190,10 +189,6 @@ class ICUReporter final : public nsIMemoryReporter,
 
 NS_IMPL_ISUPPORTS(ICUReporter, nsIMemoryReporter)
 
-/* static */ template <>
-mozilla::CountingAllocatorBase<ICUReporter>::AmountType
-    mozilla::CountingAllocatorBase<ICUReporter>::sAmount(0);
-
 class OggReporter final : public nsIMemoryReporter,
                           public mozilla::CountingAllocatorBase<OggReporter> {
  public:
@@ -215,10 +210,6 @@ class OggReporter final : public nsIMemoryReporter,
 };
 
 NS_IMPL_ISUPPORTS(OggReporter, nsIMemoryReporter)
-
-/* static */ template <>
-mozilla::CountingAllocatorBase<OggReporter>::AmountType
-    mozilla::CountingAllocatorBase<OggReporter>::sAmount(0);
 
 static bool sInitializedJS = false;
 
@@ -368,7 +359,7 @@ NS_InitXPCOM(nsIServiceManager** aResult, nsIFile* aBinDirectory,
   }
 
   if ((sCommandLineWasInitialized = !CommandLine::IsInitialized())) {
-#ifdef OS_WIN
+#ifdef XP_WIN
     CommandLine::Init(0, nullptr);
 #else
     nsCOMPtr<nsIFile> binaryFile;
@@ -594,17 +585,20 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
 
     // This must happen after the shutdown of media and widgets, which
     // are triggered by the NS_XPCOM_SHUTDOWN_OBSERVER_ID notification.
-    NS_ProcessPendingEvents(thread);
     gfxPlatform::ShutdownLayersIPC();
 
     mozilla::AppShutdown::AdvanceShutdownPhase(
         mozilla::ShutdownPhase::XPCOMShutdownThreads);
-    gXPCOMThreadsShutDown = true;
-    NS_ProcessPendingEvents(thread);
+#ifdef DEBUG
+    // Prime an assertion at ThreadEventTarget::Dispatch to avoid late
+    // dispatches to non main-thread threads.
+    ThreadEventTarget::XPCOMShutdownThreadsNotificationFinished();
+#endif
 
     // Shutdown the timer thread and all timers that might still be alive
     nsTimerImpl::Shutdown();
 
+    // Have an extra round of processing after the timers went away.
     NS_ProcessPendingEvents(thread);
 
     // Shutdown all remaining threads.  This method does not return until
@@ -622,13 +616,11 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
     // XPCOMShutdownFinal is the default phase for ClearOnShutdown.
     // This AdvanceShutdownPhase will thus free most ClearOnShutdown()'ed
     // smart pointers. Some destructors may fire extra main thread runnables
-    // that will be processed below.
+    // that will be processed inside AdvanceShutdownPhase.
     AppShutdown::AdvanceShutdownPhase(ShutdownPhase::XPCOMShutdownFinal);
 
-    NS_ProcessPendingEvents(thread);
-
-    // Shutdown the main thread, processing our last round of events, and then
-    // mark that we've finished main thread event processing.
+    // Shutdown the main thread, processing our very last round of events, and
+    // then mark that we've finished main thread event processing.
     nsThreadManager::get().ShutdownMainThread();
     gXPCOMMainThreadEventsAreDoomed = true;
 
@@ -636,8 +628,6 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
 
     mozilla::dom::JSExecutionManager::Shutdown();
   }
-
-  AbstractThread::ShutdownMainThread();
 
   // XPCOM is officially in shutdown mode NOW
   // Set this only after the observers have been notified as this
@@ -653,6 +643,10 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
     nsComponentManagerImpl::gComponentManager->FreeServices();
   }
 
+  // Remove the remaining main thread representations
+  nsThreadManager::get().ReleaseMainThread();
+  AbstractThread::ShutdownMainThread();
+
   // Release the directory service
   nsDirectoryService::gService = nullptr;
 
@@ -663,7 +657,7 @@ nsresult ShutdownXPCOM(nsIServiceManager* aServMgr) {
   // log files. We have to ignore them before we can move
   // the mozilla::PoisonWrite call before this point. See bug
   // 834945 for the details.
-  mozJSModuleLoader::Unload();
+  mozJSModuleLoader::UnloadLoaders();
 
   // Clear the profiler's JS context before cycle collection. The profiler will
   // notify the JS engine that it can let go of any data it's holding on to for

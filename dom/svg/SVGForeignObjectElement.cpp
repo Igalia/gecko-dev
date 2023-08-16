@@ -100,8 +100,8 @@ bool SVGForeignObjectElement::HasValidDimensions() const {
   float width, height;
 
   DebugOnly<bool> ok =
-      SVGGeometryProperty::ResolveAll<SVGT::Width, SVGT::Height>(
-          const_cast<SVGForeignObjectElement*>(this), &width, &height);
+      SVGGeometryProperty::ResolveAll<SVGT::Width, SVGT::Height>(this, &width,
+                                                                 &height);
   MOZ_ASSERT(ok, "SVGGeometryProperty::ResolveAll failed");
   return width > 0 && height > 0;
 }
@@ -111,17 +111,7 @@ bool SVGForeignObjectElement::HasValidDimensions() const {
 
 NS_IMETHODIMP_(bool)
 SVGForeignObjectElement::IsAttributeMapped(const nsAtom* name) const {
-  static const MappedAttributeEntry* const map[] = {sFEFloodMap,
-                                                    sFiltersMap,
-                                                    sFontSpecificationMap,
-                                                    sGradientStopMap,
-                                                    sLightingEffectsMap,
-                                                    sMarkersMap,
-                                                    sTextContentElementsMap,
-                                                    sViewportsMap};
-
   return IsInLengthInfo(name, sLengthInfo) ||
-         FindAttributeDependence(name, map) ||
          SVGGraphicsElement::IsAttributeMapped(name);
 }
 

@@ -74,9 +74,8 @@ class Theme : protected nsNativeTheme, public nsITheme {
                         LayoutDeviceIntMargin* aResult) override;
   bool GetWidgetOverflow(nsDeviceContext* aContext, nsIFrame*, StyleAppearance,
                          nsRect* aOverflowRect) override;
-  NS_IMETHOD GetMinimumWidgetSize(nsPresContext* aPresContext, nsIFrame*,
-                                  StyleAppearance, LayoutDeviceIntSize* aResult,
-                                  bool* aIsOverridable) override;
+  LayoutDeviceIntSize GetMinimumWidgetSize(nsPresContext*, nsIFrame*,
+                                           StyleAppearance) override;
   Transparency GetWidgetTransparency(nsIFrame*, StyleAppearance) override;
   NS_IMETHOD WidgetStateChanged(nsIFrame*, StyleAppearance, nsAtom* aAttribute,
                                 bool* aShouldRepaint,
@@ -91,8 +90,9 @@ class Theme : protected nsNativeTheme, public nsITheme {
   bool WidgetIsContainer(StyleAppearance) override;
   bool ThemeDrawsFocusForWidget(nsIFrame*, StyleAppearance) override;
   bool ThemeNeedsComboboxDropmarker() override;
-  ScrollbarSizes GetScrollbarSizes(nsPresContext*, StyleScrollbarWidth,
-                                   Overlay) override;
+
+  LayoutDeviceIntCoord GetScrollbarSize(const nsPresContext*,
+                                        StyleScrollbarWidth, Overlay) final;
 
   nscoord GetCheckboxRadioPrefSize() override;
 
@@ -101,13 +101,11 @@ class Theme : protected nsNativeTheme, public nsITheme {
  protected:
   virtual ~Theme() = default;
 
-  static DPIRatio GetDPIRatio(nsPresContext*, StyleAppearance);
-  static DPIRatio GetDPIRatio(nsIFrame*, StyleAppearance);
+  DPIRatio GetDPIRatio(nsPresContext*, StyleAppearance);
+  DPIRatio GetDPIRatio(nsIFrame*, StyleAppearance);
 
-  std::pair<sRGBColor, sRGBColor> ComputeCheckboxColors(const ElementState&,
-                                                        StyleAppearance,
-                                                        const Colors&);
-  sRGBColor ComputeCheckmarkColor(const ElementState&, const Colors&);
+  std::tuple<sRGBColor, sRGBColor, sRGBColor> ComputeCheckboxColors(
+      const ElementState&, StyleAppearance, const Colors&);
   enum class OutlineCoversBorder : bool { No, Yes };
   sRGBColor ComputeBorderColor(const ElementState&, const Colors&,
                                OutlineCoversBorder);
@@ -140,10 +138,9 @@ class Theme : protected nsNativeTheme, public nsITheme {
 
   void PaintCheckboxControl(DrawTarget& aDrawTarget, const LayoutDeviceRect&,
                             const ElementState&, const Colors&, DPIRatio);
-  void PaintCheckMark(DrawTarget&, const LayoutDeviceRect&, const ElementState&,
-                      const Colors&);
+  void PaintCheckMark(DrawTarget&, const LayoutDeviceRect&, const sRGBColor&);
   void PaintIndeterminateMark(DrawTarget&, const LayoutDeviceRect&,
-                              const ElementState&, const Colors&);
+                              const sRGBColor&);
 
   template <typename PaintBackendData>
   void PaintStrokedCircle(PaintBackendData&, const LayoutDeviceRect&,

@@ -2,7 +2,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from head.js */
+requestLongerTimeout(2);
 
 add_task(async function test_experiment_plain_text() {
   const defaultMessageContent = (await PanelTestProvider.getMessages()).find(
@@ -39,7 +39,7 @@ add_task(async function test_experiment_plain_text() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     const infoContainer = content.document.querySelector(".info");
     const infoTitle = content.document.getElementById("info-title");
     const infoBody = content.document.getElementById("info-body");
@@ -52,7 +52,7 @@ add_task(async function test_experiment_plain_text() {
     );
 
     // Check experiment values are rendered
-    ok(infoContainer, ".info container should exist");
+    ok(!infoContainer.hidden, ".info container should be visible");
     ok(
       infoContainer.style.backgroundImage.includes(
         "chrome://branding/content/about-logo.png"
@@ -85,11 +85,10 @@ add_task(async function test_experiment_info_disabled() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
-    is(
-      content.document.querySelector(".info"),
-      undefined,
-      "should remove .info element"
+  await SpecialPowers.spawn(tab, [], async function () {
+    ok(
+      content.document.querySelector(".info").hidden,
+      "should hide .info element"
     );
   });
 
@@ -112,7 +111,7 @@ add_task(async function test_experiment_promo_disabled() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     is(
       content.document.querySelector(".promo"),
       undefined,
@@ -151,7 +150,7 @@ add_task(async function test_experiment_format_urls() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [LOCALE], async function(locale) {
+  await SpecialPowers.spawn(tab, [LOCALE], async function (locale) {
     is(
       content.document.querySelector(".info a").getAttribute("href"),
       "http://foo.mozilla.com/" + locale,
@@ -290,7 +289,7 @@ add_task(async function test_experiment_bottom_promo() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     is(
       content.document
         .querySelector(".promo-cta button")
@@ -307,8 +306,9 @@ add_task(async function test_experiment_bottom_promo() {
       content.document.querySelector(".promo.bottom"),
       "Should have .bottom for the promo section"
     );
+    const infoTitle = content.document.getElementById("info-title");
     ok(
-      content.document.querySelector("#info-title"),
+      infoTitle && !infoTitle.hidden,
       "Should render info title if infoTitleEnabled is true"
     );
     ok(
@@ -357,7 +357,7 @@ add_task(async function test_experiment_below_search_promo() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     is(
       content.document
         .querySelector(".promo-cta button")
@@ -380,7 +380,7 @@ add_task(async function test_experiment_below_search_promo() {
       "Should have .below-search for the promo section"
     );
     ok(
-      !content.document.querySelector("#info-title"),
+      content.document.getElementById("info-title").hidden,
       "Should not render info title if infoTitleEnabled is false"
     );
     ok(
@@ -429,11 +429,7 @@ add_task(async function test_experiment_top_promo() {
 
   let { win, tab } = await openTabAndWaitForRender();
 
-  await SpecialPowers.spawn(tab, [], async function() {
-    ok(
-      !content.document.querySelector("#info-title"),
-      "Should remove the infoTitle element"
-    );
+  await SpecialPowers.spawn(tab, [], async function () {
     is(
       content.document.querySelector(".promo-image-small img").src,
       "chrome://browser/content/assets/vpn-logo.svg",
@@ -449,8 +445,8 @@ add_task(async function test_experiment_top_promo() {
       "Should have .below-search for the promo section"
     );
     ok(
-      !content.document.querySelector("#info-title"),
-      "Should not render info title if infoTitleEnabled is false"
+      content.document.getElementById("info-title").hidden,
+      "Should hide info title if infoTitleEnabled is false"
     );
     ok(
       content.document.querySelector("#private-browsing-promo-text"),

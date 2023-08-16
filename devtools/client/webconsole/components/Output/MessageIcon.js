@@ -4,9 +4,11 @@
 
 "use strict";
 
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-const dom = require("devtools/client/shared/vendor/react-dom-factories");
-const { l10n } = require("devtools/client/webconsole/utils/messages");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
+const {
+  l10n,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
 const l10nLevels = {
   error: "level.error",
@@ -30,12 +32,13 @@ function getIconElement(level, type, title) {
   title = title || l10n.getStr(l10nLevels[level] || level);
   const classnames = ["icon"];
 
-  if (type && type === "logPoint") {
+  if (type === "logPoint") {
     title = l10n.getStr("logpoint.title");
     classnames.push("logpoint");
-  }
-
-  if (type && type === "blockedReason") {
+  } else if (type === "logTrace") {
+    title = l10n.getStr("logtrace.title");
+    classnames.push("logtrace");
+  } else if (type === "blockedReason") {
     title = l10n.getStr("blockedrequest.label");
   }
 

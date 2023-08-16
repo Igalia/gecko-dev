@@ -10,6 +10,7 @@ pub(super) struct LookupSampledImage {
 
 bitflags::bitflags! {
     /// Flags describing sampling method.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct SamplingFlags: u32 {
         /// Regular sampling.
         const REGULAR = 0x1;
@@ -218,7 +219,7 @@ pub(super) fn patch_comparison_type(
     true
 }
 
-impl<I: Iterator<Item = u32>> super::Parser<I> {
+impl<I: Iterator<Item = u32>> super::Frontend<I> {
     pub(super) fn parse_image_couple(&mut self) -> Result<(), Error> {
         let _result_type_id = self.next()?;
         let result_id = self.next()?;
@@ -502,6 +503,10 @@ impl<I: Iterator<Item = u32>> super::Parser<I> {
                 spirv::ImageOperands::CONST_OFFSET => {
                     let offset_constant = self.next()?;
                     let offset_handle = self.lookup_constant.lookup(offset_constant)?.handle;
+                    let offset_handle = ctx.const_expressions.append(
+                        crate::Expression::Constant(offset_handle),
+                        Default::default(),
+                    );
                     offset = Some(offset_handle);
                     words_left -= 1;
                 }
@@ -536,19 +541,47 @@ impl<I: Iterator<Item = u32>> super::Parser<I> {
 
                 ctx.global_arena[handle].ty
             }
+
             crate::Expression::FunctionArgument(i) => {
                 ctx.parameter_sampling[i as usize] |= sampling_bit;
                 ctx.arguments[i as usize].ty
             }
+
+            crate::Expression::Access { base, .. } => match ctx.expressions[base] {
+                crate::Expression::GlobalVariable(handle) => {
+                    if let Some(flags) = self.handle_sampling.get_mut(&handle) {
+                        *flags |= sampling_bit;
+                    }
+
+                    match ctx.type_arena[ctx.global_arena[handle].ty].inner {
+                        crate::TypeInner::BindingArray { base, .. } => base,
+                        _ => return Err(Error::InvalidGlobalVar(ctx.expressions[base].clone())),
+                    }
+                }
+
+                ref other => return Err(Error::InvalidGlobalVar(other.clone())),
+            },
+
             ref other => return Err(Error::InvalidGlobalVar(other.clone())),
         };
+
         match ctx.expressions[si_lexp.sampler] {
             crate::Expression::GlobalVariable(handle) => {
-                *self.handle_sampling.get_mut(&handle).unwrap() |= sampling_bit
+                *self.handle_sampling.get_mut(&handle).unwrap() |= sampling_bit;
             }
+
             crate::Expression::FunctionArgument(i) => {
                 ctx.parameter_sampling[i as usize] |= sampling_bit;
             }
+
+            crate::Expression::Access { base, .. } => match ctx.expressions[base] {
+                crate::Expression::GlobalVariable(handle) => {
+                    *self.handle_sampling.get_mut(&handle).unwrap() |= sampling_bit;
+                }
+
+                ref other => return Err(Error::InvalidGlobalVar(other.clone())),
+            },
+
             ref other => return Err(Error::InvalidGlobalVar(other.clone())),
         }
 
@@ -656,6 +689,11 @@ impl<I: Iterator<Item = u32>> super::Parser<I> {
             image: image_lexp.handle,
             query: crate::ImageQuery::Size { level },
         };
+        let expr = crate::Expression::As {
+            expr: ctx.expressions.append(expr, self.span_from_with_op(start)),
+            kind: crate::ScalarKind::Sint,
+            convert: Some(4),
+        };
         self.lookup_expression.insert(
             result_id,
             LookupExpression {
@@ -685,6 +723,11 @@ impl<I: Iterator<Item = u32>> super::Parser<I> {
         let expr = crate::Expression::ImageQuery {
             image: image_lexp.handle,
             query,
+        };
+        let expr = crate::Expression::As {
+            expr: expressions.append(expr, self.span_from_with_op(start)),
+            kind: crate::ScalarKind::Sint,
+            convert: Some(4),
         };
         self.lookup_expression.insert(
             result_id,

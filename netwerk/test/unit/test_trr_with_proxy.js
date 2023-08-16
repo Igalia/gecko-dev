@@ -21,7 +21,6 @@ const pps = Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
 
 function setup() {
   h2Port = trr_test_setup();
-  runningODoHTests = false;
   SetParentalControlEnabled(false);
 }
 
@@ -45,15 +44,6 @@ class ProxyFilter {
     this.QueryInterface = ChromeUtils.generateQI(["nsIProtocolProxyFilter"]);
   }
   applyFilter(uri, pi, cb) {
-    if (
-      uri.pathQueryRef.startsWith("/execute") ||
-      uri.pathQueryRef.startsWith("/fork") ||
-      uri.pathQueryRef.startsWith("/kill")
-    ) {
-      // So we allow NodeServer.execute to work
-      cb.onProxyFilterResult(pi);
-      return;
-    }
     cb.onProxyFilterResult(
       pps.newProxyInfo(
         this._type,
@@ -71,7 +61,7 @@ class ProxyFilter {
 
 async function doTest(proxySetup, delay) {
   info("Verifying a basic A record");
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   setModeAndURI(2, "doh?responseIP=2.2.2.2"); // TRR-first
 
   trrProxy = new TRRProxy();
@@ -200,12 +190,12 @@ add_task(async function test_trr_proxy() {
 add_task(async function test_trr_uri_change() {
   Services.prefs.setIntPref("network.proxy.type", 0);
   Services.prefs.setBoolPref("network.trr.async_connInfo", true);
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   setModeAndURI(2, "doh?responseIP=2.2.2.2", "127.0.0.1");
 
   await new TRRDNSListener("car.example.com", "127.0.0.1");
 
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   setModeAndURI(2, "doh?responseIP=2.2.2.2");
   await new TRRDNSListener("car.example.net", "2.2.2.2");
 });

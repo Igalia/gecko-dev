@@ -5,13 +5,13 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ShortcutUtils: "resource://gre/modules/ShortcutUtils.jsm",
-  ExtensionShortcutKeyMap: "resource://gre/modules/ExtensionShortcuts.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionShortcutKeyMap: "resource://gre/modules/ExtensionShortcuts.sys.mjs",
+  ShortcutUtils: "resource://gre/modules/ShortcutUtils.sys.mjs",
 });
 
 {
@@ -505,8 +505,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
       }
 
       if (extension.shortcuts) {
-        let card = document.importNode(templates.card.content, true)
-          .firstElementChild;
+        let card = document.importNode(
+          templates.card.content,
+          true
+        ).firstElementChild;
         let icon = AddonManager.getPreferredIconURL(addon, 24, window);
         card.setAttribute("addon-id", addon.id);
         card.setAttribute("addon-name", addon.name);
@@ -543,8 +545,10 @@ XPCOMUtils.defineLazyModuleGetters(this, {
         for (let i = 0; i < commands.length; i++) {
           let command = commands[i];
 
-          let row = document.importNode(templates.row.content, true)
-            .firstElementChild;
+          let row = document.importNode(
+            templates.row.content,
+            true
+          ).firstElementChild;
 
           if (willHideCommands && i >= limit) {
             row.setAttribute("hide-before-expand", "true");
@@ -601,7 +605,7 @@ XPCOMUtils.defineLazyModuleGetters(this, {
               card.setAttribute("expanded", "true");
               setLabel("collapse");
               // If this as a keyboard event then focus the next input.
-              if (event.mozInputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
+              if (event.inputSource == MouseEvent.MOZ_SOURCE_KEYBOARD) {
                 firstHiddenInput.focus();
               }
             }

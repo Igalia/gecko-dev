@@ -19,7 +19,7 @@ requestLongerTimeout(5);
 // Each test is a function that executes an urlbar action and returns the
 // expected event object.
 const tests = [
-  async function(win) {
+  async function (win) {
     info("Type something, press Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -46,7 +46,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type a multi-word query, press Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -73,7 +73,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Paste something, press Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -101,7 +101,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something, click one-off and press enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -113,8 +113,8 @@ const tests = [
 
     let searchPromise = UrlbarTestUtils.promiseSearchComplete(win);
     EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true }, win);
-    let selectedOneOff = UrlbarTestUtils.getOneOffSearchButtons(win)
-      .selectedButton;
+    let selectedOneOff =
+      UrlbarTestUtils.getOneOffSearchButtons(win).selectedButton;
     selectedOneOff.click();
     await searchPromise;
     await UrlbarTestUtils.assertSearchMode(win, {
@@ -140,7 +140,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info(
       "Type something, select one-off with enter, and select result with enter."
     );
@@ -155,8 +155,8 @@ const tests = [
       fireInputEvent: true,
     });
     EventUtils.synthesizeKey("KEY_ArrowDown", { altKey: true }, win);
-    let selectedOneOff = UrlbarTestUtils.getOneOffSearchButtons(win)
-      .selectedButton;
+    let selectedOneOff =
+      UrlbarTestUtils.getOneOffSearchButtons(win).selectedButton;
     Assert.ok(selectedOneOff);
     EventUtils.synthesizeKey("VK_RETURN", {}, win);
     await searchPromise;
@@ -179,7 +179,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something, ESC, type something else, press Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -204,7 +204,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type a keyword, Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -231,7 +231,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     let tipProvider = registerTipProvider();
     info("Selecting a tip's main button, enter.");
     win.gURLBar.search("x");
@@ -256,16 +256,20 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     let tipProvider = registerTipProvider();
-    info("Selecting a tip's help button, enter.");
+    info("Selecting a tip's help option.");
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
     win.gURLBar.search("x");
     await UrlbarTestUtils.promiseSearchComplete(win);
     EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
     EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
-    EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
-    EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    if (UrlbarPrefs.get("resultMenu")) {
+      await UrlbarTestUtils.openResultMenuAndPressAccesskey(win, "h");
+    } else {
+      EventUtils.synthesizeKey("KEY_Tab", {}, win);
+      EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    }
     await promise;
     unregisterTipProvider(tipProvider);
     return {
@@ -284,7 +288,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something and canonize");
     win.gURLBar.select();
     const promise = BrowserTestUtils.waitForDocLoadAndStopIt(
@@ -314,7 +318,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something, click on bookmark entry.");
     // Add a clean bookmark.
     const bookmark = await PlacesUtils.bookmarks.insert({
@@ -358,7 +362,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type an autofilled string, Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -388,7 +392,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something, select bookmark entry, Enter.");
 
     // Add a clean bookmark and the input history in order to detect in InputHistory
@@ -426,13 +430,47 @@ const tests = [
         numChars: "3",
         numWords: "1",
         selIndex: val => parseInt(val) > 0,
-        selType: "bookmark",
+        selType: "bookmark_adaptive",
         provider: "InputHistory",
       },
     };
   },
 
-  async function(win) {
+  async function (win) {
+    info("Type an input used before, select an input history item, Enter.");
+    let url = "http://example.com/hello_world";
+    let searchString = "hello";
+    await PlacesTestUtils.addVisits(url);
+    await UrlbarUtils.addToInputHistory(url, searchString);
+    win.gURLBar.select();
+    let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
+    await UrlbarTestUtils.promiseAutocompleteResultPopup({
+      window: win,
+      value: searchString,
+      fireInputEvent: true,
+    });
+    while (win.gURLBar.untrimmedValue != url) {
+      EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
+    }
+    EventUtils.synthesizeKey("VK_RETURN", {}, win);
+    await promise;
+    return {
+      category: "urlbar",
+      method: "engagement",
+      object: "enter",
+      value: "typed",
+      extra: {
+        elapsed: val => parseInt(val) > 0,
+        numChars: "5",
+        numWords: "1",
+        selIndex: val => parseInt(val) > 0,
+        selType: "history_adaptive",
+        provider: "InputHistory",
+      },
+    };
+  },
+
+  async function (win) {
     info("Type something, select remote search suggestion, Enter.");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -462,7 +500,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type something, select form history, Enter.");
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.maxHistoricalSearchSuggestions", 2]],
@@ -497,7 +535,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Type @, enter on a keywordoffer, then search and press enter.");
     win.gURLBar.select();
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
@@ -521,23 +559,41 @@ const tests = [
     EventUtils.synthesizeKey("VK_RETURN", {}, win);
     await promise;
 
-    return {
-      category: "urlbar",
-      method: "engagement",
-      object: "enter",
-      value: "typed",
-      extra: {
-        elapsed: val => parseInt(val) > 0,
-        numChars: "3",
-        numWords: "1",
-        selIndex: "0",
-        selType: "searchengine",
-        provider: "HeuristicFallback",
+    return [
+      // engagement on the keyword offer result to enter search mode
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "1",
+          numWords: "1",
+          selIndex: "6",
+          selType: "searchengine",
+          provider: "TokenAliasEngines",
+        },
       },
-    };
+      // engagement on the search heuristic
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "3",
+          numWords: "1",
+          selIndex: "0",
+          selType: "searchengine",
+          provider: "HeuristicFallback",
+        },
+      },
+    ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Type an @alias, then space, then search and press enter.");
     const alias = "testalias";
     await SearchTestUtils.installSearchExtension({
@@ -580,7 +636,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Drop something.");
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
     EventUtils.synthesizeDrop(
@@ -607,7 +663,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Paste and Go something.");
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
     await SimpleTest.promiseClipboardChange("www.example.com", () => {
@@ -647,7 +703,7 @@ const tests = [
   // The URLs in the down arrow/autoOpen tests must vary from test to test,
   // else  the first Top Site results will be a switch-to-tab result and a page
   // load will not occur.
-  async function(win) {
+  async function (win) {
     info("Open the panel with DOWN, select with DOWN, Enter.");
     await addTopSite("http://example.org/");
     win.gURLBar.value = "";
@@ -678,7 +734,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Open the panel with DOWN, click on entry.");
     await addTopSite("http://example.com/");
     win.gURLBar.value = "";
@@ -712,7 +768,7 @@ const tests = [
   // The URLs in the autoOpen tests must vary from test to test, else
   // the first Top Site results will be a switch-to-tab result and a page load
   // will not occur.
-  async function(win) {
+  async function (win) {
     info(
       "With pageproxystate=valid, autoopen the panel, select with DOWN, Enter."
     );
@@ -744,7 +800,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("With pageproxystate=valid, autoopen the panel, click on entry.");
     await addTopSite("http://example.com/");
     win.gURLBar.value = "";
@@ -775,7 +831,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("With pageproxystate=invalid, open retained results, Enter.");
     await addTopSite("http://example.org/");
     win.gURLBar.value = "example.org";
@@ -803,7 +859,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("With pageproxystate=invalid, open retained results, click on entry.");
     // This value must be different from the previous test, to avoid reopening
     // the view.
@@ -833,7 +889,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Reopen the view: type, blur, focus, confirm.");
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window: win,
@@ -879,8 +935,14 @@ const tests = [
     ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Open search mode with a keyboard shortcut.");
+    // Bug 1797801: If the search mode used is the same as the default engine and
+    // showSearchTerms is enabled, the chiclet will remain in the urlbar on the search.
+    // Subsequent tests rely on search mode not already been selected.
+    await SpecialPowers.pushPrefEnv({
+      set: [["browser.urlbar.showSearchTerms.featureGate", false]],
+    });
     let defaultEngine = await Services.search.getDefault();
     win.gURLBar.select();
     EventUtils.synthesizeKey("k", { accelKey: true }, win);
@@ -900,6 +962,8 @@ const tests = [
     EventUtils.synthesizeKey("VK_RETURN", {}, win);
     await promise;
 
+    await SpecialPowers.popPrefEnv();
+
     return {
       category: "urlbar",
       method: "engagement",
@@ -916,7 +980,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Open search mode from a tab-to-search result.");
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.tabToSearch.onboard.interactionsLeft", 0]],
@@ -964,23 +1028,41 @@ const tests = [
     await PlacesUtils.history.clear();
     await SpecialPowers.popPrefEnv();
 
-    return {
-      category: "urlbar",
-      method: "engagement",
-      object: "enter",
-      value: "typed",
-      extra: {
-        elapsed: val => parseInt(val) > 0,
-        numChars: "3",
-        numWords: "1",
-        selIndex: "0",
-        selType: "searchengine",
-        provider: "HeuristicFallback",
+    return [
+      // engagement on the tab-to-search to enter search mode
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "4",
+          numWords: "1",
+          selIndex: "1",
+          selType: "tabtosearch",
+          provider: "TabToSearch",
+        },
       },
-    };
+      // engagement on the search heuristic
+      {
+        category: "urlbar",
+        method: "engagement",
+        object: "enter",
+        value: "typed",
+        extra: {
+          elapsed: val => parseInt(val) > 0,
+          numChars: "3",
+          numWords: "1",
+          selIndex: "0",
+          selType: "searchengine",
+          provider: "HeuristicFallback",
+        },
+      },
+    ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Sanity check we are not stuck on 'returned'");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -1007,7 +1089,7 @@ const tests = [
     };
   },
 
-  async function(win) {
+  async function (win) {
     info("Reopen the view: type, blur, focus, backspace, type, confirm.");
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window: win,
@@ -1056,7 +1138,7 @@ const tests = [
     ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Reopen the view: type, blur, focus, type (overwrite), confirm.");
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window: win,
@@ -1103,7 +1185,7 @@ const tests = [
     ];
   },
 
-  async function(win) {
+  async function (win) {
     info("Sanity check we are not stuck on 'restarted'");
     win.gURLBar.select();
     let promise = BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
@@ -1131,16 +1213,15 @@ const tests = [
   },
 ];
 
-add_task(async function init() {
+add_setup(async function () {
   await PlacesUtils.history.clear();
   await PlacesUtils.bookmarks.eraseEverything();
 
   // Create a new search engine and mark it as default
-  let engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "searchSuggestionEngine.xml"
-  );
-  let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  let engine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "searchSuggestionEngine.xml",
+    setAsDefault: true,
+  });
   await Services.search.moveEngine(engine, 0);
 
   await SearchTestUtils.installSearchExtension({
@@ -1160,8 +1241,7 @@ add_task(async function init() {
     url: "http://example.com/?q=%s",
   });
 
-  registerCleanupFunction(async function() {
-    await Services.search.setDefault(oldDefaultEngine);
+  registerCleanupFunction(async function () {
     await PlacesUtils.keywords.remove("kw");
     await PlacesUtils.bookmarks.remove(bm);
     await PlacesUtils.history.clear();
@@ -1185,6 +1265,10 @@ async function doTest(eventTelemetryEnabled) {
   for (let i = 0; i < tests.length; i++) {
     info(`Running test at index ${i}`);
     let events = await tests[i](win);
+    if (events === null) {
+      info("Skipping test");
+      continue;
+    }
     if (!Array.isArray(events)) {
       events = [events];
     }
@@ -1225,6 +1309,7 @@ add_task(async function disabled() {
 
 /**
  * Replaces the contents of Top Sites with the specified site.
+ *
  * @param {string} site
  *   A site to add to Top Sites.
  */
@@ -1260,10 +1345,20 @@ let tipMatches = [
     UrlbarUtils.RESULT_TYPE.TIP,
     UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
     {
-      text: "This is a test intervention.",
-      buttonText: "Done",
+      helpUrl: "http://example.com/",
+      helpL10n: {
+        id: UrlbarPrefs.get("resultMenu")
+          ? "urlbar-result-menu-tip-get-help"
+          : "urlbar-tip-help-icon",
+      },
       type: "test",
-      helpUrl: "about:about",
+      titleL10n: { id: "urlbar-search-tips-confirm" },
+      buttons: [
+        {
+          url: "http://example.com/",
+          l10n: { id: "urlbar-search-tips-confirm" },
+        },
+      ],
     }
   ),
   new UrlbarResult(

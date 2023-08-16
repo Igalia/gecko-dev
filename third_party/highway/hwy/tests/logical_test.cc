@@ -1,4 +1,5 @@
 // Copyright 2019 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,15 +13,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-#include <stddef.h>
-#include <stdint.h>
-#include <string.h>  // memcmp
-
-#include "hwy/aligned_allocator.h"
-
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "tests/logical_test.cc"
-#include "hwy/foreach_target.h"
+#include "hwy/foreach_target.h"  // IWYU pragma: keep
 #include "hwy/highway.h"
 #include "hwy/tests/test_util-inl.h"
 
@@ -28,11 +23,10 @@ HWY_BEFORE_NAMESPACE();
 namespace hwy {
 namespace HWY_NAMESPACE {
 
-struct TestLogicalInteger {
+struct TestNot {
   template <class T, class D>
   HWY_NOINLINE void operator()(T /*unused*/, D d) {
     const auto v0 = Zero(d);
-    const auto vi = Iota(d, 0);
     const auto ones = VecFromMask(d, Eq(v0, v0));
     const auto v1 = Set(d, 1);
     const auto vnot1 = Set(d, T(~T(1)));
@@ -41,6 +35,34 @@ struct TestLogicalInteger {
     HWY_ASSERT_VEC_EQ(d, ones, Not(v0));
     HWY_ASSERT_VEC_EQ(d, v1, Not(vnot1));
     HWY_ASSERT_VEC_EQ(d, vnot1, Not(v1));
+  }
+};
+
+HWY_NOINLINE void TestAllNot() {
+  ForIntegerTypes(ForPartialVectors<TestNot>());
+}
+
+struct TestLogical {
+  template <class T, class D>
+  HWY_NOINLINE void operator()(T /*unused*/, D d) {
+    const auto v0 = Zero(d);
+    const auto vi = Iota(d, 0);
+
+    auto v = vi;
+    v = And(v, vi);
+    HWY_ASSERT_VEC_EQ(d, vi, v);
+    v = And(v, v0);
+    HWY_ASSERT_VEC_EQ(d, v0, v);
+
+    v = Or(v, vi);
+    HWY_ASSERT_VEC_EQ(d, vi, v);
+    v = Or(v, v0);
+    HWY_ASSERT_VEC_EQ(d, vi, v);
+
+    v = Xor(v, vi);
+    HWY_ASSERT_VEC_EQ(d, v0, v);
+    v = Xor(v, v0);
+    HWY_ASSERT_VEC_EQ(d, v0, v);
 
     HWY_ASSERT_VEC_EQ(d, v0, And(v0, vi));
     HWY_ASSERT_VEC_EQ(d, v0, And(vi, v0));
@@ -57,6 +79,24 @@ struct TestLogicalInteger {
     HWY_ASSERT_VEC_EQ(d, vi, AndNot(v0, vi));
     HWY_ASSERT_VEC_EQ(d, v0, AndNot(vi, v0));
     HWY_ASSERT_VEC_EQ(d, v0, AndNot(vi, vi));
+
+    HWY_ASSERT_VEC_EQ(d, v0, Or3(v0, v0, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(v0, vi, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(v0, v0, vi));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(v0, vi, vi));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(vi, v0, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(vi, vi, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(vi, v0, vi));
+    HWY_ASSERT_VEC_EQ(d, vi, Or3(vi, vi, vi));
+
+    HWY_ASSERT_VEC_EQ(d, v0, Xor3(v0, v0, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Xor3(v0, vi, v0));
+    HWY_ASSERT_VEC_EQ(d, vi, Xor3(v0, v0, vi));
+    HWY_ASSERT_VEC_EQ(d, v0, Xor3(v0, vi, vi));
+    HWY_ASSERT_VEC_EQ(d, vi, Xor3(vi, v0, v0));
+    HWY_ASSERT_VEC_EQ(d, v0, Xor3(vi, vi, v0));
+    HWY_ASSERT_VEC_EQ(d, v0, Xor3(vi, v0, vi));
+    HWY_ASSERT_VEC_EQ(d, vi, Xor3(vi, vi, vi));
 
     HWY_ASSERT_VEC_EQ(d, v0, OrAnd(v0, v0, v0));
     HWY_ASSERT_VEC_EQ(d, v0, OrAnd(v0, vi, v0));
@@ -66,71 +106,11 @@ struct TestLogicalInteger {
     HWY_ASSERT_VEC_EQ(d, vi, OrAnd(vi, vi, v0));
     HWY_ASSERT_VEC_EQ(d, vi, OrAnd(vi, v0, vi));
     HWY_ASSERT_VEC_EQ(d, vi, OrAnd(vi, vi, vi));
-
-    auto v = vi;
-    v = And(v, vi);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-    v = And(v, v0);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
-
-    v = Or(v, vi);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-    v = Or(v, v0);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-
-    v = Xor(v, vi);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
-    v = Xor(v, v0);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
   }
 };
 
-HWY_NOINLINE void TestAllLogicalInteger() {
-  ForIntegerTypes(ForPartialVectors<TestLogicalInteger>());
-}
-
-struct TestLogicalFloat {
-  template <class T, class D>
-  HWY_NOINLINE void operator()(T /*unused*/, D d) {
-    const auto v0 = Zero(d);
-    const auto vi = Iota(d, 0);
-
-    HWY_ASSERT_VEC_EQ(d, v0, And(v0, vi));
-    HWY_ASSERT_VEC_EQ(d, v0, And(vi, v0));
-    HWY_ASSERT_VEC_EQ(d, vi, And(vi, vi));
-
-    HWY_ASSERT_VEC_EQ(d, vi, Or(v0, vi));
-    HWY_ASSERT_VEC_EQ(d, vi, Or(vi, v0));
-    HWY_ASSERT_VEC_EQ(d, vi, Or(vi, vi));
-
-    HWY_ASSERT_VEC_EQ(d, vi, Xor(v0, vi));
-    HWY_ASSERT_VEC_EQ(d, vi, Xor(vi, v0));
-    HWY_ASSERT_VEC_EQ(d, v0, Xor(vi, vi));
-
-    HWY_ASSERT_VEC_EQ(d, vi, AndNot(v0, vi));
-    HWY_ASSERT_VEC_EQ(d, v0, AndNot(vi, v0));
-    HWY_ASSERT_VEC_EQ(d, v0, AndNot(vi, vi));
-
-    auto v = vi;
-    v = And(v, vi);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-    v = And(v, v0);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
-
-    v = Or(v, vi);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-    v = Or(v, v0);
-    HWY_ASSERT_VEC_EQ(d, vi, v);
-
-    v = Xor(v, vi);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
-    v = Xor(v, v0);
-    HWY_ASSERT_VEC_EQ(d, v0, v);
-  }
-};
-
-HWY_NOINLINE void TestAllLogicalFloat() {
-  ForFloatTypes(ForPartialVectors<TestLogicalFloat>());
+HWY_NOINLINE void TestAllLogical() {
+  ForAllTypes(ForPartialVectors<TestLogical>());
 }
 
 struct TestCopySign {
@@ -164,90 +144,8 @@ struct TestCopySign {
   }
 };
 
-struct TestIfVecThenElse {
-  template <class T, class D>
-  HWY_NOINLINE void operator()(T /*unused*/, D d) {
-    RandomState rng;
-
-    using TU = MakeUnsigned<T>;  // For all-one mask
-    const Rebind<TU, D> du;
-    const size_t N = Lanes(d);
-    auto in1 = AllocateAligned<T>(N);
-    auto in2 = AllocateAligned<T>(N);
-    auto vec_lanes = AllocateAligned<TU>(N);
-    auto expected = AllocateAligned<T>(N);
-
-    // Each lane should have a chance of having mask=true.
-    for (size_t rep = 0; rep < AdjustedReps(200); ++rep) {
-      for (size_t i = 0; i < N; ++i) {
-        in1[i] = static_cast<T>(Random32(&rng));
-        in2[i] = static_cast<T>(Random32(&rng));
-        vec_lanes[i] = (Random32(&rng) & 16) ? static_cast<TU>(~TU(0)) : TU(0);
-      }
-
-      const auto v1 = Load(d, in1.get());
-      const auto v2 = Load(d, in2.get());
-      const auto vec = BitCast(d, Load(du, vec_lanes.get()));
-
-      for (size_t i = 0; i < N; ++i) {
-        expected[i] = vec_lanes[i] ? in1[i] : in2[i];
-      }
-      HWY_ASSERT_VEC_EQ(d, expected.get(), IfVecThenElse(vec, v1, v2));
-    }
-  }
-};
-
-HWY_NOINLINE void TestAllIfVecThenElse() {
-  ForAllTypes(ForPartialVectors<TestIfVecThenElse>());
-}
-
 HWY_NOINLINE void TestAllCopySign() {
   ForFloatTypes(ForPartialVectors<TestCopySign>());
-}
-
-struct TestZeroIfNegative {
-  template <class T, class D>
-  HWY_NOINLINE void operator()(T /*unused*/, D d) {
-    const auto v0 = Zero(d);
-    const auto vp = Iota(d, 1);
-    const auto vn = Iota(d, T(-1E5));  // assumes N < 10^5
-
-    // Zero and positive remain unchanged
-    HWY_ASSERT_VEC_EQ(d, v0, ZeroIfNegative(v0));
-    HWY_ASSERT_VEC_EQ(d, vp, ZeroIfNegative(vp));
-
-    // Negative are all replaced with zero
-    HWY_ASSERT_VEC_EQ(d, v0, ZeroIfNegative(vn));
-  }
-};
-
-HWY_NOINLINE void TestAllZeroIfNegative() {
-  ForFloatTypes(ForPartialVectors<TestZeroIfNegative>());
-}
-
-struct TestIfNegative {
-  template <class T, class D>
-  HWY_NOINLINE void operator()(T /*unused*/, D d) {
-    const auto v0 = Zero(d);
-    const auto vp = Iota(d, 1);
-    const auto vn = Or(vp, SignBit(d));
-
-    // Zero and positive remain unchanged
-    HWY_ASSERT_VEC_EQ(d, v0, IfNegativeThenElse(v0, vn, v0));
-    HWY_ASSERT_VEC_EQ(d, vn, IfNegativeThenElse(v0, v0, vn));
-    HWY_ASSERT_VEC_EQ(d, vp, IfNegativeThenElse(vp, vn, vp));
-    HWY_ASSERT_VEC_EQ(d, vn, IfNegativeThenElse(vp, vp, vn));
-
-    // Negative are replaced with 2nd arg
-    HWY_ASSERT_VEC_EQ(d, v0, IfNegativeThenElse(vn, v0, vp));
-    HWY_ASSERT_VEC_EQ(d, vn, IfNegativeThenElse(vn, vn, v0));
-    HWY_ASSERT_VEC_EQ(d, vp, IfNegativeThenElse(vn, vp, vn));
-  }
-};
-
-HWY_NOINLINE void TestAllIfNegative() {
-  ForFloatTypes(ForPartialVectors<TestIfNegative>());
-  ForSignedTypes(ForPartialVectors<TestIfNegative>());
 }
 
 struct TestBroadcastSignBit {
@@ -301,25 +199,78 @@ HWY_NOINLINE void TestAllTestBit() {
   ForIntegerTypes(ForPartialVectors<TestTestBit>());
 }
 
-struct TestPopulationCount {
+class TestBitwiseIfThenElse {
+ private:
+  template <class T>
+  static constexpr T ValueFromBitPattern(hwy::FloatTag /* type_tag */,
+                                         T /* unused */, uint64_t bits) {
+    using TI = MakeSigned<T>;
+    return static_cast<T>(static_cast<TI>(bits & MantissaMask<T>())) +
+           MantissaEnd<T>();
+  }
+  template <class T>
+  static constexpr MakeUnsigned<T> ValueFromBitPattern(
+      hwy::NonFloatTag /* type_tag */, T /* unused */, uint64_t bits) {
+    return static_cast<MakeUnsigned<T>>(bits);
+  }
+
+ public:
   template <class T, class D>
   HWY_NOINLINE void operator()(T /*unused*/, D d) {
-    RandomState rng;
-    size_t N = Lanes(d);
-    auto data = AllocateAligned<T>(N);
-    auto popcnt = AllocateAligned<T>(N);
-    for (size_t i = 0; i < AdjustedReps(1 << 18) / N; i++) {
-      for (size_t i = 0; i < N; i++) {
-        data[i] = static_cast<T>(rng());
-        popcnt[i] = static_cast<T>(PopCount(data[i]));
-      }
-      HWY_ASSERT_VEC_EQ(d, popcnt.get(), PopulationCount(Load(d, data.get())));
-    }
+    using TU = MakeUnsigned<T>;
+    using TVal = RemoveConst<decltype(ValueFromBitPattern(IsFloatTag<T>(), T(),
+                                                          uint64_t{0}))>;
+    static_assert(!IsFloat<T>() || IsSame<TVal, T>(),
+                  "TVal should be the same as T if T is a floating-point type");
+    static_assert(IsFloat<T>() || IsSame<TVal, TU>(),
+                  "TVal should be the same as TU if T is a integer type");
+
+    static constexpr TVal a0 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0x0FF00FF00FF00FF0u});
+    static constexpr TVal b0 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0x33CC33CC33CC33CCu});
+    static constexpr TVal c0 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0x55AA55AA55AA55AAu});
+    static constexpr TVal a1 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0xF00FF00FF00FF00Fu});
+    static constexpr TVal b1 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0xCC33CC33CC33CC33u});
+    static constexpr TVal c1 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0xAA55AA55AA55AA55u});
+
+    const RebindToUnsigned<decltype(d)> du;
+    const Rebind<TVal, decltype(d)> d_val;
+    const auto v_a0 = BitCast(d, Set(d_val, a0));
+    const auto v_b0 = BitCast(d, Set(d_val, b0));
+    const auto v_c0 = BitCast(d, Set(d_val, c0));
+
+    const auto v_a1 = BitCast(d, Set(d_val, a1));
+    const auto v_b1 = BitCast(d, Set(d_val, b1));
+    const auto v_c1 = BitCast(d, Set(d_val, c1));
+
+    static constexpr TVal expected_1 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0x53CA53CA53CA53CAu});
+    HWY_ASSERT_VEC_EQ(d, BitCast(d, Set(d_val, expected_1)),
+                      BitwiseIfThenElse(v_a0, v_b0, v_c0));
+
+    static constexpr TVal expected_2 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0xCA53CA53CA53CA53u});
+    HWY_ASSERT_VEC_EQ(d, BitCast(d, Set(d_val, expected_2)),
+                      BitwiseIfThenElse(v_a1, v_b1, v_c1));
+
+    static constexpr TVal expected_3 = ValueFromBitPattern(
+        IsFloatTag<T>(), T(), uint64_t{0x1DB81DB81DB81DB8u});
+    HWY_ASSERT_VEC_EQ(d, BitCast(d, Set(d_val, expected_3)),
+                      BitwiseIfThenElse(v_b1, v_a0, v_c0));
+
+    const auto v_all_ones = BitCast(d, Set(du, static_cast<TU>(-1)));
+    HWY_ASSERT_VEC_EQ(d, v_a0, BitwiseIfThenElse(v_all_ones, v_a0, v_b0));
+    HWY_ASSERT_VEC_EQ(d, v_b0, BitwiseIfThenElse(Zero(d), v_a0, v_b0));
   }
 };
 
-HWY_NOINLINE void TestAllPopulationCount() {
-  ForUnsignedTypes(ForPartialVectors<TestPopulationCount>());
+HWY_NOINLINE void TestAllBitwiseIfThenElse() {
+  ForAllTypes(ForPartialVectors<TestBitwiseIfThenElse>());
 }
 
 // NOLINTNEXTLINE(google-readability-namespace-comments)
@@ -331,21 +282,12 @@ HWY_AFTER_NAMESPACE();
 
 namespace hwy {
 HWY_BEFORE_TEST(HwyLogicalTest);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllLogicalInteger);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllLogicalFloat);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllIfVecThenElse);
+HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllNot);
+HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllLogical);
 HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllCopySign);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllZeroIfNegative);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllIfNegative);
 HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllBroadcastSignBit);
 HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllTestBit);
-HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllPopulationCount);
+HWY_EXPORT_AND_TEST_P(HwyLogicalTest, TestAllBitwiseIfThenElse);
 }  // namespace hwy
-
-// Ought not to be necessary, but without this, no tests run on RVV.
-int main(int argc, char **argv) {
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}
 
 #endif

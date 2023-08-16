@@ -10,13 +10,12 @@ const TEST_URI =
 const PARENT_MESSAGE = "Hello from parent";
 const CHILD_MESSAGE = "Hello from child";
 
-/* import-globals-from ../../webconsole/test/browser/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
   this
 );
 
-add_task(async function() {
+add_task(async function () {
   info("Open console");
   const tab = await addTab(TEST_URI);
   const toolbox = await openToolboxForTab(tab, "webconsole");

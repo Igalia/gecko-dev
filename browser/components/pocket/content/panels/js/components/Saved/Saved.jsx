@@ -12,17 +12,13 @@ import panelMessaging from "../../messages";
 function Saved(props) {
   const { locale, pockethost, utmSource, utmCampaign, utmContent } = props;
   // savedStatus can be success, loading, or error.
-  const [
-    { savedStatus, savedErrorId, itemId, itemUrl },
-    setSavedStatusState,
-  ] = useState({ savedStatus: "loading" });
+  const [{ savedStatus, savedErrorId, itemId, itemUrl }, setSavedStatusState] =
+    useState({ savedStatus: "loading" });
   // removedStatus can be removed, removing, or error.
-  const [
-    { removedStatus, removedErrorMessage },
-    setRemovedStatusState,
-  ] = useState({});
+  const [{ removedStatus, removedErrorMessage }, setRemovedStatusState] =
+    useState({});
   const [savedStory, setSavedStoryState] = useState();
-  const [{ similarRecs, similarRecsModel }, setSimilarRecsState] = useState({});
+  const [articleInfoAttempted, setArticleInfoAttempted] = useState();
   const utmParams = `utm_source=${utmSource}${
     utmCampaign && utmContent
       ? `&utm_campaign=${utmCampaign}&utm_content=${utmContent}`
@@ -37,7 +33,7 @@ function Saved(props) {
       {
         itemId,
       },
-      function(resp) {
+      function (resp) {
         const { data } = resp;
         if (data.status == "success") {
           setRemovedStatusState({ removedStatus: "removed" });
@@ -59,7 +55,7 @@ function Saved(props) {
 
   useEffect(() => {
     // Wait confirmation of save before flipping to final saved state
-    panelMessaging.addMessageListener("PKT_saveLink", function(resp) {
+    panelMessaging.addMessageListener("PKT_saveLink", function (resp) {
       const { data } = resp;
       if (data.status == "error") {
         // Use localizedKey or fallback to a generic catch all error.
@@ -80,22 +76,19 @@ function Saved(props) {
       });
     });
 
-    panelMessaging.addMessageListener("PKT_renderSavedStory", function(resp) {
-      setSavedStoryState(resp?.data?.item_preview);
-    });
+    panelMessaging.addMessageListener(
+      "PKT_articleInfoFetched",
+      function (resp) {
+        setSavedStoryState(resp?.data?.item_preview);
+      }
+    );
 
-    panelMessaging.addMessageListener("PKT_renderItemRecs", function(resp) {
-      const { data } = resp;
-
-      // This is the ML model used to recommend the story.
-      // Right now this value is the same for all three items returned together,
-      // so we can just use the first item's value for all.
-      const model = data?.recommendations?.[0]?.experiment || "";
-      setSimilarRecsState({
-        similarRecs: data?.recommendations?.map(rec => rec.item),
-        similarRecsModel: model,
-      });
-    });
+    panelMessaging.addMessageListener(
+      "PKT_getArticleInfoAttempted",
+      function (resp) {
+        setArticleInfoAttempted(true);
+      }
+    );
 
     // tell back end we're ready
     panelMessaging.sendMessage("PKT_show_saved");
@@ -125,7 +118,7 @@ function Saved(props) {
             url={`https://${pockethost}/a?${utmParams}`}
             source="view_list"
           >
-            <span data-l10n-id="pocket-panel-header-my-list"></span>
+            <span data-l10n-id="pocket-panel-header-my-saves"></span>
           </Button>
         </Header>
         <hr />
@@ -144,19 +137,7 @@ function Saved(props) {
                 utmParams={utmParams}
               />
             )}
-            <TagPicker tags={[]} itemUrl={itemUrl} />
-            {similarRecs?.length && locale?.startsWith("en") && (
-              <>
-                <hr />
-                <h3 className="header_medium">Similar Stories</h3>
-                <ArticleList
-                  articles={similarRecs}
-                  source="on_save_recs"
-                  model={similarRecsModel}
-                  utmParams={utmParams}
-                />
-              </>
-            )}
+            {articleInfoAttempted && <TagPicker tags={[]} itemUrl={itemUrl} />}
           </>
         )}
         {savedStatus === "loading" && (
@@ -174,7 +155,7 @@ function Saved(props) {
         {removedStatus === "removed" && (
           <h3
             className="header_large header_center"
-            data-l10n-id="pocket-panel-saved-removed"
+            data-l10n-id="pocket-panel-saved-removed-updated"
           />
         )}
         {removedStatus === "error" && (

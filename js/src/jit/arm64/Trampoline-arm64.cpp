@@ -4,15 +4,13 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "jit/arm64/SharedICHelpers-arm64.h"
 #include "jit/Bailouts.h"
 #include "jit/BaselineFrame.h"
 #include "jit/CalleeToken.h"
 #include "jit/JitFrames.h"
 #include "jit/JitRuntime.h"
-#ifdef JS_ION_PERF
-#  include "jit/PerfSpewer.h"
-#endif
-#include "jit/arm64/SharedICHelpers-arm64.h"
+#include "jit/PerfSpewer.h"
 #include "jit/VMFunctions.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
@@ -228,7 +226,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
     masm.push(reg_code);
 
     // Initialize the frame, including filling in the slots.
-    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+    using Fn = bool (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
                         uint32_t numStackValues);
     masm.setupUnalignedABICall(r19);
     masm.passABIArg(framePtrScratch);  // BaselineFrame.
@@ -391,8 +389,7 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   masm.Sub(x1, masm.GetStackPointer64(), Operand(sizeof(void*)));
   masm.moveToStackPtr(r1);
 
-  using Fn =
-      bool (*)(InvalidationBailoutStack * sp, BaselineBailoutInfo * *info);
+  using Fn = bool (*)(InvalidationBailoutStack* sp, BaselineBailoutInfo** info);
   masm.setupUnalignedABICall(r10);
   masm.passABIArg(r0);
   masm.passABIArg(r1);
@@ -553,7 +550,7 @@ static void GenerateBailoutThunk(MacroAssembler& masm, Label* bailoutTail) {
   masm.reserveStack(sizeof(void*));
   masm.moveStackPtrTo(r1);
 
-  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
+  using Fn = bool (*)(BailoutStack* sp, BaselineBailoutInfo** info);
   masm.setupUnalignedABICall(r2);
   masm.passABIArg(r0);
   masm.passABIArg(r1);
@@ -594,11 +591,11 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
       (Register::Codes::VolatileMask & ~Register::Codes::WrapperMask) == 0,
       "Wrapper register set must be a superset of the Volatile register set.");
 
-  // Unlike on other platforms, it is the responsibility of the VM *callee* to
+  // On link-register platforms, it is the responsibility of the VM *callee* to
   // push the return address, while the caller must ensure that the address
   // is stored in lr on entry. This allows the VM wrapper to work with both
   // direct calls and tail calls.
-  masm.push(lr);
+  masm.pushReturnAddress();
 
   // First argument is the JSContext.
   Register reg_cx = IntArgReg0;
@@ -612,6 +609,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   //
   // Push the frame pointer to finish the exit frame, then link it up.
   masm.Push(FramePointer);
+  masm.moveStackPtrTo(FramePointer);
   masm.loadJSContext(reg_cx);
   masm.enterExitFrame(reg_cx, regs.getAny(), &f);
 
@@ -682,7 +680,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
       case VMFunctionData::WordByRef:
         masm.passABIArg(
-            MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
+            MoveOperand(argsBase, argDisp, MoveOperand::Kind::EffectiveAddress),
             MoveOp::GENERAL);
         argDisp += sizeof(void*);
         break;
@@ -769,7 +767,8 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   }
 
   // Pop ExitFooterFrame and the frame pointer.
-  masm.leaveExitFrame(sizeof(void*));
+  masm.leaveExitFrame(0);
+  masm.pop(FramePointer);
 
   // Return. Subtract sizeof(void*) for the frame pointer.
   masm.retn(Imm32(sizeof(ExitFrameLayout) - sizeof(void*) +

@@ -51,13 +51,14 @@ use std::fmt;
 #[cfg(not(any(unix, windows)))]
 use std::fs::File;
 use std::io::{Error, ErrorKind, Result};
+use std::isize;
+use std::mem;
 use std::ops::{Deref, DerefMut};
 #[cfg(unix)]
 use std::os::unix::io::{AsRawFd, RawFd};
 #[cfg(windows)]
 use std::os::windows::io::{AsRawHandle, RawHandle};
 use std::slice;
-use std::usize;
 
 #[cfg(not(any(unix, windows)))]
 pub struct MmapRawDescriptor<'a>(&'a File);
@@ -237,15 +238,20 @@ impl MmapOptions {
             }
             let len = file_len - self.offset;
 
-            // This check it not relevant on 64bit targets, because usize == u64
-            #[cfg(not(target_pointer_width = "64"))]
-            {
-                if len > (usize::MAX as u64) {
-                    return Err(Error::new(
-                        ErrorKind::InvalidData,
-                        "memory map length overflows usize",
-                    ));
-                }
+            // Rust's slice cannot be larger than isize::MAX.
+            // See https://doc.rust-lang.org/std/slice/fn.from_raw_parts.html
+            //
+            // This is not a problem on 64-bit targets, but on 32-bit one
+            // having a file or an anonymous mapping larger than 2GB is quite normal
+            // and we have to prevent it.
+            //
+            // The code below is essentially the same as in Rust's std:
+            // https://github.com/rust-lang/rust/blob/db78ab70a88a0a5e89031d7ee4eccec835dcdbde/library/alloc/src/raw_vec.rs#L495
+            if mem::size_of::<usize>() < 8 && len > isize::MAX as u64 {
+                return Err(Error::new(
+                    ErrorKind::InvalidData,
+                    "memory map length overflows isize",
+                ));
             }
 
             Ok(len as usize)
@@ -457,14 +463,26 @@ impl MmapOptions {
 
     /// Creates an anonymous memory map.
     ///
-    /// Note: the memory map length must be configured to be greater than 0 before creating an
-    /// anonymous memory map using `MmapOptions::len()`.
+    /// The memory map length should be configured using [`MmapOptions::len()`]
+    /// before creating an anonymous memory map, otherwise a zero-length mapping
+    /// will be crated.
     ///
     /// # Errors
     ///
-    /// This method returns an error when the underlying system call fails.
+    /// This method returns an error when the underlying system call fails or
+    /// when `len > isize::MAX`.
     pub fn map_anon(&self) -> Result<MmapMut> {
-        MmapInner::map_anon(self.len.unwrap_or(0), self.stack).map(|inner| MmapMut { inner })
+        let len = self.len.unwrap_or(0);
+
+        // See get_len() for details.
+        if mem::size_of::<usize>() < 8 && len > isize::MAX as usize {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "memory map length overflows isize",
+            ));
+        }
+
+        MmapInner::map_anon(len, self.stack).map(|inner| MmapMut { inner })
     }
 
     /// Creates a raw memory map.
@@ -609,7 +627,35 @@ impl Mmap {
     /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
     #[cfg(unix)]
     pub fn advise(&self, advice: Advice) -> Result<()> {
-        self.inner.advise(advice)
+        self.inner.advise(advice, 0, self.inner.len())
+    }
+
+    /// Advise OS how this range of memory map will be accessed.
+    ///
+    /// The offset and length must be in the bounds of the memory map.
+    ///
+    /// Only supported on Unix.
+    ///
+    /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
+    #[cfg(unix)]
+    pub fn advise_range(&self, advice: Advice, offset: usize, len: usize) -> Result<()> {
+        self.inner.advise(advice, offset, len)
+    }
+
+    /// Lock the whole memory map into RAM. Only supported on Unix.
+    ///
+    /// See [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn lock(&mut self) -> Result<()> {
+        self.inner.lock()
+    }
+
+    /// Unlock the whole memory map. Only supported on Unix.
+    ///
+    /// See [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn unlock(&mut self) -> Result<()> {
+        self.inner.unlock()
     }
 }
 
@@ -766,6 +812,42 @@ impl MmapRaw {
     pub fn flush_async_range(&self, offset: usize, len: usize) -> Result<()> {
         self.inner.flush_async(offset, len)
     }
+
+    /// Advise OS how this memory map will be accessed. Only supported on Unix.
+    ///
+    /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
+    #[cfg(unix)]
+    pub fn advise(&self, advice: Advice) -> Result<()> {
+        self.inner.advise(advice, 0, self.inner.len())
+    }
+
+    /// Advise OS how this range of memory map will be accessed.
+    ///
+    /// The offset and length must be in the bounds of the memory map.
+    ///
+    /// Only supported on Unix.
+    ///
+    /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
+    #[cfg(unix)]
+    pub fn advise_range(&self, advice: Advice, offset: usize, len: usize) -> Result<()> {
+        self.inner.advise(advice, offset, len)
+    }
+
+    /// Lock the whole memory map into RAM. Only supported on Unix.
+    ///
+    /// See [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn lock(&mut self) -> Result<()> {
+        self.inner.lock()
+    }
+
+    /// Unlock the whole memory map. Only supported on Unix.
+    ///
+    /// See [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn unlock(&mut self) -> Result<()> {
+        self.inner.unlock()
+    }
 }
 
 impl fmt::Debug for MmapRaw {
@@ -774,6 +856,18 @@ impl fmt::Debug for MmapRaw {
             .field("ptr", &self.as_ptr())
             .field("len", &self.len())
             .finish()
+    }
+}
+
+impl From<Mmap> for MmapRaw {
+    fn from(value: Mmap) -> Self {
+        Self { inner: value.inner }
+    }
+}
+
+impl From<MmapMut> for MmapRaw {
+    fn from(value: MmapMut) -> Self {
+        Self { inner: value.inner }
     }
 }
 
@@ -856,7 +950,8 @@ impl MmapMut {
     ///
     /// # Errors
     ///
-    /// This method returns an error when the underlying system call fails.
+    /// This method returns an error when the underlying system call fails or
+    /// when `len > isize::MAX`.
     pub fn map_anon(length: usize) -> Result<MmapMut> {
         MmapOptions::new().len(length).map_anon()
     }
@@ -971,6 +1066,12 @@ impl MmapMut {
     ///
     /// If the memory map is file-backed, the file must have been opened with execute permissions.
     ///
+    /// On systems with separate instructions and data caches (a category that includes many ARM
+    /// chips), a platform-specific call may be needed to ensure that the changes are visible to the
+    /// execution unit (e.g. when using this function to implement a JIT compiler).  For more
+    /// details, see [this ARM write-up](https://community.arm.com/arm-community-blogs/b/architectures-and-processors-blog/posts/caches-and-self-modifying-code)
+    /// or the `man` page for [`sys_icache_invalidate`](https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/sys_icache_invalidate.3.html).
+    ///
     /// # Errors
     ///
     /// This method returns an error when the underlying system call fails, which can happen for a
@@ -985,7 +1086,35 @@ impl MmapMut {
     /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
     #[cfg(unix)]
     pub fn advise(&self, advice: Advice) -> Result<()> {
-        self.inner.advise(advice)
+        self.inner.advise(advice, 0, self.inner.len())
+    }
+
+    /// Advise OS how this range of memory map will be accessed.
+    ///
+    /// The offset and length must be in the bounds of the memory map.
+    ///
+    /// Only supported on Unix.
+    ///
+    /// See [madvise()](https://man7.org/linux/man-pages/man2/madvise.2.html) map page.
+    #[cfg(unix)]
+    pub fn advise_range(&self, advice: Advice, offset: usize, len: usize) -> Result<()> {
+        self.inner.advise(advice, offset, len)
+    }
+
+    /// Lock the whole memory map into RAM. Only supported on Unix.
+    ///
+    /// See [mlock()](https://man7.org/linux/man-pages/man2/mlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn lock(&mut self) -> Result<()> {
+        self.inner.lock()
+    }
+
+    /// Unlock the whole memory map. Only supported on Unix.
+    ///
+    /// See [munlock()](https://man7.org/linux/man-pages/man2/munlock.2.html) map page.
+    #[cfg(unix)]
+    pub fn unlock(&mut self) -> Result<()> {
+        self.inner.unlock()
     }
 }
 
@@ -1155,6 +1284,17 @@ mod test {
     #[test]
     fn map_anon_zero_len() {
         assert!(MmapOptions::new().map_anon().unwrap().is_empty())
+    }
+
+    #[test]
+    #[cfg(target_pointer_width = "32")]
+    fn map_anon_len_overflow() {
+        let res = MmapMut::map_anon(0x80000000);
+
+        assert_eq!(
+            res.unwrap_err().to_string(),
+            "memory map length overflows isize"
+        );
     }
 
     #[test]
@@ -1333,7 +1473,6 @@ mod test {
 
     #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
     fn jit_x86(mut mmap: MmapMut) {
-        use std::mem;
         mmap[0] = 0xB8; // mov eax, 0xAB
         mmap[1] = 0xAB;
         mmap[2] = 0x00;
@@ -1343,7 +1482,7 @@ mod test {
 
         let mmap = mmap.make_exec().expect("make_exec");
 
-        let jitfn: extern "C" fn() -> u8 = unsafe { mem::transmute(mmap.as_ptr()) };
+        let jitfn: extern "C" fn() -> u8 = unsafe { std::mem::transmute(mmap.as_ptr()) };
         assert_eq!(jitfn(), 0xab);
     }
 
@@ -1542,6 +1681,9 @@ mod test {
         // check that the mmap is empty
         assert_eq!(&zeros[..], &mmap[..]);
 
+        mmap.advise_range(Advice::Sequential, 0, mmap.len())
+            .expect("mmap advising should be supported on unix");
+
         // write values into the mmap
         (&mut mmap[..]).write_all(&incr[..]).unwrap();
 
@@ -1556,5 +1698,57 @@ mod test {
 
         // read values back
         assert_eq!(&incr[..], &mmap[..]);
+    }
+
+    /// Returns true if a non-zero amount of memory is locked.
+    #[cfg(target_os = "linux")]
+    fn is_locked() -> bool {
+        let status = &std::fs::read_to_string("/proc/self/status")
+            .expect("/proc/self/status should be available");
+        for line in status.lines() {
+            if line.starts_with("VmLck:") {
+                let numbers = line.replace(|c: char| !c.is_ascii_digit(), "");
+                return numbers != "0";
+            }
+        }
+        panic!("cannot get VmLck information")
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn lock() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let path = tempdir.path().join("mmap_lock");
+
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .open(&path)
+            .unwrap();
+        file.set_len(128).unwrap();
+
+        let mut mmap = unsafe { Mmap::map(&file).unwrap() };
+        #[cfg(target_os = "linux")]
+        assert!(!is_locked());
+
+        mmap.lock().expect("mmap lock should be supported on unix");
+        #[cfg(target_os = "linux")]
+        assert!(is_locked());
+
+        mmap.lock()
+            .expect("mmap lock again should not cause problems");
+        #[cfg(target_os = "linux")]
+        assert!(is_locked());
+
+        mmap.unlock()
+            .expect("mmap unlock should be supported on unix");
+        #[cfg(target_os = "linux")]
+        assert!(!is_locked());
+
+        mmap.unlock()
+            .expect("mmap unlock again should not cause problems");
+        #[cfg(target_os = "linux")]
+        assert!(!is_locked());
     }
 }

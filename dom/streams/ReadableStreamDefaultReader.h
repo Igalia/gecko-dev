@@ -51,7 +51,7 @@ class ReadableStreamDefaultReader final : public ReadableStreamGenericReader,
 {
  public:
   NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS_INHERITED(
       ReadableStreamDefaultReader, ReadableStreamGenericReader)
 
  public:
@@ -69,14 +69,29 @@ class ReadableStreamDefaultReader final : public ReadableStreamGenericReader,
     return nullptr;
   }
 
+  // Public functions to implement other specs
+  // https://streams.spec.whatwg.org/#other-specs-rs-create
+
+  // The following algorithms can be used on arbitrary ReadableStream instances,
+  // including ones that are created by web developers. They can all fail in
+  // various operation-specific ways, and these failures should be handled by
+  // the calling specification.
+
+  // https://streams.spec.whatwg.org/#readablestreamdefaultreader-read-a-chunk
+  MOZ_CAN_RUN_SCRIPT void ReadChunk(JSContext* aCx, ReadRequest& aRequest,
+                                    ErrorResult& aRv);
+
+  // IDL layer functions
+
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
+
+  // IDL methods
 
   static already_AddRefed<ReadableStreamDefaultReader> Constructor(
       const GlobalObject& aGlobal, ReadableStream& stream, ErrorResult& aRv);
 
-  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> Read(JSContext* aCx,
-                                                    ErrorResult& aRv);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> Read(ErrorResult& aRv);
 
   void ReleaseLock(ErrorResult& aRv);
 
@@ -85,6 +100,8 @@ class ReadableStreamDefaultReader final : public ReadableStreamGenericReader,
  private:
   LinkedList<RefPtr<ReadRequest>> mReadRequests = {};
 };
+
+namespace streams_abstract {
 
 void SetUpReadableStreamDefaultReader(ReadableStreamDefaultReader* aReader,
                                       ReadableStream* aStream,
@@ -97,6 +114,8 @@ void ReadableStreamDefaultReaderErrorReadRequests(
 void ReadableStreamDefaultReaderRelease(JSContext* aCx,
                                         ReadableStreamDefaultReader* aReader,
                                         ErrorResult& aRv);
+
+}  // namespace streams_abstract
 
 }  // namespace mozilla::dom
 

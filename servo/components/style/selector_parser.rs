@@ -11,7 +11,7 @@ use crate::values::serialize_atom_identifier;
 use crate::Atom;
 use cssparser::{Parser as CssParser, ParserInput};
 use dom::ElementState;
-use selectors::parser::SelectorList;
+use selectors::parser::{SelectorList, ParseRelative};
 use std::fmt::{self, Debug, Write};
 use style_traits::{CssWriter, ParseError, ToCss};
 
@@ -47,6 +47,8 @@ pub struct SelectorParser<'a> {
     /// The extra URL data of the stylesheet, which is used to look up
     /// whether we are parsing a chrome:// URL style sheet.
     pub url_data: &'a UrlExtraData,
+    /// Whether we're parsing selectors for `@supports`
+    pub for_supports_rule: bool,
 }
 
 impl<'a> SelectorParser<'a> {
@@ -63,9 +65,10 @@ impl<'a> SelectorParser<'a> {
             stylesheet_origin: Origin::Author,
             namespaces: &namespaces,
             url_data,
+            for_supports_rule: false,
         };
         let mut input = ParserInput::new(input);
-        SelectorList::parse(&parser, &mut CssParser::new(&mut input))
+        SelectorList::parse(&parser, &mut CssParser::new(&mut input), ParseRelative::No)
     }
 
     /// Whether we're parsing selectors in a user-agent stylesheet.
@@ -126,7 +129,7 @@ where
     T: Debug,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.write_str("[")?;
+        f.write_char('[')?;
         let mut first = true;
         for entry in self.entries.iter() {
             if !first {
@@ -135,7 +138,7 @@ where
             first = false;
             entry.fmt(f)?;
         }
-        f.write_str("]")
+        f.write_char(']')
     }
 }
 

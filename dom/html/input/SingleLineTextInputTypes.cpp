@@ -22,7 +22,7 @@ using namespace mozilla::dom;
 
 bool SingleLineTextInputTypeBase::IsMutable() const {
   return !mInputElement->IsDisabled() &&
-         !mInputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::readonly);
+         !mInputElement->HasAttr(nsGkAtoms::readonly);
 }
 
 bool SingleLineTextInputTypeBase::IsTooLong() const {
@@ -69,7 +69,7 @@ Maybe<bool> SingleLineTextInputTypeBase::HasPatternMismatch() const {
   }
 
   nsAutoString pattern;
-  if (!mInputElement->GetAttr(kNameSpaceID_None, nsGkAtoms::pattern, pattern)) {
+  if (!mInputElement->GetAttr(nsGkAtoms::pattern, pattern)) {
     return Some(false);
   }
 
@@ -81,7 +81,9 @@ Maybe<bool> SingleLineTextInputTypeBase::HasPatternMismatch() const {
   }
 
   Document* doc = mInputElement->OwnerDoc();
-  Maybe<bool> result = nsContentUtils::IsPatternMatching(value, pattern, doc);
+  Maybe<bool> result = nsContentUtils::IsPatternMatching(
+      value, std::move(pattern), doc,
+      mInputElement->HasAttr(nsGkAtoms::multiple));
   return result ? Some(!*result) : Nothing();
 }
 
@@ -129,7 +131,7 @@ bool EmailInputType::HasTypeMismatch() const {
     return false;
   }
 
-  return mInputElement->HasAttr(kNameSpaceID_None, nsGkAtoms::multiple)
+  return mInputElement->HasAttr(nsGkAtoms::multiple)
              ? !IsValidEmailAddressList(value)
              : !IsValidEmailAddress(value);
 }
@@ -269,6 +271,17 @@ bool EmailInputType::PunycodeEncodeEmailAddress(const nsAString& aEmail,
     if (NS_FAILED(idnSrv->ConvertUTF8toACE(domain, domainACE))) {
       return false;
     }
+
+    // Bug 1788115 removed the 63 character limit from the
+    // IDNService::ConvertUTF8toACE so we check for that limit here as required
+    // by the spec: https://html.spec.whatwg.org/#valid-e-mail-address
+    nsCCharSeparatedTokenizer tokenizer(domainACE, '.');
+    while (tokenizer.hasMoreTokens()) {
+      if (tokenizer.nextToken().Length() > 63) {
+        return false;
+      }
+    }
+
     value.Replace(indexOfDomain, domain.Length(), domainACE);
   }
 

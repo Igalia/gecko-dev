@@ -88,12 +88,12 @@ already_AddRefed<MediaByteBuffer> RemoteArrayOfByteBuffer::MediaByteBufferAt(
     size_t aIndex) const {
   MOZ_ASSERT(aIndex < Count());
   const OffsetEntry& entry = mOffsets[aIndex];
-  if (!mBuffers || !Get<1>(entry)) {
+  if (!mBuffers || !std::get<1>(entry)) {
     // It's an empty one.
     return nullptr;
   }
-  size_t entrySize = Get<1>(entry);
-  if (!Check(Get<0>(entry), entrySize)) {
+  size_t entrySize = std::get<1>(entry);
+  if (!Check(std::get<0>(entry), entrySize)) {
     // This Shmem is corrupted and can't contain the data we are about to
     // retrieve. We return an empty array instead of asserting to allow for
     // recovery.
@@ -101,7 +101,7 @@ already_AddRefed<MediaByteBuffer> RemoteArrayOfByteBuffer::MediaByteBufferAt(
   }
   RefPtr<MediaByteBuffer> buffer = new MediaByteBuffer(entrySize);
   buffer->SetLength(entrySize);
-  memcpy(buffer->Elements(), mBuffers->get<uint8_t>() + Get<0>(entry),
+  memcpy(buffer->Elements(), mBuffers->get<uint8_t>() + std::get<0>(entry),
          entrySize);
   return buffer.forget();
 }
@@ -147,11 +147,19 @@ bool ArrayOfRemoteMediaRawData::Fill(
         MediaDataIPDL(entry->mOffset, entry->mTime, entry->mTimecode,
                       entry->mDuration, entry->mKeyframe),
         entry->mEOS, height, entry->mDiscardPadding,
-        entry->mOriginalPresentationWindow});
+        entry->mOriginalPresentationWindow,
+        entry->mCrypto.IsEncrypted() && entry->mShouldCopyCryptoToRemoteRawData
+            ? Some(CryptoInfo{
+                  entry->mCrypto.mCryptoScheme,
+                  entry->mCrypto.mIV,
+                  entry->mCrypto.mKeyId,
+                  entry->mCrypto.mPlainSizes,
+                  entry->mCrypto.mEncryptedSizes,
+              })
+            : Nothing()});
   }
-  PerformanceRecorder perfRecorder(PerformanceRecorder::Stage::CopyDemuxedData,
-                                   height);
-  perfRecorder.Start();
+  PerformanceRecorder<PlaybackStage> perfRecorder(MediaStage::CopyDemuxedData,
+                                                  height);
   mBuffers = RemoteArrayOfByteBuffer(dataBuffers, aAllocator);
   if (!mBuffers.IsValid()) {
     return false;
@@ -164,7 +172,7 @@ bool ArrayOfRemoteMediaRawData::Fill(
   if (!mExtraDatas.IsValid()) {
     return false;
   }
-  perfRecorder.End();
+  perfRecorder.Record();
   return true;
 }
 
@@ -179,9 +187,8 @@ already_AddRefed<MediaRawData> ArrayOfRemoteMediaRawData::ElementAt(
                             mExtraDatas.Count() == Count(),
                         "Something ain't right here");
   const auto& sample = mSamples[aIndex];
-  PerformanceRecorder perfRecorder(PerformanceRecorder::Stage::CopyDemuxedData,
-                                   sample.mHeight);
-  perfRecorder.Start();
+  PerformanceRecorder<PlaybackStage> perfRecorder(MediaStage::CopyDemuxedData,
+                                                  sample.mHeight);
   AlignedByteBuffer data = mBuffers.AlignedBufferAt<uint8_t>(aIndex);
   if (mBuffers.SizeAt(aIndex) && !data) {
     // OOM
@@ -206,7 +213,16 @@ already_AddRefed<MediaRawData> ArrayOfRemoteMediaRawData::ElementAt(
   rawData->mEOS = sample.mEOS;
   rawData->mDiscardPadding = sample.mDiscardPadding;
   rawData->mExtraData = mExtraDatas.MediaByteBufferAt(aIndex);
-  perfRecorder.End();
+  if (sample.mCryptoConfig) {
+    CryptoSample& cypto = rawData->GetWritableCrypto();
+    cypto.mCryptoScheme = sample.mCryptoConfig->mEncryptionScheme();
+    cypto.mIV = std::move(sample.mCryptoConfig->mIV());
+    cypto.mIVSize = cypto.mIV.Length();
+    cypto.mKeyId = std::move(sample.mCryptoConfig->mKeyId());
+    cypto.mPlainSizes = std::move(sample.mCryptoConfig->mClearBytes());
+    cypto.mEncryptedSizes = std::move(sample.mCryptoConfig->mCipherBytes());
+  }
+  perfRecorder.Record();
   return rawData.forget();
 }
 
@@ -242,6 +258,7 @@ ipc::IPDLParamTraits<ArrayOfRemoteMediaRawData::RemoteMediaRawData>::Write(
   WriteIPDLParam(aWriter, aActor, aVar.mHeight);
   WriteIPDLParam(aWriter, aActor, aVar.mDiscardPadding);
   WriteIPDLParam(aWriter, aActor, aVar.mOriginalPresentationWindow);
+  WriteIPDLParam(aWriter, aActor, aVar.mCryptoConfig);
 }
 
 /* static */ bool
@@ -252,7 +269,8 @@ ipc::IPDLParamTraits<ArrayOfRemoteMediaRawData::RemoteMediaRawData>::Read(
          ReadIPDLParam(aReader, aActor, &aVar->mEOS) &&
          ReadIPDLParam(aReader, aActor, &aVar->mHeight) &&
          ReadIPDLParam(aReader, aActor, &aVar->mDiscardPadding) &&
-         ReadIPDLParam(aReader, aActor, &aVar->mOriginalPresentationWindow);
+         ReadIPDLParam(aReader, aActor, &aVar->mOriginalPresentationWindow) &&
+         ReadIPDLParam(aReader, aActor, &aVar->mCryptoConfig);
 };
 
 bool ArrayOfRemoteAudioData::Fill(

@@ -75,6 +75,20 @@ class IMEContentObserver final : public nsStubMutationObserver,
   HandleQueryContentEvent(WidgetQueryContentEvent* aEvent);
 
   /**
+   * Handle eSetSelection event if and only if aEvent changes selection offset
+   * or length.  Doing nothing when selection range is same is important to
+   * honer users' intention or web app's intention because ContentEventHandler
+   * does not support to put range boundaries to arbitrary side of element
+   * boundaries.  E.g., `<b>bold[]</b> normal` vs. `<b>bold</b>[] normal`.
+   * Note that this compares given range with selection cache which has been
+   * notified IME via widget.  Therefore, the caller needs to guarantee that
+   * pending notifications should've been flushed.  If you test this, you need
+   * to wait 2 animation frames before sending eSetSelection event.
+   */
+  MOZ_CAN_RUN_SCRIPT nsresult MaybeHandleSelectionEvent(
+      nsPresContext* aPresContext, WidgetSelectionEvent* aEvent);
+
+  /**
    * Init() initializes the instance, i.e., retrieving necessary objects and
    * starts to observe something.
    * Be aware, callers of this method need to guarantee that the instance
@@ -168,6 +182,15 @@ class IMEContentObserver final : public nsStubMutationObserver,
   void OnEditActionHandled();
   void BeforeEditAction();
   void CancelEditAction();
+
+  /**
+   * Called when text control value is changed while this is not observing
+   * mRootElement.  This is typically there is no frame for the editor (i.e.,
+   * no proper anonymous <div> element for the editor yet) or the TextEditor
+   * has not been created (i.e., IMEStateManager has not been reinitialized
+   * this instance with new anonymous <div> element yet).
+   */
+  void OnTextControlValueChangedWhileNotObservable(const nsAString& aNewValue);
 
   dom::Element* GetObservingElement() const {
     return mIsObserving ? mRootElement.get() : nullptr;
@@ -380,8 +403,12 @@ class IMEContentObserver final : public nsStubMutationObserver,
    */
   class DocumentObserver final : public nsStubDocumentObserver {
    public:
+    DocumentObserver() = delete;
     explicit DocumentObserver(IMEContentObserver& aIMEContentObserver)
-        : mIMEContentObserver(&aIMEContentObserver), mDocumentUpdating(0) {}
+        : mIMEContentObserver(&aIMEContentObserver), mDocumentUpdating(0) {
+      SetEnabledCallbacks(nsIMutationObserver::kBeginUpdate |
+                          nsIMutationObserver::kEndUpdate);
+    }
 
     NS_DECL_CYCLE_COLLECTION_CLASS(DocumentObserver)
     NS_DECL_CYCLE_COLLECTING_ISUPPORTS
@@ -397,7 +424,6 @@ class IMEContentObserver final : public nsStubMutationObserver,
     bool IsUpdating() const { return mDocumentUpdating != 0; }
 
    private:
-    DocumentObserver() = delete;
     virtual ~DocumentObserver() { Destroy(); }
 
     RefPtr<IMEContentObserver> mIMEContentObserver;
@@ -483,8 +509,12 @@ class IMEContentObserver final : public nsStubMutationObserver,
   EventStateManager* mESM;
 
   const IMENotificationRequests* mIMENotificationRequests;
-  uint32_t mSuppressNotifications;
-  int64_t mPreCharacterDataChangeLength;
+  int64_t mPreCharacterDataChangeLength = -1;
+  uint32_t mSuppressNotifications = 0;
+
+  // If the observing editor is a text control's one, this is set to the value
+  // length.
+  uint32_t mTextControlValueLength = 0;
 
   // mSendingNotification is a notification which is now sending from
   // IMENotificationSender.  When the value is NOTIFY_IME_OF_NOTHING, it's

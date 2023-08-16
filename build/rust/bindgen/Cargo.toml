@@ -1,6 +1,6 @@
 [package]
 name = "bindgen"
-version = "0.56.999"
+version = "0.64.999"
 edition = "2018"
 license = "BSD-3-Clause"
 
@@ -8,11 +8,10 @@ license = "BSD-3-Clause"
 path = "lib.rs"
 
 [dependencies.bindgen]
-version = "0.59"
+version = "0.66.0"
 default-features = false
 
 [features]
-default = ["bindgen/default"]
 logging = ["bindgen/logging"]
 runtime = ["bindgen/runtime"]
 static = ["bindgen/static"]

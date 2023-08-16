@@ -6,14 +6,10 @@
 
 "use strict";
 
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  ExtensionCommon: "resource://gre/modules/ExtensionCommon.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 // Minimum time between two resizes.
@@ -44,9 +40,6 @@ const BrowserListener = {
     if (allowScriptsToClose) {
       content.windowUtils.allowScriptsToClose();
     }
-
-    // Force external links to open in tabs.
-    docShell.isAppTab = true;
 
     if (this.blockParser) {
       this.blockingPromise = new Promise(resolve => {
@@ -255,21 +248,18 @@ const BrowserListener = {
       this.oldBackground = background;
 
       // Adjust the size of the browser based on its content's preferred size.
-      let { contentViewer } = docShell;
-      let ratio = content.devicePixelRatio;
-
       let w = {},
         h = {};
-      contentViewer.getContentSizeConstrained(
-        this.maxWidth * ratio,
-        this.maxHeight * ratio,
+      docShell.contentViewer.getContentSize(
+        this.maxWidth,
+        this.maxHeight,
+        /* prefWidth = */ 0,
         w,
         h
       );
 
-      let width = Math.ceil((w.value * zoom) / ratio);
-      let height = Math.ceil((h.value * zoom) / ratio);
-
+      let width = Math.ceil(w.value * zoom);
+      let height = Math.ceil(h.value * zoom);
       result = { width, height, detail };
     }
 

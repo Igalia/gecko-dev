@@ -13,7 +13,7 @@ const SUGGESTIONS_ENGINE_NAME = "searchSuggestionEngine.xml";
 
 let engine;
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.suggest.searches", true],
@@ -21,17 +21,15 @@ add_setup(async function() {
       ["browser.urlbar.shortcuts.quickactions", false],
     ],
   });
-  engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + SUGGESTIONS_ENGINE_NAME
-  );
-  let oldDefaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
+  engine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + SUGGESTIONS_ENGINE_NAME,
+    setAsDefault: true,
+  });
   await Services.search.moveEngine(engine, 0);
 
   await PlacesUtils.history.clear();
 
   registerCleanupFunction(async () => {
-    await Services.search.setDefault(oldDefaultEngine);
     await PlacesUtils.history.clear();
   });
 });
@@ -168,15 +166,12 @@ add_task(async function localOneOff_withVisit() {
   Assert.ok(UrlbarTestUtils.getResultCount(window) > 1, "Sanity check results");
   let oneOffButtons = UrlbarTestUtils.getOneOffSearchButtons(window);
 
-  let [
-    actionHistory,
-    actionTabs,
-    actionBookmarks,
-  ] = await document.l10n.formatValues([
-    { id: "urlbar-result-action-search-history" },
-    { id: "urlbar-result-action-search-tabs" },
-    { id: "urlbar-result-action-search-bookmarks" },
-  ]);
+  let [actionHistory, actionTabs, actionBookmarks] =
+    await document.l10n.formatValues([
+      { id: "urlbar-result-action-search-history" },
+      { id: "urlbar-result-action-search-tabs" },
+      { id: "urlbar-result-action-search-bookmarks" },
+    ]);
 
   info("Alt UP to select the history one-off.");
   EventUtils.synthesizeKey("KEY_ArrowUp", { altKey: true });

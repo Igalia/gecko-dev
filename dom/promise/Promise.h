@@ -68,12 +68,22 @@ class Promise : public SupportsWeakPtr {
       PropagateUserInteraction aPropagateUserInteraction =
           eDontPropagateUserInteraction);
 
+  // Same as Promise::Create but never throws, but instead:
+  // 1. Causes crash on OOM (as nearly every other web APIs do)
+  // 2. Silently creates a no-op Promise if the JS context is shut down
+  // This can be useful for implementations that produce promises but do not
+  // care whether the current global is alive to consume them.
+  // Note that PromiseObj() can return a nullptr if created this way.
+  static already_AddRefed<Promise> CreateInfallible(
+      nsIGlobalObject* aGlobal,
+      PropagateUserInteraction aPropagateUserInteraction =
+          eDontPropagateUserInteraction);
+
   // Reports a rejected Promise by sending an error report.
   static void ReportRejectedPromise(JSContext* aCx,
                                     JS::Handle<JSObject*> aPromise);
 
-  typedef void (Promise::*MaybeFunc)(JSContext* aCx,
-                                     JS::Handle<JS::Value> aValue);
+  using MaybeFunc = void (Promise::*)(JSContext*, JS::Handle<JS::Value>);
 
   // Helpers for using Promise from C++.
   // Most DOM objects are handled already.  To add a new type T, add a
@@ -212,6 +222,27 @@ class Promise : public SupportsWeakPtr {
                                           JS::Handle<JS::Value> aValue,
                                           ErrorResult& aRv);
 
+  template <typename T>
+  static already_AddRefed<Promise> Reject(nsIGlobalObject* aGlobal, T&& aValue,
+                                          ErrorResult& aError) {
+    AutoJSAPI jsapi;
+    if (!jsapi.Init(aGlobal)) {
+      aError.Throw(NS_ERROR_UNEXPECTED);
+      return nullptr;
+    }
+
+    JSContext* cx = jsapi.cx();
+    JS::Rooted<JS::Value> val(cx);
+    if (!ToJSValue(cx, std::forward<T>(aValue), &val)) {
+      return Promise::RejectWithExceptionFromContext(aGlobal, cx, aError);
+    }
+
+    return Reject(aGlobal, cx, val, aError);
+  }
+
+  static already_AddRefed<Promise> RejectWithExceptionFromContext(
+      nsIGlobalObject* aGlobal, JSContext* aCx, ErrorResult& aError);
+
   // Do the equivalent of Promise.all in the current compartment of aCx.  Errors
   // are reported on the ErrorResult; if aRv comes back !Failed(), this function
   // MUST return a non-null value.
@@ -275,9 +306,14 @@ class Promise : public SupportsWeakPtr {
   ThenResult<Callback, Args...> CatchWithCycleCollectedArgs(
       Callback&& aOnReject, Args&&... aArgs);
 
-  // Same as ThenCycleCollectedArgs but the arguments are gathered into an
-  // `std::tuple` and there is an additional `std::tuple` for JS arguments after
-  // that.
+  // Same as Then[Catch]CycleCollectedArgs but the arguments are gathered into
+  // an `std::tuple` and there is an additional `std::tuple` for JS arguments
+  // after that.
+  template <typename ResolveCallback, typename RejectCallback,
+            typename ArgsTuple, typename JSArgsTuple>
+  Result<RefPtr<Promise>, nsresult> ThenCatchWithCycleCollectedArgsJS(
+      ResolveCallback&& aOnResolve, RejectCallback&& aOnReject,
+      ArgsTuple&& aArgs, JSArgsTuple&& aJSArgs);
   template <typename Callback, typename ArgsTuple, typename JSArgsTuple>
   Result<RefPtr<Promise>, nsresult> ThenWithCycleCollectedArgsJS(
       Callback&& aOnResolve, ArgsTuple&& aArgs, JSArgsTuple&& aJSArgs);
@@ -293,6 +329,8 @@ class Promise : public SupportsWeakPtr {
                                           RejectCallback&& aOnReject,
                                           Args&&... aArgs);
 
+  // This can be null if this promise is made after the corresponding JSContext
+  // is dead.
   JSObject* PromiseObj() const { return mPromiseObj; }
 
   void AppendNativeHandler(PromiseNativeHandler* aRunnable);
@@ -331,7 +369,19 @@ class Promise : public SupportsWeakPtr {
   static already_AddRefed<Promise> CreateRejectedWithErrorResult(
       nsIGlobalObject* aGlobal, ErrorResult& aRejectionError);
 
+  // Converts an integer or DOMException to nsresult, or otherwise returns
+  // NS_ERROR_DOM_NOT_NUMBER_ERR (which is exclusive for this function).
+  // Can be used to convert JS::Value passed to rejection handler so that native
+  // error handlers e.g. MozPromise can consume it.
+  static nsresult TryExtractNSResultFromRejectionValue(
+      JS::Handle<JS::Value> aValue);
+
  protected:
+  template <typename ResolveCallback, typename RejectCallback, typename... Args,
+            typename... JSArgs>
+  Result<RefPtr<Promise>, nsresult> ThenCatchWithCycleCollectedArgsJSImpl(
+      Maybe<ResolveCallback>&& aOnResolve, Maybe<RejectCallback>&& aOnReject,
+      std::tuple<Args...>&& aArgs, std::tuple<JSArgs...>&& aJSArgs);
   template <typename ResolveCallback, typename RejectCallback, typename... Args>
   ThenResult<ResolveCallback, Args...> ThenCatchWithCycleCollectedArgsImpl(
       Maybe<ResolveCallback>&& aOnResolve, Maybe<RejectCallback>&& aOnReject,

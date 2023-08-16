@@ -60,10 +60,10 @@ class ExtensionRuntime final : public nsISupports,
   ExtensionEventManager* OnMessageExternal();
 
   void GetLastError(JSContext* aCx, JS::MutableHandle<JS::Value> aRetval);
-  void GetId(DOMString& aRetval);
+  void GetId(dom::DOMString& aRetval);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(ExtensionRuntime)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(ExtensionRuntime)
 
  private:
   ~ExtensionRuntime() = default;

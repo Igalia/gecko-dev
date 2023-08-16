@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -17,6 +17,8 @@ TemporalHelpers.assertPlainDateTime(
   1976, 11, "M11", 18, 15, 23, 20, 123, 456, 789,
   "PlainDateTime is copied"
 );
+
+assert.sameValue(result.getISOFields().calendar, orig.getISOFields().calendar, "Calendar is copied");
 
 assert.notSameValue(
   result,

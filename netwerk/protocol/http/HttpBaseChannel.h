@@ -10,10 +10,12 @@
 
 #include <utility>
 
+#include "OpaqueResponseUtils.h"
 #include "mozilla/AtomicBitfields.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/dom/DOMTypes.h"
 #include "mozilla/net/DNS.h"
+#include "mozilla/net/NeckoChannelParams.h"
 #include "mozilla/net/NeckoCommon.h"
 #include "mozilla/net/PrivateBrowsingChannel.h"
 #include "nsCOMPtr.h"
@@ -36,9 +38,11 @@
 #include "nsIThrottledInputChannel.h"
 #include "nsITimedChannel.h"
 #include "nsITraceableChannel.h"
+#include "nsITransportSecurityInfo.h"
 #include "nsIURI.h"
 #include "nsIUploadChannel2.h"
 #include "nsStringEnumerator.h"
+#include "nsStringFwd.h"
 #include "nsTArray.h"
 #include "nsThreadUtils.h"
 
@@ -65,7 +69,7 @@ class LogCollector;
 namespace net {
 extern mozilla::LazyLogModule gHttpLog;
 
-class OpaqueResponseBlockingInfo;
+class OpaqueResponseBlocker;
 class PreferredAlternativeDataTypeParams;
 
 enum CacheDisposition : uint8_t {
@@ -76,6 +80,10 @@ enum CacheDisposition : uint8_t {
   kCacheMissed = 4,
   kCacheUnknown = 5
 };
+
+// These need to be kept in sync with
+// "browser.opaqueResponseBlocking.filterFetchResponse"
+enum class OpaqueResponseFilterFetch { Never, AllowedByORB, BlockedByORB, All };
 
 /*
  * This class is a partial implementation of nsIHttpChannel.  It contains code
@@ -232,8 +240,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD SetChannelId(uint64_t aChannelId) override;
   NS_IMETHOD GetTopLevelContentWindowId(uint64_t* aContentWindowId) override;
   NS_IMETHOD SetTopLevelContentWindowId(uint64_t aContentWindowId) override;
-  NS_IMETHOD GetTopBrowsingContextId(uint64_t* aId) override;
-  NS_IMETHOD SetTopBrowsingContextId(uint64_t aId) override;
+  NS_IMETHOD GetBrowserId(uint64_t* aId) override;
+  NS_IMETHOD SetBrowserId(uint64_t aId) override;
+  NS_IMETHOD GetIsProxyUsed(bool* aIsProxyUsed) override;
 
   using nsIClassifiedChannel::IsThirdPartyTrackingResource;
 
@@ -275,6 +284,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD GetIsTRRServiceChannel(bool* aTRR) override;
   NS_IMETHOD SetIsTRRServiceChannel(bool aTRR) override;
   NS_IMETHOD GetIsResolvedByTRR(bool* aResolvedByTRR) override;
+  NS_IMETHOD GetEffectiveTRRMode(
+      nsIRequest::TRRMode* aEffectiveTRRMode) override;
+  NS_IMETHOD GetTrrSkipReason(nsITRRSkipReason::value* aTrrSkipReason) override;
   NS_IMETHOD GetIsLoadedBySocketProcess(bool* aResult) override;
   NS_IMETHOD GetIsOCSP(bool* value) override;
   NS_IMETHOD SetIsOCSP(bool value) override;
@@ -319,8 +331,8 @@ class HttpBaseChannel : public nsHashPropertyBag,
   NS_IMETHOD GetNavigationStartTimeStamp(TimeStamp* aTimeStamp) override;
   NS_IMETHOD SetNavigationStartTimeStamp(TimeStamp aTimeStamp) override;
   NS_IMETHOD CancelByURLClassifier(nsresult aErrorCode) override;
-  virtual void SetIPv4Disabled(void) override;
-  virtual void SetIPv6Disabled(void) override;
+  NS_IMETHOD SetIPv4Disabled(void) override;
+  NS_IMETHOD SetIPv6Disabled(void) override;
   NS_IMETHOD GetCrossOriginOpenerPolicy(
       nsILoadInfo::CrossOriginOpenerPolicy* aCrossOriginOpenerPolicy) override;
   NS_IMETHOD ComputeCrossOriginOpenerPolicy(
@@ -339,6 +351,21 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void DoDiagnosticAssertWhenOnStopNotCalledOnDestroy() override;
 
   NS_IMETHOD SetWaitForHTTPSSVCRecord() override;
+
+  NS_IMETHOD SetEarlyHintPreloaderId(uint64_t aEarlyHintPreloaderId) override;
+  NS_IMETHOD GetEarlyHintPreloaderId(uint64_t* aEarlyHintPreloaderId) override;
+
+  NS_IMETHOD SetEarlyHintLinkType(uint32_t aEarlyHintLinkType) override;
+  NS_IMETHOD GetEarlyHintLinkType(uint32_t* aEarlyHintLinkType) override;
+
+  NS_IMETHOD SetClassicScriptHintCharset(
+      const nsAString& aClassicScriptHintCharset) override;
+  NS_IMETHOD GetClassicScriptHintCharset(
+      nsAString& aClassicScriptHintCharset) override;
+
+  NS_IMETHOD SetDocumentCharacterSet(
+      const nsAString& aDocumentCharacterSet) override;
+  NS_IMETHOD GetDocumentCharacterSet(nsAString& aDocumentCharacterSet) override;
 
   virtual void SetConnectionInfo(
       mozilla::net::nsHttpConnectionInfo* aCI) override;
@@ -428,7 +455,11 @@ class HttpBaseChannel : public nsHashPropertyBag,
   const NetAddr& GetSelfAddr() { return mSelfAddr; }
   const NetAddr& GetPeerAddr() { return mPeerAddr; }
 
-  [[nodiscard]] nsresult OverrideSecurityInfo(nsISupports* aSecurityInfo);
+  [[nodiscard]] nsresult OverrideSecurityInfo(
+      nsITransportSecurityInfo* aSecurityInfo);
+
+  void LogORBError(const nsAString& aReason,
+                   const OpaqueResponseBlockedTelemetryReason aTelemetryReason);
 
  public: /* Necko internal use only... */
   int64_t GetAltDataLength() { return mAltDataLength; }
@@ -501,7 +532,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
     Maybe<nsCString> contentType;
     Maybe<nsCString> contentLength;
 
-    dom::ReplacementChannelConfigInit Serialize(dom::ContentParent* aParent);
+    dom::ReplacementChannelConfigInit Serialize();
   };
 
   enum class ReplacementReason {
@@ -530,6 +561,13 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // https://fetch.spec.whatwg.org/#concept-request-tainted-origin
   bool HasRedirectTaintedOrigin() { return LoadTaintedOriginFlag(); }
 
+  bool ChannelBlockedByOpaqueResponse() const {
+    return mChannelBlockedByOpaqueResponse;
+  }
+  bool CachedOpaqueResponseBlockingPref() const {
+    return mCachedOpaqueResponseBlockingPref;
+  }
+
  protected:
   nsresult GetTopWindowURI(nsIURI* aURIBeingLoaded, nsIURI** aTopWindowURI);
 
@@ -549,7 +587,6 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // was fired.
   void NotifySetCookie(const nsACString& aCookie);
 
-  mozilla::dom::PerformanceStorage* GetPerformanceStorage();
   void MaybeReportTimingData();
   nsIURI* GetReferringPage();
   nsPIDOMWindowInner* GetInnerDOMWindow();
@@ -557,6 +594,12 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void AddCookiesToRequest();
   [[nodiscard]] virtual nsresult SetupReplacementChannel(
       nsIURI*, nsIChannel*, bool preserveMethod, uint32_t redirectFlags);
+
+  bool IsNewChannelSameOrigin(nsIChannel* aNewChannel);
+
+  // WHATWG Fetch Standard 4.4. HTTP-redirect fetch, step 10
+  virtual bool ShouldTaintReplacementChannelOrigin(nsIChannel* aNewChannel,
+                                                   uint32_t aRedirectFlags);
 
   // bundle calling OMR observers and marking flag into one function
   inline void CallOnModifyRequestObservers() {
@@ -610,14 +653,30 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
   nsresult ValidateMIMEType();
 
-  bool EnsureOpaqueResponseIsAllowed();
+  bool ShouldFilterOpaqueResponse(OpaqueResponseFilterFetch aFilterType) const;
+  bool ShouldBlockOpaqueResponse() const;
+  OpaqueResponse BlockOrFilterOpaqueResponse(
+      OpaqueResponseBlocker* aORB, const nsAString& aReason,
+      const OpaqueResponseBlockedTelemetryReason aTelemetryReason,
+      const char* aFormat, ...);
 
-  Result<bool, nsresult> EnsureOpaqueResponseIsAllowedAfterSniff();
+  OpaqueResponse PerformOpaqueResponseSafelistCheckBeforeSniff();
 
+  OpaqueResponse PerformOpaqueResponseSafelistCheckAfterSniff(
+      const nsACString& aContentType, bool aNoSniff);
+
+  bool NeedOpaqueResponseAllowedCheckAfterSniff() const;
+  void BlockOpaqueResponseAfterSniff(
+      const nsAString& aReason,
+      const OpaqueResponseBlockedTelemetryReason aTelemetryReason);
+  void AllowOpaqueResponseAfterSniff();
+  void SetChannelBlockedByOpaqueResponse();
   bool Http3Allowed() const;
 
+  friend class OpaqueResponseBlocker;
   friend class PrivateBrowsingChannel<HttpBaseChannel>;
   friend class InterceptFailedOnStop;
+  friend class HttpChannelParent;
 
  protected:
   // this section is for main-thread-only object
@@ -639,10 +698,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
   nsCOMPtr<nsIStreamListener> mCompressListener;
   nsCOMPtr<nsIEventTarget> mCurrentThread;
 
- private:
-  // WHATWG Fetch Standard 4.4. HTTP-redirect fetch, step 10
-  bool ShouldTaintReplacementChannelOrigin(nsIURI* aNewURI);
+  RefPtr<OpaqueResponseBlocker> mORB;
 
+ private:
   // Proxy release all members above on main thread.
   void ReleaseMainThreadOnlyReferences();
 
@@ -687,7 +745,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   UniquePtr<nsHttpHeaderArray> mResponseTrailers;
   RefPtr<nsHttpConnectionInfo> mConnectionInfo;
   nsCOMPtr<nsIProxyInfo> mProxyInfo;
-  nsCOMPtr<nsISupports> mSecurityInfo;
+  nsCOMPtr<nsITransportSecurityInfo> mSecurityInfo;
   nsCOMPtr<nsIHttpUpgradeListener> mUpgradeProtocolCallback;
   UniquePtr<nsString> mContentDispositionFilename;
   nsCOMPtr<nsIConsoleReportCollector> mReportCollector;
@@ -714,6 +772,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   TimeStamp mAsyncOpenTime;
   TimeStamp mCacheReadStart;
   TimeStamp mCacheReadEnd;
+  TimeStamp mTransactionPendingTime;
   TimeStamp mLaunchServiceWorkerStart;
   TimeStamp mLaunchServiceWorkerEnd;
   TimeStamp mDispatchFetchEventStart;
@@ -739,7 +798,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   // ID of the top-level document's inner window this channel is being
   // originated from.
   uint64_t mContentWindowId;
-  uint64_t mTopBrowsingContextId;
+  uint64_t mBrowserId;
   int64_t mAltDataLength;
   uint64_t mChannelId;
   uint64_t mReqContentLength;
@@ -758,6 +817,30 @@ class HttpBaseChannel : public nsHashPropertyBag,
   uint32_t mCaps;
 
   ClassOfService mClassOfService;
+  // This should be set the the actual TRR mode used to resolve the request.
+  // Is initially set to TRR_DEFAULT_MODE, but should be updated to the actual
+  // mode used by the request
+  nsIRequest::TRRMode mEffectiveTRRMode = nsIRequest::TRR_DEFAULT_MODE;
+  TRRSkippedReason mTRRSkipReason = TRRSkippedReason::TRR_UNSET;
+
+ public:
+  void SetEarlyHints(
+      nsTArray<mozilla::net::EarlyHintConnectArgs>&& aEarlyHints);
+  nsTArray<mozilla::net::EarlyHintConnectArgs>&& TakeEarlyHints();
+
+ protected:
+  // Storing Http 103 Early Hint preloads. The parent process is responsible to
+  // start the early hint preloads, but the http child needs to be able to look
+  // them up. They are sent via IPC and stored in this variable. This is set on
+  // main document channel
+  nsTArray<EarlyHintConnectArgs> mEarlyHints;
+  // EarlyHintRegistrar id to connect back to the preload. Set on preload
+  // channels started from the above list
+  uint64_t mEarlyHintPreloaderId = 0;
+  uint32_t mEarlyHintLinkType = 0;
+
+  nsString mClassicScriptHintCharset;
+  nsString mDocumentCharacterSet;
 
   // clang-format off
   MOZ_ATOMIC_BITFIELDS(mAtomicBitfields1, 32, (
@@ -817,7 +900,9 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
     // If true, we prefer the LOAD_FROM_CACHE flag over LOAD_BYPASS_CACHE or
     // LOAD_BYPASS_LOCAL_CACHE.
-    (uint32_t, PreferCacheLoadOverBypass, 1)
+    (uint32_t, PreferCacheLoadOverBypass, 1),
+
+    (uint32_t, IsProxyUsed, 1)
   ))
 
   // Broken up into two bitfields to avoid alignment requirements of uint64_t.
@@ -891,9 +976,12 @@ class HttpBaseChannel : public nsHashPropertyBag,
     All
   };
   SnifferCategoryType mSnifferCategoryType = SnifferCategoryType::NetContent;
+
+  // Used to ensure the same pref value is being used across the
+  // lifetime of this http channel.
   const bool mCachedOpaqueResponseBlockingPref;
-  bool mBlockOpaqueResponseAfterSniff;
-  bool mCheckIsOpaqueResponseAllowedAfterSniff;
+  bool mChannelBlockedByOpaqueResponse;
+
   bool mDummyChannelForImageCache;
 
   // clang-format off
@@ -944,7 +1032,11 @@ class HttpBaseChannel : public nsHashPropertyBag,
 
     // True if HTTPS RR is used during the connection establishment of this
     // channel.
-    (uint32_t, HasHTTPSRR, 1)
+    (uint32_t, HasHTTPSRR, 1),
+
+    // Ensures that ProcessCrossOriginSecurityHeadersCalled has been called
+    // before calling CallOnStartRequest.
+    (uint32_t, ProcessCrossOriginSecurityHeadersCalled, 1)
   ))
   // clang-format on
 
@@ -957,7 +1049,7 @@ class HttpBaseChannel : public nsHashPropertyBag,
   void AddAsNonTailRequest();
   void RemoveAsNonTailRequest();
 
-  void EnsureTopBrowsingContextId();
+  void EnsureBrowserId();
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(HttpBaseChannel, HTTP_BASE_CHANNEL_IID)

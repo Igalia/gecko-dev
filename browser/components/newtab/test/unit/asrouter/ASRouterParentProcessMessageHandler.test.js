@@ -1,6 +1,6 @@
 import { ASRouterParentProcessMessageHandler } from "lib/ASRouterParentProcessMessageHandler.jsm";
 import { _ASRouter } from "lib/ASRouter.jsm";
-import { MESSAGE_TYPE_HASH as msg } from "common/ActorConstants.jsm";
+import { MESSAGE_TYPE_HASH as msg } from "common/ActorConstants.sys.mjs";
 
 describe("ASRouterParentProcessMessageHandler", () => {
   let handler = null;
@@ -11,13 +11,13 @@ describe("ASRouterParentProcessMessageHandler", () => {
     const returnValue = { value: 1 };
     const router = new _ASRouter();
     [
-      "_updateOnboardingState",
       "addImpression",
       "addPreviewEndpoint",
       "evaluateExpression",
       "forceAttribution",
       "forceWNPanel",
       "closeWNPanel",
+      "forcePBWindow",
       "resetGroupsState",
     ].forEach(method => sandbox.stub(router, `${method}`).resolves());
     [
@@ -172,12 +172,6 @@ describe("ASRouterParentProcessMessageHandler", () => {
       });
     });
     describe("USER_ACTION action", () => {
-      it("with INSTALL_ADDON_FROM_URL calls _updateOnboardingState", () => {
-        handler.handleMessage(msg.USER_ACTION, {
-          type: "INSTALL_ADDON_FROM_URL",
-        });
-        assert.calledOnce(config.router._updateOnboardingState);
-      });
       it("default calls SpecialMessageActions.handleAction", async () => {
         await handler.handleMessage(
           msg.USER_ACTION,
@@ -186,7 +180,6 @@ describe("ASRouterParentProcessMessageHandler", () => {
           },
           { browser: { ownerGlobal: {} } }
         );
-        assert.notCalled(config.router._updateOnboardingState);
         assert.calledOnce(config.specialMessageActions.handleAction);
         assert.calledWith(
           config.specialMessageActions.handleAction,
@@ -354,6 +347,17 @@ describe("ASRouterParentProcessMessageHandler", () => {
         );
         assert.calledOnce(config.router.closeWNPanel);
         assert.calledWith(config.router.closeWNPanel, { ownerGlobal: {} });
+      });
+    });
+    describe("FORCE_PRIVATE_BROWSING_WINDOW action", () => {
+      it("default calls forcePBWindow", () => {
+        handler.handleMessage(
+          msg.FORCE_PRIVATE_BROWSING_WINDOW,
+          {},
+          { browser: { ownerGlobal: {} } }
+        );
+        assert.calledOnce(config.router.forcePBWindow);
+        assert.calledWith(config.router.forcePBWindow, { ownerGlobal: {} });
       });
     });
     describe("MODIFY_MESSAGE_JSON action", () => {

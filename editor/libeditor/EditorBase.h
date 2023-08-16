@@ -15,7 +15,7 @@
 #include "mozilla/Likely.h"              // for MOZ_UNLIKELY, MOZ_LIKELY
 #include "mozilla/Maybe.h"               // for Maybe
 #include "mozilla/OwningNonNull.h"       // for OwningNonNull
-#include "mozilla/TypeInState.h"         // for PropItem, StyleCache
+#include "mozilla/PendingStyles.h"       // for PendingStyle, PendingStyleCache
 #include "mozilla/RangeBoundary.h"       // for RawRangeBoundary, RangeBoundary
 #include "mozilla/SelectionState.h"      // for RangeUpdater, etc.
 #include "mozilla/StyleSheet.h"          // for StyleSheet
@@ -56,7 +56,6 @@ class nsIPrincipal;
 class nsISupports;
 class nsITransferable;
 class nsITransaction;
-class nsITransactionListener;
 class nsIWidget;
 class nsRange;
 
@@ -220,6 +219,14 @@ class EditorBase : public nsIEditor,
     }
     Selection* selection = sc->GetSelection(ToRawSelectionType(aSelectionType));
     return selection;
+  }
+
+  /**
+   * @return Ancestor limiter of normal selection
+   */
+  [[nodiscard]] nsIContent* GetSelectionAncestorLimiter() const {
+    Selection* selection = GetSelection(SelectionType::eNormal);
+    return selection ? selection->GetAncestorLimiter() : nullptr;
   }
 
   /**
@@ -432,14 +439,6 @@ class EditorBase : public nsIEditor,
       WidgetCompositionEvent& aCompositionEndEvent);
 
   /**
-   * Similar to the setter for wrapWidth, but just sets the editor
-   * internal state without actually changing the content being edited
-   * to wrap at that column.  This should only be used by callers who
-   * are sure that their content is already set up correctly.
-   */
-  void SetWrapColumn(int32_t aWrapColumn) { mWrapColumn = aWrapColumn; }
-
-  /**
    * Accessor methods to flags.
    */
   uint32_t Flags() const { return mFlags; }
@@ -472,13 +471,6 @@ class EditorBase : public nsIEditor,
     return SetFlags(kNewFlags);  // virtual call and may be expensive.
   }
 
-  bool IsInPlaintextMode() const {
-    const bool isPlaintextMode =
-        (mFlags & nsIEditor::eEditorPlaintextMask) != 0;
-    MOZ_ASSERT_IF(IsTextEditor(), isPlaintextMode);
-    return isPlaintextMode;
-  }
-
   bool IsSingleLineEditor() const {
     const bool isSingleLineEditor =
         (mFlags & nsIEditor::eEditorSingleLineMask) != 0;
@@ -508,10 +500,6 @@ class EditorBase : public nsIEditor,
 
   bool IsMailEditor() const {
     return (mFlags & nsIEditor::eEditorMailMask) != 0;
-  }
-
-  bool IsWrapHackEnabled() const {
-    return (mFlags & nsIEditor::eEditorEnableWrapHackMask) != 0;
   }
 
   bool IsInteractionAllowed() const {
@@ -740,26 +728,30 @@ class EditorBase : public nsIEditor,
    *
    * @param aClipboardType      nsIClipboard::kGlobalClipboard or
    *                            nsIClipboard::kSelectionClipboard.
-   * @param aDispatchPasteEvent true if this should dispatch ePaste event
-   *                            before pasting.  Otherwise, false.
+   * @param aDispatchPasteEvent Yes if this should dispatch ePaste event
+   *                            before pasting.  Otherwise, No.
    * @param aPrincipal          Set subject principal if it may be called by
    *                            JS.  If set to nullptr, will be treated as
    *                            called by system.
    */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteAsAction(
-      int32_t aClipboardType, bool aDispatchPasteEvent,
-      nsIPrincipal* aPrincipal = nullptr) = 0;
+  enum class DispatchPasteEvent { No, Yes };
+  MOZ_CAN_RUN_SCRIPT nsresult
+  PasteAsAction(int32_t aClipboardType, DispatchPasteEvent aDispatchPasteEvent,
+                nsIPrincipal* aPrincipal = nullptr);
 
   /**
    * Paste aTransferable at Selection.
    *
    * @param aTransferable       Must not be nullptr.
+   * @param aDispatchPasteEvent Yes if this should dispatch ePaste event
+   *                            before pasting.  Otherwise, No.
    * @param aPrincipal          Set subject principal if it may be called by
    *                            JS.  If set to nullptr, will be treated as
    *                            called by system.
    */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteTransferableAsAction(
-      nsITransferable* aTransferable, nsIPrincipal* aPrincipal = nullptr) = 0;
+  MOZ_CAN_RUN_SCRIPT nsresult PasteTransferableAsAction(
+      nsITransferable* aTransferable, DispatchPasteEvent aDispatchPasteEvent,
+      nsIPrincipal* aPrincipal = nullptr);
 
   /**
    * PasteAsQuotationAsAction() pastes content in clipboard as quotation.
@@ -770,15 +762,15 @@ class EditorBase : public nsIEditor,
    *
    * @param aClipboardType      nsIClipboard::kGlobalClipboard or
    *                            nsIClipboard::kSelectionClipboard.
-   * @param aDispatchPasteEvent true if this should dispatch ePaste event
-   *                            before pasting.  Otherwise, false.
+   * @param aDispatchPasteEvent Yes if this should dispatch ePaste event
+   *                            before pasting.  Otherwise, No.
    * @param aPrincipal          Set subject principal if it may be called by
    *                            JS.  If set to nullptr, will be treated as
    *                            called by system.
    */
-  MOZ_CAN_RUN_SCRIPT virtual nsresult PasteAsQuotationAsAction(
-      int32_t aClipboardType, bool aDispatchPasteEvent,
-      nsIPrincipal* aPrincipal = nullptr) = 0;
+  MOZ_CAN_RUN_SCRIPT nsresult PasteAsQuotationAsAction(
+      int32_t aClipboardType, DispatchPasteEvent aDispatchPasteEvent,
+      nsIPrincipal* aPrincipal = nullptr);
 
  protected:  // May be used by friends.
   class AutoEditActionDataSetter;
@@ -797,14 +789,14 @@ class EditorBase : public nsIEditor,
     // Computing changed range while we're handling sub actions.
     RefPtr<nsRange> mChangedRange;
 
-    // XXX In strict speaking, mCachedInlineStyles isn't enough to cache inline
-    //     styles because inline style can be specified with "style" attribute
-    //     and/or CSS in <style> elements or CSS files.  So, we need to look
-    //     for better implementation about this.
-    // FYI: Initialization cost of AutoStyleCacheArray is expensive and it is
-    //      not used by TextEditor so that we should construct it only when
-    //      we're an HTMLEditor.
-    Maybe<AutoStyleCacheArray> mCachedInlineStyles;
+    // XXX In strict speaking, mCachedPendingStyles isn't enough to cache
+    //     inline styles because inline style can be specified with "style"
+    //     attribute and/or CSS in <style> elements or CSS files.  So, we need
+    //     to look for better implementation about this.
+    // FYI: Initialization cost of AutoPendingStyleCacheArray is expensive and
+    //      it is not used by TextEditor so that we should construct it only
+    //      when we're an HTMLEditor.
+    Maybe<AutoPendingStyleCacheArray> mCachedPendingStyles;
 
     // If we tried to delete selection, set to true.
     bool mDidDeleteSelection;
@@ -881,8 +873,8 @@ class EditorBase : public nsIEditor,
       }
       mSelectedRange->Clear();
       mChangedRange->Reset();
-      if (mCachedInlineStyles.isSome()) {
-        mCachedInlineStyles->Clear();
+      if (mCachedPendingStyles.isSome()) {
+        mCachedPendingStyles->Clear();
       }
       mDidDeleteSelection = false;
       mDidDeleteNonCollapsedRange = false;
@@ -956,6 +948,14 @@ class EditorBase : public nsIEditor,
                              EditAction aEditAction,
                              nsIPrincipal* aPrincipal = nullptr);
     ~AutoEditActionDataSetter();
+
+    void SetSelectionCreatedByDoubleclick(bool aSelectionCreatedByDoubleclick) {
+      mSelectionCreatedByDoubleclick = aSelectionCreatedByDoubleclick;
+    }
+
+    [[nodiscard]] bool SelectionCreatedByDoubleclick() const {
+      return mSelectionCreatedByDoubleclick;
+    }
 
     void UpdateEditAction(EditAction aEditAction) {
       MOZ_ASSERT(!mHasTriedToDispatchBeforeInputEvent,
@@ -1353,6 +1353,10 @@ class EditorBase : public nsIEditor,
     EditorBase& mEditorBase;
     RefPtr<Selection> mSelection;
     nsTArray<OwningNonNull<Selection>> mRetiredSelections;
+
+    // True if the selection was created by doubleclicking a word.
+    bool mSelectionCreatedByDoubleclick{false};
+
     nsCOMPtr<nsIPrincipal> mPrincipal;
     // EditAction may be nested, for example, a command may be executed
     // from mutation event listener which is run while editor changes
@@ -1654,39 +1658,30 @@ class EditorBase : public nsIEditor,
       const nsAString& aStringToInsert, SelectionHandling aSelectionHandling);
 
   /**
-   * InsertTextWithTransaction() inserts aStringToInsert to aPointToInsert or
-   * better insertion point around it.  If aPointToInsert isn't in a text node,
-   * this method looks for the nearest point in a text node with
-   * FindBetterInsertionPoint().  If there is no text node, this creates
-   * new text node and put aStringToInsert to it.
+   * Insert aStringToInsert to aPointToInsert or better insertion point around
+   * it.  If aPointToInsert isn't in a text node, this method looks for the
+   * nearest point in a text node with TextEditor::FindBetterInsertionPoint()
+   * or EditorDOMPoint::GetPointInTextNodeIfPointingAroundTextNode().
+   * If there is no text node, this creates new text node and put
+   * aStringToInsert to it.
    *
    * @param aDocument       The document of this editor.
    * @param aStringToInsert The string to insert.
    * @param aPointToInsert  The point to insert aStringToInsert.
    *                        Must be valid DOM point.
-   * @return                If succeeded, returns the point after inserted
-   *                        aStringToInsert. So, when this method actually
-   *                        inserts string, returns a point in the text node.
-   *                        Otherwise, returns aPointToInsert.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual Result<EditorDOMPoint, nsresult>
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual Result<InsertTextResult, nsresult>
   InsertTextWithTransaction(Document& aDocument,
                             const nsAString& aStringToInsert,
                             const EditorDOMPoint& aPointToInsert);
 
   /**
-   * InsertTextIntoTextNodeWithTransaction() inserts aStringToInsert into
-   * aOffset of aTextNode with transaction.
-   *
-   * @param aStringToInsert     String to be inserted.
-   * @param aPointToInsert      The insertion point.
-   * @param aSuppressIME        true if it's not a part of IME composition.
-   *                            E.g., adjusting white-spaces during composition.
-   *                            false, otherwise.
+   * Insert aStringToInsert to aPointToInsert.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult InsertTextIntoTextNodeWithTransaction(
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<InsertTextResult, nsresult>
+  InsertTextIntoTextNodeWithTransaction(
       const nsAString& aStringToInsert,
-      const EditorDOMPointInText& aPointToInsert, bool aSuppressIME = false);
+      const EditorDOMPointInText& aPointToInsert);
 
   /**
    * SetTextNodeWithoutTransaction() is optimized path to set new value to
@@ -1718,9 +1713,10 @@ class EditorBase : public nsIEditor,
    *                            point to put caret.
    */
   template <typename ContentNodeType>
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT CreateNodeResultBase<ContentNodeType>
-  InsertNodeWithTransaction(ContentNodeType& aContentToInsert,
-                            const EditorDOMPoint& aPointToInsert);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT
+      Result<CreateNodeResultBase<ContentNodeType>, nsresult>
+      InsertNodeWithTransaction(ContentNodeType& aContentToInsert,
+                                const EditorDOMPoint& aPointToInsert);
 
   /**
    * InsertPaddingBRElementForEmptyLastLineWithTransaction() creates a padding
@@ -1732,7 +1728,7 @@ class EditorBase : public nsIEditor,
    * @return                    If succeeded, returns the new <br> element and
    *                            point to put caret around it.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT CreateElementResult
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CreateElementResult, nsresult>
   InsertPaddingBRElementForEmptyLastLineWithTransaction(
       const EditorDOMPoint& aPointToInsert);
 
@@ -1764,7 +1760,7 @@ class EditorBase : public nsIEditor,
    * @param aElement        Element node which will lose aAttribute.
    * @param aAttribute      Attribute name to be removed from aElement.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
   RemoveAttributeWithTransaction(Element& aElement, nsAtom& aAttribute);
 
   MOZ_CAN_RUN_SCRIPT virtual nsresult RemoveAttributeOrEquivalent(
@@ -1816,15 +1812,17 @@ class EditorBase : public nsIEditor,
                                     ErrorResult& aRv);
 
   /**
-   * DeleteTextWithTransaction() removes text in the range from aTextNode.
+   * Delete text in the range in aTextNode.  Use
+   * `HTMLEditor::ReplaceTextWithTransaction` if you'll insert text there (and
+   * if you want to use it in `TextEditor`, move it into `EditorBase`).
    *
    * @param aTextNode           The text node which should be modified.
    * @param aOffset             Start offset of removing text in aTextNode.
    * @param aLength             Length of removing text.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult DeleteTextWithTransaction(dom::Text& aTextNode,
-                                                        uint32_t aOffset,
-                                                        uint32_t aLength);
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CaretPoint, nsresult>
+  DeleteTextWithTransaction(dom::Text& aTextNode, uint32_t aOffset,
+                            uint32_t aLength);
 
   /**
    * MarkElementDirty() sets a special dirty attribute on the element.
@@ -1921,12 +1919,6 @@ class EditorBase : public nsIEditor,
   }
 
   /**
-   * CollapseSelectionToEnd() collapses the selection to the last leaf content
-   * of the editor.
-   */
-  MOZ_CAN_RUN_SCRIPT nsresult CollapseSelectionToEndOfLastLeafNode() const;
-
-  /**
    * AllowsTransactionsToChangeSelection() returns true if editor allows any
    * transactions to change Selection.  Otherwise, transactions shouldn't
    * change Selection.
@@ -1954,18 +1946,6 @@ class EditorBase : public nsIEditor,
    * editor was focused when the DOM window was active.
    */
   virtual bool IsActiveInDOMWindow() const;
-
-  /**
-   * FindBetterInsertionPoint() tries to look for better insertion point which
-   * is typically the nearest text node and offset in it.
-   *
-   * @param aPoint      Insertion point which the callers found.
-   * @return            Better insertion point if there is.  If not returns
-   *                    same point as aPoint.
-   */
-  template <typename EditorDOMPointType>
-  EditorDOMPointType FindBetterInsertionPoint(
-      const EditorDOMPointType& aPoint) const;
 
   /**
    * HideCaret() hides caret with nsCaret::AddForceHide() or may show carent
@@ -2058,7 +2038,7 @@ class EditorBase : public nsIEditor,
    *                            TextEditor instance.  Otherwise,
    *                            nsIEditor::eStrip is also valid.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual EditActionResult
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual Result<EditActionResult, nsresult>
   HandleDeleteSelection(nsIEditor::EDirection aDirectionAndAmount,
                         nsIEditor::EStripWrappers aStripWrappers) = 0;
 
@@ -2079,9 +2059,10 @@ class EditorBase : public nsIEditor,
    * @param aSelectionHandling  Specify whether selected content should be
    *                            deleted or ignored.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual EditActionResult HandleInsertText(
-      EditSubAction aEditSubAction, const nsAString& aInsertionString,
-      SelectionHandling aSelectionHandling) = 0;
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual Result<EditActionResult, nsresult>
+  HandleInsertText(EditSubAction aEditSubAction,
+                   const nsAString& aInsertionString,
+                   SelectionHandling aSelectionHandling) = 0;
 
   /**
    * InsertWithQuotationsAsSubAction() inserts aQuotedText with appending ">"
@@ -2103,29 +2084,32 @@ class EditorBase : public nsIEditor,
    *                            shouldn't use this instance after calling this
    *                            method because this method may cause changing
    *                            the DOM tree and Selection.
-   * @param aDoDeleteSelection  true if selected content should be removed.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult PrepareToInsertContent(
-      const EditorDOMPoint& aPointToInsert, bool aDoDeleteSelection);
+  enum class DeleteSelectedContent : bool {
+    No,   // Don't delete selection
+    Yes,  // Delete selected content
+  };
+  MOZ_CAN_RUN_SCRIPT nsresult
+  PrepareToInsertContent(const EditorDOMPoint& aPointToInsert,
+                         DeleteSelectedContent aDeleteSelectedContent);
 
   /**
    * InsertTextAt() inserts aStringToInsert at aPointToInsert.
    *
    * @param aStringToInsert     The string which you want to insert.
    * @param aPointToInsert      The insertion point.
-   * @param aDoDeleteSelection  true if you want this to delete selected
-   *                            content.  Otherwise, false.
    */
-  MOZ_CAN_RUN_SCRIPT nsresult InsertTextAt(const nsAString& aStringToInsert,
-                                           const EditorDOMPoint& aPointToInsert,
-                                           bool aDoDeleteSelection);
+  MOZ_CAN_RUN_SCRIPT nsresult InsertTextAt(
+      const nsAString& aStringToInsert, const EditorDOMPoint& aPointToInsert,
+      DeleteSelectedContent aDeleteSelectedContent);
 
   /**
-   * Return true if the data is safe to insert as the source and destination
+   * Return whether the data is safe to insert as the source and destination
    * principals match, or we are in a editor context where this doesn't matter.
    * Otherwise, the data must be sanitized first.
    */
-  bool IsSafeToInsertData(nsIPrincipal* aSourcePrincipal) const;
+  enum class SafeToInsertData : bool { No, Yes };
+  SafeToInsertData IsSafeToInsertData(nsIPrincipal* aSourcePrincipal) const;
 
  protected:  // Called by helper classes.
   /**
@@ -2244,13 +2228,6 @@ class EditorBase : public nsIEditor,
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult FlushPendingSpellCheck();
 
   [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult EnsureEmptyTextFirstChild();
-
-  /**
-   * InitEditorContentAndSelection() may insert a padding `<br>` element for
-   * if it's required in the anonymous `<div>` element or `<body>` element and
-   * collapse selection at the end if there is no selection ranges.
-   */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult InitEditorContentAndSelection();
 
   int32_t WrapWidth() const { return mWrapColumn; }
 
@@ -2544,32 +2521,29 @@ class EditorBase : public nsIEditor,
    *                            be ignored.
    * @param aRangesToDelete     The ranges to delete content.
    */
-  [[nodiscard]] MOZ_CAN_RUN_SCRIPT nsresult
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<CaretPoint, nsresult>
   DeleteRangesWithTransaction(nsIEditor::EDirection aDirectionAndAmount,
                               nsIEditor::EStripWrappers aStripWrappers,
                               const AutoRangeArray& aRangesToDelete);
 
   /**
-   * Create an aggregate transaction for delete the content in aRangesToDelete.
-   * The result may include DeleteNodeTransactions and/or DeleteTextTransactions
-   * as its children.
+   * Create a transaction for delete the content in aRangesToDelete.
+   * The result may include DeleteRangeTransaction (for deleting non-collapsed
+   * range), DeleteNodeTransactions and DeleteTextTransactions (for deleting
+   * collapsed range) as its children.
    *
    * @param aHowToHandleCollapsedRange
    *                            How to handle collapsed ranges.
    * @param aRangesToDelete     The ranges to delete content.
-   * @return                    If it can remove the content in ranges, returns
-   *                            an aggregate transaction which has some
-   *                            DeleteNodeTransactions and/or
-   *                            DeleteTextTransactions as its children.
    */
-  already_AddRefed<EditAggregateTransaction>
+  already_AddRefed<DeleteMultipleRangesTransaction>
   CreateTransactionForDeleteSelection(
       HowToHandleCollapsedRange aHowToHandleCollapsedRange,
       const AutoRangeArray& aRangesToDelete);
 
   /**
-   * Create a transaction for removing the nodes and/or text around
-   * aRangeToDelete.
+   * Create a DeleteNodeTransaction or DeleteTextTransaction for removing a
+   * nodes or some text around aRangeToDelete.
    *
    * @param aCollapsedRange     The range to be removed.  This must be
    *                            collapsed.
@@ -2577,11 +2551,9 @@ class EditorBase : public nsIEditor,
    *                            How to handle aCollapsedRange.  Must
    *                            be HowToHandleCollapsedRange::ExtendBackward or
    *                            HowToHandleCollapsedRange::ExtendForward.
-   * @return                    The transaction to remove content around the
-   *                            range.  Its type is DeleteNodeTransaction or
-   *                            DeleteTextTransaction.
    */
-  already_AddRefed<EditTransactionBase> CreateTransactionForCollapsedRange(
+  already_AddRefed<DeleteContentTransactionBase>
+  CreateTransactionForCollapsedRange(
       const nsRange& aCollapsedRange,
       HowToHandleCollapsedRange aHowToHandleCollapsedRange);
 
@@ -2622,18 +2594,55 @@ class EditorBase : public nsIEditor,
       nsAtom* aCommand, EventMessage aEventMessage) const;
 
   /**
-   * FireClipboardEvent() may dispatch a clipboard event.
+   * DispatchClipboardEventAndUpdateClipboard() may dispatch a clipboard event
+   * and update clipboard if aEventMessage is eCopy or eCut.
    *
    * @param aEventMessage       The event message which may be set to the
    *                            dispatching event.
    * @param aClipboardType      Working with global clipboard or selection.
-   * @param aActionTaken        [optional][out] If set to non-nullptr, will be
-   *                            set to true if the action for the event is
-   *                            handled or prevented default.
-   * @return                    false if dispatching event is canceled.
    */
-  bool FireClipboardEvent(EventMessage aEventMessage, int32_t aClipboardType,
-                          bool* aActionTaken = nullptr);
+  enum class ClipboardEventResult {
+    // We have met an error in nsCopySupport::FireClipboardEvent,
+    // or, default of dispatched event is NOT prevented, the event is "cut"
+    // and the event target is not editable.
+    IgnoredOrError,
+    // A "paste" event is dispatched and prevented its default.
+    DefaultPreventedOfPaste,
+    // Default of a "copy" or "cut" event is prevented but the clipboard is
+    // updated unless the dataTransfer of the event is cleared by the listener.
+    // Or, default of the event is NOT prevented but selection is collapsed
+    // when the event target is editable or the event is "copy".
+    CopyOrCutHandled,
+    // A clipboard event is maybe dispatched and not canceled by the web app.
+    // In this case, the clipboard has been updated if aEventMessage is eCopy
+    // or eCut.
+    DoDefault,
+  };
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT Result<ClipboardEventResult, nsresult>
+  DispatchClipboardEventAndUpdateClipboard(EventMessage aEventMessage,
+                                           int32_t aClipboardType);
+
+  /**
+   * Called after PasteAsAction() dispatches "paste" event and it's not
+   * canceled.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual nsresult HandlePaste(
+      AutoEditActionDataSetter& aEditActionData, int32_t aClipboardType) = 0;
+
+  /**
+   * Called after PasteAsQuotationAsAction() dispatches "paste" event and it's
+   * not canceled.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual nsresult HandlePasteAsQuotation(
+      AutoEditActionDataSetter& aEditActionData, int32_t aClipboardType) = 0;
+
+  /**
+   * Called after PasteTransferableAsAction() dispatches "paste" event and it's
+   * not canceled.
+   */
+  [[nodiscard]] MOZ_CAN_RUN_SCRIPT virtual nsresult HandlePasteTransferable(
+      AutoEditActionDataSetter& aEditActionData,
+      nsITransferable& aTransferable) = 0;
 
  private:
   nsCOMPtr<nsISelectionController> mSelectionController;
@@ -2818,14 +2827,14 @@ class EditorBase : public nsIEditor,
   // Listens to all low level actions on the doc.
   // Edit action listener is currently used by highlighter of the findbar and
   // the spellchecker.  So, we should reserve only 2 items.
-  typedef AutoTArray<OwningNonNull<nsIEditActionListener>, 2>
-      AutoActionListenerArray;
+  using AutoActionListenerArray =
+      AutoTArray<OwningNonNull<nsIEditActionListener>, 2>;
   AutoActionListenerArray mActionListeners;
   // Listen to overall doc state (dirty or not, just created, etc.).
   // Document state listener is currently used by FinderHighlighter and
   // BlueGriffon so that reserving only one is enough.
-  typedef AutoTArray<OwningNonNull<nsIDocumentStateListener>, 1>
-      AutoDocumentStateListenerArray;
+  using AutoDocumentStateListenerArray =
+      AutoTArray<OwningNonNull<nsIDocumentStateListener>, 1>;
   AutoDocumentStateListenerArray mDocStateListeners;
 
   // Number of modifications (for undo/redo stack).
@@ -2838,7 +2847,7 @@ class EditorBase : public nsIEditor,
   // Nesting count for batching.
   int32_t mPlaceholderBatch;
 
-  int32_t mWrapColumn;
+  int32_t mWrapColumn = 0;
   int32_t mNewlineHandling;
   int32_t mCaretStyle;
 
@@ -2869,6 +2878,8 @@ class EditorBase : public nsIEditor,
   friend class AlignStateAtSelection;  // AutoEditActionDataSetter,
                                        // ToGenericNSResult
   friend class AutoRangeArray;  // IsSEditActionDataAvailable, SelectionRef
+  friend class CaretPoint;      // AllowsTransactionsToChangeSelection,
+                                // CollapseSelectionTo
   friend class CompositionTransaction;  // CollapseSelectionTo, DoDeleteText,
                                         // DoInsertText, DoReplaceText,
                                         // HideCaret, RangeupdaterRef
@@ -2891,17 +2902,15 @@ class EditorBase : public nsIEditor,
   friend class MoveNodeTransaction;            // ToGenericNSResult
   friend class ParagraphStateAtSelection;      // AutoEditActionDataSetter,
                                                // ToGenericNSResult
+  friend class PendingStyles;                  // GetEditAction,
+                                               // GetFirstSelectionStartPoint,
+                                               // SelectionRef
   friend class ReplaceTextTransaction;  // AllowsTransactionsToChangeSelection,
                                         // CollapseSelectionTo, DoReplaceText,
                                         // RangeUpdaterRef
   friend class SplitNodeTransaction;    // ToGenericNSResult
-  friend class TypeInState;  // GetEditAction, GetFirstSelectionStartPoint,
-                             // SelectionRef
   friend class WhiteSpaceVisibilityKeeper;  // AutoTransactionsConserveSelection
   friend class nsIEditor;                   // mIsHTMLEditorClass
-
-  template <typename NodeType>
-  friend class CreateNodeResultBase;  // CollapseSelectionTo
 };
 
 }  // namespace mozilla

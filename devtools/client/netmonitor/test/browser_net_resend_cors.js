@@ -8,7 +8,7 @@
  * a preflight OPTIONS request (bug 1270096 and friends)
  */
 
-add_task(async function() {
+add_task(async function () {
   const { tab, monitor } = await initNetMonitor(HTTPS_CORS_URL, {
     requestCount: 1,
   });
@@ -26,15 +26,17 @@ add_task(async function() {
 
   info("Waiting for OPTIONS, then POST");
   const wait = waitForNetworkEvents(monitor, 2);
-  await SpecialPowers.spawn(tab.linkedBrowser, [requestUrl], async function(
-    url
-  ) {
-    content.wrappedJSObject.performRequests(
-      url,
-      "triggering/preflight",
-      "post-data"
-    );
-  });
+  await SpecialPowers.spawn(
+    tab.linkedBrowser,
+    [requestUrl],
+    async function (url) {
+      content.wrappedJSObject.performRequests(
+        url,
+        "triggering/preflight",
+        "post-data"
+      );
+    }
+  );
   await wait;
 
   const METHODS = ["OPTIONS", "POST"];
@@ -70,7 +72,7 @@ add_task(async function() {
     store.dispatch(Actions.cloneRequest(item.id));
 
     info("Sending the cloned request (without change)");
-    store.dispatch(Actions.sendCustomRequest(connector, item.id));
+    store.dispatch(Actions.sendCustomRequest(item.id));
 
     await waitUntil(
       () => getSortedRequests(store.getState()).length === length + 1

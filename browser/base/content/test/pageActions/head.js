@@ -2,15 +2,12 @@
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
 ChromeUtils.defineESModuleGetters(this, {
-  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(this, {
   EnterprisePolicyTesting:
-    "resource://testing-common/EnterprisePolicyTesting.jsm",
-  ExtensionCommon: "resource://gre/modules/ExtensionCommon.jsm",
-  sinon: "resource://testing-common/Sinon.jsm",
-  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.jsm",
+    "resource://testing-common/EnterprisePolicyTesting.sys.mjs",
+  ExtensionCommon: "resource://gre/modules/ExtensionCommon.sys.mjs",
+  PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 async function promisePageActionPanelOpen(win = window, eventDict = {}) {

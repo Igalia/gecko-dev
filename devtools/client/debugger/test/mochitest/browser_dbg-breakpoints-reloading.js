@@ -10,7 +10,7 @@ requestLongerTimeout(3);
 
 // Tests that a breakpoint set is correctly synced after reload
 // and gets hit correctly.
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-scripts.html", "simple1.js", "long.js");
 
   await selectSource(dbg, "simple1.js");
@@ -25,7 +25,7 @@ add_task(async function() {
 
   await addBreakpointViaGutter(dbg, 1);
 
-  await reload(dbg);
+  const onReloaded = reload(dbg);
   await waitForPaused(dbg);
 
   info("Assert that the source is not long.js");
@@ -60,6 +60,9 @@ add_task(async function() {
 
   await resume(dbg);
 
+  info("Wait for reload to complete after resume");
+  await onReloaded;
+
   // remove breakpoints so they do not affect other
   // tests.
   await removeBreakpoint(dbg, source.id, 56);
@@ -71,14 +74,14 @@ add_task(async function() {
 
 // Test that pending breakpoints are installed in inline scripts as they are
 // sent to the client.
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-scripts.html", "doc-scripts.html");
 
   await selectSource(dbg, "doc-scripts.html");
   await addBreakpointViaGutter(dbg, 22);
   await addBreakpointViaGutter(dbg, 27);
 
-  await reload(dbg, "doc-scripts.html");
+  const onReloaded = reload(dbg, "doc-scripts.html");
   await waitForPaused(dbg);
 
   const source = findSource(dbg, "doc-scripts.html");
@@ -105,6 +108,9 @@ add_task(async function() {
   await assertBreakpoint(dbg, 27);
 
   await resume(dbg);
+
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 
   await removeBreakpoint(dbg, source.id, 22);
   await removeBreakpoint(dbg, source.id, 27);

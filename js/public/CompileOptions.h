@@ -60,9 +60,15 @@
 
 #include "jstypes.h"  // JS_PUBLIC_API
 
-#include "js/TypeDecls.h"  // JS::MutableHandle (fwd)
+#include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
+#include "js/TypeDecls.h"          // JS::MutableHandle (fwd)
+
+namespace js {
+class FrontendContext;
+}  // namespace js
 
 namespace JS {
+using FrontendContext = js::FrontendContext;
 
 enum class AsmJSOption : uint8_t {
   Enabled,
@@ -111,6 +117,93 @@ enum class DelazificationOption : uint8_t {
 class JS_PUBLIC_API InstantiateOptions;
 class JS_PUBLIC_API DecodeOptions;
 
+// Compilation-specific part of JS::ContextOptions which is supposed to be
+// configured by user prefs.
+class JS_PUBLIC_API PrefableCompileOptions {
+ public:
+  PrefableCompileOptions()
+      : importAssertions_(false),
+        sourcePragmas_(true),
+        throwOnAsmJSValidationFailure_(false) {}
+
+  bool importAssertions() const { return importAssertions_; }
+  PrefableCompileOptions& setImportAssertions(bool enabled) {
+    importAssertions_ = enabled;
+    return *this;
+  }
+
+  // Enable/disable support for parsing '//(#@) source(Mapping)?URL=' pragmas.
+  bool sourcePragmas() const { return sourcePragmas_; }
+  PrefableCompileOptions& setSourcePragmas(bool flag) {
+    sourcePragmas_ = flag;
+    return *this;
+  }
+
+  AsmJSOption asmJSOption() const { return asmJSOption_; }
+  PrefableCompileOptions& setAsmJS(bool flag) {
+    asmJSOption_ =
+        flag ? AsmJSOption::Enabled : AsmJSOption::DisabledByAsmJSPref;
+    return *this;
+  }
+  PrefableCompileOptions& setAsmJSOption(AsmJSOption option) {
+    asmJSOption_ = option;
+    return *this;
+  }
+
+  bool throwOnAsmJSValidationFailure() const {
+    return throwOnAsmJSValidationFailure_;
+  }
+  PrefableCompileOptions& setThrowOnAsmJSValidationFailure(bool flag) {
+    throwOnAsmJSValidationFailure_ = flag;
+    return *this;
+  }
+  PrefableCompileOptions& toggleThrowOnAsmJSValidationFailure() {
+    throwOnAsmJSValidationFailure_ = !throwOnAsmJSValidationFailure_;
+    return *this;
+  }
+
+#if defined(DEBUG) || defined(JS_JITSPEW)
+  template <typename Printer>
+  void dumpWith(Printer& print) const {
+#  define PrintFields_(Name) print(#Name, Name)
+    PrintFields_(importAssertions_);
+    PrintFields_(sourcePragmas_);
+    PrintFields_(throwOnAsmJSValidationFailure_);
+#  undef PrintFields_
+
+    switch (asmJSOption_) {
+      case AsmJSOption::Enabled:
+        print("asmJSOption_", "AsmJSOption::Enabled");
+        break;
+      case AsmJSOption::DisabledByAsmJSPref:
+        print("asmJSOption_", "AsmJSOption::DisabledByAsmJSPref");
+        break;
+      case AsmJSOption::DisabledByLinker:
+        print("asmJSOption_", "AsmJSOption::DisabledByLinker");
+        break;
+      case AsmJSOption::DisabledByNoWasmCompiler:
+        print("asmJSOption_", "AsmJSOption::DisabledByNoWasmCompiler");
+        break;
+      case AsmJSOption::DisabledByDebugger:
+        print("asmJSOption_", "AsmJSOption::DisabledByDebugger");
+        break;
+    }
+  }
+#endif  // defined(DEBUG) || defined(JS_JITSPEW)
+
+ private:
+  // ==== Syntax-related options. ====
+  bool importAssertions_ : 1;
+
+  // The context has specified that source pragmas should be parsed.
+  bool sourcePragmas_ : 1;
+
+  // ==== asm.js options. ====
+  bool throwOnAsmJSValidationFailure_ : 1;
+
+  AsmJSOption asmJSOption_ = AsmJSOption::DisabledByAsmJSPref;
+};
+
 /**
  * The common base class for the CompileOptions hierarchy.
  *
@@ -123,8 +216,10 @@ class JS_PUBLIC_API TransitiveCompileOptions {
  protected:
   // non-POD options:
 
-  const char* filename_ = nullptr;
-  const char* introducerFilename_ = nullptr;
+  JS::ConstUTF8CharsZ filename_;
+
+  JS::ConstUTF8CharsZ introducerFilename_;
+
   const char16_t* sourceMapURL_ = nullptr;
 
   // POD options:
@@ -150,8 +245,8 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   // strict-mode.
   bool forceStrictMode_ = false;
 
-  // The context has specified that source pragmas should be parsed.
-  bool sourcePragmas_ = true;
+  // The Realm of this script is configured to use fdlibm math library.
+  bool alwaysUseFdlibm_ = false;
 
   // Flag used to bypass the filename validation callback.
   // See also SetFilenameValidationCallback.
@@ -176,8 +271,6 @@ class JS_PUBLIC_API TransitiveCompileOptions {
 
  public:
   bool selfHostingMode = false;
-  AsmJSOption asmJSOption = AsmJSOption::DisabledByAsmJSPref;
-  bool throwOnAsmJSValidationFailureOption = false;
   bool forceAsync = false;
   bool discardSource = false;
   bool sourceIsLazy = false;
@@ -187,10 +280,6 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   // Top-level await is enabled by default but is not supported for chrome
   // modules loaded with ChromeUtils.importModule.
   bool topLevelAwait = true;
-
-  bool useFdlibmForSinCosTan = false;
-
-  bool importAssertions = false;
 
   // When decoding from XDR into a Stencil, directly reference data in the
   // buffer (where possible) instead of copying it. This is an optional
@@ -231,9 +320,11 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   // WARNING: This option will eventually be removed.
   bool deoptimizeModuleGlobalVars = false;
 
+  PrefableCompileOptions prefableOptions_;
+
   /**
-   * |introductionType| is a statically allocated C string: one of "eval",
-   * "Function", or "GeneratorFunction".
+   * |introductionType| is a statically allocated C string. See JSScript.h
+   * for more information.
    */
   const char* introductionType = nullptr;
 
@@ -264,6 +355,7 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   // Read-only accessors for non-POD options. The proper way to set these
   // depends on the derived type.
   bool mutedErrors() const { return mutedErrors_; }
+  bool alwaysUseFdlibm() const { return alwaysUseFdlibm_; }
   bool forceFullParse() const {
     return eagerDelazificationIsOneOf<
         DelazificationOption::ParseEverythingEagerly>();
@@ -291,10 +383,24 @@ class JS_PUBLIC_API TransitiveCompileOptions {
   DelazificationOption eagerDelazificationStrategy() const {
     return eagerDelazificationStrategy_;
   }
-  bool sourcePragmas() const { return sourcePragmas_; }
-  const char* filename() const { return filename_; }
-  const char* introducerFilename() const { return introducerFilename_; }
+
+  bool importAssertions() const { return prefableOptions_.importAssertions(); }
+  bool sourcePragmas() const { return prefableOptions_.sourcePragmas(); }
+  bool throwOnAsmJSValidationFailure() const {
+    return prefableOptions_.throwOnAsmJSValidationFailure();
+  }
+  AsmJSOption asmJSOption() const { return prefableOptions_.asmJSOption(); }
+  void setAsmJSOption(AsmJSOption option) {
+    prefableOptions_.setAsmJSOption(option);
+  }
+
+  JS::ConstUTF8CharsZ filename() const { return filename_; }
+  JS::ConstUTF8CharsZ introducerFilename() const { return introducerFilename_; }
   const char16_t* sourceMapURL() const { return sourceMapURL_; }
+
+  const PrefableCompileOptions& prefableOptions() const {
+    return prefableOptions_;
+  }
 
   TransitiveCompileOptions(const TransitiveCompileOptions&) = delete;
   TransitiveCompileOptions& operator=(const TransitiveCompileOptions&) = delete;
@@ -302,28 +408,24 @@ class JS_PUBLIC_API TransitiveCompileOptions {
 #if defined(DEBUG) || defined(JS_JITSPEW)
   template <typename Printer>
   void dumpWith(Printer& print) const {
-#  define PrintFields_(Name) print(#  Name, Name)
+#  define PrintFields_(Name) print(#Name, Name)
     PrintFields_(filename_);
     PrintFields_(introducerFilename_);
     PrintFields_(sourceMapURL_);
     PrintFields_(mutedErrors_);
     PrintFields_(forceStrictMode_);
-    PrintFields_(sourcePragmas_);
+    PrintFields_(alwaysUseFdlibm_);
     PrintFields_(skipFilenameValidation_);
     PrintFields_(hideScriptFromDebugger_);
     PrintFields_(deferDebugMetadata_);
     PrintFields_(eagerDelazificationStrategy_);
     PrintFields_(selfHostingMode);
-    PrintFields_(asmJSOption);
-    PrintFields_(throwOnAsmJSValidationFailureOption);
     PrintFields_(forceAsync);
     PrintFields_(discardSource);
     PrintFields_(sourceIsLazy);
     PrintFields_(allowHTMLComments);
     PrintFields_(nonSyntacticScope);
     PrintFields_(topLevelAwait);
-    PrintFields_(useFdlibmForSinCosTan);
-    PrintFields_(importAssertions);
     PrintFields_(borrowBuffer);
     PrintFields_(usePinnedBytecode);
     PrintFields_(allocateInstantiationStorage);
@@ -333,6 +435,8 @@ class JS_PUBLIC_API TransitiveCompileOptions {
     PrintFields_(introductionOffset);
     PrintFields_(hasIntroductionInfo);
 #  undef PrintFields_
+
+    prefableOptions_.dumpWith(print);
   }
 #endif  // defined(DEBUG) || defined(JS_JITSPEW)
 };
@@ -381,7 +485,7 @@ class JS_PUBLIC_API ReadOnlyCompileOptions : public TransitiveCompileOptions {
   template <typename Printer>
   void dumpWith(Printer& print) const {
     this->TransitiveCompileOptions::dumpWith(print);
-#  define PrintFields_(Name) print(#  Name, Name)
+#  define PrintFields_(Name) print(#Name, Name)
     PrintFields_(lineno);
     PrintFields_(column);
     PrintFields_(scriptSourceOffset);
@@ -409,10 +513,21 @@ class JS_PUBLIC_API OwningCompileOptions final : public ReadOnlyCompileOptions {
  public:
   // A minimal constructor, for use with OwningCompileOptions::copy.
   explicit OwningCompileOptions(JSContext* cx);
+
+  struct ForFrontendContext {};
+  explicit OwningCompileOptions(const ForFrontendContext&)
+      : ReadOnlyCompileOptions() {}
+
   ~OwningCompileOptions();
 
+ private:
+  template <typename ContextT>
+  bool copyImpl(ContextT* cx, const ReadOnlyCompileOptions& rhs);
+
+ public:
   /** Set this to a copy of |rhs|.  Return false on OOM. */
   bool copy(JSContext* cx, const ReadOnlyCompileOptions& rhs);
+  bool copy(JS::FrontendContext* fc, const ReadOnlyCompileOptions& rhs);
 
   size_t sizeOfExcludingThis(mozilla::MallocSizeOf mallocSizeOf) const;
 
@@ -466,8 +581,15 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
     sourceMapURL_ = rhs.sourceMapURL();
   }
 
+  // Construct a CompileOption in the context where JSContext is not available.
+  // prefableOptions should reflect the compilation-specific user prefs.
+  explicit CompileOptions(const PrefableCompileOptions& prefableOptions)
+      : ReadOnlyCompileOptions() {
+    prefableOptions_ = prefableOptions;
+  }
+
   CompileOptions& setFile(const char* f) {
-    filename_ = f;
+    filename_ = JS::ConstUTF8CharsZ(f);
     return *this;
   }
 
@@ -477,7 +599,7 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
   }
 
   CompileOptions& setFileAndLine(const char* f, unsigned l) {
-    filename_ = f;
+    filename_ = JS::ConstUTF8CharsZ(f);
     lineno = l;
     return *this;
   }
@@ -550,7 +672,7 @@ class MOZ_STACK_CLASS JS_PUBLIC_API CompileOptions final
   CompileOptions& setIntroductionInfo(const char* introducerFn,
                                       const char* intro, unsigned line,
                                       uint32_t offset) {
-    introducerFilename_ = introducerFn;
+    introducerFilename_ = JS::ConstUTF8CharsZ(introducerFn);
     introductionType = intro;
     introductionLineno = line;
     introductionOffset = offset;
@@ -650,7 +772,7 @@ class JS_PUBLIC_API DecodeOptions {
   bool allocateInstantiationStorage = false;
   bool forceAsync = false;
 
-  const char* introducerFilename = nullptr;
+  const JS::ConstUTF8CharsZ introducerFilename;
 
   // See `TransitiveCompileOptions::introductionType` field for details.
   const char* introductionType = nullptr;
@@ -679,6 +801,10 @@ class JS_PUBLIC_API DecodeOptions {
     options.introductionType = introductionType;
     options.introductionLineno = introductionLineno;
     options.introductionOffset = introductionOffset;
+  }
+
+  bool hasExternalData() const {
+    return introducerFilename || introductionType;
   }
 };
 

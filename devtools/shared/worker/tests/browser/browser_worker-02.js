@@ -5,7 +5,9 @@
 
 // Tests errors are handled properly by the DevToolsWorker.
 
-const { DevToolsWorker } = require("devtools/shared/worker/worker");
+const {
+  DevToolsWorker,
+} = require("resource://devtools/shared/worker/worker.js");
 
 const blob = new Blob(
   [
@@ -27,7 +29,7 @@ createTask(self, "myTask", function({
   { type: "application/javascript" }
 );
 
-add_task(async function() {
+add_task(async function () {
   try {
     new DevToolsWorker("resource://i/dont/exist.js");
     ok(false, "Creating a DevToolsWorker with an invalid URL throws");

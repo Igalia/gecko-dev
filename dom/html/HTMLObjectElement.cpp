@@ -46,15 +46,13 @@ HTMLObjectElement::~HTMLObjectElement() {
 }
 
 bool HTMLObjectElement::IsInteractiveHTMLContent() const {
-  return HasAttr(kNameSpaceID_None, nsGkAtoms::usemap) ||
+  return HasAttr(nsGkAtoms::usemap) ||
          nsGenericHTMLFormControlElement::IsInteractiveHTMLContent();
 }
 
 void HTMLObjectElement::AsyncEventRunning(AsyncEventDispatcher* aEvent) {
   nsImageLoadingContent::AsyncEventRunning(aEvent);
 }
-
-bool HTMLObjectElement::IsDoneAddingChildren() { return mIsDoneAddingChildren; }
 
 void HTMLObjectElement::DoneAddingChildren(bool aHaveNotified) {
   mIsDoneAddingChildren = true;
@@ -111,52 +109,45 @@ void HTMLObjectElement::UnbindFromTree(bool aNullParent) {
   nsGenericHTMLFormControlElement::UnbindFromTree(aNullParent);
 }
 
-nsresult HTMLObjectElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                         const nsAttrValue* aValue,
-                                         const nsAttrValue* aOldValue,
-                                         nsIPrincipal* aSubjectPrincipal,
-                                         bool aNotify) {
-  nsresult rv = AfterMaybeChangeAttr(aNamespaceID, aName, aNotify);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+void HTMLObjectElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                                     const nsAttrValue* aValue,
+                                     const nsAttrValue* aOldValue,
+                                     nsIPrincipal* aSubjectPrincipal,
+                                     bool aNotify) {
+  AfterMaybeChangeAttr(aNamespaceID, aName, aNotify);
   return nsGenericHTMLFormControlElement::AfterSetAttr(
       aNamespaceID, aName, aValue, aOldValue, aSubjectPrincipal, aNotify);
 }
 
-nsresult HTMLObjectElement::OnAttrSetButNotChanged(
+void HTMLObjectElement::OnAttrSetButNotChanged(
     int32_t aNamespaceID, nsAtom* aName, const nsAttrValueOrString& aValue,
     bool aNotify) {
-  nsresult rv = AfterMaybeChangeAttr(aNamespaceID, aName, aNotify);
-  NS_ENSURE_SUCCESS(rv, rv);
-
+  AfterMaybeChangeAttr(aNamespaceID, aName, aNotify);
   return nsGenericHTMLFormControlElement::OnAttrSetButNotChanged(
       aNamespaceID, aName, aValue, aNotify);
 }
 
-nsresult HTMLObjectElement::AfterMaybeChangeAttr(int32_t aNamespaceID,
-                                                 nsAtom* aName, bool aNotify) {
-  if (aNamespaceID == kNameSpaceID_None) {
-    // if aNotify is false, we are coming from the parser or some such place;
-    // we'll get bound after all the attributes have been set, so we'll do the
-    // object load from BindToTree/DoneAddingChildren.
-    // Skip the LoadObject call in that case.
-    // We also don't want to start loading the object when we're not yet in
-    // a document, just in case that the caller wants to set additional
-    // attributes before inserting the node into the document.
-    if (aNotify && IsInComposedDoc() && mIsDoneAddingChildren &&
-        aName == nsGkAtoms::data && !BlockEmbedOrObjectContentLoading()) {
-      nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
-          "HTMLObjectElement::LoadObject",
-          [self = RefPtr<HTMLObjectElement>(this), aNotify]() {
-            if (self->IsInComposedDoc()) {
-              self->LoadObject(aNotify, true);
-            }
-          }));
-      return NS_OK;
-    }
+void HTMLObjectElement::AfterMaybeChangeAttr(int32_t aNamespaceID,
+                                             nsAtom* aName, bool aNotify) {
+  // if aNotify is false, we are coming from the parser or some such place;
+  // we'll get bound after all the attributes have been set, so we'll do the
+  // object load from BindToTree/DoneAddingChildren.
+  // Skip the LoadObject call in that case.
+  // We also don't want to start loading the object when we're not yet in
+  // a document, just in case that the caller wants to set additional
+  // attributes before inserting the node into the document.
+  if (aNamespaceID != kNameSpaceID_None || aName != nsGkAtoms::data ||
+      !aNotify || !IsInComposedDoc() || !mIsDoneAddingChildren ||
+      BlockEmbedOrObjectContentLoading()) {
+    return;
   }
-
-  return NS_OK;
+  nsContentUtils::AddScriptRunner(NS_NewRunnableFunction(
+      "HTMLObjectElement::LoadObject",
+      [self = RefPtr<HTMLObjectElement>(this), aNotify]() {
+        if (self->IsInComposedDoc()) {
+          self->LoadObject(aNotify, true);
+        }
+      }));
 }
 
 bool HTMLObjectElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
@@ -188,9 +179,8 @@ bool HTMLObjectElement::IsHTMLFocusable(bool aWithMouse, bool* aIsFocusable,
 
   // This method doesn't call nsGenericHTMLFormControlElement intentionally.
   // TODO: It should probably be changed when bug 597242 will be fixed.
-  if (IsEditableRoot() ||
-      ((Type() == eType_Document || Type() == eType_FakePlugin) &&
-       nsContentUtils::IsSubDocumentTabbable(this))) {
+  if (IsEditableRoot() || Type() == eType_Document ||
+      Type() == eType_FakePlugin) {
     if (aTabIndex) {
       *aTabIndex = isFocusable ? attrVal->GetIntegerValue() : 0;
     }
@@ -242,16 +232,12 @@ bool HTMLObjectElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
 }
 
 void HTMLObjectElement::MapAttributesIntoRule(
-    const nsMappedAttributes* aAttributes, MappedDeclarations& aDecls) {
-  nsGenericHTMLFormControlElement::MapImageAlignAttributeInto(aAttributes,
-                                                              aDecls);
-  nsGenericHTMLFormControlElement::MapImageBorderAttributeInto(aAttributes,
-                                                               aDecls);
-  nsGenericHTMLFormControlElement::MapImageMarginAttributeInto(aAttributes,
-                                                               aDecls);
-  nsGenericHTMLFormControlElement::MapImageSizeAttributesInto(aAttributes,
-                                                              aDecls);
-  nsGenericHTMLFormControlElement::MapCommonAttributesInto(aAttributes, aDecls);
+    MappedDeclarationsBuilder& aBuilder) {
+  MapImageAlignAttributeInto(aBuilder);
+  MapImageBorderAttributeInto(aBuilder);
+  MapImageMarginAttributeInto(aBuilder);
+  MapImageSizeAttributesInto(aBuilder);
+  MapCommonAttributesInto(aBuilder);
 }
 
 NS_IMETHODIMP_(bool)

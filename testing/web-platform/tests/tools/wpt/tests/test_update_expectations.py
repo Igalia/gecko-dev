@@ -6,7 +6,8 @@ import os
 import pytest
 
 from tools.wpt import wpt
-from tools.wptrunner.wptrunner import manifestexpected
+from wptrunner import manifestexpected
+from wptrunner.manifestupdate import get_test_name
 from localpaths import repo_root
 
 @pytest.fixture
@@ -94,6 +95,10 @@ def test_update(tmp_path, metadata_file):
     os.makedirs(metadata_path)
     wptreport_paths = [path_firefox, path_chrome]
 
+    update_properties = {"properties": ["product"]}
+    with open(os.path.join(metadata_path, "update_properties.json"), "w") as f:
+        json.dump(update_properties, f)
+
     args = ["update-expectations",
             "--manifest", os.path.join(repo_root, "MANIFEST.json"),
             "--metadata", metadata_path,
@@ -111,16 +116,14 @@ def test_update(tmp_path, metadata_file):
 
     firefox_expected = manifestexpected.get_manifest(metadata_path,
                                                      test_path,
-                                                     "/",
                                                      run_info_firefox)
     # Default expected isn't stored
     with pytest.raises(KeyError):
-        assert firefox_expected.get_test(test_id).get("expected")
-    assert firefox_expected.get_test(test_id).get_subtest(subtest_name).expected == "FAIL"
+        assert firefox_expected.get_test(get_test_name(test_id)).get("expected")
+    assert firefox_expected.get_test(get_test_name(test_id)).get_subtest(subtest_name).expected == "FAIL"
 
     chrome_expected = manifestexpected.get_manifest(metadata_path,
                                                     test_path,
-                                                    "/",
                                                     run_info_chrome)
-    assert chrome_expected.get_test(test_id).expected == "ERROR"
-    assert chrome_expected.get_test(test_id).get_subtest(subtest_name).expected == "NOTRUN"
+    assert chrome_expected.get_test(get_test_name(test_id)).expected == "ERROR"
+    assert chrome_expected.get_test(get_test_name(test_id)).get_subtest(subtest_name).expected == "NOTRUN"

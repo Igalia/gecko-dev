@@ -25,7 +25,7 @@ registerCleanupFunction(async () => {
   });
 });
 
-add_task(async function() {
+add_task(async function () {
   const toolbox = await openNewTabAndToolbox(TEST_URI, "netmonitor");
   info("Network panel is open.");
 
@@ -53,7 +53,7 @@ async function testNetmonitor(toolbox) {
     "devtools/client/netmonitor/src/selectors/index"
   );
 
-  await waitFor(() => store.getState().requests.requests.length > 0);
+  await waitFor(() => !!store.getState().requests.requests.length);
 
   is(
     store.getState().requests.requests.length,

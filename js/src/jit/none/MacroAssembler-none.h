@@ -275,10 +275,6 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T, typename S>
-  void store32_NoSecondScratch(T, S) {
-    MOZ_CRASH();
-  }
-  template <typename T, typename S>
   void store32Unaligned(T, S) {
     MOZ_CRASH();
   }
@@ -414,7 +410,7 @@ class MacroAssemblerNone : public Assembler {
     MOZ_CRASH();
   }
   template <typename T>
-  void storeUnboxedValue(const ConstantOrRegister&, MIRType, T, MIRType) {
+  void storeUnboxedValue(const ConstantOrRegister&, MIRType, T) {
     MOZ_CRASH();
   }
   template <typename T>

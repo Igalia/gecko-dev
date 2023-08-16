@@ -7,6 +7,7 @@
 #include "gfxPlatform.h"
 #include "gfx2DGlue.h"
 #include "mozilla/dom/ImageBitmapRenderingContextBinding.h"
+#include "mozilla/gfx/Types.h"
 #include "nsComponentManagerUtils.h"
 #include "nsRegion.h"
 #include "ImageContainer.h"
@@ -62,17 +63,22 @@ void ImageBitmapRenderingContext::GetCanvas(
   }
 }
 
-void ImageBitmapRenderingContext::TransferImageBitmap(
-    ImageBitmap& aImageBitmap) {
-  TransferFromImageBitmap(&aImageBitmap);
+void ImageBitmapRenderingContext::TransferImageBitmap(ImageBitmap& aImageBitmap,
+                                                      ErrorResult& aRv) {
+  TransferFromImageBitmap(&aImageBitmap, aRv);
 }
 
 void ImageBitmapRenderingContext::TransferFromImageBitmap(
-    ImageBitmap* aImageBitmap) {
-  Reset();
+    ImageBitmap* aImageBitmap, ErrorResult& aRv) {
+  ResetBitmap();
 
   if (aImageBitmap) {
     mImage = aImageBitmap->TransferAsImage();
+
+    if (!mImage) {
+      aRv.ThrowInvalidStateError("The input ImageBitmap has been detached");
+      return;
+    }
 
     if (aImageBitmap->IsWriteOnly()) {
       if (mCanvasElement) {
@@ -136,8 +142,9 @@ ImageBitmapRenderingContext::MatchWithIntrinsicSize() {
 }
 
 mozilla::UniquePtr<uint8_t[]> ImageBitmapRenderingContext::GetImageBuffer(
-    int32_t* aFormat) {
+    int32_t* aFormat, gfx::IntSize* aImageSize) {
   *aFormat = 0;
+  *aImageSize = {};
 
   if (!mImage) {
     return nullptr;
@@ -160,7 +167,17 @@ mozilla::UniquePtr<uint8_t[]> ImageBitmapRenderingContext::GetImageBuffer(
   }
 
   *aFormat = imgIEncoder::INPUT_FORMAT_HOSTARGB;
-  return gfx::SurfaceToPackedBGRA(data);
+  *aImageSize = data->GetSize();
+
+  UniquePtr<uint8_t[]> ret = gfx::SurfaceToPackedBGRA(data);
+
+  if (ret && ShouldResistFingerprinting(RFPTarget::CanvasRandomization)) {
+    nsRFPService::RandomizePixels(
+        GetCookieJarSettings(), ret.get(),
+        data->GetSize().width * data->GetSize().height * 4,
+        gfx::SurfaceFormat::A8R8G8B8_UINT32);
+  }
+  return ret;
 }
 
 NS_IMETHODIMP
@@ -175,14 +192,15 @@ ImageBitmapRenderingContext::GetInputStream(const char* aMimeType,
   }
 
   int32_t format = 0;
-  UniquePtr<uint8_t[]> imageBuffer = GetImageBuffer(&format);
+  gfx::IntSize imageSize = {};
+  UniquePtr<uint8_t[]> imageBuffer = GetImageBuffer(&format, &imageSize);
   if (!imageBuffer) {
     return NS_ERROR_FAILURE;
   }
 
-  return ImageEncoder::GetInputStream(mWidth, mHeight, imageBuffer.get(),
-                                      format, encoder, aEncoderOptions,
-                                      aStream);
+  return ImageEncoder::GetInputStream(imageSize.width, imageSize.height,
+                                      imageBuffer.get(), format, encoder,
+                                      aEncoderOptions, aStream);
 }
 
 already_AddRefed<mozilla::gfx::SourceSurface>
@@ -216,15 +234,13 @@ void ImageBitmapRenderingContext::SetOpaqueValueFromOpaqueAttr(
 
 bool ImageBitmapRenderingContext::GetIsOpaque() { return false; }
 
-NS_IMETHODIMP
-ImageBitmapRenderingContext::Reset() {
+void ImageBitmapRenderingContext::ResetBitmap() {
   if (mCanvasElement) {
     mCanvasElement->InvalidateCanvas();
   }
 
   mImage = nullptr;
   mFrameCaptureState = FrameCaptureState::CLEAN;
-  return NS_OK;
 }
 
 bool ImageBitmapRenderingContext::UpdateWebRenderCanvasData(
@@ -264,9 +280,6 @@ ImageBitmapRenderingContext::Redraw(const gfxRect& aDirty) {
 
   return NS_OK;
 }
-
-NS_IMETHODIMP
-ImageBitmapRenderingContext::SetIsIPC(bool aIsIPC) { return NS_OK; }
 
 void ImageBitmapRenderingContext::DidRefresh() {}
 

@@ -16,20 +16,16 @@
 #include "jspubtd.h"
 #include "NamespaceImports.h"
 
-#include "gc/Barrier.h"
 #include "js/Class.h"
 #include "js/ErrorReport.h"
 #include "js/RootingAPI.h"
 #include "js/TypeDecls.h"
 #include "js/UniquePtr.h"
 #include "js/Value.h"
-#include "vm/FunctionFlags.h"  // js::FunctionFlags
 #include "vm/JSObject.h"
 #include "vm/NativeObject.h"
-#include "vm/Shape.h"
 
 namespace js {
-class ArrayObject;
 
 class ErrorObject : public NativeObject {
   static JSObject* createProto(JSContext* cx, JSProtoKey key);
@@ -90,7 +86,8 @@ class ErrorObject : public NativeObject {
    * *not* include .message, which must be added separately if needed; see
    * ErrorObject::init.)
    */
-  static Shape* assignInitialShape(JSContext* cx, Handle<ErrorObject*> obj);
+  static SharedShape* assignInitialShape(JSContext* cx,
+                                         Handle<ErrorObject*> obj);
 
   JSExnType type() const {
     MOZ_ASSERT(isErrorClass(getClass()));
@@ -118,9 +115,13 @@ class ErrorObject : public NativeObject {
     return val.isString() ? val.toString() : nullptr;
   }
 
+  /*
+   * Return Nothing if the error was created without an initial cause or if the
+   * initial cause data property has been redefined to an accessor property.
+   */
   mozilla::Maybe<Value> getCause() const {
     const auto& value = getReservedSlot(CAUSE_SLOT);
-    if (value.isMagic(JS_ERROR_WITHOUT_CAUSE)) {
+    if (value.isMagic(JS_ERROR_WITHOUT_CAUSE) || value.isPrivateGCThing()) {
       return mozilla::Nothing();
     }
     return mozilla::Some(value);

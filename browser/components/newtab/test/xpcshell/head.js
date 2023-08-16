@@ -3,18 +3,14 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-/* eslint-disable no-unused-vars */
-
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "JsonSchema",
-  "resource://gre/modules/JsonSchema.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  JsonSchema: "resource://gre/modules/JsonSchema.sys.mjs",
+});
 
 XPCOMUtils.defineLazyGlobalGetters(this, ["fetch"]);
 
@@ -92,6 +88,11 @@ async function makeValidators() {
     ),
     whatsnew_panel_message: await schemaValidatorFor(
       "resource://testing-common/WhatsNewMessage.schema.json",
+      { common: true }
+    ),
+    feature_callout: await schemaValidatorFor(
+      // For now, Feature Callout and Spotlight share a common schema
+      "resource://testing-common/Spotlight.schema.json",
       { common: true }
     ),
   };

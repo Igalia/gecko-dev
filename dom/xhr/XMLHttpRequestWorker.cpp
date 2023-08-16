@@ -27,7 +27,6 @@
 #include "mozilla/dom/SerializedStackHolder.h"
 #include "mozilla/dom/StreamBlobImpl.h"
 #include "mozilla/dom/StructuredCloneHolder.h"
-#include "mozilla/dom/UnionConversions.h"
 #include "mozilla/dom/URLSearchParams.h"
 #include "mozilla/dom/WorkerScope.h"
 #include "mozilla/dom/WorkerRef.h"
@@ -43,6 +42,8 @@
 #include "XMLHttpRequestUpload.h"
 
 #include "mozilla/UniquePtr.h"
+
+extern mozilla::LazyLogModule gXMLHttpRequestLog;
 
 namespace mozilla::dom {
 
@@ -118,6 +119,7 @@ class Proxy final : public nsIDOMEventListener {
   uint64_t mLastTotal;
   uint64_t mLastUploadLoaded;
   uint64_t mLastUploadTotal;
+  nsresult mLastErrorDetailAtLoadend;
   bool mIsSyncXHR;
   bool mLastLengthComputable;
   bool mLastUploadLengthComputable;
@@ -151,6 +153,7 @@ class Proxy final : public nsIDOMEventListener {
         mLastTotal(0),
         mLastUploadLoaded(0),
         mLastUploadTotal(0),
+        mLastErrorDetailAtLoadend(NS_OK),
         mIsSyncXHR(false),
         mLastLengthComputable(false),
         mLastUploadLengthComputable(false),
@@ -392,7 +395,7 @@ class LoadStartDetectionRunnable final : public Runnable,
       }
 
       if (mSyncLoopTarget) {
-        aWorkerPrivate->StopSyncLoop(mSyncLoopTarget, true);
+        aWorkerPrivate->StopSyncLoop(mSyncLoopTarget, NS_OK);
       }
 
       if (mXMLHttpRequestPrivate->SendInProgress()) {
@@ -402,14 +405,7 @@ class LoadStartDetectionRunnable final : public Runnable,
       return true;
     }
 
-    nsresult Cancel() override {
-      // We need to check first if cancel is called twice
-      nsresult rv = MainThreadProxyRunnable::Cancel();
-      NS_ENSURE_SUCCESS(rv, rv);
-
-      // On the first cancel, this must run!
-      return Run();
-    }
+    nsresult Cancel() override { return Run(); }
   };
 
  public:
@@ -458,6 +454,7 @@ class EventRunnable final : public MainThreadProxyRunnable {
   bool mProgressEvent;
   bool mLengthComputable;
   nsresult mStatusResult;
+  nsresult mErrorDetail;
   // mScopeObj is used in PreDispatch only.  We init it in our constructor, and
   // reset() in PreDispatch, to ensure that it's not still linked into the
   // runtime once we go off-thread.
@@ -479,6 +476,7 @@ class EventRunnable final : public MainThreadProxyRunnable {
         mProgressEvent(true),
         mLengthComputable(aLengthComputable),
         mStatusResult(NS_OK),
+        mErrorDetail(NS_OK),
         mScopeObj(RootingCx(), aScopeObj) {}
 
   EventRunnable(Proxy* aProxy, bool aUploadEvent, const nsString& aType,
@@ -495,6 +493,7 @@ class EventRunnable final : public MainThreadProxyRunnable {
         mProgressEvent(false),
         mLengthComputable(0),
         mStatusResult(NS_OK),
+        mErrorDetail(NS_OK),
         mScopeObj(RootingCx(), aScopeObj) {}
 
  private:
@@ -827,7 +826,7 @@ void Proxy::Teardown(bool aSendUnpin) {
         // We have an unclosed sync loop.  Fix that now.
         RefPtr<MainThreadStopSyncLoopRunnable> runnable =
             new MainThreadStopSyncLoopRunnable(
-                mWorkerPrivate, std::move(mSyncLoopTarget), false);
+                mWorkerPrivate, std::move(mSyncLoopTarget), NS_ERROR_FAILURE);
         MOZ_ALWAYS_TRUE(runnable->Dispatch());
       }
 
@@ -1055,6 +1054,8 @@ bool EventRunnable::PreDispatch(WorkerPrivate* /* unused */) {
   mStatus = xhr->GetStatus(rv);
   mStatusResult = rv.StealNSResult();
 
+  mErrorDetail = xhr->ErrorDetail();
+
   xhr->GetStatusText(mStatusText, rv);
   MOZ_ASSERT(!rv.Failed());
 
@@ -1074,6 +1075,10 @@ bool EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) {
   if (!mProxy->mXMLHttpRequestPrivate) {
     // Object was finalized, bail.
     return true;
+  }
+
+  if (mType.EqualsASCII(sEventStrings[STRING_loadend])) {
+    mProxy->mLastErrorDetailAtLoadend = mErrorDetail;
   }
 
   if (mType.EqualsASCII(sEventStrings[STRING_loadstart])) {
@@ -1171,6 +1176,15 @@ bool EventRunnable::WorkerRun(JSContext* aCx, WorkerPrivate* aWorkerPrivate) {
   }
 
   event->SetTrusted(true);
+
+  if (MOZ_LOG_TEST(gXMLHttpRequestLog, LogLevel::Debug)) {
+    nsAutoString type;
+    event->GetType(type);
+    MOZ_LOG(gXMLHttpRequestLog, LogLevel::Debug,
+            ("%p firing %s event (%u,%u,%" PRIu64 ",%" PRIu64 ")",
+             mProxy->mXHR.get(), NS_ConvertUTF16toUTF8(type).get(),
+             mUploadEvent, mLengthComputable, mLoaded, mTotal));
+  }
 
   target->DispatchEvent(*event);
 
@@ -1596,6 +1610,13 @@ void XMLHttpRequestWorker::DispatchPrematureAbortEvent(
 
   event->SetTrusted(true);
 
+  MOZ_LOG(gXMLHttpRequestLog, LogLevel::Debug,
+          ("%p firing %s pre-abort event (%u,%u,%" PRIu64 ",%" PRIu64, this,
+           NS_ConvertUTF16toUTF8(aEventType).get(), aUploadTarget,
+           aUploadTarget ? mProxy->mLastUploadLengthComputable
+                         : mProxy->mLastLengthComputable,
+           aUploadTarget ? mProxy->mLastUploadLoaded : mProxy->mLastLoaded,
+           aUploadTarget ? mProxy->mLastUploadTotal : mProxy->mLastTotal));
   aTarget->DispatchEvent(*event);
 }
 
@@ -1655,11 +1676,11 @@ void XMLHttpRequestWorker::SendInternal(const BodyExtractorBase* aBody,
   AutoUnpinXHR autoUnpin(this);
   Maybe<AutoSyncLoopHolder> autoSyncLoop;
 
-  nsCOMPtr<nsIEventTarget> syncLoopTarget;
+  nsCOMPtr<nsISerialEventTarget> syncLoopTarget;
   bool isSyncXHR = mProxy->mIsSyncXHR;
   if (isSyncXHR) {
     autoSyncLoop.emplace(mWorkerPrivate, Canceling);
-    syncLoopTarget = autoSyncLoop->GetEventTarget();
+    syncLoopTarget = autoSyncLoop->GetSerialEventTarget();
     if (!syncLoopTarget) {
       aRv.Throw(NS_ERROR_DOM_INVALID_STATE_ERR);
       return;
@@ -1693,8 +1714,33 @@ void XMLHttpRequestWorker::SendInternal(const BodyExtractorBase* aBody,
 
   autoUnpin.Clear();
 
-  bool succeeded = autoSyncLoop->Run();
+  bool succeeded = NS_SUCCEEDED(autoSyncLoop->Run());
   mStateData->mFlagSend = false;
+
+  // Throw appropriately If a sync XHR failed per spec's RequestErrorSteps
+  if (isSyncXHR && mProxy) {
+    nsresult error = mProxy->mLastErrorDetailAtLoadend;
+    if (error == NS_ERROR_DOM_ABORT_ERR) {
+      MOZ_LOG(gXMLHttpRequestLog, LogLevel::Info,
+              ("%p throwing NS_ERROR_DOM_ABORT_ERR", this));
+      aRv.Throw(error);
+      return;
+    }
+    if (error == NS_ERROR_DOM_TIMEOUT_ERR) {
+      MOZ_LOG(gXMLHttpRequestLog, LogLevel::Info,
+              ("%p throwing NS_ERROR_DOM_TIMEOUT_ERR", this));
+      aRv.Throw(error);
+      return;
+    }
+    if (error == NS_ERROR_DOM_NETWORK_ERR ||
+        NS_ERROR_GET_MODULE(error) == NS_ERROR_MODULE_NETWORK) {
+      MOZ_LOG(gXMLHttpRequestLog, LogLevel::Info,
+              ("%p throwing NS_ERROR_DOM_NETWORK_ERR (0x%" PRIx32 ")", this,
+               static_cast<uint32_t>(error)));
+      aRv.Throw(NS_ERROR_DOM_NETWORK_ERR);
+      return;
+    }
+  }
 
   // Don't clobber an existing exception that we may have thrown on aRv
   // already... though can there really be one?  In any case, it seems to me
@@ -1702,6 +1748,8 @@ void XMLHttpRequestWorker::SendInternal(const BodyExtractorBase* aBody,
   // for it will come from ProxyCompleteRunnable and that always passes true for
   // the second arg.
   if (!succeeded && !aRv.Failed()) {
+    MOZ_LOG(gXMLHttpRequestLog, LogLevel::Debug,
+            ("%p SendInternal failed; throwing NS_ERROR_FAILURE", this));
     aRv.Throw(NS_ERROR_FAILURE);
   }
 }
@@ -1712,6 +1760,10 @@ void XMLHttpRequestWorker::Open(const nsACString& aMethod,
                                 const Optional<nsAString>& aPassword,
                                 ErrorResult& aRv) {
   mWorkerPrivate->AssertIsOnWorkerThread();
+
+  MOZ_LOG(gXMLHttpRequestLog, LogLevel::Debug,
+          ("%p Open(%s,%s,%d)", this, nsAutoCString(aMethod).get(),
+           NS_ConvertUTF16toUTF8(aUrl).get(), aAsync));
 
   if (mCanceled) {
     aRv.ThrowUncatchableException();

@@ -1,13 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 import {
   UrlbarProvider,
@@ -17,20 +11,24 @@ import {
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  AddonTestUtils: "resource://testing-common/AddonTestUtils.sys.mjs",
+  BrowserTestUtils: "resource://testing-common/BrowserTestUtils.sys.mjs",
+  BrowserUIUtils: "resource:///modules/BrowserUIUtils.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  ExperimentFakes: "resource://testing-common/NimbusTestUtils.sys.mjs",
+  ExperimentManager: "resource://nimbus/lib/ExperimentManager.sys.mjs",
+
+  FormHistoryTestUtils:
+    "resource://testing-common/FormHistoryTestUtils.sys.mjs",
+
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  TestUtils: "resource://testing-common/TestUtils.sys.mjs",
   UrlbarController: "resource:///modules/UrlbarController.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarSearchUtils: "resource:///modules/UrlbarSearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonTestUtils: "resource://testing-common/AddonTestUtils.jsm",
-  BrowserTestUtils: "resource://testing-common/BrowserTestUtils.jsm",
-  BrowserUIUtils: "resource:///modules/BrowserUIUtils.jsm",
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  FormHistoryTestUtils: "resource://testing-common/FormHistoryTestUtils.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
-  TestUtils: "resource://testing-common/TestUtils.jsm",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
 export var UrlbarTestUtils = {
@@ -50,34 +48,45 @@ export var UrlbarTestUtils = {
     rightClickEnter: 5,
   },
 
+  // Fallback to the console.
+  info: console.log,
+
   /**
    * Running this init allows helpers to access test scope helpers, like Assert
    * and SimpleTest. Note this initialization is not enforced, thus helpers
-   * should always check _testScope and provide a fallback path.
+   * should always check the properties set here and provide a fallback path.
+   *
    * @param {object} scope The global scope where tests are being run.
    */
   init(scope) {
-    this._testScope = scope;
-    if (scope) {
-      this.Assert = scope.Assert;
-      this.EventUtils = scope.EventUtils;
+    if (!scope) {
+      throw new Error("Must initialize UrlbarTestUtils with a test scope");
     }
     // If you add other properties to `this`, null them in uninit().
-  },
+    this.Assert = scope.Assert;
+    this.info = scope.info;
+    this.registerCleanupFunction = scope.registerCleanupFunction;
 
-  /**
-   * If tests initialize UrlbarTestUtils, they may need to call this function in
-   * their cleanup callback, or else their scope will affect subsequent tests.
-   * This is usually only required for tests outside browser/components/urlbar.
-   */
-  uninit() {
-    this._testScope = null;
-    this.Assert = null;
-    this.EventUtils = null;
+    if (Services.env.exists("XPCSHELL_TEST_PROFILE_DIR")) {
+      this.initXPCShellDependencies();
+    } else {
+      // xpcshell doesn't support EventUtils.
+      this.EventUtils = scope.EventUtils;
+      this.SimpleTest = scope.SimpleTest;
+    }
+
+    this.registerCleanupFunction(() => {
+      this.Assert = null;
+      this.info = console.log;
+      this.registerCleanupFunction = null;
+      this.EventUtils = null;
+      this.SimpleTest = null;
+    });
   },
 
   /**
    * Waits to a search to be complete.
+   *
    * @param {object} win The window containing the urlbar
    * @returns {Promise} Resolved when done.
    */
@@ -92,14 +101,27 @@ export var UrlbarTestUtils = {
       // Search mode may start a second query.
       context = await waitForQuery();
     }
+    if (win.gURLBar.view.oneOffSearchButtons._rebuilding) {
+      await new Promise(resolve =>
+        win.gURLBar.view.oneOffSearchButtons.addEventListener(
+          "rebuild",
+          resolve,
+          {
+            once: true,
+          }
+        )
+      );
+    }
     return context;
   },
 
   /**
    * Starts a search for a given string and waits for the search to be complete.
+   *
+   * @param {object} options The options object.
    * @param {object} options.window The window containing the urlbar
    * @param {string} options.value the search string
-   * @param {function} options.waitForFocus The SimpleTest function
+   * @param {Function} options.waitForFocus The SimpleTest function
    * @param {boolean} [options.fireInputEvent] whether an input event should be
    *        used when starting the query (simulates the user's typing, sets
    *        userTypedValued, triggers engagement event telemetry, etc.)
@@ -110,25 +132,25 @@ export var UrlbarTestUtils = {
     window,
     value,
     waitForFocus,
-    fireInputEvent = false,
+    fireInputEvent = true,
     selectionStart = -1,
     selectionEnd = -1,
   } = {}) {
-    if (this._testScope) {
-      await this._testScope.SimpleTest.promiseFocus(window);
+    if (this.SimpleTest) {
+      await this.SimpleTest.promiseFocus(window);
     } else {
       await new Promise(resolve => waitForFocus(resolve, window));
     }
 
     const setup = () => {
-      window.gURLBar.inputField.focus();
+      window.gURLBar.focus();
       // Using the value setter in some cases may trim and fetch unexpected
       // results, then pick an alternate path.
       if (
         lazy.UrlbarPrefs.get("trimURLs") &&
         value != lazy.BrowserUIUtils.trimURL(value)
       ) {
-        window.gURLBar.inputField.value = value;
+        window.gURLBar._setValue(value, false);
         fireInputEvent = true;
       } else {
         window.gURLBar.value = value;
@@ -169,6 +191,7 @@ export var UrlbarTestUtils = {
    * Waits for a result to be added at a certain index. Since we implement lazy
    * results replacement, even if we have a result at an index, it may be
    * related to the previous query, this methods ensures the result is current.
+   *
    * @param {object} win The window containing the urlbar
    * @param {number} index The index to look for
    * @returns {HtmlElement|XulElement} the result's element.
@@ -176,14 +199,16 @@ export var UrlbarTestUtils = {
   async waitForAutocompleteResultAt(win, index) {
     // TODO Bug 1530338: Quantum Bar doesn't yet implement lazy results replacement.
     await this.promiseSearchComplete(win);
-    if (index >= win.gURLBar.view._rows.children.length) {
+    let container = this.getResultsContainer(win);
+    if (index >= container.children.length) {
       throw new Error("Not enough results");
     }
-    return win.gURLBar.view._rows.children[index];
+    return container.children[index];
   },
 
   /**
    * Returns the oneOffSearchButtons object for the urlbar.
+   *
    * @param {object} win The window containing the urlbar
    * @returns {object} The oneOffSearchButtons
    */
@@ -192,7 +217,295 @@ export var UrlbarTestUtils = {
   },
 
   /**
+   * Returns a specific button of a result.
+   *
+   * @param {object} win The window containing the urlbar
+   * @param {string} buttonName The name of the button, e.g. "menu", "0", etc.
+   * @param {number} resultIndex The index of the result
+   * @returns {HtmlElement} The button
+   */
+  getButtonForResultIndex(win, buttonName, resultIndex) {
+    return this.getRowAt(win, resultIndex).querySelector(
+      `.urlbarView-button-${buttonName}`
+    );
+  },
+
+  /**
+   * Show the result menu button regardless of the result being hovered or
+   + selected.
+   *
+   * @param {object} win The window containing the urlbar
+   */
+  disableResultMenuAutohide(win) {
+    let container = this.getResultsContainer(win);
+    let attr = "disable-resultmenu-autohide";
+    container.toggleAttribute(attr, true);
+    this.registerCleanupFunction?.(() => {
+      container.toggleAttribute(attr, false);
+    });
+  },
+
+  /**
+   * Opens the result menu of a specific result.
+   *
+   * @param {object} win The window containing the urlbar
+   * @param {object} [options] The options object.
+   * @param {number} [options.resultIndex] The index of the result. Defaults
+   *        to the current selected index.
+   * @param {boolean} [options.byMouse] Whether to open the menu by mouse or
+   *        keyboard.
+   * @param {string} [options.activationKey] Key to activate the button with,
+   *        defaults to KEY_Enter.
+   */
+  async openResultMenu(
+    win,
+    {
+      resultIndex = win.gURLBar.view.selectedRowIndex,
+      byMouse = false,
+      activationKey = "KEY_Enter",
+    } = {}
+  ) {
+    this.Assert?.ok(win.gURLBar.view.isOpen, "view should be open");
+    let menuButton = this.getButtonForResultIndex(win, "menu", resultIndex);
+    this.Assert?.ok(
+      menuButton,
+      `found the menu button at result index ${resultIndex}`
+    );
+    let promiseMenuOpen = lazy.BrowserTestUtils.waitForEvent(
+      win.gURLBar.view.resultMenu,
+      "popupshown"
+    );
+    if (byMouse) {
+      this.info(
+        `synthesizing mousemove on row to make the menu button visible`
+      );
+      await this.EventUtils.promiseElementReadyForUserInput(
+        menuButton.closest(".urlbarView-row"),
+        win,
+        this.info
+      );
+      this.info(`got mousemove, now clicking the menu button`);
+      this.EventUtils.synthesizeMouseAtCenter(menuButton, {}, win);
+      this.info(`waiting for the menu popup to open via mouse`);
+    } else {
+      this.info(`selecting the result at index ${resultIndex}`);
+      while (win.gURLBar.view.selectedRowIndex != resultIndex) {
+        this.EventUtils.synthesizeKey("KEY_ArrowDown", {}, win);
+      }
+      if (this.getSelectedElement(win) != menuButton) {
+        this.EventUtils.synthesizeKey("KEY_Tab", {}, win);
+      }
+      this.Assert?.equal(
+        this.getSelectedElement(win),
+        menuButton,
+        `selected the menu button at result index ${resultIndex}`
+      );
+      this.EventUtils.synthesizeKey(activationKey, {}, win);
+      this.info(`waiting for ${activationKey} to open the menu popup`);
+    }
+    await promiseMenuOpen;
+    this.Assert?.equal(
+      win.gURLBar.view.resultMenu.state,
+      "open",
+      "Checking popup state"
+    );
+  },
+
+  /**
+   * Opens the result menu of a specific result and gets a menu item by either
+   * accesskey or command name. Either `accesskey` or `command` must be given.
+   *
+   * @param {object} options
+   *   The options object.
+   * @param {object} options.window
+   *   The window containing the urlbar.
+   * @param {string} options.accesskey
+   *   The access key of the menu item to return.
+   * @param {string} options.command
+   *   The command name of the menu item to return.
+   * @param {number} options.resultIndex
+   *   The index of the result. Defaults to the current selected index.
+   * @param {boolean} options.openByMouse
+   *   Whether to open the menu by mouse or keyboard.
+   * @param {Array} options.submenuSelectors
+   *   If the command is in the top-level result menu, leave this as an empty
+   *   array. If it's in a submenu, set this to an array where each element i is
+   *   a selector that can be used to get the i'th menu item that opens a
+   *   submenu.
+   */
+  async openResultMenuAndGetItem({
+    window,
+    accesskey,
+    command,
+    resultIndex = window.gURLBar.view.selectedRowIndex,
+    openByMouse = false,
+    submenuSelectors = [],
+  }) {
+    await this.openResultMenu(window, { resultIndex, byMouse: openByMouse });
+
+    // Open the sequence of submenus that contains the item.
+    for (let selector of submenuSelectors) {
+      let menuitem = window.gURLBar.view.resultMenu.querySelector(selector);
+      if (!menuitem) {
+        throw new Error("Submenu item not found for selector: " + selector);
+      }
+
+      let promisePopup = lazy.BrowserTestUtils.waitForEvent(
+        window.gURLBar.view.resultMenu,
+        "popupshown"
+      );
+
+      if (AppConstants.platform == "macosx") {
+        // Synthesized clicks don't work in the native Mac menu.
+        this.info(
+          "Calling openMenu() on submenu item with selector: " + selector
+        );
+        menuitem.openMenu(true);
+      } else {
+        this.info("Clicking submenu item with selector: " + selector);
+        this.EventUtils.synthesizeMouseAtCenter(menuitem, {}, window);
+      }
+
+      this.info("Waiting for submenu popupshown event");
+      await promisePopup;
+      this.info("Got the submenu popupshown event");
+    }
+
+    // Now get the item.
+    let menuitem;
+    if (accesskey) {
+      await lazy.BrowserTestUtils.waitForCondition(() => {
+        menuitem = window.gURLBar.view.resultMenu.querySelector(
+          `menuitem[accesskey=${accesskey}]`
+        );
+        return menuitem;
+      }, "Waiting for strings to load");
+    } else if (command) {
+      menuitem = window.gURLBar.view.resultMenu.querySelector(
+        `menuitem[data-command=${command}]`
+      );
+    } else {
+      throw new Error("accesskey or command must be specified");
+    }
+
+    return menuitem;
+  },
+
+  /**
+   * Opens the result menu of a specific result and presses an access key to
+   * activate a menu item.
+   *
+   * @param {object} win The window containing the urlbar
+   * @param {string} accesskey The access key to press once the menu is open
+   * @param {object} [options] The options object.
+   * @param {number} [options.resultIndex] The index of the result. Defaults
+   *        to the current selected index.
+   * @param {boolean} [options.openByMouse] Whether to open the menu by mouse
+   *        or keyboard.
+   */
+  async openResultMenuAndPressAccesskey(
+    win,
+    accesskey,
+    {
+      resultIndex = win.gURLBar.view.selectedRowIndex,
+      openByMouse = false,
+    } = {}
+  ) {
+    let menuitem = await this.openResultMenuAndGetItem({
+      accesskey,
+      resultIndex,
+      openByMouse,
+      window: win,
+    });
+    if (!menuitem) {
+      throw new Error("Menu item not found for accesskey: " + accesskey);
+    }
+
+    let promiseCommand = lazy.BrowserTestUtils.waitForEvent(
+      win.gURLBar.view.resultMenu,
+      "command"
+    );
+
+    if (AppConstants.platform == "macosx") {
+      // The native Mac menu doesn't support access keys.
+      this.info("calling doCommand() to activate menu item");
+      menuitem.doCommand();
+      win.gURLBar.view.resultMenu.hidePopup(true);
+    } else {
+      this.info(`pressing access key (${accesskey}) to activate menu item`);
+      this.EventUtils.synthesizeKey(accesskey, {}, win);
+    }
+
+    this.info("waiting for command event");
+    await promiseCommand;
+    this.info("got the command event");
+  },
+
+  /**
+   * Opens the result menu of a specific result and clicks a menu item with a
+   * specified command name.
+   *
+   * @param {object} win
+   *   The window containing the urlbar.
+   * @param {string|Array} commandOrArray
+   *   If the command is in the top-level result menu, set this to the command
+   *   name. If it's in a submenu, set this to an array where each element i is
+   *   a selector that can be used to click the i'th menu item that opens a
+   *   submenu, and the last element is the command name.
+   * @param {object} options
+   *   The options object.
+   * @param {number} options.resultIndex
+   *   The index of the result. Defaults to the current selected index.
+   * @param {boolean} options.openByMouse
+   *   Whether to open the menu by mouse or keyboard.
+   */
+  async openResultMenuAndClickItem(
+    win,
+    commandOrArray,
+    {
+      resultIndex = win.gURLBar.view.selectedRowIndex,
+      openByMouse = false,
+    } = {}
+  ) {
+    let submenuSelectors = Array.isArray(commandOrArray)
+      ? commandOrArray
+      : [commandOrArray];
+    let command = submenuSelectors.pop();
+
+    let menuitem = await this.openResultMenuAndGetItem({
+      resultIndex,
+      openByMouse,
+      command,
+      submenuSelectors,
+      window: win,
+    });
+    if (!menuitem) {
+      throw new Error("Menu item not found for command: " + command);
+    }
+
+    let promiseCommand = lazy.BrowserTestUtils.waitForEvent(
+      win.gURLBar.view.resultMenu,
+      "command"
+    );
+
+    if (AppConstants.platform == "macosx") {
+      // Synthesized clicks don't work in the native Mac menu.
+      this.info("calling doCommand() to activate menu item");
+      menuitem.doCommand();
+      win.gURLBar.view.resultMenu.hidePopup(true);
+    } else {
+      this.info("Clicking menu item with command: " + command);
+      this.EventUtils.synthesizeMouseAtCenter(menuitem, {}, win);
+    }
+
+    this.info("Waiting for command event");
+    await promiseCommand;
+    this.info("Got the command event");
+  },
+
+  /**
    * Returns true if the oneOffSearchButtons are visible.
+   *
    * @param {object} win The window containing the urlbar
    * @returns {boolean} True if the buttons are visible.
    */
@@ -203,6 +516,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Gets an abstracted representation of the result at an index.
+   *
    * @param {object} win The window containing the urlbar
    * @param {number} index The index to look for
    * @returns {object} An object with numerous properties describing the result.
@@ -219,7 +533,8 @@ export var UrlbarTestUtils = {
     details.source = result.source;
     details.heuristic = result.heuristic;
     details.autofill = !!result.autofill;
-    details.image = element.getElementsByClassName("urlbarView-favicon")[0].src;
+    details.image =
+      element.getElementsByClassName("urlbarView-favicon")[0]?.src;
     details.title = result.title;
     details.tags = "tags" in result.payload ? result.payload.tags : [];
     details.isSponsored = result.payload.isSponsored;
@@ -255,12 +570,15 @@ export var UrlbarTestUtils = {
       };
     } else if (details.type == UrlbarUtils.RESULT_TYPE.KEYWORD) {
       details.keyword = result.payload.keyword;
+    } else if (details.type == UrlbarUtils.RESULT_TYPE.DYNAMIC) {
+      details.dynamicType = result.payload.dynamicType;
     }
     return details;
   },
 
   /**
    * Gets the currently selected element.
+   *
    * @param {object} win The window containing the urlbar.
    * @returns {HtmlElement|XulElement} The selected element.
    */
@@ -270,6 +588,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Gets the index of the currently selected element.
+   *
    * @param {object} win The window containing the urlbar.
    * @returns {number} The selected index.
    */
@@ -278,17 +597,30 @@ export var UrlbarTestUtils = {
   },
 
   /**
+   * Gets the row at a specific index.
+   *
+   * @param {object} win The window containing the urlbar.
+   * @param {number} index The index to look for.
+   * @returns {HTMLElement|XulElement} The selected row.
+   */
+  getRowAt(win, index) {
+    return this.getResultsContainer(win).children.item(index);
+  },
+
+  /**
    * Gets the currently selected row. If the selected element is a descendant of
    * a row, this will return the ancestor row.
+   *
    * @param {object} win The window containing the urlbar.
    * @returns {HTMLElement|XulElement} The selected row.
    */
   getSelectedRow(win) {
-    return win.gURLBar.view._getSelectedRow() || null;
+    return this.getRowAt(win, this.getSelectedRowIndex(win));
   },
 
   /**
    * Gets the index of the currently selected element.
+   *
    * @param {object} win The window containing the urlbar.
    * @returns {number} The selected row index.
    */
@@ -298,6 +630,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Selects the element at the index specified.
+   *
    * @param {object} win The window containing the urlbar.
    * @param {index} index The index to select.
    */
@@ -305,18 +638,24 @@ export var UrlbarTestUtils = {
     win.gURLBar.view.selectedRowIndex = index;
   },
 
+  getResultsContainer(win) {
+    return win.gURLBar.view.panel.querySelector(".urlbarView-results");
+  },
+
   /**
    * Gets the number of results.
    * You must wait for the query to be complete before using this.
+   *
    * @param {object} win The window containing the urlbar
    * @returns {number} the number of results.
    */
   getResultCount(win) {
-    return win.gURLBar.view._rows.children.length;
+    return this.getResultsContainer(win).children.length;
   },
 
   /**
    * Ensures at least one search suggestion is present.
+   *
    * @param {object} win The window containing the urlbar
    * @returns {boolean} whether at least one search suggestion is present.
    */
@@ -339,6 +678,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Waits for the given number of connections to an http server.
+   *
    * @param {object} httpserver an HTTP Server instance
    * @param {number} count Number of connections to wait for
    * @returns {Promise} resolved when all the expected connections were started.
@@ -355,8 +695,9 @@ export var UrlbarTestUtils = {
 
   /**
    * Waits for the popup to be shown.
+   *
    * @param {object} win The window containing the urlbar
-   * @param {function} openFn Function to be used to open the popup.
+   * @param {Function} openFn Function to be used to open the popup.
    * @returns {Promise} resolved once the popup is closed
    */
   async promisePopupOpen(win, openFn) {
@@ -367,7 +708,7 @@ export var UrlbarTestUtils = {
     if (win.gURLBar.view.isOpen) {
       return;
     }
-    this._testScope?.info("Awaiting for the urlbar panel to open");
+    this.info("Awaiting for the urlbar panel to open");
     await new Promise(resolve => {
       win.gURLBar.controller.addQueryListener({
         onViewOpen() {
@@ -376,13 +717,14 @@ export var UrlbarTestUtils = {
         },
       });
     });
-    this._testScope?.info("Urlbar panel opened");
+    this.info("Urlbar panel opened");
   },
 
   /**
    * Waits for the popup to be hidden.
+   *
    * @param {object} win The window containing the urlbar
-   * @param {function} [closeFn] Function to be used to close the popup, if not
+   * @param {Function} [closeFn] Function to be used to close the popup, if not
    *        supplied it will default to a closing the popup directly.
    * @returns {Promise} resolved once the popup is closed
    */
@@ -395,7 +737,7 @@ export var UrlbarTestUtils = {
     if (!win.gURLBar.view.isOpen) {
       return;
     }
-    this._testScope?.info("Awaiting for the urlbar panel to close");
+    this.info("Awaiting for the urlbar panel to close");
     await new Promise(resolve => {
       win.gURLBar.controller.addQueryListener({
         onViewClose() {
@@ -404,13 +746,14 @@ export var UrlbarTestUtils = {
         },
       });
     });
-    this._testScope?.info("Urlbar panel closed");
+    this.info("Urlbar panel closed");
   },
 
   /**
    * Open the input field context menu and run a task on it.
+   *
    * @param {nsIWindow} win the current window
-   * @param {function} task a task function to run, gets the contextmenu popup
+   * @param {Function} task a task function to run, gets the contextmenu popup
    *        as argument.
    */
   async withContextMenu(win, task) {
@@ -452,13 +795,13 @@ export var UrlbarTestUtils = {
   },
 
   /**
-   * Asserts that the input is in a given search mode, or no search mode.
+   * Asserts that the input is in a given search mode, or no search mode. Can
+   * only be used if UrlbarTestUtils has been initialized with init().
    *
    * @param {Window} window
    *   The browser window.
    * @param {object} expectedSearchMode
    *   The expected search mode object.
-   * @note Can only be used if UrlbarTestUtils has been initialized with init().
    */
   async assertSearchMode(window, expectedSearchMode) {
     this.Assert.equal(
@@ -472,6 +815,22 @@ export var UrlbarTestUtils = {
       !!expectedSearchMode,
       "gURLBar.searchMode should exist as expected"
     );
+
+    if (
+      window.gURLBar.searchMode?.source &&
+      window.gURLBar.searchMode.source !== UrlbarUtils.RESULT_SOURCE.SEARCH
+    ) {
+      this.Assert.equal(
+        window.gURLBar.getAttribute("searchmodesource"),
+        UrlbarUtils.getResultSourceName(window.gURLBar.searchMode.source),
+        "gURLBar has proper searchmodesource attribute"
+      );
+    } else {
+      this.Assert.ok(
+        !window.gURLBar.hasAttribute("searchmodesource"),
+        "gURLBar does not have searchmodesource attribute"
+      );
+    }
 
     if (!expectedSearchMode) {
       // Check the input's placeholder.
@@ -509,10 +868,10 @@ export var UrlbarTestUtils = {
     // names that are not usually included in actual search mode objects.  For
     // convenience, ignore those properties if they aren't also present in the
     // urlbar's actual search mode object.
-    let ignoreProperties = ["icon", "pref", "restrict"];
+    let ignoreProperties = ["icon", "pref", "restrict", "telemetryLabel"];
     for (let prop of ignoreProperties) {
       if (prop in expectedSearchMode && !(prop in window.gURLBar.searchMode)) {
-        this._testScope?.info(
+        this.info(
           `Ignoring unimportant property '${prop}' in expected search mode`
         );
         delete expectedSearchMode[prop];
@@ -600,9 +959,8 @@ export var UrlbarTestUtils = {
           let engine = Services.search.getEngineByName(
             expectedSearchMode.engineName
           );
-          let engineRootDomain = lazy.UrlbarSearchUtils.getRootDomainFromEngine(
-            engine
-          );
+          let engineRootDomain =
+            lazy.UrlbarSearchUtils.getRootDomainFromEngine(engine);
           let resultUrl = new URL(result.url);
           this.Assert.ok(
             resultUrl.hostname.includes(engineRootDomain),
@@ -615,16 +973,18 @@ export var UrlbarTestUtils = {
 
   /**
    * Enters search mode by clicking a one-off.  The view must already be open
-   * before you call this.
+   * before you call this. Can only be used if UrlbarTestUtils has been
+   * initialized with init().
+   *
    * @param {object} window
+   *   The window to operate on.
    * @param {object} searchMode
    *   If given, the one-off matching this search mode will be clicked; it
    *   should be a full search mode object as described in
    *   UrlbarInput.setSearchMode.  If not given, the first one-off is clicked.
-   * @note Can only be used if UrlbarTestUtils has been initialized with init().
    */
   async enterSearchMode(window, searchMode = null) {
-    this._testScope?.info(`Enter Search Mode ${JSON.stringify(searchMode)}`);
+    this.info(`Enter Search Mode ${JSON.stringify(searchMode)}`);
 
     // Ensure any pending query is complete.
     await this.promiseSearchComplete(window);
@@ -667,19 +1027,22 @@ export var UrlbarTestUtils = {
   },
 
   /**
-   * Exits search mode.
+   * Exits search mode. If neither `backspace` nor `clickClose` is given, we'll
+   * default to backspacing. Can only be used if UrlbarTestUtils has been
+   * initialized with init().
+   *
    * @param {object} window
+   *   The window to operate on.
+   * @param {object} options
+   *   Options object
    * @param {boolean} options.backspace
    *   Exits search mode by backspacing at the beginning of the search string.
    * @param {boolean} options.clickClose
    *   Exits search mode by clicking the close button on the search mode
    *   indicator.
-   * @param {boolean} [waitForSearch]
+   * @param {boolean} [options.waitForSearch]
    *   Whether the test should wait for a search after exiting search mode.
    *   Defaults to true.
-   * @note If neither `backspace` nor `clickClose` is given, we'll default to
-   *       backspacing.
-   * @note Can only be used if UrlbarTestUtils has been initialized with init().
    */
   async exitSearchMode(
     window,
@@ -745,9 +1108,10 @@ export var UrlbarTestUtils = {
 
   /**
    * Returns the userContextId (container id) for the last search.
+   *
    * @param {object} win The browser window
-   * @returns {Promise} resolved when fetching is complete
-   * @resolves {number} a userContextId
+   * @returns {Promise<number>}
+   *   resolved when fetching is complete. Its value is a userContextId
    */
   async promiseUserContextId(win) {
     const defaultId = Ci.nsIScriptSecurityManager.DEFAULT_USER_CONTEXT_ID;
@@ -757,6 +1121,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Dispatches an input event to the input field.
+   *
    * @param {object} win The browser window
    */
   fireInputEvent(win) {
@@ -770,6 +1135,7 @@ export var UrlbarTestUtils = {
 
   /**
    * Returns a new mock controller.  This is useful for xpcshell tests.
+   *
    * @param {object} options Additional options to pass to the UrlbarController
    *        constructor.
    * @returns {UrlbarController} A new controller.
@@ -782,6 +1148,9 @@ export var UrlbarTestUtils = {
             isPrivate: false,
             onFirstResult() {
               return false;
+            },
+            getSearchSource() {
+              return "dummy-search-source";
             },
             window: {
               location: {
@@ -816,13 +1185,135 @@ export var UrlbarTestUtils = {
       }
     }
   },
+
+  /**
+   * Enrolls in a mock Nimbus feature.
+   *
+   * If you call UrlbarPrefs.updateFirefoxSuggestScenario() from an xpcshell
+   * test, you must call this first to intialize the Nimbus urlbar feature.
+   *
+   * @param {object} value
+   *   Define any desired Nimbus variables in this object.
+   * @param {string} [feature]
+   *   The feature to init.
+   * @param {string} [enrollmentType]
+   *   The enrollment type, either "rollout" (default) or "config".
+   * @returns {Function}
+   *   A cleanup function that will unenroll the feature, returns a promise.
+   */
+  async initNimbusFeature(
+    value = {},
+    feature = "urlbar",
+    enrollmentType = "rollout"
+  ) {
+    this.info("initNimbusFeature awaiting ExperimentManager.onStartup");
+    await lazy.ExperimentManager.onStartup();
+
+    this.info("initNimbusFeature awaiting ExperimentAPI.ready");
+    await lazy.ExperimentAPI.ready();
+
+    let method =
+      enrollmentType == "rollout"
+        ? "enrollWithRollout"
+        : "enrollWithFeatureConfig";
+    this.info(`initNimbusFeature awaiting ExperimentFakes.${method}`);
+    let doCleanup = await lazy.ExperimentFakes[method]({
+      featureId: lazy.NimbusFeatures[feature].featureId,
+      value: { enabled: true, ...value },
+    });
+
+    this.info("initNimbusFeature done");
+
+    this.registerCleanupFunction?.(async () => {
+      // If `doCleanup()` has already been called (i.e., by the caller), it will
+      // throw an error here.
+      try {
+        await doCleanup();
+      } catch (error) {}
+    });
+
+    return doCleanup;
+  },
+
+  /**
+   * Simulate that user clicks URLBar and inputs text into it.
+   *
+   * @param {object} win
+   *   The browser window containing target gURLBar.
+   * @param {string} text
+   *   The text to be input.
+   */
+  async inputIntoURLBar(win, text) {
+    if (win.gURLBar.focused) {
+      win.gURLBar.select();
+    } else {
+      this.EventUtils.synthesizeMouseAtCenter(win.gURLBar.inputField, {}, win);
+      await lazy.TestUtils.waitForCondition(() => win.gURLBar.focused);
+    }
+    if (text.length > 1) {
+      // Set most of the string directly instead of going through sendString,
+      // so that we don't make life unnecessarily hard for consumers by
+      // possibly starting multiple searches.
+      win.gURLBar._setValue(
+        text.substr(0, text.length - 1),
+        false /* allowTrim = */
+      );
+    }
+    this.EventUtils.sendString(text.substr(-1, 1), win);
+  },
+
+  /**
+   * Checks the urlbar value fomatting for a given URL.
+   *
+   * @param {window} win
+   *   The input in this window will be tested.
+   * @param {string} urlFormatString
+   *   The URL to test. The parts the are expected to be de-emphasized should be
+   *   wrapped in "<" and ">" chars.
+   * @param {object} [options]
+   *   Options object.
+   * @param {string} [options.clobberedURLString]
+   *      Normally the URL is de-emphasized in-place, thus it's enough to pass
+   *      urlString. In some cases however the formatter may decide to replace
+   *      the URL with a fixed one, because it can't properly guess a host. In
+   *      that case clobberedURLString is the expected de-emphasized value. The
+   *      parts the are expected to be de-emphasized should be wrapped in "<"
+   *      and ">" chars.
+   * @param {string} [options.additionalMsg]
+   *   Additional message to use for Assert.equal.
+   */
+  checkFormatting(
+    win,
+    urlFormatString,
+    { clobberedURLString = null, additionalMsg = null } = {}
+  ) {
+    let selectionController = win.gURLBar.editor.selectionController;
+    let selection = selectionController.getSelection(
+      selectionController.SELECTION_URLSECONDARY
+    );
+    let value = win.gURLBar.editor.rootElement.textContent;
+    let result = "";
+    for (let i = 0; i < selection.rangeCount; i++) {
+      let range = selection.getRangeAt(i).toString();
+      let pos = value.indexOf(range);
+      result += value.substring(0, pos) + "<" + range + ">";
+      value = value.substring(pos + range.length);
+    }
+    result += value;
+    this.Assert.equal(
+      result,
+      clobberedURLString || urlFormatString,
+      "Correct part of the URL is de-emphasized" +
+        (additionalMsg ? ` (${additionalMsg})` : "")
+    );
+  },
 };
 
 UrlbarTestUtils.formHistory = {
   /**
    * Adds values to the urlbar's form history.
    *
-   * @param {array} values
+   * @param {Array} values
    *   The form history entries to remove.
    * @param {object} window
    *   The window containing the urlbar.
@@ -837,7 +1328,7 @@ UrlbarTestUtils.formHistory = {
    * Removes values from the urlbar's form history.  If you want to remove all
    * history, use clearFormHistory.
    *
-   * @param {array} values
+   * @param {Array} values
    *   The form history entries to remove.
    * @param {object} window
    *   The window containing the urlbar.
@@ -914,20 +1405,28 @@ class TestProvider extends UrlbarProvider {
   /**
    * Constructor.
    *
-   * @param {array} results
+   * @param {object} options
+   *   Constructor options
+   * @param {Array} options.results
    *   An array of UrlbarResult objects that will be the provider's results.
-   * @param {string} [name]
+   * @param {string} [options.name]
    *   The provider's name.  Provider names should be unique.
-   * @param {UrlbarUtils.PROVIDER_TYPE} [type]
+   * @param {UrlbarUtils.PROVIDER_TYPE} [options.type]
    *   The provider's type.
-   * @param {number} [priority]
+   * @param {number} [options.priority]
    *   The provider's priority.  Built-in providers have a priority of zero.
-   * @param {number} [addTimeout]
+   * @param {number} [options.addTimeout]
    *   If non-zero, each result will be added on this timeout.  If zero, all
    *   results will be added immediately and synchronously.
-   * @param {function} [onCancel]
+   *   If there's no results, the query will be completed after this timeout.
+   * @param {Function} [options.onCancel]
    *   If given, a function that will be called when the provider's cancelQuery
    *   method is called.
+   * @param {Function} [options.onSelection]
+   *   If given, a function that will be called when
+   *   {@link UrlbarView.#selectElement} method is called.
+   * @param {Function} [options.onEngagement]
+   *   If given, a function that will be called when engagement.
    */
   constructor({
     results,
@@ -937,6 +1436,7 @@ class TestProvider extends UrlbarProvider {
     addTimeout = 0,
     onCancel = null,
     onSelection = null,
+    onEngagement = null,
   } = {}) {
     super();
     this._results = results;
@@ -946,6 +1446,7 @@ class TestProvider extends UrlbarProvider {
     this._addTimeout = addTimeout;
     this._onCancel = onCancel;
     this._onSelection = onSelection;
+    this._onEngagement = onEngagement;
   }
   get name() {
     return this._name;
@@ -960,6 +1461,9 @@ class TestProvider extends UrlbarProvider {
     return true;
   }
   async startQuery(context, addCallback) {
+    if (!this._results.length && this._addTimeout) {
+      await new Promise(resolve => lazy.setTimeout(resolve, this._addTimeout));
+    }
     for (let result of this._results) {
       if (!this._addTimeout) {
         addCallback(this, result);
@@ -982,6 +1486,12 @@ class TestProvider extends UrlbarProvider {
   onSelection(result, element) {
     if (this._onSelection) {
       this._onSelection(result, element);
+    }
+  }
+
+  onEngagement(state, queryContext, details, controller) {
+    if (this._onEngagement) {
+      this._onEngagement(state, queryContext, details, controller);
     }
   }
 }

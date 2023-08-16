@@ -3,6 +3,12 @@
 
 "use strict";
 
+// When running full suite, previous audio decoding tests might have left some
+// running and this might interfere with our testing
+add_setup(async function ensureNoExistingProcess() {
+  await killUtilityProcesses();
+});
+
 add_task(async () => {
   const utilityPid = await startUtilityProcess();
 
@@ -15,7 +21,7 @@ add_task(async () => {
 
   const performCollection = new Promise((resolve, reject) => {
     // Record the reports from the live memory reporters then process them.
-    let handleReport = function(
+    let handleReport = function (
       aProcess,
       aUnsafePath,
       aKind,
@@ -23,7 +29,7 @@ add_task(async () => {
       aAmount,
       aDescription
     ) {
-      const expectedProcess = `Utility (pid: ${utilityPid}, sandboxingKind: ${kGenericUtility})`;
+      const expectedProcess = `Utility (pid ${utilityPid}, sandboxingKind ${kGenericUtilitySandbox})`;
       if (aProcess !== expectedProcess) {
         return;
       }
@@ -66,5 +72,5 @@ add_task(async () => {
     "Collected some explicit/ report"
   );
 
-  await cleanUtilityProcessShutdown(utilityPid);
+  await cleanUtilityProcessShutdown();
 });

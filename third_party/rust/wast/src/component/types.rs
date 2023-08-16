@@ -2,6 +2,7 @@ use crate::component::*;
 use crate::core;
 use crate::kw;
 use crate::parser::Lookahead1;
+use crate::parser::Peek;
 use crate::parser::{Parse, Parser, Result};
 use crate::token::Index;
 use crate::token::LParen;
@@ -52,7 +53,7 @@ pub enum CoreTypeDef<'a> {
 
 impl<'a> Parse<'a> for CoreTypeDef<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<kw::module>() {
+        if parser.peek::<kw::module>()? {
             parser.parse::<kw::module>()?;
             Ok(Self::Module(parser.parse()?))
         } else {
@@ -82,8 +83,8 @@ impl<'a> Parse<'a> for ModuleType<'a> {
 pub enum ModuleTypeDecl<'a> {
     /// A core type.
     Type(core::Type<'a>),
-    /// An alias local to the module type.
-    Alias(CoreAlias<'a>),
+    /// An alias local to the component type.
+    Alias(Alias<'a>),
     /// An import.
     Import(core::Import<'a>),
     /// An export.
@@ -93,16 +94,13 @@ pub enum ModuleTypeDecl<'a> {
 impl<'a> Parse<'a> for ModuleTypeDecl<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::r#type>() {
+        if l.peek::<kw::r#type>()? {
             Ok(Self::Type(parser.parse()?))
-        } else if l.peek::<kw::alias>() {
-            let span = parser.parse::<kw::alias>()?.0;
-            Ok(Self::Alias(CoreAlias::parse_outer_type_alias(
-                span, parser,
-            )?))
-        } else if l.peek::<kw::import>() {
+        } else if l.peek::<kw::alias>()? {
+            Ok(Self::Alias(Alias::parse_outer_core_type_alias(parser)?))
+        } else if l.peek::<kw::import>()? {
             Ok(Self::Import(parser.parse()?))
-        } else if l.peek::<kw::export>() {
+        } else if l.peek::<kw::export>()? {
             parser.parse::<kw::export>()?;
             let name = parser.parse()?;
             let et = parser.parens(|parser| parser.parse())?;
@@ -135,17 +133,31 @@ pub struct Type<'a> {
     pub name: Option<NameAnnotation<'a>>,
     /// If present, inline export annotations which indicate names this
     /// definition should be exported under.
-    pub exports: core::InlineExport<'a>,
+    pub exports: InlineExport<'a>,
     /// The type definition.
     pub def: TypeDef<'a>,
 }
 
-impl<'a> Parse<'a> for Type<'a> {
-    fn parse(parser: Parser<'a>) -> Result<Self> {
+impl<'a> Type<'a> {
+    /// Parses a `Type` while allowing inline `(export "...")` names to be
+    /// defined.
+    pub fn parse_maybe_with_inline_exports(parser: Parser<'a>) -> Result<Self> {
+        Type::parse(parser, true)
+    }
+
+    fn parse_no_inline_exports(parser: Parser<'a>) -> Result<Self> {
+        Type::parse(parser, false)
+    }
+
+    fn parse(parser: Parser<'a>, allow_inline_exports: bool) -> Result<Self> {
         let span = parser.parse::<kw::r#type>()?.0;
         let id = parser.parse()?;
         let name = parser.parse()?;
-        let exports = parser.parse()?;
+        let exports = if allow_inline_exports {
+            parser.parse()?
+        } else {
+            Default::default()
+        };
         let def = parser.parse()?;
 
         Ok(Self {
@@ -169,22 +181,27 @@ pub enum TypeDef<'a> {
     Component(ComponentType<'a>),
     /// An instance type.
     Instance(InstanceType<'a>),
+    /// A resource type.
+    Resource(ResourceType<'a>),
 }
 
 impl<'a> Parse<'a> for TypeDef<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<LParen>() {
+        if parser.peek::<LParen>()? {
             parser.parens(|parser| {
                 let mut l = parser.lookahead1();
-                if l.peek::<kw::func>() {
+                if l.peek::<kw::func>()? {
                     parser.parse::<kw::func>()?;
                     Ok(Self::Func(parser.parse()?))
-                } else if l.peek::<kw::component>() {
+                } else if l.peek::<kw::component>()? {
                     parser.parse::<kw::component>()?;
                     Ok(Self::Component(parser.parse()?))
-                } else if l.peek::<kw::instance>() {
+                } else if l.peek::<kw::instance>()? {
                     parser.parse::<kw::instance>()?;
                     Ok(Self::Instance(parser.parse()?))
+                } else if l.peek::<kw::resource>()? {
+                    parser.parse::<kw::resource>()?;
+                    Ok(Self::Resource(parser.parse()?))
                 } else {
                     Ok(Self::Defined(ComponentDefinedType::parse_non_primitive(
                         parser, l,
@@ -204,7 +221,6 @@ impl<'a> Parse<'a> for TypeDef<'a> {
 #[allow(missing_docs)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PrimitiveValType {
-    Unit,
     Bool,
     S8,
     U8,
@@ -223,46 +239,43 @@ pub enum PrimitiveValType {
 impl<'a> Parse<'a> for PrimitiveValType {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::unit>() {
-            parser.parse::<kw::unit>()?;
-            Ok(Self::Unit)
-        } else if l.peek::<kw::bool_>() {
+        if l.peek::<kw::bool_>()? {
             parser.parse::<kw::bool_>()?;
             Ok(Self::Bool)
-        } else if l.peek::<kw::s8>() {
+        } else if l.peek::<kw::s8>()? {
             parser.parse::<kw::s8>()?;
             Ok(Self::S8)
-        } else if l.peek::<kw::u8>() {
+        } else if l.peek::<kw::u8>()? {
             parser.parse::<kw::u8>()?;
             Ok(Self::U8)
-        } else if l.peek::<kw::s16>() {
+        } else if l.peek::<kw::s16>()? {
             parser.parse::<kw::s16>()?;
             Ok(Self::S16)
-        } else if l.peek::<kw::u16>() {
+        } else if l.peek::<kw::u16>()? {
             parser.parse::<kw::u16>()?;
             Ok(Self::U16)
-        } else if l.peek::<kw::s32>() {
+        } else if l.peek::<kw::s32>()? {
             parser.parse::<kw::s32>()?;
             Ok(Self::S32)
-        } else if l.peek::<kw::u32>() {
+        } else if l.peek::<kw::u32>()? {
             parser.parse::<kw::u32>()?;
             Ok(Self::U32)
-        } else if l.peek::<kw::s64>() {
+        } else if l.peek::<kw::s64>()? {
             parser.parse::<kw::s64>()?;
             Ok(Self::S64)
-        } else if l.peek::<kw::u64>() {
+        } else if l.peek::<kw::u64>()? {
             parser.parse::<kw::u64>()?;
             Ok(Self::U64)
-        } else if l.peek::<kw::float32>() {
+        } else if l.peek::<kw::float32>()? {
             parser.parse::<kw::float32>()?;
             Ok(Self::Float32)
-        } else if l.peek::<kw::float64>() {
+        } else if l.peek::<kw::float64>()? {
             parser.parse::<kw::float64>()?;
             Ok(Self::Float64)
-        } else if l.peek::<kw::char>() {
+        } else if l.peek::<kw::char>()? {
             parser.parse::<kw::char>()?;
             Ok(Self::Char)
-        } else if l.peek::<kw::string>() {
+        } else if l.peek::<kw::string>()? {
             parser.parse::<kw::string>()?;
             Ok(Self::String)
         } else {
@@ -271,12 +284,35 @@ impl<'a> Parse<'a> for PrimitiveValType {
     }
 }
 
-/// An component value type.
+impl Peek for PrimitiveValType {
+    fn peek(cursor: crate::parser::Cursor<'_>) -> Result<bool> {
+        Ok(matches!(
+            cursor.keyword()?,
+            Some(("bool", _))
+                | Some(("s8", _))
+                | Some(("u8", _))
+                | Some(("s16", _))
+                | Some(("u16", _))
+                | Some(("s32", _))
+                | Some(("u32", _))
+                | Some(("s64", _))
+                | Some(("u64", _))
+                | Some(("float32", _))
+                | Some(("float64", _))
+                | Some(("char", _))
+                | Some(("string", _))
+        ))
+    }
+
+    fn display() -> &'static str {
+        "primitive value type"
+    }
+}
+
+/// A component value type.
 #[allow(missing_docs)]
 #[derive(Debug)]
 pub enum ComponentValType<'a> {
-    /// The value type is a primitive value type.
-    Primitive(PrimitiveValType),
     /// The value type is an inline defined type.
     Inline(ComponentDefinedType<'a>),
     /// The value type is an index reference to a defined type.
@@ -285,17 +321,42 @@ pub enum ComponentValType<'a> {
 
 impl<'a> Parse<'a> for ComponentValType<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<Index<'_>>() {
+        if parser.peek::<Index<'_>>()? {
             Ok(Self::Ref(parser.parse()?))
-        } else if parser.peek::<LParen>() {
+        } else {
+            Ok(Self::Inline(InlineComponentValType::parse(parser)?.0))
+        }
+    }
+}
+
+impl Peek for ComponentValType<'_> {
+    fn peek(cursor: crate::parser::Cursor<'_>) -> Result<bool> {
+        Ok(Index::peek(cursor)? || ComponentDefinedType::peek(cursor)?)
+    }
+
+    fn display() -> &'static str {
+        "component value type"
+    }
+}
+
+/// An inline-only component value type.
+///
+/// This variation does not parse type indexes.
+#[allow(missing_docs)]
+#[derive(Debug)]
+pub struct InlineComponentValType<'a>(ComponentDefinedType<'a>);
+
+impl<'a> Parse<'a> for InlineComponentValType<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        if parser.peek::<LParen>()? {
             parser.parens(|parser| {
-                Ok(Self::Inline(ComponentDefinedType::parse_non_primitive(
+                Ok(Self(ComponentDefinedType::parse_non_primitive(
                     parser,
                     parser.lookahead1(),
                 )?))
             })
         } else {
-            Ok(Self::Primitive(parser.parse()?))
+            Ok(Self(ComponentDefinedType::Primitive(parser.parse()?)))
         }
     }
 }
@@ -313,30 +374,38 @@ pub enum ComponentDefinedType<'a> {
     Enum(Enum<'a>),
     Union(Union<'a>),
     Option(OptionType<'a>),
-    Expected(Expected<'a>),
+    Result(ResultType<'a>),
+    Own(Index<'a>),
+    Borrow(Index<'a>),
 }
 
 impl<'a> ComponentDefinedType<'a> {
     fn parse_non_primitive(parser: Parser<'a>, mut l: Lookahead1<'a>) -> Result<Self> {
         parser.depth_check()?;
-        if l.peek::<kw::record>() {
+        if l.peek::<kw::record>()? {
             Ok(Self::Record(parser.parse()?))
-        } else if l.peek::<kw::variant>() {
+        } else if l.peek::<kw::variant>()? {
             Ok(Self::Variant(parser.parse()?))
-        } else if l.peek::<kw::list>() {
+        } else if l.peek::<kw::list>()? {
             Ok(Self::List(parser.parse()?))
-        } else if l.peek::<kw::tuple>() {
+        } else if l.peek::<kw::tuple>()? {
             Ok(Self::Tuple(parser.parse()?))
-        } else if l.peek::<kw::flags>() {
+        } else if l.peek::<kw::flags>()? {
             Ok(Self::Flags(parser.parse()?))
-        } else if l.peek::<kw::enum_>() {
+        } else if l.peek::<kw::enum_>()? {
             Ok(Self::Enum(parser.parse()?))
-        } else if l.peek::<kw::union>() {
+        } else if l.peek::<kw::union>()? {
             Ok(Self::Union(parser.parse()?))
-        } else if l.peek::<kw::option>() {
+        } else if l.peek::<kw::option>()? {
             Ok(Self::Option(parser.parse()?))
-        } else if l.peek::<kw::expected>() {
-            Ok(Self::Expected(parser.parse()?))
+        } else if l.peek::<kw::result>()? {
+            Ok(Self::Result(parser.parse()?))
+        } else if l.peek::<kw::own>()? {
+            parser.parse::<kw::own>()?;
+            Ok(Self::Own(parser.parse()?))
+        } else if l.peek::<kw::borrow>()? {
+            parser.parse::<kw::borrow>()?;
+            Ok(Self::Borrow(parser.parse()?))
         } else {
             Err(l.error())
         }
@@ -345,7 +414,37 @@ impl<'a> ComponentDefinedType<'a> {
 
 impl Default for ComponentDefinedType<'_> {
     fn default() -> Self {
-        Self::Primitive(PrimitiveValType::Unit)
+        Self::Primitive(PrimitiveValType::Bool)
+    }
+}
+
+impl Peek for ComponentDefinedType<'_> {
+    fn peek(cursor: crate::parser::Cursor<'_>) -> Result<bool> {
+        if PrimitiveValType::peek(cursor)? {
+            return Ok(true);
+        }
+
+        Ok(match cursor.lparen()? {
+            Some(cursor) => matches!(
+                cursor.keyword()?,
+                Some(("record", _))
+                    | Some(("variant", _))
+                    | Some(("list", _))
+                    | Some(("tuple", _))
+                    | Some(("flags", _))
+                    | Some(("enum", _))
+                    | Some(("union", _))
+                    | Some(("option", _))
+                    | Some(("result", _))
+                    | Some(("own", _))
+                    | Some(("borrow", _))
+            ),
+            None => false,
+        })
+    }
+
+    fn display() -> &'static str {
+        "component defined type"
     }
 }
 
@@ -414,8 +513,8 @@ pub struct VariantCase<'a> {
     pub id: Option<Id<'a>>,
     /// The name of the case.
     pub name: &'a str,
-    /// The type of the case.
-    pub ty: ComponentValType<'a>,
+    /// The optional type of the case.
+    pub ty: Option<ComponentValType<'a>>,
     /// The optional refinement.
     pub refines: Option<Refinement<'a>>,
 }
@@ -565,23 +664,32 @@ impl<'a> Parse<'a> for OptionType<'a> {
     }
 }
 
-/// An expected type.
+/// A result type.
 #[derive(Debug)]
-pub struct Expected<'a> {
+pub struct ResultType<'a> {
     /// The type on success.
-    pub ok: Box<ComponentValType<'a>>,
+    pub ok: Option<Box<ComponentValType<'a>>>,
     /// The type on failure.
-    pub err: Box<ComponentValType<'a>>,
+    pub err: Option<Box<ComponentValType<'a>>>,
 }
 
-impl<'a> Parse<'a> for Expected<'a> {
+impl<'a> Parse<'a> for ResultType<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        parser.parse::<kw::expected>()?;
-        let ok = parser.parse()?;
-        let err = parser.parse()?;
+        parser.parse::<kw::result>()?;
+
+        let ok: Option<ComponentValType> = parser.parse()?;
+        let err: Option<ComponentValType> = if parser.peek::<LParen>()? {
+            Some(parser.parens(|parser| {
+                parser.parse::<kw::error>()?;
+                parser.parse()
+            })?)
+        } else {
+            None
+        };
+
         Ok(Self {
-            ok: Box::new(ok),
-            err: Box::new(err),
+            ok: ok.map(Box::new),
+            err: err.map(Box::new),
         })
     }
 }
@@ -592,31 +700,26 @@ pub struct ComponentFunctionType<'a> {
     /// The parameters of a function, optionally each having an identifier for
     /// name resolution and a name for the custom `name` section.
     pub params: Box<[ComponentFunctionParam<'a>]>,
-    /// The result type of a function.
-    pub result: ComponentValType<'a>,
+    /// The result of a function, optionally each having an identifier for
+    /// name resolution and a name for the custom `name` section.
+    pub results: Box<[ComponentFunctionResult<'a>]>,
 }
 
 impl<'a> Parse<'a> for ComponentFunctionType<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        let mut params = Vec::new();
-        while parser.peek2::<kw::param>() {
+        let mut params: Vec<ComponentFunctionParam> = Vec::new();
+        while parser.peek2::<kw::param>()? {
             params.push(parser.parens(|p| p.parse())?);
         }
 
-        let result = if parser.peek2::<kw::result>() {
-            // Parse a `(result ...)`.
-            parser.parens(|parser| {
-                parser.parse::<kw::result>()?;
-                parser.parse()
-            })?
-        } else {
-            // If the result is omitted, use `unit`.
-            ComponentValType::Primitive(PrimitiveValType::Unit)
-        };
+        let mut results: Vec<ComponentFunctionResult> = Vec::new();
+        while parser.peek2::<kw::result>()? {
+            results.push(parser.parens(|p| p.parse())?);
+        }
 
         Ok(Self {
             params: params.into(),
-            result,
+            results: results.into(),
         })
     }
 }
@@ -624,8 +727,8 @@ impl<'a> Parse<'a> for ComponentFunctionType<'a> {
 /// A parameter of a [`ComponentFunctionType`].
 #[derive(Debug)]
 pub struct ComponentFunctionParam<'a> {
-    /// An optionally-specified name of this parameter
-    pub name: Option<&'a str>,
+    /// The name of the parameter
+    pub name: &'a str,
     /// The type of the parameter.
     pub ty: ComponentValType<'a>,
 }
@@ -640,13 +743,32 @@ impl<'a> Parse<'a> for ComponentFunctionParam<'a> {
     }
 }
 
+/// A result of a [`ComponentFunctionType`].
+#[derive(Debug)]
+pub struct ComponentFunctionResult<'a> {
+    /// An optionally-specified name of this result
+    pub name: Option<&'a str>,
+    /// The type of the result.
+    pub ty: ComponentValType<'a>,
+}
+
+impl<'a> Parse<'a> for ComponentFunctionResult<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        parser.parse::<kw::result>()?;
+        Ok(Self {
+            name: parser.parse()?,
+            ty: parser.parse()?,
+        })
+    }
+}
+
 /// The type of an exported item from an component or instance type.
 #[derive(Debug)]
 pub struct ComponentExportType<'a> {
     /// Where this export was defined.
     pub span: Span,
     /// The name of this export.
-    pub name: &'a str,
+    pub name: ComponentExternName<'a>,
     /// The signature of the item.
     pub item: ItemSig<'a>,
 }
@@ -654,8 +776,15 @@ pub struct ComponentExportType<'a> {
 impl<'a> Parse<'a> for ComponentExportType<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let span = parser.parse::<kw::export>()?.0;
+        let id = parser.parse()?;
+        let debug_name = parser.parse()?;
         let name = parser.parse()?;
-        let item = parser.parens(|p| p.parse())?;
+        let item = parser.parens(|p| {
+            let mut item = p.parse::<ItemSigNoName<'_>>()?.0;
+            item.id = id;
+            item.name = debug_name;
+            Ok(item)
+        })?;
         Ok(Self { span, name, item })
     }
 }
@@ -694,15 +823,15 @@ pub enum ComponentTypeDecl<'a> {
 impl<'a> Parse<'a> for ComponentTypeDecl<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::core>() {
+        if l.peek::<kw::core>()? {
             Ok(Self::CoreType(parser.parse()?))
-        } else if l.peek::<kw::r#type>() {
-            Ok(Self::Type(parser.parse()?))
-        } else if l.peek::<kw::alias>() {
-            Ok(Self::Alias(Alias::parse_outer_type_alias(parser)?))
-        } else if l.peek::<kw::import>() {
+        } else if l.peek::<kw::r#type>()? {
+            Ok(Self::Type(Type::parse_no_inline_exports(parser)?))
+        } else if l.peek::<kw::alias>()? {
+            Ok(Self::Alias(parser.parse()?))
+        } else if l.peek::<kw::import>()? {
             Ok(Self::Import(parser.parse()?))
-        } else if l.peek::<kw::export>() {
+        } else if l.peek::<kw::export>()? {
             Ok(Self::Export(parser.parse()?))
         } else {
             Err(l.error())
@@ -752,13 +881,13 @@ pub enum InstanceTypeDecl<'a> {
 impl<'a> Parse<'a> for InstanceTypeDecl<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::core>() {
+        if l.peek::<kw::core>()? {
             Ok(Self::CoreType(parser.parse()?))
-        } else if l.peek::<kw::r#type>() {
-            Ok(Self::Type(parser.parse()?))
-        } else if l.peek::<kw::alias>() {
-            Ok(Self::Alias(Alias::parse_outer_type_alias(parser)?))
-        } else if l.peek::<kw::export>() {
+        } else if l.peek::<kw::r#type>()? {
+            Ok(Self::Type(Type::parse_no_inline_exports(parser)?))
+        } else if l.peek::<kw::alias>()? {
+            Ok(Self::Alias(parser.parse()?))
+        } else if l.peek::<kw::export>()? {
             Ok(Self::Export(parser.parse()?))
         } else {
             Err(l.error())
@@ -773,6 +902,46 @@ impl<'a> Parse<'a> for Vec<InstanceTypeDecl<'a>> {
             decls.push(parser.parens(|parser| parser.parse())?);
         }
         Ok(decls)
+    }
+}
+
+/// A type definition for an instance type.
+#[derive(Debug)]
+pub struct ResourceType<'a> {
+    /// Representation, in core WebAssembly, of this resource.
+    pub rep: core::ValType<'a>,
+    /// The declarations of the instance type.
+    pub dtor: Option<CoreItemRef<'a, kw::func>>,
+}
+
+impl<'a> Parse<'a> for ResourceType<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        let rep = parser.parens(|p| {
+            p.parse::<kw::rep>()?;
+            p.parse()
+        })?;
+        let dtor = if parser.is_empty() {
+            None
+        } else {
+            Some(parser.parens(|p| {
+                p.parse::<kw::dtor>()?;
+                p.parens(|p| p.parse())
+            })?)
+        };
+        Ok(Self { rep, dtor })
+    }
+}
+
+/// A value type declaration used for values in import signatures.
+#[derive(Debug)]
+pub struct ComponentValTypeUse<'a>(pub ComponentValType<'a>);
+
+impl<'a> Parse<'a> for ComponentValTypeUse<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        match ComponentTypeUse::<'a, InlineComponentValType<'a>>::parse(parser)? {
+            ComponentTypeUse::Ref(i) => Ok(Self(ComponentValType::Ref(i.idx))),
+            ComponentTypeUse::Inline(t) => Ok(Self(ComponentValType::Inline(t.0))),
+        }
     }
 }
 
@@ -791,7 +960,7 @@ pub enum CoreTypeUse<'a, T> {
 impl<'a, T: Parse<'a>> Parse<'a> for CoreTypeUse<'a, T> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         // Here the core context is assumed, so no core prefix is expected
-        if parser.peek::<LParen>() && parser.peek2::<CoreItemRef<'a, kw::r#type>>() {
+        if parser.peek::<LParen>()? && parser.peek2::<CoreItemRef<'a, kw::r#type>>()? {
             Ok(Self::Ref(parser.parens(|parser| parser.parse())?))
         } else {
             Ok(Self::Inline(parser.parse()?))
@@ -824,7 +993,7 @@ pub enum ComponentTypeUse<'a, T> {
 
 impl<'a, T: Parse<'a>> Parse<'a> for ComponentTypeUse<'a, T> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        if parser.peek::<LParen>() && parser.peek2::<ItemRef<'a, kw::r#type>>() {
+        if parser.peek::<LParen>()? && parser.peek2::<ItemRef<'a, kw::r#type>>()? {
             Ok(Self::Ref(parser.parens(|parser| parser.parse())?))
         } else {
             Ok(Self::Inline(parser.parse()?))

@@ -26,6 +26,59 @@ class DeleteAllCookiesAction:
         self.protocol.cookies.delete_all_cookies()
 
 
+class GetAllCookiesAction:
+    name = "get_all_cookies"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Getting all cookies")
+        return self.protocol.cookies.get_all_cookies()
+
+
+class GetComputedLabelAction:
+    name = "get_computed_label"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        selector = payload["selector"]
+        element = self.protocol.select.element_by_selector(selector)
+        self.logger.debug("Getting computed label for element: %s" % element)
+        return self.protocol.accessibility.get_computed_label(element)
+
+
+class GetComputedRoleAction:
+    name = "get_computed_role"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        selector = payload["selector"]
+        element = self.protocol.select.element_by_selector(selector)
+        self.logger.debug("Getting computed role for element: %s" % element)
+        return self.protocol.accessibility.get_computed_role(element)
+
+
+class GetNamedCookieAction:
+    name = "get_named_cookie"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        name = payload["name"]
+        self.logger.debug("Getting cookie named %s" % name)
+        return self.protocol.cookies.get_named_cookie(name)
+
+
 class SendKeysAction:
     name = "send_keys"
 
@@ -118,9 +171,8 @@ class SetPermissionAction:
         descriptor = permission_params["descriptor"]
         name = descriptor["name"]
         state = permission_params["state"]
-        one_realm = permission_params.get("oneRealm", False)
-        self.logger.debug("Setting permission %s to %s, oneRealm=%s" % (name, state, one_realm))
-        self.protocol.set_permission.set_permission(descriptor, state, one_realm)
+        self.logger.debug("Setting permission %s to %s" % (name, state))
+        self.protocol.set_permission.set_permission(descriptor, state)
 
 class AddVirtualAuthenticatorAction:
     name = "add_virtual_authenticator"
@@ -225,8 +277,91 @@ class SetSPCTransactionModeAction:
         self.logger.debug("Setting SPC transaction mode to %s" % mode)
         return self.protocol.spc_transactions.set_spc_transaction_mode(mode)
 
+class CancelFedCMDialogAction:
+    name = "cancel_fedcm_dialog"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Canceling FedCM dialog")
+        return self.protocol.fedcm.cancel_fedcm_dialog()
+
+class SelectFedCMAccountAction:
+    name = "select_fedcm_account"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        account_index = payload["account_index"]
+        self.logger.debug(f"Selecting FedCM account of index: {account_index}")
+        return self.protocol.fedcm.select_fedcm_account(account_index)
+
+class GetFedCMAccountListAction:
+    name = "get_fedcm_account_list"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Getting FedCM account list")
+        return self.protocol.fedcm.get_fedcm_account_list()
+
+class GetFedCMDialogTitleAction:
+    name = "get_fedcm_dialog_title"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Getting FedCM dialog title")
+        return self.protocol.fedcm.get_fedcm_dialog_title()
+
+class GetFedCMDialogTypeAction:
+    name = "get_fedcm_dialog_type"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Getting FedCM dialog type")
+        return self.protocol.fedcm.get_fedcm_dialog_type()
+
+class SetFedCMDelayEnabledAction:
+    name = "set_fedcm_delay_enabled"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        enabled = payload["enabled"]
+        self.logger.debug("Setting FedCM delay enabled as %s" % enabled)
+        return self.protocol.fedcm.set_fedcm_delay_enabled(enabled)
+
+class ResetFedCMCooldownAction:
+    name = "reset_fedcm_cooldown"
+
+    def __init__(self, logger, protocol):
+        self.logger = logger
+        self.protocol = protocol
+
+    def __call__(self, payload):
+        self.logger.debug("Resetting FedCM cooldown")
+        return self.protocol.fedcm.reset_fedcm_cooldown()
+
 actions = [ClickAction,
            DeleteAllCookiesAction,
+           GetAllCookiesAction,
+           GetNamedCookieAction,
+           GetComputedLabelAction,
+           GetComputedRoleAction,
            SendKeysAction,
            MinimizeWindowAction,
            SetWindowRectAction,
@@ -240,4 +375,11 @@ actions = [ClickAction,
            RemoveCredentialAction,
            RemoveAllCredentialsAction,
            SetUserVerifiedAction,
-           SetSPCTransactionModeAction]
+           SetSPCTransactionModeAction,
+           CancelFedCMDialogAction,
+           SelectFedCMAccountAction,
+           GetFedCMAccountListAction,
+           GetFedCMDialogTitleAction,
+           GetFedCMDialogTypeAction,
+           SetFedCMDelayEnabledAction,
+           ResetFedCMCooldownAction]

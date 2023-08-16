@@ -19,17 +19,17 @@ let SUGGESTIONS_DATA = [
   {
     keywords: ["aaa", "bbb"],
     isSponsored: false,
-    score: 2 * UrlbarQuickSuggest.DEFAULT_SUGGESTION_SCORE,
+    score: 2 * QuickSuggestRemoteSettings.DEFAULT_SUGGESTION_SCORE,
   },
   {
     keywords: ["bbb"],
     isSponsored: true,
-    score: 4 * UrlbarQuickSuggest.DEFAULT_SUGGESTION_SCORE,
+    score: 4 * QuickSuggestRemoteSettings.DEFAULT_SUGGESTION_SCORE,
   },
   {
     keywords: ["bbb"],
     isSponsored: false,
-    score: 3 * UrlbarQuickSuggest.DEFAULT_SUGGESTION_SCORE,
+    score: 3 * QuickSuggestRemoteSettings.DEFAULT_SUGGESTION_SCORE,
   },
   {
     keywords: ["ccc"],
@@ -129,8 +129,10 @@ let TESTS = {
   },
 };
 
-add_task(async function() {
+add_task(async function () {
   UrlbarPrefs.set("quicksuggest.enabled", true);
+  UrlbarPrefs.set("suggest.quicksuggest.sponsored", true);
+  UrlbarPrefs.set("suggest.quicksuggest.nonsponsored", true);
 
   // Create results and suggestions based on `SUGGESTIONS_DATA`.
   let qsResults = [];
@@ -161,11 +163,11 @@ add_task(async function() {
       score:
         typeof score == "number"
           ? score
-          : UrlbarQuickSuggest.DEFAULT_SUGGESTION_SCORE,
+          : QuickSuggestRemoteSettings.DEFAULT_SUGGESTION_SCORE,
       source: "remote-settings",
       icon: null,
       position: undefined,
-      _test_is_best_match: undefined,
+      provider: "AdmWikipedia",
     };
     delete qsSuggestion.keywords;
     delete qsSuggestion.id;
@@ -178,6 +180,7 @@ add_task(async function() {
       heuristic: false,
       payload: {
         isSponsored,
+        telemetryType: isSponsored ? "adm_sponsored" : "adm_nonsponsored",
         sponsoredBlockId: qsResult.id,
         url: qsResult.url,
         originalUrl: qsResult.url,
@@ -188,14 +191,35 @@ add_task(async function() {
         sponsoredAdvertiser: qsResult.advertiser,
         sponsoredIabCategory: qsResult.iab_category,
         icon: null,
-        helpUrl: UrlbarProviderQuickSuggest.helpUrl,
-        helpL10nId: "firefox-suggest-urlbar-learn-more",
+        descriptionL10n: isSponsored
+          ? { id: "urlbar-result-action-sponsored" }
+          : undefined,
+        helpUrl: QuickSuggest.HELP_URL,
+        helpL10n: {
+          id: UrlbarPrefs.get("resultMenu")
+            ? "urlbar-result-menu-learn-more-about-firefox-suggest"
+            : "firefox-suggest-urlbar-learn-more",
+        },
+        isBlockable: UrlbarPrefs.get("quickSuggestBlockingEnabled"),
+        blockL10n: {
+          id: UrlbarPrefs.get("resultMenu")
+            ? "urlbar-result-menu-dismiss-firefox-suggest"
+            : "firefox-suggest-urlbar-block",
+        },
         source: "remote-settings",
+        provider: "AdmWikipedia",
       },
     });
   }
 
-  await QuickSuggestTestUtils.ensureQuickSuggestInit(qsResults);
+  await QuickSuggestTestUtils.ensureQuickSuggestInit({
+    remoteSettingsResults: [
+      {
+        type: "data",
+        attachment: qsResults,
+      },
+    ],
+  });
 
   // Run a test for each keyword.
   for (let [keyword, test] of Object.entries(TESTS)) {
@@ -205,32 +229,13 @@ add_task(async function() {
 
     // Call `query()`.
     Assert.deepEqual(
-      await UrlbarQuickSuggest.query(keyword),
+      await QuickSuggestRemoteSettings.query(keyword),
       expectedIndexes.map(i => ({
         ...qsSuggestions[i],
         full_keyword: keyword,
       })),
-      `query() for ${keyword}`
+      `query() for keyword ${keyword}`
     );
-
-    // Make sure the expected result object(s) are stored correctly.
-    let mapValue = UrlbarQuickSuggest._resultsByKeyword.get(keyword);
-    if (expectedIndexes.length == 1) {
-      Assert.ok(!Array.isArray(mapValue), "The map value is not an array");
-      Assert.deepEqual(
-        mapValue,
-        qsResults[expectedIndexes[0]],
-        "The map value is the expected result object"
-      );
-    } else {
-      Assert.ok(Array.isArray(mapValue), "The map value is an array");
-      Assert.greater(mapValue.length, 0, "The array is not empty");
-      Assert.deepEqual(
-        mapValue,
-        expectedIndexes.map(i => qsResults[i]),
-        "The map value is the expected array of result objects"
-      );
-    }
 
     // Now do a urlbar search for the keyword with all possible combinations of
     // sponsored and non-sponsored suggestions enabled and disabled.
@@ -274,5 +279,8 @@ add_task(async function() {
         await check_results({ context, matches });
       }
     }
+
+    UrlbarPrefs.set("suggest.quicksuggest.sponsored", true);
+    UrlbarPrefs.set("suggest.quicksuggest.nonsponsored", true);
   }
 });

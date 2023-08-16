@@ -50,17 +50,11 @@
                       "description": "Optional extra params for the feature (this should be validated against a schema)"
                     }
                   },
-                  "required": [
-                    "featureId",
-                    "value"
-                  ],
+                  "required": ["featureId", "value"],
                   "description": "A single feature configuration"
                 }
               },
-              "required": [
-                "slug",
-                "feature"
-              ]
+              "required": ["slug", "feature"]
             },
             {
               "type": "object",
@@ -85,11 +79,7 @@
                       "additionalProperties": {}
                     }
                   },
-                  "required": [
-                    "featureId",
-                    "enabled",
-                    "value"
-                  ],
+                  "required": ["featureId", "enabled", "value"],
                   "description": "The feature key must be provided with valid values to prevent crashes if the DTO is encountered by Desktop clients earlier than version 95."
                 },
                 "features": {
@@ -101,29 +91,18 @@
                         "type": "string",
                         "description": "The identifier for the feature flag"
                       },
-                      "enabled": {
-                        "type": "boolean",
-                        "description": "This can be used to turn the whole feature on/off"
-                      },
                       "value": {
                         "type": "object",
                         "additionalProperties": {},
                         "description": "Optional extra params for the feature (this should be validated against a schema)"
                       }
                     },
-                    "required": [
-                      "featureId",
-                      "value"
-                    ]
+                    "required": ["featureId", "value"]
                   },
                   "description": "An array of feature configurations"
                 }
               },
-              "required": [
-                "slug",
-                "feature",
-                "features"
-              ]
+              "required": ["slug", "feature", "features"]
             },
             {
               "type": "object",
@@ -141,28 +120,18 @@
                         "type": "string",
                         "description": "The identifier for the feature flag"
                       },
-                      "enabled": {
-                        "type": "boolean",
-                        "description": "This can be used to turn the whole feature on/off"
-                      },
                       "value": {
                         "type": "object",
                         "additionalProperties": {},
                         "description": "Optional extra params for the feature (this should be validated against a schema)"
                       }
                     },
-                    "required": [
-                      "featureId",
-                      "value"
-                    ]
+                    "required": ["featureId", "value"]
                   },
                   "description": "An array of feature configurations"
                 }
               },
-              "required": [
-                "slug",
-                "features"
-              ]
+              "required": ["slug", "features"]
             }
           ],
           "description": "Branch configuration for the experiment"
@@ -187,6 +156,57 @@
         "force": {
           "type": "boolean",
           "description": "Whether or not this was a force enrollment."
+        },
+        "prefs": {
+          "type": "array",
+          "description": "Information about prefs set by this enrollment.",
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "The name of the pref that was set."
+              },
+              "featureId": {
+                "type": "string",
+                "description": "The ID of the feature that owns the variable that set this pref."
+              },
+              "variable": {
+                "type": "string",
+                "description": "The variable that set this pref."
+              },
+              "branch": {
+                "type": "string",
+                "enum": ["user", "default"],
+                "description": "The branch the pref was set on."
+              },
+              "originalValue": {
+                "description": "The original value before the experiment."
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "localizations": {
+          "anyOf": [
+            {
+              "type": "object",
+              "additionalProperties": {
+                "type": "object",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              }
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-locale localization substitutions.\n\nThe top level key is the locale (e.g., \"en-US\" or \"fr\"). Each entry is a mapping of string IDs to their localized equivalents.\n\nOnly supported on desktop."
+        },
+        "unenrollReason": {
+          "type": "string",
+          "description": "The reason for unenrollment. Only present when the enrollment is inactive."
         }
       },
       "required": [

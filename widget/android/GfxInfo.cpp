@@ -168,11 +168,6 @@ GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) {
 }
 
 NS_IMETHODIMP
-GfxInfo::GetDesktopEnvironment(nsAString& aDesktopEnvironment) {
-  return NS_ERROR_NOT_IMPLEMENTED;
-}
-
-NS_IMETHODIMP
 GfxInfo::GetTestType(nsAString& aTestType) { return NS_ERROR_NOT_IMPLEMENTED; }
 
 void GfxInfo::EnsureInitialized() {
@@ -597,7 +592,7 @@ nsresult GfxInfo::GetFeatureStatusImpl(
         *aStatus = nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
         aFailureId = "FEATURE_FAILURE_POWERVR_FENCE_SYNC_CRASH";
       } else {
-        *aStatus = nsIGfxInfo::FEATURE_ALLOW_QUALIFIED;
+        *aStatus = nsIGfxInfo::FEATURE_STATUS_OK;
       }
       return NS_OK;
     }
@@ -694,6 +689,14 @@ static nsCString FeatureCacheOsVerPrefName(int32_t aFeature) {
   return osPrefName;
 }
 
+static nsCString FeatureCacheAppVerPrefName(int32_t aFeature) {
+  nsCString osPrefName;
+  osPrefName.AppendASCII("gfxinfo.cache.");
+  osPrefName.AppendInt(aFeature);
+  osPrefName.AppendASCII(".appver");
+  return osPrefName;
+}
+
 static nsCString FeatureCacheValuePrefName(int32_t aFeature) {
   nsCString osPrefName;
   osPrefName.AppendASCII("gfxinfo.cache.");
@@ -703,11 +706,20 @@ static nsCString FeatureCacheValuePrefName(int32_t aFeature) {
 }
 
 static bool GetCachedFeatureVal(int32_t aFeature, uint32_t aExpectedOsVer,
+                                const nsCString& aCurrentAppVer,
                                 int32_t& aOutStatus) {
   uint32_t osVer = 0;
   nsresult rv =
       Preferences::GetUint(FeatureCacheOsVerPrefName(aFeature).get(), &osVer);
   if (NS_FAILED(rv) || osVer != aExpectedOsVer) {
+    return false;
+  }
+  // Bug 1804287 requires we invalidate cached values for new builds to allow
+  // for code changes to modify the features support.
+  nsAutoCString cachedAppVersion;
+  rv = Preferences::GetCString(FeatureCacheAppVerPrefName(aFeature).get(),
+                               cachedAppVersion);
+  if (NS_FAILED(rv) || !aCurrentAppVer.Equals(cachedAppVersion)) {
     return false;
   }
   int32_t status = 0;
@@ -720,9 +732,12 @@ static bool GetCachedFeatureVal(int32_t aFeature, uint32_t aExpectedOsVer,
 }
 
 static void SetCachedFeatureVal(int32_t aFeature, uint32_t aOsVer,
+                                const nsCString& aCurrentAppVer,
                                 int32_t aStatus) {
   // Ignore failures; not much we can do anyway.
   Preferences::SetUint(FeatureCacheOsVerPrefName(aFeature).get(), aOsVer);
+  Preferences::SetCString(FeatureCacheAppVerPrefName(aFeature).get(),
+                          aCurrentAppVer);
   Preferences::SetInt(FeatureCacheValuePrefName(aFeature).get(), aStatus);
 }
 
@@ -733,8 +748,9 @@ int32_t GfxInfo::WebRtcHwVp8EncodeSupported() {
   // in preferences, invalidating if the OS version changes.
 
   int32_t status = 0;
+  const auto& currentAppVersion = GfxInfoBase::GetApplicationVersion();
   if (GetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_ENCODE,
-                          mOSVersionInteger, status)) {
+                          mOSVersionInteger, currentAppVersion, status)) {
     return status;
   }
 
@@ -743,7 +759,7 @@ int32_t GfxInfo::WebRtcHwVp8EncodeSupported() {
                : nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
 
   SetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_ENCODE, mOSVersionInteger,
-                      status);
+                      currentAppVersion, status);
 
   return status;
 }
@@ -755,8 +771,9 @@ int32_t GfxInfo::WebRtcHwVp8DecodeSupported() {
   // in preferences, invalidating if the OS version changes.
 
   int32_t status = 0;
+  const auto& appVersion = GfxInfoBase::GetApplicationVersion();
   if (GetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_DECODE,
-                          mOSVersionInteger, status)) {
+                          mOSVersionInteger, appVersion, status)) {
     return status;
   }
 
@@ -765,7 +782,7 @@ int32_t GfxInfo::WebRtcHwVp8DecodeSupported() {
                : nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
 
   SetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_DECODE, mOSVersionInteger,
-                      status);
+                      appVersion, status);
 
   return status;
 }
@@ -777,8 +794,9 @@ int32_t GfxInfo::WebRtcHwH264Supported() {
   // in preferences, invalidating if the OS version changes.
 
   int32_t status = 0;
+  const auto& currentAppVersion = GfxInfoBase::GetApplicationVersion();
   if (GetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_H264,
-                          mOSVersionInteger, status)) {
+                          mOSVersionInteger, currentAppVersion, status)) {
     return status;
   }
 
@@ -787,7 +805,7 @@ int32_t GfxInfo::WebRtcHwH264Supported() {
                : nsIGfxInfo::FEATURE_BLOCKED_DEVICE;
 
   SetCachedFeatureVal(FEATURE_WEBRTC_HW_ACCELERATION_H264, mOSVersionInteger,
-                      status);
+                      currentAppVersion, status);
 
   return status;
 }
@@ -816,8 +834,6 @@ NS_IMETHODIMP GfxInfo::SpoofOSVersion(uint32_t aVersion) {
   mOSVersion = aVersion;
   return NS_OK;
 }
-
-NS_IMETHODIMP GfxInfo::FireTestProcess() { return NS_OK; }
 
 #endif
 

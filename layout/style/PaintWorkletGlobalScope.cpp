@@ -6,7 +6,6 @@
 
 #include "PaintWorkletGlobalScope.h"
 
-#include "mozilla/dom/WorkletPrincipals.h"
 #include "mozilla/dom/PaintWorkletGlobalScopeBinding.h"
 #include "mozilla/dom/FunctionBinding.h"
 #include "PaintWorkletImpl.h"
@@ -24,6 +23,11 @@ bool PaintWorkletGlobalScope::WrapGlobalObject(
     JSContext* aCx, JS::MutableHandle<JSObject*> aReflector) {
   JS::RealmOptions options;
 
+  options.creationOptions().setForceUTC(
+      ShouldResistFingerprinting(RFPTarget::JSDateTimeUTC));
+  options.creationOptions().setAlwaysUseFdlibm(
+      ShouldResistFingerprinting(RFPTarget::JSMathFdlibm));
+
   // The SharedArrayBuffer global constructor property should not be present in
   // a fresh global object when shared memory objects aren't allowed (because
   // COOP/COEP support isn't enabled, or because COOP/COEP don't act to isolate
@@ -31,9 +35,9 @@ bool PaintWorkletGlobalScope::WrapGlobalObject(
   options.creationOptions().setDefineSharedArrayBufferConstructor(
       IsSharedMemoryAllowed());
 
-  JS::AutoHoldPrincipals principals(aCx, new WorkletPrincipals(mImpl));
   return PaintWorkletGlobalScope_Binding::Wrap(
-      aCx, this, this, options, principals.get(), true, aReflector);
+      aCx, this, this, options, nsJSPrincipals::get(mImpl->Principal()), true,
+      aReflector);
 }
 
 void PaintWorkletGlobalScope::RegisterPaint(const nsAString& aType,

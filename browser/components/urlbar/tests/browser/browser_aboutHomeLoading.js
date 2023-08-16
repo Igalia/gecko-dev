@@ -7,11 +7,11 @@
 
 "use strict";
 
-const { SessionSaver } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionSaver.jsm"
+const { SessionSaver } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionSaver.sys.mjs"
 );
-const { TabStateFlusher } = ChromeUtils.import(
-  "resource:///modules/sessionstore/TabStateFlusher.jsm"
+const { TabStateFlusher } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/TabStateFlusher.sys.mjs"
 );
 
 add_task(function addHomeButton() {
@@ -34,7 +34,7 @@ add_task(async function clearURLBarAfterParentProcessURL() {
     let newTabBrowser = gBrowser.getBrowserForTab(gBrowser.selectedTab);
     newTabBrowser.addEventListener(
       "Initialized",
-      async function() {
+      async function () {
         resolve(gBrowser.selectedTab);
       },
       { capture: true, once: true }
@@ -65,12 +65,12 @@ add_task(async function clearURLBarAfterParentProcessURLInExistingTab() {
     let newTabBrowser = gBrowser.getBrowserForTab(gBrowser.selectedTab);
     newTabBrowser.addEventListener(
       "Initialized",
-      async function() {
+      async function () {
         resolve(gBrowser.selectedTab);
       },
       { capture: true, once: true }
     );
-    BrowserTestUtils.loadURI(newTabBrowser, "about:preferences");
+    BrowserTestUtils.loadURIString(newTabBrowser, "about:preferences");
   });
   document.getElementById("home-button").click();
   await BrowserTestUtils.browserLoaded(
@@ -172,7 +172,7 @@ add_task(async function dontTemporarilyShowAboutHome() {
  * some value into the URL bar, that the URL bar is cleared if
  * the homepage is one of the initial pages set.
  */
-add_task(async function() {
+add_task(async function () {
   await BrowserTestUtils.withNewTab(
     {
       url: "http://example.com",

@@ -1,33 +1,48 @@
-ChromeUtils.defineModuleGetter(
-  this,
-  "AddonTestUtils",
-  "resource://testing-common/AddonTestUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AddonTestUtils: "resource://testing-common/AddonTestUtils.sys.mjs",
+});
 
 const BASE = getRootDirectory(gTestPath).replace(
   "chrome://mochitests/content/",
   "https://example.com/"
 );
 
-var { ExtensionsUI } = ChromeUtils.import(
-  "resource:///modules/ExtensionsUI.jsm"
-);
 XPCOMUtils.defineLazyGetter(this, "Management", () => {
   // eslint-disable-next-line no-shadow
-  const { Management } = ChromeUtils.import(
-    "resource://gre/modules/Extension.jsm"
+  const { Management } = ChromeUtils.importESModule(
+    "resource://gre/modules/Extension.sys.mjs"
   );
   return Management;
 });
 
-let { CustomizableUITestUtils } = ChromeUtils.import(
-  "resource://testing-common/CustomizableUITestUtils.jsm"
+let { CustomizableUITestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CustomizableUITestUtils.sys.mjs"
 );
 let gCUITestUtils = new CustomizableUITestUtils(window);
 
-const { PermissionTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PermissionTestUtils.jsm"
+const { PermissionTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PermissionTestUtils.sys.mjs"
 );
+
+let extL10n = null;
+/**
+ * @param {string} id
+ * @param {object} [args]
+ * @returns {string}
+ */
+function formatExtValue(id, args) {
+  if (!extL10n) {
+    extL10n = new Localization(
+      [
+        "toolkit/global/extensions.ftl",
+        "toolkit/global/extensionPermissions.ftl",
+        "branding/brand.ftl",
+      ],
+      true
+    );
+  }
+  return extL10n.formatValueSync(id, args);
+}
 
 /**
  * Wait for the given PopupNotification to display
@@ -58,8 +73,8 @@ function promisePopupNotificationShown(name) {
 }
 
 function promiseAppMenuNotificationShown(id) {
-  const { AppMenuNotifications } = ChromeUtils.import(
-    "resource://gre/modules/AppMenuNotifications.jsm"
+  const { AppMenuNotifications } = ChromeUtils.importESModule(
+    "resource://gre/modules/AppMenuNotifications.sys.mjs"
   );
   return new Promise(resolve => {
     function popupshown() {
@@ -189,37 +204,6 @@ function isDefaultIcon(icon) {
 }
 
 /**
- * Check the contents of an individual permission string.
- * This function is fairly specific to the use here and probably not
- * suitable for re-use elsewhere...
- *
- * @param {string} string
- *        The string value to check (i.e., pulled from the DOM)
- * @param {string} key
- *        The key in browser.properties for the localized string to
- *        compare with.
- * @param {string|null} param
- *        Optional string to substitute for %S in the localized string.
- * @param {string} msg
- *        The message to be emitted as part of the actual test.
- */
-function checkPermissionString(string, key, param, msg) {
-  let localizedString = param
-    ? gBrowserBundle.formatStringFromName(key, [param])
-    : gBrowserBundle.GetStringFromName(key);
-
-  // If this is a parameterized string and the parameter isn't given,
-  // just do a simple comparison of the text before and after the %S
-  if (localizedString.includes("%S")) {
-    let i = localizedString.indexOf("%S");
-    ok(string.startsWith(localizedString.slice(0, i)), msg);
-    ok(string.endsWith(localizedString.slice(i + 2)), msg);
-  } else {
-    is(string, localizedString, msg);
-  }
-}
-
-/**
  * Check the contents of a permission popup notification
  *
  * @param {Window} panel
@@ -233,7 +217,7 @@ function checkPermissionString(string, key, param, msg) {
  * @param {array} permissions
  *        The expected entries in the permissions list.  Each element
  *        in this array is itself a 2-element array with the string key
- *        for the item (e.g., "webextPerms.description.foo") and an
+ *        for the item (e.g., "webext-perms-description-foo") and an
  *        optional formatting parameter.
  * @param {boolean} sideloaded
  *        Whether the notification is for a sideloaded extenion.
@@ -255,21 +239,20 @@ function checkNotification(panel, checkIcon, permissions, sideloaded) {
     is(icon, checkIcon, "Notification icon is correct");
   }
 
-  let description = panel.querySelector(".popup-notification-description")
-    .textContent;
-  let expectedDescription = "webextPerms.header";
+  let description = panel.querySelector(
+    ".popup-notification-description"
+  ).textContent;
+  let descL10nId = "webext-perms-header";
   if (permissions.length) {
-    expectedDescription += "WithPerms";
+    descL10nId = "webext-perms-header-with-perms";
   }
   if (sideloaded) {
-    expectedDescription = "webextPerms.sideloadHeader";
+    descL10nId = "webext-perms-sideload-header";
   }
-  checkPermissionString(
-    description,
-    expectedDescription,
-    undefined,
-    `Description is the expected one`
-  );
+  const exp = formatExtValue(descL10nId, { extension: "<>" }).split("<>");
+  ok(description.startsWith(exp.at(0)), "Description is the expected one");
+  ok(description.endsWith(exp.at(-1)), "Description is the expected one");
+
   is(
     learnMoreLink.hidden,
     !permissions.length,
@@ -295,10 +278,10 @@ function checkNotification(panel, checkIcon, permissions, sideloaded) {
     );
     for (let i in permissions) {
       let [key, param] = permissions[i];
-      checkPermissionString(
+      const expected = formatExtValue(key, param);
+      is(
         ul.children[i].textContent,
-        key,
-        param,
+        expected,
         `Permission number ${i + 1} is correct`
       );
     }
@@ -330,10 +313,6 @@ async function testInstallMethod(installFn, telemetryBase) {
       ["extensions.install.requireBuiltInCerts", false],
     ],
   });
-
-  if (telemetryBase !== undefined) {
-    hookExtensionsTelemetry();
-  }
 
   let testURI = makeURI("https://example.com/");
   PermissionTestUtils.add(testURI, "install", Services.perms.ALLOW_ACTION);
@@ -380,13 +359,19 @@ async function testInstallMethod(installFn, telemetryBase) {
       // path, just make sure we've got a jar url pointing to the right path
       // inside the jar.
       checkNotification(panel, /^jar:file:\/\/.*\/icon\.png$/, [
-        ["webextPerms.hostDescription.wildcard", "wildcard.domain"],
-        ["webextPerms.hostDescription.oneSite", "singlehost.domain"],
-        ["webextPerms.description.nativeMessaging"],
+        [
+          "webext-perms-host-description-wildcard",
+          { domain: "wildcard.domain" },
+        ],
+        [
+          "webext-perms-host-description-one-site",
+          { domain: "singlehost.domain" },
+        ],
+        ["webext-perms-description-nativeMessaging"],
         // The below permissions are deliberately in this order as permissions
         // are sorted alphabetically by the permission string to match AMO.
-        ["webextPerms.description.history"],
-        ["webextPerms.description.tabs"],
+        ["webext-perms-description-history"],
+        ["webext-perms-description-tabs"],
       ]);
     } else if (filename == NO_PERMS_XPI) {
       checkNotification(panel, isDefaultIcon, []);
@@ -399,9 +384,8 @@ async function testInstallMethod(installFn, telemetryBase) {
       } catch (err) {}
     } else {
       // Look for post-install notification
-      let postInstallPromise = promiseAppMenuNotificationShown(
-        "addon-installed"
-      );
+      let postInstallPromise =
+        promiseAppMenuNotificationShown("addon-installed");
       panel.button.click();
 
       // Press OK on the post-install notification
@@ -437,16 +421,6 @@ async function testInstallMethod(installFn, telemetryBase) {
   //    accept the permissions to install the extension.  (Then uninstall
   //    the extension to clean up.)
   await runOnce(PERMS_XPI, false);
-
-  if (telemetryBase !== undefined) {
-    // Should see 2 canceled installs followed by 1 successful install
-    // for this method.
-    expectTelemetry([
-      `${telemetryBase}Rejected`,
-      `${telemetryBase}Rejected`,
-      `${telemetryBase}Accepted`,
-    ]);
-  }
 
   await SpecialPowers.popPrefEnv();
 }
@@ -520,7 +494,7 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
 
   // Navigate away from the starting page to force about:addons to load
   // in a new tab during the tests below.
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:mozilla");
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:mozilla");
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 
   // Install version 1.0 of the test extension
@@ -542,7 +516,8 @@ async function interactiveUpdateTest(autoUpdate, checkFn) {
   // Click the cancel button, wait to see the cancel event
   let cancelPromise = promiseInstallEvent(addon, "onInstallCancelled");
   panel.secondaryButton.click();
-  await cancelPromise;
+  const cancelledByUser = await cancelPromise;
+  is(cancelledByUser, true, "Install cancelled by user");
 
   addon = await AddonManager.getAddonByID(ID);
   is(addon.version, "1.0", "Should still be running the old version");
@@ -652,7 +627,7 @@ add_setup(async function head_setup() {
   let addons = await AddonManager.getAllAddons();
   let existingAddons = new Set(addons.map(a => a.id));
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     if (testCleanup) {
       await testCleanup();
       testCleanup = null;
@@ -674,26 +649,3 @@ add_setup(async function head_setup() {
     }
   });
 });
-
-let collectedTelemetry = [];
-function hookExtensionsTelemetry() {
-  let originalHistogram = ExtensionsUI.histogram;
-  ExtensionsUI.histogram = {
-    add(value) {
-      collectedTelemetry.push(value);
-    },
-  };
-  registerCleanupFunction(() => {
-    is(
-      collectedTelemetry.length,
-      0,
-      "No unexamined telemetry after test is finished"
-    );
-    ExtensionsUI.histogram = originalHistogram;
-  });
-}
-
-function expectTelemetry(values) {
-  Assert.deepEqual(values, collectedTelemetry);
-  collectedTelemetry = [];
-}

@@ -40,16 +40,14 @@ add_task(async function setup() {
 
 add_task(async function test() {
   let url = "https://en.example.com/";
-  await SearchTestUtils.installSearchExtension({
-    name: "TestEngine",
-    search_url: url,
-  });
-  let engine = Services.search.getEngineByName("TestEngine");
-  let defaultEngine = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
-  registerCleanupFunction(async () => {
-    await Services.search.setDefault(defaultEngine);
-  });
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "TestEngine",
+      search_url: url,
+    },
+    { setAsDefault: true }
+  );
+
   // Make sure the engine domain would be autofilled.
   await PlacesUtils.bookmarks.insert({
     url,
@@ -71,7 +69,7 @@ add_task(async function test() {
           heuristic: true,
         }),
         makeSearchResult(context, {
-          engineName: engine.name,
+          engineName: "TestEngine",
           engineIconUri: UrlbarUtils.ICON.SEARCH_GLASS,
           uri: "en.example.",
           providesSearchMode: true,
@@ -172,18 +170,17 @@ add_task(async function test() {
     sources: [UrlbarUtils.RESULT_SOURCE.BOOKMARKS],
   });
   let host = await UrlbarProviderAutofill.getTopHostOverThreshold(context, [
-    wikiEngine.getResultDomain(),
+    wikiEngine.searchUrlDomain,
   ]);
   Assert.equal(
     host,
-    wikiEngine.getResultDomain(),
+    wikiEngine.searchUrlDomain,
     "The search satisfies the autofill threshold requirement."
   );
   await check_results({
     context,
     autofilled: "www.example.com/",
     completed: "https://www.example.com/",
-    hasAutofillTitle: true,
     matches: [
       makeVisitResult(context, {
         uri: `${wwwUrl}/`,

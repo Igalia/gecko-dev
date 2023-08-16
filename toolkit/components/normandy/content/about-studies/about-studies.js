@@ -29,6 +29,7 @@ function readOptinParams() {
     slug: searchParams.get("optin_slug"),
     branch: searchParams.get("optin_branch"),
     collection: searchParams.get("optin_collection"),
+    applyTargeting: !!searchParams.get("apply_targeting"),
   };
 }
 
@@ -191,13 +192,8 @@ function OptInBox({ error, message }) {
  */
 class StudyList extends React.Component {
   render() {
-    const {
-      addonStudies,
-      prefStudies,
-      translations,
-      experiments,
-      debugMode,
-    } = this.props;
+    const { addonStudies, prefStudies, translations, experiments, debugMode } =
+      this.props;
 
     if (!addonStudies.length && !prefStudies.length && !experiments.length) {
       return r("p", { className: "study-list-info" }, translations.noStudies);

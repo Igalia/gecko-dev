@@ -29,29 +29,11 @@ x86_64-apple-darwin)
   arch=x86_64
   export MACOSX_DEPLOYMENT_TARGET=10.12
   ;;
-armv7-linux-android)
+armv7-linux-android|i686-linux-android)
   api_level=16
-  ndk_target=arm-linux-androideabi
-  ndk_prefix=arm-linux-androideabi
-  ndk_arch=arm
   ;;
-aarch64-linux-android)
+aarch64-linux-android|x86_64-linux-android)
   api_level=21
-  ndk_target=aarch64-linux-android
-  ndk_prefix=aarch64-linux-android
-  ndk_arch=arm64
-  ;;
-i686-linux-android)
-  api_level=16
-  ndk_target=i686-linux-android
-  ndk_prefix=x86
-  ndk_arch=x86
-  ;;
-x86_64-linux-android)
-  api_level=21
-  ndk_target=x86_64-linux-android
-  ndk_prefix=x86_64
-  ndk_arch=x86_64
   ;;
 esac
 
@@ -63,11 +45,11 @@ case "$target" in
     -DCMAKE_LIPO=$MOZ_FETCHES_DIR/clang/bin/llvm-lipo
     -DCMAKE_SYSTEM_NAME=Darwin
     -DCMAKE_SYSTEM_VERSION=$MACOSX_DEPLOYMENT_TARGET
-    -DCMAKE_OSX_SYSROOT=$MOZ_FETCHES_DIR/MacOSX11.0.sdk
+    -DCMAKE_OSX_SYSROOT=$MOZ_FETCHES_DIR/MacOSX13.3.sdk
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DDARWIN_osx_ARCHS=$arch
-    -DDARWIN_osx_SYSROOT=$MOZ_FETCHES_DIR/MacOSX11.0.sdk
+    -DDARWIN_osx_SYSROOT=$MOZ_FETCHES_DIR/MacOSX13.3.sdk
     -DDARWIN_macosx_OVERRIDE_SDK_VERSION=11.0
     -DDARWIN_osx_BUILTIN_ARCHS=$arch
     -DLLVM_DEFAULT_TARGET_TRIPLE=$target
@@ -76,33 +58,41 @@ case "$target" in
   # Give it a fake one.
   echo "#!/bin/sh" > codesign
   chmod +x codesign
+  # cmake makes decisions based on the output of the mac-only sw_vers, which is
+  # obviously missing when cross-compiling, so create a fake one. The exact
+  # version doesn't really matter: as of writing, cmake checks at most for 10.5.
+  echo "#!/bin/sh" > sw_vers
+  echo echo 10.12 >> sw_vers
+  chmod +x sw_vers
   PATH="$PATH:$PWD"
   ;;
 *-linux-android)
-  cflags="
-    --gcc-toolchain=$MOZ_FETCHES_DIR/android-ndk/toolchains/$ndk_prefix-4.9/prebuilt/linux-x86_64
-    -isystem $MOZ_FETCHES_DIR/android-ndk/sysroot/usr/include/$ndk_target
-    -isystem $MOZ_FETCHES_DIR/android-ndk/sysroot/usr/include
-    -D__ANDROID_API__=$api_level
-  "
-  # These flags are only necessary to pass the cmake tests.
-  exe_linker_flags="
-    --rtlib=libgcc
-    -L$MOZ_FETCHES_DIR/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$ndk_target/$api_level
-    -L$MOZ_FETCHES_DIR/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot/usr/lib/$ndk_target
-  "
+  case "$target" in
+  armv7-linux-android)
+    arch=arm
+    ;;
+  *-linux-android)
+    arch=${target%-linux-android}
+    ;;
+  esac
+  target=$target$api_level
+  # These flags are only necessary to pass the cmake tests. They don't end up
+  # actually using libgcc, so use an empty library instead of trying to find
+  # where it is in the NDK.
+  if [ "$what" = "compiler-rt" ]; then
+    exe_linker_flags="--rtlib=libgcc -L$PWD"
+    touch libgcc.a
+  fi
   EXTRA_CMAKE_FLAGS="
     $EXTRA_CMAKE_FLAGS
-    -DCMAKE_SYSROOT=$MOZ_FETCHES_DIR/android-ndk/platforms/android-$api_level/arch-$ndk_arch
+    -DCMAKE_SYSROOT=$MOZ_FETCHES_DIR/android-ndk/toolchains/llvm/prebuilt/linux-x86_64/sysroot
     -DCMAKE_LINKER=$MOZ_FETCHES_DIR/clang/bin/ld.lld
-    -DCMAKE_C_FLAGS='-fPIC $cflags'
-    -DCMAKE_ASM_FLAGS='$cflags'
-    -DCMAKE_CXX_FLAGS='-fPIC -Qunused-arguments $cflags'
     -DCMAKE_EXE_LINKER_FLAGS='-fuse-ld=lld $exe_linker_flags'
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
     -DANDROID=1
     -DANDROID_NATIVE_API_LEVEL=$api_level
     -DSANITIZER_ALLOW_CXXABI=OFF
+    -DLLVM_DEFAULT_TARGET_TRIPLE=$arch-unknown-linux-android
   "
   ;;
 *-unknown-linux-gnu)
@@ -111,17 +101,22 @@ case "$target" in
   else
     sysroot=$MOZ_FETCHES_DIR/sysroot-${target%-unknown-linux-gnu}-linux-gnu
   fi
+  if [ "${target%-unknown-linux-gnu}" = i686 ]; then
+    EXTRA_CMAKE_FLAGS="
+      $EXTRA_CMAKE_FLAGS
+      -DLLVM_TABLEGEN=$MOZ_FETCHES_DIR/clang/bin/llvm-tblgen
+    "
+  fi
   EXTRA_CMAKE_FLAGS="
     $EXTRA_CMAKE_FLAGS
     -DCMAKE_SYSROOT=$sysroot
     -DCMAKE_LINKER=$MOZ_FETCHES_DIR/clang/bin/ld.lld
     -DCMAKE_EXE_LINKER_FLAGS=-fuse-ld=lld
     -DCMAKE_SHARED_LINKER_FLAGS=-fuse-ld=lld
+    -DLLVM_ENABLE_TERMINFO=OFF
   "
   ;;
 *-pc-windows-msvc)
-  export LD_PRELOAD="/builds/worker/fetches/liblowercase/liblowercase.so"
-  export LOWERCASE_DIRS="/builds/worker/fetches/vs"
   EXTRA_CMAKE_FLAGS="
     $EXTRA_CMAKE_FLAGS
     -DCMAKE_TOOLCHAIN_FILE=$MOZ_FETCHES_DIR/llvm-project/llvm/cmake/platforms/WinMsvc.cmake

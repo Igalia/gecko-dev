@@ -43,3 +43,8 @@ toolbox-mode-parent-process-label = Parent process only
 toolbox-mode-parent-process-sub-label = (Fast)
 toolbox-mode-parent-process-container =
   .title = Only focus on resources from the parent process.
+
+toolbox-always-on-top-enabled2 = Disable always on top
+  .title = This will restart the Developer Tools
+toolbox-always-on-top-disabled2 = Enable always on top
+  .title = This will restart the Developer Tools

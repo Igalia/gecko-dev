@@ -2,20 +2,16 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 import io
 import os
 import sys
-
-from six import string_types
 
 __all__ = ["read_ini", "combine_fields"]
 
 
 class IniParseError(Exception):
     def __init__(self, fp, linenum, msg):
-        if isinstance(fp, string_types):
+        if isinstance(fp, str):
             path = fp
         elif hasattr(fp, "name"):
             path = fp.name
@@ -53,10 +49,14 @@ def read_ini(
     sections = []
     key = value = None
     section_names = set()
-    if isinstance(fp, string_types):
+    if isinstance(fp, str):
         fp = io.open(fp, encoding="utf-8")
 
     # read the lines
+    section = default
+    current_section = {}
+    current_section_name = ""
+    key_indent = 0
     for (linenum, line) in enumerate(fp.read().splitlines(), start=1):
 
         stripped = line.strip()
@@ -76,8 +76,8 @@ def read_ini(
         inline_prefixes = {p: -1 for p in comments}
         while comment_start == sys.maxsize and inline_prefixes:
             next_prefixes = {}
-            for prefix, index in inline_prefixes.items():
-                index = stripped.find(prefix, index + 1)
+            for prefix, i in inline_prefixes.items():
+                index = stripped.find(prefix, i + 1)
                 if index == -1:
                     continue
                 next_prefixes[prefix] = index
@@ -91,7 +91,8 @@ def read_ini(
         # check for a new section
         if len(stripped) > 2 and stripped[0] == "[" and stripped[-1] == "]":
             section = stripped[1:-1].strip()
-            key = value = key_indent = None
+            key = value = None
+            key_indent = 0
 
             # deal with DEFAULT section
             if section.lower() == default.lower():
@@ -99,6 +100,7 @@ def read_ini(
                     assert default not in section_names
                 section_names.add(default)
                 current_section = default_section
+                current_section_name = "DEFAULT"
                 continue
 
             if strict:
@@ -109,6 +111,7 @@ def read_ini(
 
             section_names.add(section)
             current_section = {}
+            current_section_name = section
             sections.append((section, current_section))
             continue
 
@@ -124,6 +127,16 @@ def read_ini(
         line_indent = len(line) - len(line.lstrip(" "))
         if key and line_indent > key_indent:
             value = "%s%s%s" % (value, os.linesep, stripped)
+            if strict:
+                # make sure the value doesn't contain assignments
+                if " = " in value:
+                    raise IniParseError(
+                        fp,
+                        linenum,
+                        "Should not assign in {} condition for {}".format(
+                            key, current_section_name
+                        ),
+                    )
             current_section[key] = value
             continue
 
@@ -137,11 +150,22 @@ def read_ini(
 
                 # make sure this key isn't already in the section
                 if key:
-                    assert key not in current_section
+                    assert (
+                        key not in current_section
+                    ), f"Found duplicate key {key} in section {section}"
 
                 if strict:
                     # make sure this key isn't empty
                     assert key
+                    # make sure the value doesn't contain assignments
+                    if " = " in value:
+                        raise IniParseError(
+                            fp,
+                            linenum,
+                            "Should not assign in {} condition for {}".format(
+                                key, current_section_name
+                            ),
+                        )
 
                 current_section[key] = value
                 break

@@ -8,29 +8,37 @@ const { render, mount } = require("enzyme");
 const sinon = require("sinon");
 
 // React
-const { createFactory } = require("devtools/client/shared/vendor/react");
-const Provider = createFactory(require("react-redux").Provider);
-const { setupStore } = require("devtools/client/webconsole/test/node/helpers");
+const {
+  createFactory,
+} = require("resource://devtools/client/shared/vendor/react.js");
+const Provider = createFactory(
+  require("resource://devtools/client/shared/vendor/react-redux.js").Provider
+);
+const {
+  setupStore,
+} = require("resource://devtools/client/webconsole/test/node/helpers.js");
 
 // Components under test.
 const ConsoleApiCall = createFactory(
-  require("devtools/client/webconsole/components/Output/message-types/ConsoleApiCall")
+  require("resource://devtools/client/webconsole/components/Output/message-types/ConsoleApiCall.js")
 );
 const {
   MESSAGE_OPEN,
   MESSAGE_CLOSE,
-} = require("devtools/client/webconsole/constants");
+} = require("resource://devtools/client/webconsole/constants.js");
 const {
   INDENT_WIDTH,
-} = require("devtools/client/webconsole/components/Output/MessageIndent");
-const { prepareMessage } = require("devtools/client/webconsole/utils/messages");
+} = require("resource://devtools/client/webconsole/components/Output/MessageIndent.js");
+const {
+  prepareMessage,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
 // Test fakes.
 const {
   stubPreparedMessages,
   stubPackets,
-} = require("devtools/client/webconsole/test/node/fixtures/stubs/index");
-const serviceContainer = require("devtools/client/webconsole/test/node/fixtures/serviceContainer");
+} = require("resource://devtools/client/webconsole/test/node/fixtures/stubs/index.js");
+const serviceContainer = require("resource://devtools/client/webconsole/test/node/fixtures/serviceContainer.js");
 
 describe("ConsoleAPICall component:", () => {
   describe("console.log", () => {
@@ -195,7 +203,7 @@ describe("ConsoleAPICall component:", () => {
       );
       const {
         timestampString,
-      } = require("devtools/client/webconsole/utils/l10n");
+      } = require("resource://devtools/client/webconsole/utils/l10n.js");
 
       expect(wrapper.find(".timestamp").text()).toBe(
         timestampString(message.timeStamp)
@@ -385,43 +393,25 @@ describe("ConsoleAPICall component:", () => {
       expect(frameLinks.length).toBe(3);
 
       expect(
-        frameLinks
-          .eq(0)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(0).find(".frame-link-function-display-name").text()
       ).toBe("testStacktraceFiltering");
-      expect(
-        frameLinks
-          .eq(0)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(0).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       expect(
-        frameLinks
-          .eq(1)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(1).find(".frame-link-function-display-name").text()
       ).toBe("foo");
-      expect(
-        frameLinks
-          .eq(1)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(1).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       expect(
-        frameLinks
-          .eq(2)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(2).find(".frame-link-function-display-name").text()
       ).toBe("triggerPacket");
-      expect(
-        frameLinks
-          .eq(2)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(2).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       // it should not be collapsible.
       expect(wrapper.find(`.theme-twisty`).length).toBe(0);
@@ -451,43 +441,25 @@ describe("ConsoleAPICall component:", () => {
       expect(frameLinks.length).toBe(3);
 
       expect(
-        frameLinks
-          .eq(0)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(0).find(".frame-link-function-display-name").text()
       ).toBe("testStacktraceWithLog");
-      expect(
-        frameLinks
-          .eq(0)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(0).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       expect(
-        frameLinks
-          .eq(1)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(1).find(".frame-link-function-display-name").text()
       ).toBe("foo");
-      expect(
-        frameLinks
-          .eq(1)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(1).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       expect(
-        frameLinks
-          .eq(2)
-          .find(".frame-link-function-display-name")
-          .text()
+        frameLinks.eq(2).find(".frame-link-function-display-name").text()
       ).toBe("triggerPacket");
-      expect(
-        frameLinks
-          .eq(2)
-          .find(".frame-link-filename")
-          .text()
-      ).toBe(filepath);
+      expect(frameLinks.eq(2).find(".frame-link-filename").text()).toBe(
+        filepath
+      );
 
       // it should not be collapsible.
       expect(wrapper.find(`.theme-twisty`).length).toBe(0);

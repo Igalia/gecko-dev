@@ -13,21 +13,18 @@ from abc import ABCMeta, abstractmethod
 from manifestparser import TestManifest
 from manifestparser.filters import chunk_by_runtime, tags
 from mozbuild.util import memoize
-from moztest.resolve import (
-    TEST_SUITES,
-    TestResolver,
-    TestManifestLoader,
-)
+from moztest.resolve import TEST_SUITES, TestManifestLoader, TestResolver
+from taskgraph.util.yaml import load_yaml
 
 from gecko_taskgraph import GECKO
-from gecko_taskgraph.util.bugbug import BugbugTimeoutException, CT_LOW, push_schedules
+from gecko_taskgraph.util.bugbug import CT_LOW, BugbugTimeoutException, push_schedules
 
 logger = logging.getLogger(__name__)
 here = os.path.abspath(os.path.dirname(__file__))
 resolver = TestResolver.from_environment(cwd=here, loader_cls=TestManifestLoader)
 
 
-def guess_mozinfo_from_task(task):
+def guess_mozinfo_from_task(task, repo=""):
     """Attempt to build a mozinfo dict from a task definition.
 
     This won't be perfect and many values used in the manifests will be missing. But
@@ -49,19 +46,11 @@ def guess_mozinfo_from_task(task):
         "bits": 32 if "32" in arch else 64,
         "ccov": setting["build"].get("ccov", False),
         "debug": setting["build"]["type"] in ("debug", "debug-isolated-process"),
-        "e10s": not setting["runtime"].get("1proc", False),
-        "no-fission": "no-fission" in setting["runtime"].keys(),
-        "fission": any(
-            "1proc" not in key or "no-fission" not in key
-            for key in setting["runtime"].keys()
-        ),
         "headless": "-headless" in task["test-name"],
-        "condprof": "conditioned_profile" in setting["runtime"].keys(),
         "tsan": setting["build"].get("tsan", False),
-        "xorigin": any("xorigin" in key for key in setting["runtime"].keys()),
-        "socketprocess_networking": "socketprocess_networking"
-        in setting["runtime"].keys(),
+        "nightly_build": repo in ["mozilla-central", "autoland", "try", ""],  # trunk
     }
+
     for platform in ("android", "linux", "mac", "win"):
         if p_os["name"].startswith(platform):
             info["os"] = platform
@@ -109,6 +98,25 @@ def guess_mozinfo_from_task(task):
         if p_os["name"] == name and p_os["version"] == old_ver:
             info["os_version"] = new_ver
             break
+
+    test_variants = load_yaml(GECKO, "taskcluster", "ci", "test", "variants.yml")
+    for variant in test_variants:
+        tag = test_variants[variant]["suffix"]
+        value = variant in setting["runtime"].keys()
+
+        if tag == "1proc":
+            tag = "e10s"
+            value = not value
+        if tag == "fis":
+            tag = "fission"
+            value = any(
+                "1proc" not in key or "no-fission" not in key
+                for key in setting["runtime"].keys()
+            )
+        if tag == "xorigin":
+            value = any("xorigin" in key for key in setting["runtime"].keys())
+
+        info[tag] = value
 
     return info
 
@@ -220,11 +228,16 @@ class DefaultLoader(BaseManifestLoader):
         # Compute all tests for the given suite/subsuite.
         tests = self.get_tests(suite)
 
+        # TODO: the only exception here is we schedule webgpu as that is a --tag
         if "web-platform-tests" in suite:
             manifests = set()
             for t in tests:
                 manifests.add(t["manifest"])
-            return {"active": list(manifests), "skipped": []}
+            return {
+                "active": list(manifests),
+                "skipped": [],
+                "other_dirs": dict.fromkeys(manifests, ""),
+            }
 
         manifests = {chunk_by_runtime.get_manifest(t) for t in tests}
 
@@ -236,9 +249,25 @@ class DefaultLoader(BaseManifestLoader):
         m = TestManifest()
         m.tests = tests
         tests = m.active_tests(disabled=False, exists=False, filters=filters, **mozinfo)
-        active = {chunk_by_runtime.get_manifest(t) for t in tests}
-        skipped = manifests - active
-        return {"active": list(active), "skipped": list(skipped)}
+        active = {}
+        # map manifests and 'other' directories included
+        for t in tests:
+            mp = chunk_by_runtime.get_manifest(t)
+            active.setdefault(mp, [])
+
+            if not mp.startswith(t["dir_relpath"]):
+                active[mp].append(t["dir_relpath"])
+
+        skipped = manifests - set(active.keys())
+        other = {}
+        for m in active:
+            if len(active[m]) > 0:
+                other[m] = list(set(active[m]))
+        return {
+            "active": list(active.keys()),
+            "skipped": list(skipped),
+            "other_dirs": other,
+        }
 
 
 class BugbugLoader(DefaultLoader):

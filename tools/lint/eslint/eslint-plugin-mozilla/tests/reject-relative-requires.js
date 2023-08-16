@@ -10,7 +10,7 @@
 var rule = require("../lib/rules/reject-relative-requires");
 var RuleTester = require("eslint").RuleTester;
 
-const ruleTester = new RuleTester({ parserOptions: { ecmaVersion: 8 } });
+const ruleTester = new RuleTester({ parserOptions: { ecmaVersion: "latest" } });
 
 // ------------------------------------------------------------------------------
 // Tests
@@ -42,8 +42,7 @@ ruleTester.run("reject-relative-requires", rule, {
       errors: invalidError(),
     },
     {
-      code:
-        'loader.lazyRequireGetter(this, "path", "../parent/folder/path", true)',
+      code: 'loader.lazyRequireGetter(this, "path", "../parent/folder/path", true)',
       errors: invalidError(),
     },
     {

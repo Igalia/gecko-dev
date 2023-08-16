@@ -4,16 +4,16 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
-const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const KeyShortcuts = require("resource://devtools/client/shared/key-shortcuts.js");
 const {
   HTMLTooltip,
-} = require("devtools/client/shared/widgets/tooltip/HTMLTooltip");
+} = require("resource://devtools/client/shared/widgets/tooltip/HTMLTooltip.js");
 
 loader.lazyRequireGetter(
   this,
   "KeyCodes",
-  "devtools/client/shared/keycodes",
+  "resource://devtools/client/shared/keycodes.js",
   true
 );
 
@@ -156,16 +156,16 @@ class SwatchBasedEditorTooltip {
    */
   addSwatch(swatchEl, callbacks = {}) {
     if (!callbacks.onShow) {
-      callbacks.onShow = function() {};
+      callbacks.onShow = function () {};
     }
     if (!callbacks.onPreview) {
-      callbacks.onPreview = function() {};
+      callbacks.onPreview = function () {};
     }
     if (!callbacks.onRevert) {
-      callbacks.onRevert = function() {};
+      callbacks.onRevert = function () {};
     }
     if (!callbacks.onCommit) {
-      callbacks.onCommit = function() {};
+      callbacks.onCommit = function () {};
     }
 
     this.swatches.set(swatchEl, {

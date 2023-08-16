@@ -9,25 +9,18 @@ NOT_NESTED = 1
 INSIDE_SYNC_NESTED = 2
 INSIDE_CPOW_NESTED = 3
 
-NORMAL_PRIORITY = 1
-INPUT_PRIORITY = 2
-VSYNC_PRIORITY = 3
-MEDIUMHIGH_PRIORITY = 4
-CONTROL_PRIORITY = 5
-
 NESTED_ATTR_MAP = {
     "not": NOT_NESTED,
     "inside_sync": INSIDE_SYNC_NESTED,
     "inside_cpow": INSIDE_CPOW_NESTED,
 }
 
-PRIORITY_ATTR_MAP = {
-    "normal": NORMAL_PRIORITY,
-    "input": INPUT_PRIORITY,
-    "vsync": VSYNC_PRIORITY,
-    "mediumhigh": MEDIUMHIGH_PRIORITY,
-    "control": CONTROL_PRIORITY,
-}
+# Each element of this list is the IPDL source representation of a priority.
+priorityList = ["normal", "input", "vsync", "mediumhigh", "control"]
+
+priorityAttrMap = {src: idx for idx, src in enumerate(priorityList)}
+
+NORMAL_PRIORITY = priorityAttrMap["normal"]
 
 
 class Visitor:
@@ -229,7 +222,7 @@ class UsingStmt(Node):
         attributes={},
     ):
         Node.__init__(self, loc)
-        assert not isinstance(cxxTypeSpec, str)
+        assert isinstance(cxxTypeSpec, QualifiedId)
         assert cxxHeader is None or isinstance(cxxHeader, str)
         assert kind is None or kind == "class" or kind == "struct"
         self.type = cxxTypeSpec
@@ -385,10 +378,18 @@ class MessageDecl(Node):
         return NESTED_ATTR_MAP.get(self.attributes["Nested"].value, NOT_NESTED)
 
     def priority(self):
-        if "Priority" not in self.attributes:
-            return NORMAL_PRIORITY
+        if "Priority" in self.attributes:
+            sourcePriority = self.attributes["Priority"].value
+        else:
+            sourcePriority = "normal"
+        return priorityAttrMap.get(sourcePriority, NORMAL_PRIORITY)
 
-        return PRIORITY_ATTR_MAP.get(self.attributes["Priority"].value, NORMAL_PRIORITY)
+    def replyPriority(self):
+        if "ReplyPriority" in self.attributes:
+            sourcePriority = self.attributes["ReplyPriority"].value
+            if sourcePriority in priorityAttrMap:
+                return priorityAttrMap[sourcePriority]
+        return self.priority()
 
 
 class Param(Node):
@@ -402,17 +403,18 @@ class Param(Node):
 class TypeSpec(Node):
     def __init__(self, loc, spec):
         Node.__init__(self, loc)
-        self.spec = spec  # QualifiedId
+        assert isinstance(spec, str)
+        self.spec = spec  # str
         self.array = False  # bool
         self.maybe = False  # bool
         self.nullable = False  # bool
         self.uniqueptr = False  # bool
 
     def basename(self):
-        return self.spec.baseid
+        return self.spec
 
     def __str__(self):
-        return str(self.spec)
+        return self.spec
 
 
 class Attribute(Node):
@@ -446,9 +448,9 @@ class QualifiedId:  # FIXME inherit from node?
         self.baseid = id
 
     def __str__(self):
-        if 0 == len(self.quals):
-            return self.baseid
-        return "::".join(self.quals) + "::" + self.baseid
+        # NOTE: include a leading "::" in order to force all QualifiedIds to be
+        # fully qualified types in C++
+        return "::" + "::".join(self.quals + [self.baseid])
 
 
 # added by type checking passes

@@ -13,8 +13,6 @@
 #include "ScopedNSSTypes.h"
 #include "SharedCertVerifier.h"
 
-class nsNSSSocketInfo;
-
 namespace mozilla {
 namespace psm {
 
@@ -43,8 +41,9 @@ class VerifySSLServerCertParent : public PVerifySSLServerCertParent {
                                uint16_t aCertificateTransparencyStatus,
                                uint8_t aEVStatus, bool aSucceeded,
                                PRErrorCode aFinalError,
-                               uint32_t aCollectedErrors,
-                               bool aIsBuiltCertChainRootBuiltInRoot);
+                               uint32_t aOverridableErrorCategory,
+                               bool aIsBuiltCertChainRootBuiltInRoot,
+                               bool aMadeOCSPRequests);
 
  private:
   virtual ~VerifySSLServerCertParent();

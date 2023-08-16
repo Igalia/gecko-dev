@@ -10,16 +10,16 @@
 
 var helpers = require("../helpers");
 
-const isRelativePath = function(path) {
+const isRelativePath = function (path) {
   return path.startsWith("./") || path.startsWith("../");
 };
 
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-relative-requires.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-relative-requires.html",
     },
+    schema: [],
     type: "problem",
   },
 
@@ -28,7 +28,10 @@ module.exports = {
       CallExpression(node) {
         const path = helpers.getDevToolsRequirePath(node);
         if (path && isRelativePath(path)) {
-          context.report(node, "relative paths are not allowed with require()");
+          context.report({
+            node,
+            message: "relative paths are not allowed with require()",
+          });
         }
       },
     };

@@ -1,8 +1,8 @@
-import { CONTENT_MESSAGE_TYPE } from "common/Actions.jsm";
+import { CONTENT_MESSAGE_TYPE } from "common/Actions.sys.mjs";
 import { ActivityStream, PREFS_CONFIG } from "lib/ActivityStream.jsm";
 import { GlobalOverrider } from "test/unit/utils";
 
-import { DEFAULT_SITES } from "lib/DefaultSites.jsm";
+import { DEFAULT_SITES } from "lib/DefaultSites.sys.mjs";
 import { AboutPreferences } from "lib/AboutPreferences.jsm";
 import { DefaultPrefs } from "lib/ActivityStreamPrefs.jsm";
 import { NewTabInit } from "lib/NewTabInit.jsm";
@@ -18,8 +18,8 @@ import { TopStoriesFeed } from "lib/TopStoriesFeed.jsm";
 import { HighlightsFeed } from "lib/HighlightsFeed.jsm";
 import { DiscoveryStreamFeed } from "lib/DiscoveryStreamFeed.jsm";
 
-import { LinksCache } from "lib/LinksCache.jsm";
-import { PersistentCache } from "lib/PersistentCache.jsm";
+import { LinksCache } from "lib/LinksCache.sys.mjs";
+import { PersistentCache } from "lib/PersistentCache.sys.mjs";
 import { DownloadsManager } from "lib/DownloadsManager.jsm";
 
 describe("ActivityStream", () => {
@@ -312,11 +312,14 @@ describe("ActivityStream", () => {
     });
   });
   describe("_updateDynamicPrefs topstories default value", () => {
-    let getStringPrefStub;
+    let getVariableStub;
     let getBoolPrefStub;
     let appLocaleAsBCP47Stub;
     beforeEach(() => {
-      getStringPrefStub = sandbox.stub(global.Services.prefs, "getStringPref");
+      getVariableStub = sandbox.stub(
+        global.NimbusFeatures.pocketNewtab,
+        "getVariable"
+      );
       appLocaleAsBCP47Stub = sandbox.stub(
         global.Services.locale,
         "appLocaleAsBCP47"
@@ -331,11 +334,7 @@ describe("ActivityStream", () => {
 
       sandbox.stub(global.Region, "home").get(() => "US");
 
-      getStringPrefStub
-        .withArgs(
-          "browser.newtabpage.activity-stream.discoverystream.region-stories-config"
-        )
-        .returns("US,CA");
+      getVariableStub.withArgs("regionStoriesConfig").returns("US,CA");
     });
     it("should be false with no geo/locale", () => {
       appLocaleAsBCP47Stub.get(() => "");
@@ -349,10 +348,8 @@ describe("ActivityStream", () => {
       appLocaleAsBCP47Stub.get(() => "");
       sandbox.stub(global.Region, "home").get(() => "");
       appLocaleAsBCP47Stub.get(() => "en-US");
-      getStringPrefStub
-        .withArgs(
-          "browser.newtabpage.activity-stream.discoverystream.locale-list-config"
-        )
+      getVariableStub
+        .withArgs("localeListConfig")
         .returns("en-US,en-CA,en-GB")
         // We only have this pref set to trigger a close to real situation.
         .withArgs(
@@ -398,11 +395,7 @@ describe("ActivityStream", () => {
     it("should be true with updated pref change", () => {
       appLocaleAsBCP47Stub.get(() => "en-GB");
       sandbox.stub(global.Region, "home").get(() => "GB");
-      getStringPrefStub
-        .withArgs(
-          "browser.newtabpage.activity-stream.discoverystream.region-stories-config"
-        )
-        .returns("GB");
+      getVariableStub.withArgs("regionStoriesConfig").returns("GB");
 
       as._updateDynamicPrefs();
 
@@ -411,11 +404,7 @@ describe("ActivityStream", () => {
     it("should be true with allowed locale in non US region", () => {
       appLocaleAsBCP47Stub.get(() => "en-CA");
       sandbox.stub(global.Region, "home").get(() => "DE");
-      getStringPrefStub
-        .withArgs(
-          "browser.newtabpage.activity-stream.discoverystream.locale-list-config"
-        )
-        .returns("en-US,en-CA,en-GB");
+      getVariableStub.withArgs("localeListConfig").returns("en-US,en-CA,en-GB");
 
       as._updateDynamicPrefs();
 
@@ -452,10 +441,8 @@ describe("ActivityStream", () => {
     });
     it("should set true with expected geo and locale", () => {
       sandbox
-        .stub(global.Services.prefs, "getStringPref")
-        .withArgs(
-          "browser.newtabpage.activity-stream.discoverystream.region-stories-config"
-        )
+        .stub(global.NimbusFeatures.pocketNewtab, "getVariable")
+        .withArgs("regionStoriesConfig")
         .returns("US");
 
       sandbox.stub(global.Services.prefs, "getBoolPref").returns(true);

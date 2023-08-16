@@ -13,7 +13,7 @@
 #include "lib/jxl/color_management.h"
 #include "lib/jxl/common.h"
 #include "lib/jxl/fields.h"
-#include "lib/jxl/linalg.h"
+#include "lib/jxl/matrix_ops.h"
 
 namespace jxl {
 namespace {
@@ -35,7 +35,7 @@ std::string ToString(ColorSpace color_space) {
       return "CS?";
   }
   // Should not happen - visitor fails if enum is invalid.
-  JXL_ABORT("Invalid ColorSpace %u", static_cast<uint32_t>(color_space));
+  JXL_UNREACHABLE("Invalid ColorSpace %u", static_cast<uint32_t>(color_space));
 }
 
 std::string ToString(WhitePoint white_point) {
@@ -50,7 +50,7 @@ std::string ToString(WhitePoint white_point) {
       return "DCI";
   }
   // Should not happen - visitor fails if enum is invalid.
-  JXL_ABORT("Invalid WhitePoint %u", static_cast<uint32_t>(white_point));
+  JXL_UNREACHABLE("Invalid WhitePoint %u", static_cast<uint32_t>(white_point));
 }
 
 std::string ToString(Primaries primaries) {
@@ -65,7 +65,7 @@ std::string ToString(Primaries primaries) {
       return "Cst";
   }
   // Should not happen - visitor fails if enum is invalid.
-  JXL_ABORT("Invalid Primaries %u", static_cast<uint32_t>(primaries));
+  JXL_UNREACHABLE("Invalid Primaries %u", static_cast<uint32_t>(primaries));
 }
 
 std::string ToString(TransferFunction transfer_function) {
@@ -86,8 +86,8 @@ std::string ToString(TransferFunction transfer_function) {
       return "TF?";
   }
   // Should not happen - visitor fails if enum is invalid.
-  JXL_ABORT("Invalid TransferFunction %u",
-            static_cast<uint32_t>(transfer_function));
+  JXL_UNREACHABLE("Invalid TransferFunction %u",
+                  static_cast<uint32_t>(transfer_function));
 }
 
 std::string ToString(RenderingIntent rendering_intent) {
@@ -102,8 +102,8 @@ std::string ToString(RenderingIntent rendering_intent) {
       return "Abs";
   }
   // Should not happen - visitor fails if enum is invalid.
-  JXL_ABORT("Invalid RenderingIntent %u",
-            static_cast<uint32_t>(rendering_intent));
+  JXL_UNREACHABLE("Invalid RenderingIntent %u",
+                  static_cast<uint32_t>(rendering_intent));
 }
 
 static double F64FromCustomxyI32(const int32_t i) { return i * 1E-6; }
@@ -131,7 +131,8 @@ Status ConvertExternalToInternalWhitePoint(const JxlWhitePoint external,
       *internal = WhitePoint::kDCI;
       return true;
   }
-  return JXL_FAILURE("Invalid WhitePoint enum value");
+  return JXL_FAILURE("Invalid WhitePoint enum value %d",
+                     static_cast<int>(external));
 }
 
 Status ConvertExternalToInternalPrimaries(const JxlPrimaries external,
@@ -314,7 +315,7 @@ CIExy ColorEncoding::GetWhitePoint() const {
       xy.x = xy.y = 1.0 / 3;
       return xy;
   }
-  JXL_ABORT("Invalid WhitePoint %u", static_cast<uint32_t>(white_point));
+  JXL_UNREACHABLE("Invalid WhitePoint %u", static_cast<uint32_t>(white_point));
 }
 
 Status ColorEncoding::SetWhitePoint(const CIExy& xy) {
@@ -376,7 +377,7 @@ PrimariesCIExy ColorEncoding::GetPrimaries() const {
       xy.b.y = 0.060;
       return xy;
   }
-  JXL_ABORT("Invalid Primaries %u", static_cast<uint32_t>(primaries));
+  JXL_UNREACHABLE("Invalid Primaries %u", static_cast<uint32_t>(primaries));
 }
 
 Status ColorEncoding::SetPrimaries(const PrimariesCIExy& xy) {
@@ -417,10 +418,45 @@ Status ColorEncoding::SetPrimaries(const PrimariesCIExy& xy) {
 
 Status ColorEncoding::CreateICC() {
   InternalRemoveICC();
-  if (!MaybeCreateProfile(*this, &icc_)) {
-    return JXL_FAILURE("Failed to create profile from fields");
+  return MaybeCreateProfile(*this, &icc_);
+}
+
+Status ColorEncoding::SetFieldsFromICC(const JxlCmsInterface& cms) {
+  // In case parsing fails, mark the ColorEncoding as invalid.
+  SetColorSpace(ColorSpace::kUnknown);
+  tf.SetTransferFunction(TransferFunction::kUnknown);
+
+  if (icc_.empty()) return JXL_FAILURE("Empty ICC profile");
+
+  JxlColorEncoding external;
+  JXL_BOOL cmyk;
+  JXL_RETURN_IF_ERROR(cms.set_fields_from_icc(cms.set_fields_data, icc_.data(),
+                                              icc_.size(), &external, &cmyk));
+  if (cmyk) {
+    cmyk_ = true;
+    return true;
   }
+  PaddedBytes icc = std::move(icc_);
+  JXL_RETURN_IF_ERROR(ConvertExternalToInternalColorEncoding(external, this));
+  icc_ = std::move(icc);
   return true;
+}
+
+void ColorEncoding::DecideIfWantICC(const JxlCmsInterface& cms) {
+  if (icc_.empty()) return;
+
+  JxlColorEncoding c;
+  JXL_BOOL cmyk;
+  if (!cms.set_fields_from_icc(cms.set_fields_data, icc_.data(), icc_.size(),
+                               &c, &cmyk)) {
+    return;
+  }
+  if (cmyk) return;
+
+  PaddedBytes new_icc;
+  if (!MaybeCreateProfile(*this, &new_icc)) return;
+
+  want_icc_ = false;
 }
 
 std::string Description(const ColorEncoding& c_in) {
@@ -636,6 +672,7 @@ Status ConvertExternalToInternalColorEncoding(const JxlColorEncoding& external,
     }
   }
   CustomTransferFunction tf;
+  tf.nonserialized_color_space = internal->GetColorSpace();
   if (external.transfer_function == JXL_TRANSFER_FUNCTION_GAMMA) {
     JXL_RETURN_IF_ERROR(tf.SetGamma(external.gamma));
   } else {
@@ -689,8 +726,8 @@ Status AdaptToXYZD50(float wx, float wy, float matrix[9]) {
   float lms[3];
   float lms50[3];
 
-  MatMul(kBradford, w, 3, 3, 1, lms);
-  MatMul(kBradford, w50, 3, 3, 1, lms50);
+  Mul3x3Vector(kBradford, w, lms);
+  Mul3x3Vector(kBradford, w50, lms50);
 
   if (lms[0] == 0 || lms[1] == 0 || lms[2] == 0) {
     return JXL_FAILURE("Invalid white point");
@@ -704,8 +741,8 @@ Status AdaptToXYZD50(float wx, float wy, float matrix[9]) {
   }
 
   float b[9];
-  MatMul(a, kBradford, 3, 3, 3, b);
-  MatMul(kBradfordInv, b, 3, 3, 3, matrix);
+  Mul3x3Matrix(a, kBradford, b);
+  Mul3x3Matrix(kBradfordInv, b, matrix);
 
   return true;
 }
@@ -728,13 +765,13 @@ Status PrimariesToXYZ(float rx, float ry, float gx, float gy, float bx,
   // 1 / tiny float can still overflow
   JXL_RETURN_IF_ERROR(std::isfinite(w[0]) && std::isfinite(w[2]));
   float xyz[3];
-  MatMul(primaries_inv, w, 3, 3, 1, xyz);
+  Mul3x3Vector(primaries_inv, w, xyz);
 
   float a[9] = {
       xyz[0], 0, 0, 0, xyz[1], 0, 0, 0, xyz[2],
   };
 
-  MatMul(primaries, a, 3, 3, 3, matrix);
+  Mul3x3Matrix(primaries, a, matrix);
   return true;
 }
 
@@ -745,7 +782,7 @@ Status PrimariesToXYZD50(float rx, float ry, float gx, float gy, float bx,
   float d50[9];
   JXL_RETURN_IF_ERROR(AdaptToXYZD50(wx, wy, d50));
 
-  MatMul(d50, toXYZ, 3, 3, 3, matrix);
+  Mul3x3Matrix(d50, toXYZ, matrix);
   return true;
 }
 

@@ -7,12 +7,16 @@
 #ifndef mozilla_dom_media_MediaIPCUtils_h
 #define mozilla_dom_media_MediaIPCUtils_h
 
+#include <type_traits>
+
 #include "DecoderDoctorDiagnostics.h"
+#include "PerformanceRecorder.h"
 #include "PlatformDecoderModule.h"
 #include "ipc/EnumSerializer.h"
 #include "mozilla/EnumSet.h"
 #include "mozilla/GfxMessageUtils.h"
 #include "mozilla/gfx/Rect.h"
+#include "mozilla/dom/MFCDMSerializers.h"
 
 namespace IPC {
 template <>
@@ -33,9 +37,11 @@ struct ParamTraits<mozilla::VideoInfo> {
     WriteParam(aWriter, aParam.mRotation);
     WriteParam(aWriter, aParam.mColorDepth);
     WriteParam(aWriter, aParam.mColorSpace);
+    WriteParam(aWriter, aParam.mColorPrimaries);
     WriteParam(aWriter, aParam.mTransferFunction);
     WriteParam(aWriter, aParam.mColorRange);
     WriteParam(aWriter, aParam.HasAlpha());
+    WriteParam(aWriter, aParam.mCrypto);
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
@@ -51,9 +57,11 @@ struct ParamTraits<mozilla::VideoInfo> {
         ReadParam(aReader, &aResult->mRotation) &&
         ReadParam(aReader, &aResult->mColorDepth) &&
         ReadParam(aReader, &aResult->mColorSpace) &&
+        ReadParam(aReader, &aResult->mColorPrimaries) &&
         ReadParam(aReader, &aResult->mTransferFunction) &&
         ReadParam(aReader, &aResult->mColorRange) &&
-        ReadParam(aReader, &alphaPresent)) {
+        ReadParam(aReader, &alphaPresent) &&
+        ReadParam(aReader, &aResult->mCrypto)) {
       aResult->SetAlpha(alphaPresent);
       return true;
     }
@@ -105,11 +113,15 @@ struct ParamTraits<mozilla::AacCodecSpecificData> {
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
     WriteParam(aWriter, *aParam.mEsDescriptorBinaryBlob);
     WriteParam(aWriter, *aParam.mDecoderConfigDescriptorBinaryBlob);
+    WriteParam(aWriter, aParam.mEncoderDelayFrames);
+    WriteParam(aWriter, aParam.mMediaFrameCount);
   }
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return ReadParam(aReader, aResult->mEsDescriptorBinaryBlob.get()) &&
            ReadParam(aReader,
-                     aResult->mDecoderConfigDescriptorBinaryBlob.get());
+                     aResult->mDecoderConfigDescriptorBinaryBlob.get()) &&
+           ReadParam(aReader, &aResult->mEncoderDelayFrames) &&
+           ReadParam(aReader, &aResult->mMediaFrameCount);
   }
 };
 
@@ -177,6 +189,7 @@ struct ParamTraits<mozilla::AudioInfo> {
     WriteParam(aWriter, aParam.mProfile);
     WriteParam(aWriter, aParam.mExtendedProfile);
     WriteParam(aWriter, aParam.mCodecSpecificConfig);
+    WriteParam(aWriter, aParam.mCrypto);
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
@@ -187,7 +200,8 @@ struct ParamTraits<mozilla::AudioInfo> {
         ReadParam(aReader, &aResult->mBitDepth) &&
         ReadParam(aReader, &aResult->mProfile) &&
         ReadParam(aReader, &aResult->mExtendedProfile) &&
-        ReadParam(aReader, &aResult->mCodecSpecificConfig)) {
+        ReadParam(aReader, &aResult->mCodecSpecificConfig) &&
+        ReadParam(aReader, &aResult->mCrypto)) {
       return true;
     }
     return false;
@@ -204,21 +218,25 @@ struct ParamTraits<mozilla::MediaDataDecoder::ConversionRequired>
 
 template <>
 struct ParamTraits<mozilla::media::TimeUnit> {
-  typedef mozilla::media::TimeUnit paramType;
+  using paramType = mozilla::media::TimeUnit;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
     WriteParam(aWriter, aParam.IsValid());
-    WriteParam(aWriter, aParam.IsValid() ? aParam.ToMicroseconds() : 0);
+    WriteParam(aWriter, aParam.IsValid() ? aParam.mTicks.value() : 0);
+    WriteParam(aWriter,
+               aParam.IsValid() ? aParam.mBase : 1);  // base can't be 0
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
     bool valid;
-    int64_t value;
-    if (ReadParam(aReader, &valid) && ReadParam(aReader, &value)) {
-      if (!valid) {
-        *aResult = mozilla::media::TimeUnit::Invalid();
+    int64_t ticks;
+    int64_t base;
+    if (ReadParam(aReader, &valid) && ReadParam(aReader, &ticks) &&
+        ReadParam(aReader, &base)) {
+      if (valid) {
+        *aResult = mozilla::media::TimeUnit(ticks, base);
       } else {
-        *aResult = mozilla::media::TimeUnit::FromMicroseconds(value);
+        *aResult = mozilla::media::TimeUnit::Invalid();
       }
       return true;
     }
@@ -314,6 +332,43 @@ struct ParamTraits<mozilla::DecoderDoctorEvent> {
     }
     return false;
   };
+};
+
+template <>
+struct ParamTraits<mozilla::TrackingId::Source>
+    : public ContiguousEnumSerializer<
+          mozilla::TrackingId::Source,
+          mozilla::TrackingId::Source::Unimplemented,
+          mozilla::TrackingId::Source::LAST> {};
+
+template <>
+struct ParamTraits<mozilla::TrackingId> {
+  typedef mozilla::TrackingId paramType;
+
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteParam(aWriter, aParam.mSource);
+    WriteParam(aWriter, aParam.mProcId);
+    WriteParam(aWriter, aParam.mUniqueInProcId);
+  }
+
+  static bool Read(MessageReader* aReader, paramType* aResult) {
+    return ReadParam(aReader, &aResult->mSource) &&
+           ReadParam(aReader, &aResult->mProcId) &&
+           ReadParam(aReader, &aResult->mUniqueInProcId);
+  }
+};
+
+template <>
+struct ParamTraits<mozilla::CryptoTrack> {
+  typedef mozilla::CryptoTrack paramType;
+
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteParam(aWriter, aParam.mCryptoScheme);
+  }
+
+  static bool Read(MessageReader* aReader, paramType* aResult) {
+    return ReadParam(aReader, &aResult->mCryptoScheme);
+  }
 };
 
 }  // namespace IPC

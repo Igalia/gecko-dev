@@ -123,13 +123,6 @@ class PrototypeDocumentContentSink final : public nsIStreamLoaderObserver,
   bool mOffThreadCompiling;
 
   /**
-   * If the current transcluded script is being compiled off thread, the
-   * source for that script.
-   */
-  char16_t* mOffThreadCompileStringBuf;
-  size_t mOffThreadCompileStringLength;
-
-  /**
    * Wether the prototype document is still be traversed to create the DOM.
    * Layout will not be started until false.
    */

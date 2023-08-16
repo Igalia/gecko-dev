@@ -5,9 +5,10 @@
 
 #include "js/ArrayBuffer.h"
 #include "js/Value.h"
+#include "mozilla/Attributes.h"
 #include "mozilla/ErrorResult.h"
 #include "mozilla/Logging.h"
-#include "mozilla/ipc/Shmem.h"
+#include "mozilla/RefPtr.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/WebGPUBinding.h"
 #include "Device.h"
@@ -18,6 +19,9 @@
 #include "Buffer.h"
 #include "ComputePipeline.h"
 #include "DeviceLostInfo.h"
+#include "InternalError.h"
+#include "OutOfMemoryError.h"
+#include "PipelineLayout.h"
 #include "Queue.h"
 #include "RenderBundleEncoder.h"
 #include "RenderPipeline.h"
@@ -39,28 +43,15 @@ GPU_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_INHERITED(Device, DOMEventTargetHelper,
 NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(Device, DOMEventTargetHelper)
 GPU_IMPL_JS_WRAP(Device)
 
-static void mapFreeCallback(void* aContents, void* aUserData) {
-  Unused << aContents;
-  Unused << aUserData;
-}
-
 RefPtr<WebGPUChild> Device::GetBridge() { return mBridge; }
 
-JSObject* Device::CreateExternalArrayBuffer(JSContext* aCx, size_t aOffset,
-                                            size_t aSize,
-                                            const ipc::Shmem& aShmem) {
-  MOZ_ASSERT(aOffset + aSize <= aShmem.Size<uint8_t>());
-  return JS::NewExternalArrayBuffer(aCx, aSize, aShmem.get<uint8_t>() + aOffset,
-                                    &mapFreeCallback, nullptr);
-}
-
 Device::Device(Adapter* const aParent, RawId aId,
-               UniquePtr<ffi::WGPULimits> aRawLimits)
+               const ffi::WGPULimits& aRawLimits)
     : DOMEventTargetHelper(aParent->GetParentObject()),
       mId(aId),
       // features are filled in Adapter::RequestDevice
       mFeatures(new SupportedFeatures(aParent)),
-      mLimits(new SupportedLimits(aParent, std::move(aRawLimits))),
+      mLimits(new SupportedLimits(aParent, aRawLimits)),
       mBridge(aParent->mBridge),
       mQueue(new class Queue(this, aParent->mBridge, aId)) {
   mBridge->RegisterDevice(this);
@@ -95,13 +86,17 @@ void Device::CleanupUnregisteredInParent() {
   mValid = false;
 }
 
+bool Device::IsLost() const { return !mBridge || !mBridge->CanSend(); }
+
 // Generate an error on the Device timeline for this device.
 //
 // aMessage is interpreted as UTF-8.
-void Device::GenerateError(const nsCString& aMessage) {
-  if (mBridge->CanSend()) {
-    mBridge->SendGenerateError(mId, aMessage);
+void Device::GenerateValidationError(const nsCString& aMessage) {
+  if (IsLost()) {
+    return;  // Just drop it?
   }
+  mBridge->SendGenerateError(Some(mId), dom::GPUErrorFilter::Validation,
+                             aMessage);
 }
 
 void Device::GetLabel(nsAString& aValue) const { aValue = mLabel; }
@@ -121,81 +116,7 @@ dom::Promise* Device::GetLost(ErrorResult& aRv) {
 
 already_AddRefed<Buffer> Device::CreateBuffer(
     const dom::GPUBufferDescriptor& aDesc, ErrorResult& aRv) {
-  if (!mBridge->CanSend()) {
-    RefPtr<Buffer> buffer = new Buffer(this, 0, aDesc.mSize, 0);
-    return buffer.forget();
-  }
-
-  ipc::Shmem shmem;
-  bool hasMapFlags = aDesc.mUsage & (dom::GPUBufferUsage_Binding::MAP_WRITE |
-                                     dom::GPUBufferUsage_Binding::MAP_READ);
-  if (hasMapFlags || aDesc.mMappedAtCreation) {
-    const auto checked = CheckedInt<size_t>(aDesc.mSize);
-    if (!checked.isValid()) {
-      aRv.ThrowRangeError("Mappable size is too large");
-      return nullptr;
-    }
-    const auto& size = checked.value();
-
-    // TODO: use `ShmemPool`?
-    if (!mBridge->AllocShmem(size, &shmem)) {
-      aRv.ThrowAbortError(
-          nsPrintfCString("Unable to allocate shmem of size %" PRIuPTR, size));
-      return nullptr;
-    }
-
-    // zero out memory
-    memset(shmem.get<uint8_t>(), 0, size);
-  }
-
-  // If the buffer is not mapped at creation, and it has Shmem, we send it
-  // to the GPU process. Otherwise, we keep it.
-  RawId id = mBridge->DeviceCreateBuffer(mId, aDesc);
-  RefPtr<Buffer> buffer = new Buffer(this, id, aDesc.mSize, aDesc.mUsage);
-  if (aDesc.mMappedAtCreation) {
-    buffer->SetMapped(std::move(shmem),
-                      !(aDesc.mUsage & dom::GPUBufferUsage_Binding::MAP_READ));
-  } else if (hasMapFlags) {
-    mBridge->SendBufferReturnShmem(id, std::move(shmem));
-  }
-
-  return buffer.forget();
-}
-
-RefPtr<MappingPromise> Device::MapBufferAsync(RawId aId, uint32_t aMode,
-                                              size_t aOffset, size_t aSize,
-                                              ErrorResult& aRv) {
-  ffi::WGPUHostMap mode;
-  switch (aMode) {
-    case dom::GPUMapMode_Binding::READ:
-      mode = ffi::WGPUHostMap_Read;
-      break;
-    case dom::GPUMapMode_Binding::WRITE:
-      mode = ffi::WGPUHostMap_Write;
-      break;
-    default:
-      MOZ_CRASH("should have checked aMode in Buffer::MapAsync");
-  }
-
-  const CheckedInt<uint64_t> offset(aOffset);
-  if (!offset.isValid()) {
-    aRv.ThrowRangeError("Mapped offset is too large");
-    return nullptr;
-  }
-  const CheckedInt<uint64_t> size(aSize);
-  if (!size.isValid()) {
-    aRv.ThrowRangeError("Mapped size is too large");
-    return nullptr;
-  }
-
-  return mBridge->SendBufferMap(aId, mode, offset.value(), size.value());
-}
-
-void Device::UnmapBuffer(RawId aId, ipc::Shmem&& aShmem, bool aFlush,
-                         bool aKeepShmem) {
-  if (mBridge->CanSend()) {
-    mBridge->SendBufferUnmap(aId, std::move(aShmem), aFlush, aKeepShmem);
-  }
+  return Buffer::Create(this, mId, aDesc, aRv);
 }
 
 already_AddRefed<Texture> Device::CreateTexture(
@@ -263,8 +184,9 @@ already_AddRefed<BindGroup> Device::CreateBindGroup(
   return object.forget();
 }
 
-already_AddRefed<ShaderModule> Device::CreateShaderModule(
-    JSContext* aCx, const dom::GPUShaderModuleDescriptor& aDesc) {
+MOZ_CAN_RUN_SCRIPT_FOR_DEFINITION already_AddRefed<ShaderModule>
+Device::CreateShaderModule(JSContext* aCx,
+                           const dom::GPUShaderModuleDescriptor& aDesc) {
   Unused << aCx;
 
   if (!mBridge->CanSend()) {
@@ -277,7 +199,7 @@ already_AddRefed<ShaderModule> Device::CreateShaderModule(
     return nullptr;
   }
 
-  return mBridge->DeviceCreateShaderModule(this, aDesc, promise);
+  return MOZ_KnownLive(mBridge)->DeviceCreateShaderModule(this, aDesc, promise);
 }
 
 already_AddRefed<ComputePipeline> Device::CreateComputePipeline(
@@ -372,45 +294,28 @@ already_AddRefed<dom::Promise> Device::CreateRenderPipelineAsync(
 
 already_AddRefed<Texture> Device::InitSwapChain(
     const dom::GPUCanvasConfiguration& aDesc,
-    const layers::CompositableHandle& aHandle, gfx::SurfaceFormat aFormat,
-    gfx::IntSize* aCanvasSize) {
+    const layers::RemoteTextureOwnerId aOwnerId, gfx::SurfaceFormat aFormat,
+    gfx::IntSize aCanvasSize) {
   if (!mBridge->CanSend()) {
     return nullptr;
   }
 
-  gfx::IntSize size = *aCanvasSize;
-  if (aDesc.mSize.WasPassed()) {
-    const auto& descSize = aDesc.mSize.Value();
-    if (descSize.IsRangeEnforcedUnsignedLongSequence()) {
-      const auto& seq = descSize.GetAsRangeEnforcedUnsignedLongSequence();
-      // TODO: add a check for `seq.Length()`
-      size.width = AssertedCast<int>(seq[0]);
-      size.height = AssertedCast<int>(seq[1]);
-    } else if (descSize.IsGPUExtent3DDict()) {
-      const auto& dict = descSize.GetAsGPUExtent3DDict();
-      size.width = AssertedCast<int>(dict.mWidth);
-      size.height = AssertedCast<int>(dict.mHeight);
-    } else {
-      MOZ_CRASH("Unexpected union");
-    }
-    *aCanvasSize = size;
-  }
-
-  const layers::RGBDescriptor rgbDesc(size, aFormat);
+  const layers::RGBDescriptor rgbDesc(aCanvasSize, aFormat);
   // buffer count doesn't matter much, will be created on demand
   const size_t maxBufferCount = 10;
-  mBridge->DeviceCreateSwapChain(mId, rgbDesc, maxBufferCount, aHandle);
+  mBridge->DeviceCreateSwapChain(mId, rgbDesc, maxBufferCount, aOwnerId);
 
   dom::GPUTextureDescriptor desc;
   desc.mDimension = dom::GPUTextureDimension::_2d;
   auto& sizeDict = desc.mSize.SetAsGPUExtent3DDict();
-  sizeDict.mWidth = size.width;
-  sizeDict.mHeight = size.height;
+  sizeDict.mWidth = aCanvasSize.width;
+  sizeDict.mHeight = aCanvasSize.height;
   sizeDict.mDepthOrArrayLayers = 1;
   desc.mFormat = aDesc.mFormat;
   desc.mMipLevelCount = 1;
   desc.mSampleCount = 1;
   desc.mUsage = aDesc.mUsage | dom::GPUTextureUsage_Binding::COPY_SRC;
+  desc.mViewFormats = aDesc.mViewFormats;
   return CreateTexture(desc);
 }
 
@@ -423,19 +328,30 @@ void Device::Destroy() {
 }
 
 void Device::PushErrorScope(const dom::GPUErrorFilter& aFilter) {
-  if (mBridge->CanSend()) {
-    mBridge->SendDevicePushErrorScope(mId);
+  if (IsLost()) {
+    return;
   }
+  mBridge->SendDevicePushErrorScope(mId, aFilter);
 }
 
 already_AddRefed<dom::Promise> Device::PopErrorScope(ErrorResult& aRv) {
+  /*
+  https://www.w3.org/TR/webgpu/#errors-and-debugging:
+  > After a device is lost (described below), errors are no longer surfaced.
+  > At this point, implementations do not need to run validation or error
+  tracking: > popErrorScope() and uncapturederror stop reporting errors, > and
+  the validity of objects on the device becomes unobservable.
+  */
   RefPtr<dom::Promise> promise = dom::Promise::Create(GetParentObject(), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
 
-  if (!mBridge->CanSend()) {
-    promise->MaybeRejectWithOperationError("Internal communication error");
+  if (IsLost()) {
+    WebGPUChild::JsWarning(
+        GetOwnerGlobal(),
+        "popErrorScope resolving to null because device is already lost."_ns);
+    promise->MaybeResolve(JS::NullHandleValue);
     return promise.forget();
   }
 
@@ -443,26 +359,47 @@ already_AddRefed<dom::Promise> Device::PopErrorScope(ErrorResult& aRv) {
 
   errorPromise->Then(
       GetCurrentSerialEventTarget(), __func__,
-      [self = RefPtr{this}, promise](const MaybeScopedError& aMaybeError) {
-        if (aMaybeError) {
-          if (aMaybeError->operationError) {
-            promise->MaybeRejectWithOperationError("Stack is empty");
-          } else {
-            dom::OwningGPUOutOfMemoryErrorOrGPUValidationError error;
-            if (aMaybeError->validationMessage.IsEmpty()) {
-              error.SetAsGPUOutOfMemoryError();
-            } else {
-              error.SetAsGPUValidationError() = new ValidationError(
-                  self->GetParentObject(), aMaybeError->validationMessage);
-            }
-            promise->MaybeResolve(std::move(error));
-          }
-        } else {
-          promise->MaybeResolveWithUndefined();
+      [self = RefPtr{this}, promise](const PopErrorScopeResult& aResult) {
+        RefPtr<Error> error;
+
+        switch (aResult.resultType) {
+          case PopErrorScopeResultType::NoError:
+            promise->MaybeResolve(JS::NullHandleValue);
+            return;
+
+          case PopErrorScopeResultType::DeviceLost:
+            WebGPUChild::JsWarning(
+                self->GetOwnerGlobal(),
+                "popErrorScope resolving to null because device was lost."_ns);
+            promise->MaybeResolve(JS::NullHandleValue);
+            return;
+
+          case PopErrorScopeResultType::ThrowOperationError:
+            promise->MaybeRejectWithOperationError(aResult.message);
+            return;
+
+          case PopErrorScopeResultType::OutOfMemory:
+            error =
+                new OutOfMemoryError(self->GetParentObject(), aResult.message);
+            break;
+
+          case PopErrorScopeResultType::ValidationError:
+            error =
+                new ValidationError(self->GetParentObject(), aResult.message);
+            break;
+
+          case PopErrorScopeResultType::InternalError:
+            error = new InternalError(self->GetParentObject(), aResult.message);
+            break;
         }
+        promise->MaybeResolve(std::move(error));
       },
-      [promise](const ipc::ResponseRejectReason&) {
-        promise->MaybeRejectWithOperationError("Internal communication error");
+      [self = RefPtr{this}, promise](const ipc::ResponseRejectReason&) {
+        // Device was lost.
+        WebGPUChild::JsWarning(
+            self->GetOwnerGlobal(),
+            "popErrorScope resolving to null because device was just lost."_ns);
+        promise->MaybeResolve(JS::NullHandleValue);
       });
 
   return promise.forget();

@@ -6,19 +6,23 @@
 async function require_module(id) {
   if (!require_module.moduleLoader) {
     const { ModuleLoader } = await import(
-      "/tests/dom/quota/test/modules/ModuleLoader.js"
+      "/tests/dom/quota/test/modules/ModuleLoader.mjs"
     );
 
     const base = window.location.href;
 
     const depth = "../../../../";
 
-    const { Assert } = await import("/tests/dom/quota/test/modules/Assert.js");
+    const { Assert } = await import("/tests/dom/quota/test/modules/Assert.mjs");
+
+    const { Utils } = await import("/tests/dom/quota/test/modules/Utils.mjs");
 
     const proto = {
       Assert,
       Cr: SpecialPowers.Cr,
       navigator,
+      TextEncoder,
+      Utils,
     };
 
     require_module.moduleLoader = new ModuleLoader(base, depth, proto);
@@ -29,23 +33,50 @@ async function require_module(id) {
 
 async function run_test_in_worker(script) {
   const { runTestInWorker } = await import(
-    "/tests/dom/quota/test/modules/WorkerDriver.js"
+    "/tests/dom/quota/test/modules/WorkerDriver.mjs"
   );
-  await runTestInWorker(script);
+
+  const base = window.location.href;
+
+  const listener = {
+    onOk(value, message) {
+      ok(value, message);
+    },
+    onIs(a, b, message) {
+      is(a, b, message);
+    },
+    onInfo(message) {
+      info(message);
+    },
+  };
+
+  await runTestInWorker(script, base, listener);
 }
 
-// XXX It would be nice if we could call add_setup here (xpcshell-test and
-//     browser-test support it.
-add_task(async function setup() {
+// XXX This can be removed once we use <profile>/storage. See bug 1798015.
+async function removeAllEntries() {
+  const root = await navigator.storage.getDirectory();
+  for await (const value of root.values()) {
+    root.removeEntry(value.name, { recursive: true });
+  }
+}
+
+add_setup(async function () {
   const { setStoragePrefs, clearStoragesForOrigin } = await import(
-    "/tests/dom/quota/test/modules/StorageUtils.js"
+    "/tests/dom/quota/test/modules/StorageUtils.mjs"
   );
 
-  const optionalPrefsToSet = [["dom.fs.enabled", true]];
+  const optionalPrefsToSet = [
+    ["dom.fs.enabled", true],
+    ["dom.fs.writable_file_stream.enabled", true],
+    ["dom.workers.modules.enabled", true],
+  ];
 
   await setStoragePrefs(optionalPrefsToSet);
 
-  SimpleTest.registerCleanupFunction(async function() {
+  SimpleTest.registerCleanupFunction(async function () {
+    await removeAllEntries();
+
     await clearStoragesForOrigin(SpecialPowers.wrap(document).nodePrincipal);
   });
 });

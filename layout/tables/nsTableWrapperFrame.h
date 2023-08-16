@@ -42,13 +42,12 @@ class nsTableWrapperFrame : public nsContainerFrame {
   virtual const nsFrameList& GetChildList(ChildListID aListID) const override;
   virtual void GetChildLists(nsTArray<ChildList>* aLists) const override;
 
-  virtual void SetInitialChildList(ChildListID aListID,
-                                   nsFrameList& aChildList) override;
-  virtual void AppendFrames(ChildListID aListID,
-                            nsFrameList& aFrameList) override;
-  virtual void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
-                            const nsLineList::iterator* aPrevFrameLine,
-                            nsFrameList& aFrameList) override;
+  void SetInitialChildList(ChildListID aListID,
+                           nsFrameList&& aChildList) override;
+  void AppendFrames(ChildListID aListID, nsFrameList&& aFrameList) override;
+  void InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
+                    const nsLineList::iterator* aPrevFrameLine,
+                    nsFrameList&& aFrameList) override;
   virtual void RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) override;
 
   virtual nsContainerFrame* GetContentInsertionFrame() override {
@@ -65,29 +64,12 @@ class nsTableWrapperFrame : public nsContainerFrame {
   void BuildDisplayListForInnerTable(nsDisplayListBuilder* aBuilder,
                                      const nsDisplayListSet& aLists);
 
-  virtual nscoord GetLogicalBaseline(
-      mozilla::WritingMode aWritingMode) const override;
-
-  bool GetNaturalBaselineBOffset(mozilla::WritingMode aWM,
-                                 BaselineSharingGroup aBaselineGroup,
-                                 nscoord* aBaseline) const override {
-    if (StyleDisplay()->IsContainLayout()) {
-      return false;
-    }
-    auto innerTable = InnerTableFrame();
-    nscoord offset;
-    if (innerTable->GetNaturalBaselineBOffset(aWM, aBaselineGroup, &offset)) {
-      auto bStart = innerTable->BStart(aWM, mRect.Size());
-      if (aBaselineGroup == BaselineSharingGroup::First) {
-        *aBaseline = offset + bStart;
-      } else {
-        auto bEnd = bStart + innerTable->BSize(aWM);
-        *aBaseline = BSize(aWM) - (bEnd - offset);
-      }
-      return true;
-    }
-    return false;
-  }
+  nscoord SynthesizeFallbackBaseline(
+      mozilla::WritingMode aWM,
+      BaselineSharingGroup aBaselineGroup) const override;
+  Maybe<nscoord> GetNaturalBaselineBOffset(
+      mozilla::WritingMode aWM, BaselineSharingGroup aBaselineGroup,
+      BaselineExportContext aExportContext) const override;
 
   virtual nscoord GetMinISize(gfxContext* aRenderingContext) override;
   virtual nscoord GetPrefISize(gfxContext* aRenderingContext) override;
@@ -201,16 +183,6 @@ class nsTableWrapperFrame : public nsContainerFrame {
   // having "physical" names.)
   MaybeCaptionSide GetCaptionSide() const;
 
-  bool HasSideCaption() const {
-    auto captionSide = GetCaptionSide();
-    return captionSide && IsSideCaption(*captionSide);
-  }
-
-  static bool IsSideCaption(const mozilla::StyleCaptionSide aCaptionSide) {
-    return aCaptionSide == mozilla::StyleCaptionSide::Left ||
-           aCaptionSide == mozilla::StyleCaptionSide::Right;
-  }
-
   mozilla::StyleVerticalAlignKeyword GetCaptionVerticalAlign() const;
 
   nscoord ComputeFinalBSize(const MaybeCaptionSide&,
@@ -235,26 +207,15 @@ class nsTableWrapperFrame : public nsContainerFrame {
                           mozilla::LogicalPoint& aOrigin,
                           mozilla::WritingMode aWM);
 
-  // Returns the area occupied by the caption within our content box depending
-  // on the caption side.
-  //
-  // @param aCaptionMarginBoxSize the caption's margin-box size in our
-  //        writing-mode.
-  mozilla::LogicalSize GetAreaOccupiedByCaption(
-      mozilla::StyleCaptionSide,
-      const mozilla::LogicalSize& aCaptionMarginBoxSize) const;
-
   // Create and init the child reflow input, using passed-in aChildRI, so that
   // caller can use it after we return.
   //
-  // @param aAreaOccupiedByCaption the value computed by
-  //        GetAreaOccupiedByCaption() if we have a caption.
+  // @param aBSizeOccupiedByCaption the block size occupied by the caption
+  //                                within our content box.
   void CreateReflowInputForInnerTable(
       nsPresContext* aPresContext, nsTableFrame* aTableFrame,
       const ReflowInput& aOuterRI, Maybe<ReflowInput>& aChildRI,
-      const nscoord aAvailISize,
-      const mozilla::Maybe<mozilla::LogicalSize>& aAreaOccupiedByCaption =
-          mozilla::Nothing()) const;
+      const nscoord aAvailISize, nscoord aBSizeOccupiedByCaption = 0) const;
   void CreateReflowInputForCaption(nsPresContext* aPresContext,
                                    nsIFrame* aCaptionFrame,
                                    const ReflowInput& aOuterRI,
@@ -311,7 +272,7 @@ class nsTableWrapperFrame : public nsContainerFrame {
       const nsTableFrame* aTableFrame,
       const mozilla::StyleSizeOverrides& aWrapperSizeOverrides,
       const mozilla::LogicalSize& aBorderPadding,
-      const mozilla::LogicalSize& aAreaOccupiedByCaption) const;
+      nscoord aBSizeOccupiedByCaption) const;
 
  private:
   nsFrameList mCaptionFrames;

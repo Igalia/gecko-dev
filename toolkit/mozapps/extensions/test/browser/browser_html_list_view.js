@@ -1,7 +1,7 @@
 /* eslint max-len: ["error", 80] */
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 AddonTestUtils.initMochitest(this);
@@ -33,10 +33,9 @@ function waitForThemeChange(list) {
 
 let mockProvider;
 
-add_setup(async function() {
-  mockProvider = new MockProvider();
+add_setup(async function () {
+  mockProvider = new MockProvider(["extension", "sitepermission"]);
   promptService = mockPromptService();
-  Services.telemetry.clearEvents();
 });
 
 let extensionsCreated = 0;
@@ -46,7 +45,7 @@ function createExtensions(manifestExtras) {
     ExtensionTestUtils.loadExtension({
       manifest: {
         name: "Test extension",
-        applications: {
+        browser_specific_settings: {
           gecko: { id: `test-${extensionsCreated++}@mochi.test` },
         },
         icons: {
@@ -65,7 +64,7 @@ add_task(async function testExtensionList() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
       icons: {
         32: "test-icon.png",
       },
@@ -113,7 +112,7 @@ add_task(async function testExtensionList() {
 
   // Disable the extension.
   let disableToggle = card.querySelector('[action="toggle-disabled"]');
-  ok(disableToggle.checked, "The disable toggle is checked");
+  ok(disableToggle.pressed, "The disable toggle is pressed");
   is(
     doc.l10n.getAttributes(disableToggle).id,
     "extension-enable-addon-button-label",
@@ -131,8 +130,8 @@ add_task(async function testExtensionList() {
     "The card is now in the disabled section"
   );
 
-  // The disable button is now enable.
-  ok(!disableToggle.checked, "The disable toggle is unchecked");
+  // The disable button is now enabled.
+  ok(!disableToggle.pressed, "The disable toggle is not pressed");
   is(
     doc.l10n.getAttributes(disableToggle).id,
     "extension-enable-addon-button-label",
@@ -180,7 +179,7 @@ add_task(async function testExtensionList() {
   const extension2 = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension 2",
-      applications: { gecko: { id: "test-2@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test-2@mochi.test" } },
       icons: {
         32: "test-icon.png",
       },
@@ -234,7 +233,7 @@ add_task(async function testExtensionList() {
   const themeXpi = AddonTestUtils.createTempWebExtensionFile({
     manifest: {
       name: "My theme",
-      applications: { gecko: { id: "theme@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "theme@mochi.test" } },
       theme: {},
     },
   });
@@ -248,7 +247,7 @@ add_task(async function testExtensionList() {
   const xpi = AddonTestUtils.createTempWebExtensionFile({
     manifest: {
       name: "Test extension 3",
-      applications: { gecko: { id: "test-3@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test-3@mochi.test" } },
       icons: {
         32: "test-icon.png",
       },
@@ -295,57 +294,13 @@ add_task(async function testExtensionList() {
     !(await AddonManager.getAddonByID(themeAddon.id)),
     "The theme addon is fully uninstalled"
   );
-
-  assertAboutAddonsTelemetryEvents([
-    ["addonsManager", "view", "aboutAddons", "list", { type: "extension" }],
-    [
-      "addonsManager",
-      "action",
-      "aboutAddons",
-      null,
-      { type: "extension", addonId: id, view: "list", action: "disable" },
-    ],
-    [
-      "addonsManager",
-      "action",
-      "aboutAddons",
-      "cancelled",
-      { type: "extension", addonId: id, view: "list", action: "uninstall" },
-    ],
-    [
-      "addonsManager",
-      "action",
-      "aboutAddons",
-      "accepted",
-      { type: "extension", addonId: id, view: "list", action: "uninstall" },
-    ],
-    [
-      "addonsManager",
-      "action",
-      "aboutAddons",
-      null,
-      { type: "extension", addonId: id, view: "list", action: "undo" },
-    ],
-    [
-      "addonsManager",
-      "action",
-      "aboutAddons",
-      null,
-      {
-        type: "extension",
-        addonId: "test-2@mochi.test",
-        view: "list",
-        action: "undo",
-      },
-    ],
-  ]);
 });
 
 add_task(async function testMouseSupport() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension",
-      applications: { gecko: { id: "test@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test@mochi.test" } },
     },
     useAddonManager: "temporary",
   });
@@ -376,7 +331,7 @@ add_task(async function testKeyboardSupport() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
     },
     useAddonManager: "temporary",
   });
@@ -476,7 +431,7 @@ add_task(async function testOpenDetailFromNameKeyboard() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Detail extension",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
     },
     useAddonManager: "temporary",
   });
@@ -598,7 +553,7 @@ add_task(async function testExtensionReordering() {
 add_task(async function testThemeList() {
   let theme = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: "theme@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "theme@mochi.test" } },
       name: "My theme",
       theme: {},
     },
@@ -819,7 +774,7 @@ add_task(async function testOnlyTypeIsShown() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension",
-      applications: { gecko: { id: "test@mochi.test" } },
+      browser_specific_settings: { gecko: { id: "test@mochi.test" } },
     },
     useAddonManager: "temporary",
   });
@@ -864,7 +819,7 @@ add_task(async function testExtensionGenericIcon() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Test extension",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
     },
     useAddonManager: "temporary",
   });
@@ -967,7 +922,7 @@ add_task(async function testDisabledDimming() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
       name: "Disable me",
-      applications: { gecko: { id } },
+      browser_specific_settings: { gecko: { id } },
     },
     useAddonManager: "temporary",
   });
@@ -1073,13 +1028,6 @@ add_task(async function testEmptyMessage() {
 
     while (disabledSection.firstChild) {
       disabledSection.firstChild.remove();
-    }
-
-    if (test.type == "theme") {
-      // The colorways section won't exist if there's no active collection.
-      // Bug 1774432 is going to make it easier to use a mock collection
-      // which would allow for a more predictable setup here.
-      getSection(doc, "colorways-section")?.remove();
     }
 
     // Message should now be displayed

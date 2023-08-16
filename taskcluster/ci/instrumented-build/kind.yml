@@ -13,6 +13,7 @@ transforms:
     - gecko_taskgraph.transforms.build_attrs:transforms
     - gecko_taskgraph.transforms.build_lints:transforms
     - gecko_taskgraph.transforms.job:transforms
+    - gecko_taskgraph.transforms.artifact:transforms
     - gecko_taskgraph.transforms.task:transforms
 
 job-defaults:
@@ -25,6 +26,7 @@ job-defaults:
         env:
             PERFHERDER_EXTRA_OPTIONS: instrumented
             MACH_BUILD_PYTHON_NATIVE_PACKAGE_SOURCE: system
+    use-system-python: false
     run:
         using: mozharness
         actions: [get-secrets, build]
@@ -48,7 +50,7 @@ jobs:
         shipping-product: firefox
         treeherder:
             platform: linux32-shippable/opt
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         run:
             config:
                 - builds/releng_base_firefox.py
@@ -58,7 +60,6 @@ jobs:
         run-on-projects: ['release']
         fetches:
             toolchain:
-                - linux64-binutils
                 - linux64-clang
                 - linux64-rust
                 - linux64-rust-size
@@ -66,6 +67,7 @@ jobs:
                 - linux64-dump_syms
                 - linux64-nasm
                 - linux64-node
+                - linux64-pkgconf
                 - sysroot-i686-linux-gnu
                 - sysroot-x86_64-linux-gnu
                 - sysroot-wasm32-wasi
@@ -78,7 +80,7 @@ jobs:
         shipping-product: firefox
         treeherder:
             platform: linux64-shippable/opt
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         run:
             config:
                 - builds/releng_base_firefox.py
@@ -87,7 +89,6 @@ jobs:
             tooltool-downloads: public
         fetches:
             toolchain:
-                - linux64-binutils
                 - linux64-clang
                 - linux64-rust
                 - linux64-rust-size
@@ -95,6 +96,7 @@ jobs:
                 - linux64-dump_syms
                 - linux64-nasm
                 - linux64-node
+                - linux64-pkgconf
                 - sysroot-x86_64-linux-gnu
                 - sysroot-wasm32-wasi
 
@@ -104,9 +106,8 @@ jobs:
         shipping-product: firefox
         treeherder:
             platform: osx-shippable/opt
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
-            docker-image: {in-tree: debian11-amd64-build}
             max-run-time: 7200
             env:
                 PERFHERDER_EXTRA_OPTIONS: instrumented
@@ -121,8 +122,6 @@ jobs:
             mozconfig-variant: profile-generate
         fetches:
             toolchain:
-                - linux64-binutils
-                - linux64-cctools-port
                 - linux64-clang
                 - linux64-hfsplus
                 - linux64-libdmg
@@ -132,7 +131,7 @@ jobs:
                 - linux64-dump_syms
                 - linux64-nasm
                 - linux64-node
-                - macosx64-sdk-11.0
+                - macosx64-sdk
                 - sysroot-x86_64-linux-gnu
                 - sysroot-wasm32-wasi
 
@@ -144,7 +143,7 @@ jobs:
         shipping-product: fennec
         treeherder:
             platform: android-5-0-x86/pgo
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: android-build}
             env:
@@ -200,7 +199,7 @@ jobs:
         shipping-product: fennec
         treeherder:
             platform: android-5-0-x86_64/pgo
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: android-build}
             env:
@@ -254,9 +253,7 @@ jobs:
         shipping-product: firefox
         treeherder:
             platform: windows2012-32-shippable/opt
-        worker-type: b-linux
-        worker:
-            docker-image: {in-tree: debian11-amd64-build}
+        worker-type: b-linux-gcp
         run:
             options: [append-env-variables-from-configs]
             mozconfig-variant: profile-generate
@@ -266,12 +263,8 @@ jobs:
             extra-config:
                 stage_platform: win32
                 mozconfig_platform: win32
-                env:
-                    LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                    LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         fetches:
             toolchain:
-                - linux64-binutils
                 - linux64-clang
                 - linux64-rust-cross
                 - linux64-rust-size
@@ -280,12 +273,11 @@ jobs:
                 - linux64-cbindgen
                 - linux64-dump_syms
                 - linux64-wine
-                - linux64-liblowercase
                 - linux64-winchecksec
                 - nsis
                 - sysroot-x86_64-linux-gnu
                 - sysroot-wasm32-wasi
-                - win64-vs2017
+                - vs
             fetch:
                 - upx-3.95-win
 
@@ -297,9 +289,7 @@ jobs:
         shipping-product: firefox
         treeherder:
             platform: windows2012-64-shippable/opt
-        worker-type: b-linux
-        worker:
-            docker-image: {in-tree: debian11-amd64-build}
+        worker-type: b-linux-gcp
         run:
             options: [append-env-variables-from-configs]
             mozconfig-variant: profile-generate
@@ -309,12 +299,8 @@ jobs:
             extra-config:
                 stage_platform: win64
                 mozconfig_platform: win64
-                env:
-                    LD_PRELOAD: "/builds/worker/fetches/liblowercase/liblowercase.so"
-                    LOWERCASE_DIRS: "/builds/worker/fetches/vs"
         fetches:
             toolchain:
-                - linux64-binutils
                 - linux64-clang
                 - linux64-rust-cross
                 - linux64-rust-size
@@ -323,11 +309,10 @@ jobs:
                 - linux64-cbindgen
                 - linux64-dump_syms
                 - linux64-wine
-                - linux64-liblowercase
                 - linux64-winchecksec
                 - nsis
                 - sysroot-x86_64-linux-gnu
                 - sysroot-wasm32-wasi
-                - win64-vs2017
+                - vs
             fetch:
                 - upx-3.95-win

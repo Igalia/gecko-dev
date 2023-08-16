@@ -3,25 +3,20 @@
 
 "use strict";
 
-const { ClientID } = ChromeUtils.import("resource://gre/modules/ClientID.jsm");
-const { CommonUtils } = ChromeUtils.import(
-  "resource://services-common/utils.js"
+const { ClientID } = ChromeUtils.importESModule(
+  "resource://gre/modules/ClientID.sys.mjs"
 );
-const { OS } = ChromeUtils.import("resource://gre/modules/osfile.jsm");
 
 const PREF_CACHED_CLIENTID = "toolkit.telemetry.cachedClientID";
 
 var drsPath;
 
-const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const uuidRegex =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function run_test() {
   do_get_profile();
-  drsPath = OS.Path.join(
-    OS.Constants.Path.profileDir,
-    "datareporting",
-    "state.json"
-  );
+  drsPath = PathUtils.join(PathUtils.profileDir, "datareporting", "state.json");
 
   Services.prefs.setBoolPref(
     "toolkit.telemetry.testing.overrideProductsCheck",
@@ -74,7 +69,7 @@ add_task(async function test_client_id() {
   let oldClientID = clientID;
   for (let [invalidID] of invalidIDs) {
     await ClientID._reset();
-    await CommonUtils.writeJSON({ clientID: invalidID }, drsPath);
+    await IOUtils.writeJSON(drsPath, { clientID: invalidID });
     clientID = await ClientID.getClientID();
     Assert.equal(clientID, oldClientID);
     if (AppConstants.platform != "android") {
@@ -85,7 +80,7 @@ add_task(async function test_client_id() {
   // Test that valid DRS actually works.
   const validClientID = "5afebd62-a33c-416c-b519-5c60fb988e8e";
   await ClientID._reset();
-  await CommonUtils.writeJSON({ clientID: validClientID }, drsPath);
+  await IOUtils.writeJSON(drsPath, { clientID: validClientID });
   clientID = await ClientID.getClientID();
   Assert.equal(clientID, validClientID);
   if (AppConstants.platform != "android") {

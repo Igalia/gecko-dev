@@ -4,7 +4,7 @@
 "use strict";
 
 // Check that messages are logged and observed with the correct category. See Bug 595934.
-const { MESSAGE_CATEGORY } = require("devtools/shared/constants");
+const { MESSAGE_CATEGORY } = require("resource://devtools/shared/constants.js");
 
 const TEST_URI =
   "data:text/html;charset=utf-8,<!DOCTYPE html>Web Console test for " +
@@ -33,7 +33,7 @@ const TESTS = [
     matchString: "multipart/form-data",
     typeSelector: ".warn",
     onload() {
-      SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+      SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
         const form = content.document.querySelector("form");
         form.submit();
       });
@@ -99,7 +99,7 @@ const TESTS = [
   },
 ];
 
-add_task(async function() {
+add_task(async function () {
   // Disable bfcache for Fission for now.
   // If Fission is disabled, the pref is no-op.
   await SpecialPowers.pushPrefEnv({
@@ -126,14 +126,8 @@ add_task(async function() {
 });
 
 async function runTest(test, hud) {
-  const {
-    file,
-    category,
-    matchString,
-    typeSelector,
-    onload,
-    skipInE10s,
-  } = test;
+  const { file, category, matchString, typeSelector, onload, skipInE10s } =
+    test;
 
   if (skipInE10s && Services.appinfo.browserTabsRemoteAutostart) {
     return;

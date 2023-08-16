@@ -7,12 +7,13 @@
 // HttpLog.h should generally be included first
 #include "HttpLog.h"
 
+#include "Http2StreamTunnel.h"
 #include "TLSTransportLayer.h"
 #include "nsISocketProvider.h"
-#include "Http2StreamTunnel.h"
+#include "nsITLSSocketControl.h"
 #include "nsQueryObject.h"
-#include "nsSocketTransport2.h"
 #include "nsSocketProviderService.h"
+#include "nsSocketTransport2.h"
 
 namespace mozilla::net {
 
@@ -47,6 +48,12 @@ NS_IMETHODIMP TLSTransportLayer::InputStreamWrapper::Available(
   return mSocketIn->Available(avail);
 }
 
+NS_IMETHODIMP TLSTransportLayer::InputStreamWrapper::StreamStatus() {
+  LOG(("TLSTransportLayer::InputStreamWrapper::StreamStatus [this=%p]\n",
+       this));
+  return mSocketIn->StreamStatus();
+}
+
 nsresult TLSTransportLayer::InputStreamWrapper::ReadDirectly(
     char* buf, uint32_t count, uint32_t* countRead) {
   LOG(("TLSTransportLayer::InputStreamWrapper::ReadDirectly [this=%p]\n",
@@ -59,9 +66,16 @@ TLSTransportLayer::InputStreamWrapper::Read(char* buf, uint32_t count,
                                             uint32_t* countRead) {
   LOG(("TLSTransportLayer::InputStreamWrapper::Read [this=%p]\n", this));
 
-  mStatus = NS_OK;
+  *countRead = 0;
+
+  if (NS_FAILED(mStatus)) {
+    return (mStatus == NS_BASE_STREAM_CLOSED) ? NS_OK : mStatus;
+  }
+
   int32_t bytesRead = PR_Read(mTransport->mFD, buf, count);
-  if (bytesRead == -1) {
+  if (bytesRead > 0) {
+    *countRead = bytesRead;
+  } else if (bytesRead < 0) {
     PRErrorCode code = PR_GetError();
     if (code == PR_WOULD_BLOCK_ERROR) {
       LOG((
@@ -77,9 +91,7 @@ TLSTransportLayer::InputStreamWrapper::Read(char* buf, uint32_t count,
            ".\n",
            this, static_cast<uint32_t>(mStatus)));
     }
-    return mStatus;
   }
-  *countRead = bytesRead;
 
   if (NS_SUCCEEDED(mStatus) && !bytesRead) {
     LOG(
@@ -138,8 +150,18 @@ TLSTransportLayer::InputStreamWrapper::AsyncWait(
   PRPollDesc pd;
   pd.fd = mTransport->mFD;
   pd.in_flags = PR_POLL_READ | PR_POLL_EXCEPT;
-  int32_t rv = PR_Poll(&pd, 1, PR_INTERVAL_NO_TIMEOUT);
-  LOG(("TLSTransportLayer::InputStreamWrapper::AsyncWait rv=%d", rv));
+  // Only run PR_Poll on the socket thread. Also, make sure this lives at least
+  // as long as that operation.
+  auto DoPoll = [self = RefPtr{this}, pd(pd)]() mutable {
+    int32_t rv = PR_Poll(&pd, 1, PR_INTERVAL_NO_TIMEOUT);
+    LOG(("TLSTransportLayer::InputStreamWrapper::AsyncWait rv=%d", rv));
+  };
+  if (OnSocketThread()) {
+    DoPoll();
+  } else {
+    gSocketTransportService->Dispatch(NS_NewRunnableFunction(
+        "TLSTransportLayer::InputStreamWrapper::AsyncWait", DoPoll));
+  }
   return NS_OK;
 }
 
@@ -176,6 +198,12 @@ TLSTransportLayer::OutputStreamWrapper::Flush() {
   return mSocketOut->Flush();
 }
 
+NS_IMETHODIMP
+TLSTransportLayer::OutputStreamWrapper::StreamStatus() {
+  LOG(("TLSTransportLayerOutputStream::StreamStatus [this=%p]\n", this));
+  return mSocketOut->StreamStatus();
+}
+
 nsresult TLSTransportLayer::OutputStreamWrapper::WriteDirectly(
     const char* buf, uint32_t count, uint32_t* countWritten) {
   LOG(
@@ -192,7 +220,10 @@ TLSTransportLayer::OutputStreamWrapper::Write(const char* buf, uint32_t count,
        this, count));
 
   *countWritten = 0;
-  mStatus = NS_OK;
+
+  if (NS_FAILED(mStatus)) {
+    return (mStatus == NS_BASE_STREAM_CLOSED) ? NS_OK : mStatus;
+  }
 
   int32_t written = PR_Write(mTransport->mFD, buf, count);
   LOG(
@@ -200,7 +231,9 @@ TLSTransportLayer::OutputStreamWrapper::Write(const char* buf, uint32_t count,
        "%d\n",
        this, count, written, PR_GetError() == PR_WOULD_BLOCK_ERROR));
 
-  if (written < 0) {
+  if (written > 0) {
+    *countWritten = written;
+  } else if (written < 0) {
     PRErrorCode code = PR_GetError();
     if (code == PR_WOULD_BLOCK_ERROR) {
       LOG(
@@ -214,11 +247,8 @@ TLSTransportLayer::OutputStreamWrapper::Write(const char* buf, uint32_t count,
     if (NS_SUCCEEDED(mStatus)) {
       mStatus = ErrorAccordingToNSPR(code);
     }
-
-    return mStatus;
   }
 
-  *countWritten = written;
   return mStatus;
 }
 
@@ -312,12 +342,13 @@ TLSTransportLayer::TLSTransportLayer(nsISocketTransport* aTransport,
 }
 
 TLSTransportLayer::~TLSTransportLayer() {
+  MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("TLSTransportLayer dtor this=[%p]", this));
   if (mFD) {
     PR_Close(mFD);
     mFD = nullptr;
   }
-  mSecInfo = nullptr;
+  mTLSSocketControl = nullptr;
 }
 
 bool TLSTransportLayer::Init(const char* aTLSHost, int32_t aTLSPort) {
@@ -361,9 +392,9 @@ bool TLSTransportLayer::Init(const char* aTLSHost, int32_t aTLSPort) {
 
   mFD->secret = reinterpret_cast<PRFilePrivate*>(this);
 
-  return NS_SUCCEEDED(provider->AddToSocket(PR_AF_INET, aTLSHost, aTLSPort,
-                                            nullptr, OriginAttributes(), 0, 0,
-                                            mFD, getter_AddRefs(mSecInfo)));
+  return NS_SUCCEEDED(provider->AddToSocket(
+      PR_AF_INET, aTLSHost, aTLSPort, nullptr, OriginAttributes(), 0, 0, mFD,
+      getter_AddRefs(mTLSSocketControl)));
 }
 
 NS_IMETHODIMP
@@ -452,6 +483,8 @@ TLSTransportLayer::Close(nsresult aReason) {
     mSocketTransport->Close(aReason);
     mSocketTransport = nullptr;
   }
+  mSocketInWrapper.AsyncWait(nullptr, 0, 0, nullptr);
+  mSocketOutWrapper.AsyncWait(nullptr, 0, 0, nullptr);
 
   if (mOwner) {
     RefPtr<TLSTransportLayer> self = this;
@@ -514,6 +547,22 @@ TLSTransportLayer::ResolvedByTRR(bool* aResolvedByTRR) {
   return mSocketTransport->ResolvedByTRR(aResolvedByTRR);
 }
 
+NS_IMETHODIMP TLSTransportLayer::GetEffectiveTRRMode(
+    nsIRequest::TRRMode* aEffectiveTRRMode) {
+  if (!mSocketTransport) {
+    return NS_ERROR_FAILURE;
+  }
+  return mSocketTransport->GetEffectiveTRRMode(aEffectiveTRRMode);
+}
+
+NS_IMETHODIMP TLSTransportLayer::GetTrrSkipReason(
+    nsITRRSkipReason::value* aTrrSkipReason) {
+  if (!mSocketTransport) {
+    return NS_ERROR_FAILURE;
+  }
+  return mSocketTransport->GetTrrSkipReason(aTrrSkipReason);
+}
+
 #define FWD_TS_PTR(fx, ts)                          \
   NS_IMETHODIMP                                     \
   TLSTransportLayer::fx(ts* arg) {                  \
@@ -553,12 +602,13 @@ FWD_TS_PTR(GetRecvBufferSize, uint32_t);
 FWD_TS(SetRecvBufferSize, uint32_t);
 FWD_TS_PTR(GetResetIPFamilyPreference, bool);
 
-nsresult TLSTransportLayer::GetSecurityInfo(nsISupports** secinfo) {
-  if (!mSecInfo) {
+nsresult TLSTransportLayer::GetTlsSocketControl(
+    nsITLSSocketControl** tlsSocketControl) {
+  if (!mTLSSocketControl) {
     return NS_ERROR_ABORT;
   }
 
-  *secinfo = do_AddRef(mSecInfo).take();
+  *tlsSocketControl = do_AddRef(mTLSSocketControl).take();
   return NS_OK;
 }
 
@@ -675,7 +725,6 @@ int32_t TLSTransportLayer::OutputInternal(const char* aBuf, int32_t aAmount) {
 
   uint32_t outCountWrite = 0;
   nsresult rv = mSocketOutWrapper.WriteDirectly(aBuf, aAmount, &outCountWrite);
-  mSocketOutWrapper.SetStatus(rv);
   if (NS_FAILED(rv)) {
     if (rv == NS_BASE_STREAM_WOULD_BLOCK) {
       PR_SetError(PR_WOULD_BLOCK_ERROR, 0);
@@ -693,7 +742,6 @@ int32_t TLSTransportLayer::InputInternal(char* aBuf, int32_t aAmount) {
 
   uint32_t outCountRead = 0;
   nsresult rv = mSocketInWrapper.ReadDirectly(aBuf, aAmount, &outCountRead);
-  mSocketInWrapper.SetStatus(rv);
   if (NS_FAILED(rv)) {
     if (rv == NS_BASE_STREAM_WOULD_BLOCK) {
       PR_SetError(PR_WOULD_BLOCK_ERROR, 0);

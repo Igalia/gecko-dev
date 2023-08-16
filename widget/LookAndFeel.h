@@ -24,6 +24,7 @@ class nsIFrame;
 
 namespace mozilla {
 
+using Modifiers = uint16_t;
 struct StyleColorSchemeFlags;
 
 namespace dom {
@@ -106,47 +107,6 @@ class LookAndFeel {
      * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
      */
     WindowsAccentColorInTitlebar,
-
-    /*
-     * A Boolean value to determine whether the Windows default theme is
-     * being used.
-     *
-     * The value of this metric is not used on other platforms. These platforms
-     * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
-     */
-    WindowsDefaultTheme,
-
-    /*
-     * A Boolean value to determine whether the DWM compositor is being used
-     *
-     * This metric is not used on non-Windows platforms. These platforms
-     * should return NS_ERROR_NOT_IMPLEMENTED when queried for this metric.
-     */
-    DWMCompositor,
-
-    /*
-     * A Boolean value to determine whether Windows is themed (Classic vs.
-     * uxtheme)
-     *
-     * This is Windows-specific and is not implemented on other platforms
-     * (will return the default of NS_ERROR_FAILURE).
-     */
-    WindowsClassic,
-
-    /*
-     * A Boolean value to determine whether the current Windows desktop theme
-     * supports Aero Glass.
-     *
-     * This is Windows-specific and is not implemented on other platforms
-     * (will return the default of NS_ERROR_FAILURE).
-     */
-    WindowsGlass,
-
-    /*
-     * A Boolean value to determine whether the Mac graphite theme is
-     * being used.
-     */
-    MacGraphiteTheme,
 
     /*
      * A Boolean value to determine whether the macOS Big Sur-specific
@@ -291,8 +251,24 @@ class LookAndFeel {
      * 0: no-preference
      * 1: reduce
      */
-
     PrefersReducedMotion,
+
+    /**
+     * Corresponding to prefers-reduced-transparency.
+     * https://drafts.csswg.org/mediaqueries-5/#prefers-reduced-transparency
+     * 0: no-preference
+     * 1: reduce
+     */
+    PrefersReducedTransparency,
+
+    /**
+     * Corresponding to inverted-colors.
+     * https://drafts.csswg.org/mediaqueries-5/#inverted
+     * 0: none
+     * 1: inverted
+     */
+    InvertedColors,
+
     /**
      * Corresponding to PointerCapabilities in ServoTypes.h
      * 0: None
@@ -307,20 +283,15 @@ class LookAndFeel {
      * 'Coarse | Fine | Hover'.
      */
     AllPointerCapabilities,
-    /** The vertical scrollbar width, in CSS pixels. */
-    SystemVerticalScrollbarWidth,
 
-    /** The horizontal scrollbar height, in CSS pixels. */
-    SystemHorizontalScrollbarHeight,
+    /** The scrollbar size, in CSS pixels. */
+    SystemScrollbarSize,
 
     /** A boolean value to determine whether a touch device is present */
     TouchDeviceSupportPresent,
 
     /** GTK titlebar radius */
     TitlebarRadius,
-
-    /** GTK menu radius */
-    GtkMenuRadius,
 
     /**
      * Corresponding to dynamic-range.
@@ -330,6 +301,9 @@ class LookAndFeel {
      */
     DynamicRange,
     VideoDynamicRange,
+
+    /** Whether XUL panel animations are enabled. */
+    PanelAnimations,
 
     /*
      * Not an ID; used to define the range of valid IDs.  Must be last.
@@ -341,6 +315,12 @@ class LookAndFeel {
   static bool UseOverlayScrollbars() {
     return GetInt(IntID::UseOverlayScrollbars);
   }
+
+  // Returns keyCode value of a modifier key which is used for accesskey.
+  // Returns 0 if the platform doesn't support access key.
+  static uint32_t GetMenuAccessKey();
+  // Modifier mask for the menu accesskey.
+  static Modifiers GetMenuAccessKeyModifiers();
 
   enum {
     eScrollArrow_None = 0,
@@ -388,8 +368,6 @@ class LookAndFeel {
 
   using FontID = mozilla::StyleSystemFont;
 
-  static bool WindowsNonNativeMenusEnabled();
-
   static ColorScheme SystemColorScheme() {
     return GetInt(IntID::SystemUsesDarkTheme) ? ColorScheme::Dark
                                               : ColorScheme::Light;
@@ -410,9 +388,11 @@ class LookAndFeel {
     return sContentColorScheme;
   }
 
-  static ColorScheme ColorSchemeForStyle(const dom::Document&,
-                                         const StyleColorSchemeFlags&);
-  static ColorScheme ColorSchemeForFrame(const nsIFrame*);
+  static ColorScheme ColorSchemeForStyle(
+      const dom::Document&, const StyleColorSchemeFlags&,
+      ColorSchemeMode = ColorSchemeMode::Used);
+  static ColorScheme ColorSchemeForFrame(
+      const nsIFrame*, ColorSchemeMode = ColorSchemeMode::Used);
 
   // Whether standins for native colors should be used (that is, colors faked,
   // taken from win7, mostly). This forces light appearance, effectively.

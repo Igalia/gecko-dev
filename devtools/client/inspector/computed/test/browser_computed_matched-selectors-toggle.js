@@ -14,7 +14,7 @@ const TEST_URI = `
   <h1>Some header text</h1>
 `;
 
-add_task(async function() {
+add_task(async function () {
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
   const { inspector, view } = await openComputedView();
   await selectNode("h1", inspector);
@@ -45,10 +45,7 @@ async function testExpandOnTwistyClick(
   const div = styleDocument.querySelector(
     ".computed-property-content .matchedselectors"
   );
-  ok(
-    div.childNodes.length > 0,
-    "Matched selectors are expanded on twisty click"
-  );
+  ok(!!div.childNodes.length, "Matched selectors are expanded on twisty click");
 }
 
 async function testCollapseOnTwistyClick(
@@ -98,7 +95,7 @@ async function testExpandOnDblClick({ styleDocument, styleWindow }, inspector) {
   const div = styleDocument.querySelector(
     ".computed-property-content .matchedselectors"
   );
-  ok(div.childNodes.length > 0, "Matched selectors are expanded on dblclick");
+  ok(!!div.childNodes.length, "Matched selectors are expanded on dblclick");
 }
 
 async function testCollapseOnDblClick(

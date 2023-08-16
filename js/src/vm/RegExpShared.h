@@ -17,7 +17,7 @@
 #include "mozilla/MemoryReporting.h"
 
 #include "gc/Barrier.h"
-#include "gc/Marking.h"
+#include "gc/Policy.h"
 #include "gc/ZoneAllocator.h"
 #include "irregexp/RegExpTypes.h"
 #include "jit/JitCode.h"
@@ -27,11 +27,11 @@
 #include "js/UbiNode.h"
 #include "js/Vector.h"
 #include "vm/ArrayObject.h"
-#include "vm/JSAtom.h"
 
 namespace js {
 
 class ArrayObject;
+class PlainObject;
 class RegExpRealm;
 class RegExpShared;
 class RegExpStatics;
@@ -70,6 +70,8 @@ inline bool IsNativeRegExpEnabled() {
  */
 class RegExpShared
     : public gc::CellWithTenuredGCPointer<gc::TenuredCell, JSAtom> {
+  friend class js::gc::CellAllocator;
+
  public:
   enum class Kind { Unparsed, Atom, RegExp };
   enum class CodeKind { Bytecode, Jitcode, Any };
@@ -83,7 +85,7 @@ class RegExpShared
   friend class RegExpZone;
 
   struct RegExpCompilation {
-    WeakHeapPtr<jit::JitCode*> jitCode;
+    HeapPtr<jit::JitCode*> jitCode;
     ByteCode* byteCode = nullptr;
 
     bool compiled(CodeKind kind = CodeKind::Any) const {
@@ -215,6 +217,7 @@ class RegExpShared
   bool multiline() const { return flags.multiline(); }
   bool dotAll() const { return flags.dotAll(); }
   bool unicode() const { return flags.unicode(); }
+  bool unicodeSets() const { return flags.unicodeSets(); }
   bool sticky() const { return flags.sticky(); }
 
   bool isCompiled(bool latin1, CodeKind codeKind = CodeKind::Any) const {

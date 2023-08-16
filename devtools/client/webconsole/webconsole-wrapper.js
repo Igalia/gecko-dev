@@ -6,47 +6,51 @@
 const {
   createElement,
   createFactory,
-} = require("devtools/client/shared/vendor/react");
-const ReactDOM = require("devtools/client/shared/vendor/react-dom");
+} = require("resource://devtools/client/shared/vendor/react.js");
+const ReactDOM = require("resource://devtools/client/shared/vendor/react-dom.js");
 const {
   Provider,
   createProvider,
-} = require("devtools/client/shared/vendor/react-redux");
-const Services = require("Services");
+} = require("resource://devtools/client/shared/vendor/react-redux.js");
 
-const actions = require("devtools/client/webconsole/actions/index");
-const { configureStore } = require("devtools/client/webconsole/store");
+const actions = require("resource://devtools/client/webconsole/actions/index.js");
+const {
+  configureStore,
+} = require("resource://devtools/client/webconsole/store.js");
 
 const {
   isPacketPrivate,
-} = require("devtools/client/webconsole/utils/messages");
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 const {
   getMutableMessagesById,
   getMessage,
   getAllNetworkMessagesUpdateById,
-} = require("devtools/client/webconsole/selectors/messages");
-const Telemetry = require("devtools/client/shared/telemetry");
+} = require("resource://devtools/client/webconsole/selectors/messages.js");
 
-const EventEmitter = require("devtools/shared/event-emitter");
-const App = createFactory(require("devtools/client/webconsole/components/App"));
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const App = createFactory(
+  require("resource://devtools/client/webconsole/components/App.js")
+);
 
 loader.lazyGetter(this, "AppErrorBoundary", () =>
-  createFactory(require("devtools/client/shared/components/AppErrorBoundary"))
+  createFactory(
+    require("resource://devtools/client/shared/components/AppErrorBoundary.js")
+  )
 );
 
 const {
   setupServiceContainer,
-} = require("devtools/client/webconsole/service-container");
+} = require("resource://devtools/client/webconsole/service-container.js");
 
 loader.lazyRequireGetter(
   this,
   "Constants",
-  "devtools/client/webconsole/constants"
+  "resource://devtools/client/webconsole/constants.js"
 );
 
 // Localized strings for (devtools/client/locales/en-US/startup.properties)
-loader.lazyGetter(this, "L10N", function() {
-  const { LocalizationHelper } = require("devtools/shared/l10n");
+loader.lazyGetter(this, "L10N", function () {
+  const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
   return new LocalizationHelper("devtools/client/locales/startup.properties");
 });
 
@@ -54,13 +58,13 @@ loader.lazyGetter(this, "L10N", function() {
 loader.lazyRequireGetter(
   this,
   "FluentL10n",
-  "devtools/client/shared/fluent-l10n/fluent-l10n",
+  "resource://devtools/client/shared/fluent-l10n/fluent-l10n.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "LocalizationProvider",
-  "devtools/client/shared/vendor/fluent-react",
+  "resource://devtools/client/shared/vendor/fluent-react.js",
   true
 );
 
@@ -90,7 +94,8 @@ class WebConsoleWrapper {
     this.queuedMessageUpdates = [];
     this.queuedRequestUpdates = [];
     this.throttledDispatchPromise = null;
-    this.telemetry = new Telemetry();
+
+    this.telemetry = this.hud.telemetry;
   }
 
   #serviceContainer;
@@ -159,7 +164,7 @@ class WebConsoleWrapper {
   }
 
   destroy() {
-    // This component can be instantiated from mocha test, in which case we don't have
+    // This component can be instantiated from jest test, in which case we don't have
     // a parentNode reference.
     if (this.parentNode) {
       ReactDOM.unmountComponentAtNode(this.parentNode);
@@ -318,7 +323,7 @@ class WebConsoleWrapper {
   }
 
   batchedMessagesUpdates(messages) {
-    if (messages.length > 0) {
+    if (messages.length) {
       this.queuedMessageUpdates.push(...messages);
       this.setTimeoutIfNeeded();
     }
@@ -330,7 +335,7 @@ class WebConsoleWrapper {
   }
 
   batchedMessagesAdd(messages) {
-    if (messages.length > 0) {
+    if (messages.length) {
       this.queuedMessageAdds.push(...messages);
       this.setTimeoutIfNeeded();
     }
@@ -359,7 +364,13 @@ class WebConsoleWrapper {
     if (!this.throttledDispatchPromise) {
       return Promise.resolve();
     }
-    return this.throttledDispatchPromise;
+    // When closing the console during initialization,
+    // setTimeoutIfNeeded may never resolve its promise
+    // as window.setTimeout will be disabled on document destruction.
+    const onUnload = new Promise(r =>
+      window.addEventListener("unload", r, { once: true })
+    );
+    return Promise.race([this.throttledDispatchPromise, onUnload]);
   }
 
   setTimeoutIfNeeded() {
@@ -374,10 +385,14 @@ class WebConsoleWrapper {
           // The store is not initialized yet, we can call setTimeoutIfNeeded so the
           // messages will be handled in the next timeout when the store is ready.
           this.setTimeoutIfNeeded();
+          done();
           return;
         }
 
-        store.dispatch(actions.messagesAdd(this.queuedMessageAdds));
+        const { ui } = store.getState();
+        store.dispatch(
+          actions.messagesAdd(this.queuedMessageAdds, null, ui.persistLogs)
+        );
 
         const { length } = this.queuedMessageAdds;
 
@@ -396,14 +411,14 @@ class WebConsoleWrapper {
 
         this.queuedMessageAdds = [];
 
-        if (this.queuedMessageUpdates.length > 0) {
+        if (this.queuedMessageUpdates.length) {
           await store.dispatch(
             actions.networkMessageUpdates(this.queuedMessageUpdates, null)
           );
           this.webConsoleUI.emitForTests("network-messages-updated");
           this.queuedMessageUpdates = [];
         }
-        if (this.queuedRequestUpdates.length > 0) {
+        if (this.queuedRequestUpdates.length) {
           await store.dispatch(
             actions.networkUpdateRequests(this.queuedRequestUpdates)
           );

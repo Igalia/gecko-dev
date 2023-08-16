@@ -12,6 +12,7 @@
 #include "nsCOMPtr.h"
 #include "nsIObserver.h"
 #include "nsIRemoteTab.h"
+#include "nsIThread.h"
 #include "nsStringFwd.h"
 
 class nsIRunnable;
@@ -44,7 +45,7 @@ class ProcessHangMonitor final : public nsIObserver {
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
-  static PProcessHangMonitorParent* AddProcess(
+  static already_AddRefed<PProcessHangMonitorParent> AddProcess(
       dom::ContentParent* aContentParent);
   static void RemoveProcess(PProcessHangMonitorParent* aParent);
 
@@ -53,6 +54,11 @@ class ProcessHangMonitor final : public nsIObserver {
   static void PaintWhileInterruptingJS(
       PProcessHangMonitorParent* aParent, dom::BrowserParent* aTab,
       const layers::LayersObserverEpoch& aEpoch);
+
+  static void UnloadLayersWhileInterruptingJS(
+      PProcessHangMonitorParent* aParent, dom::BrowserParent* aTab,
+      const layers::LayersObserverEpoch& aEpoch);
+
   static void ClearPaintWhileInterruptingJS(
       const layers::LayersObserverEpoch& aEpoch);
   static void MaybeStartPaintWhileInterruptingJS();
@@ -61,6 +67,9 @@ class ProcessHangMonitor final : public nsIObserver {
       PProcessHangMonitorParent* aParent, dom::BrowserParent* aTab,
       nsIRemoteTab::NavigationType aNavigationType,
       const dom::CancelContentJSOptions& aCancelContentJSOptions);
+
+  static void SetMainThreadQoSPriority(PProcessHangMonitorParent* aParent,
+                                       nsIThread::QoSPriority aQoSPriority);
 
   enum SlowScriptAction {
     Continue,

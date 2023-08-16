@@ -11,7 +11,6 @@
 
 // Worker contexts do not support Services; in that case we have to rely
 // on the support URL redirection.
-const Services = require("Services");
 
 loader.lazyGetter(this, "supportBaseURL", () => {
   // Fallback URL used for worker targets, as well as when app.support.baseURL
@@ -114,6 +113,7 @@ const ErrorDocs = {
   JSMSG_PROPERTY_FAIL: "cant_access_property",
   JSMSG_PROPERTY_FAIL_EXPR: "cant_access_property",
   JSMSG_REDECLARED_VAR: "Redeclared_parameter",
+  JSMSG_MISMATCHED_PLACEMENT: "Mismatched placement",
   JSMSG_SET_NON_OBJECT_RECEIVER: "Cant_assign_to_property",
 };
 

@@ -22,6 +22,7 @@ module.exports = {
         // "tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js".
         es2021: false,
         "mozilla/privileged": false,
+        "mozilla/specific": false,
 
         // Enable SpiderMonkey's self-hosted environment.
         "spidermonkey-js/environment": true,
@@ -44,19 +45,95 @@ module.exports = {
         },
       },
 
+      rules: {
+        // We should fix those at some point, but we use this to detect NaNs.
+        "no-self-compare": "off",
+        "no-lonely-if": "off",
+        // Disabled until we can use let/const to fix those erorrs, and undefined
+        // names cause an exception and abort during runtime initialization.
+        "no-redeclare": "off",
+        // Disallow use of |void 0|. Instead use |undefined|.
+        "no-void": ["error", { allowAsStatement: true }],
+        // Disallow loose equality because of objects with the [[IsHTMLDDA]]
+        // internal slot, aka |document.all|, aka "objects emulating undefined".
+        eqeqeq: "error",
+        // All self-hosted code is implicitly strict mode, so there's no need to
+        // add a strict-mode directive.
+        strict: ["error", "never"],
+        // Disallow syntax not supported in self-hosted code.
+        "no-restricted-syntax": [
+          "error",
+          {
+            selector: "ClassDeclaration",
+            message: "Class declarations are not allowed",
+          },
+          {
+            selector: "ClassExpression",
+            message: "Class expressions are not allowed",
+          },
+          {
+            selector: "Literal[regex]",
+            message: "Regular expression literals are not allowed",
+          },
+          {
+            selector: "CallExpression > MemberExpression.callee",
+            message:
+              "Direct method calls are not allowed, use callFunction() or callContentFunction()",
+          },
+          {
+            selector: "NewExpression > MemberExpression.callee",
+            message:
+              "Direct method calls are not allowed, use constructContentFunction()",
+          },
+          {
+            selector: "YieldExpression[delegate=true]",
+            message:
+              "yield* is not allowed because it can run user-modifiable iteration code",
+          },
+          {
+            selector: "ForOfStatement > :not(CallExpression).right",
+            message:
+              "for-of loops must use allowContentIter(), allowContentIterWith(), or allowContentIterWithNext()",
+          },
+          {
+            selector:
+              "ForOfStatement > CallExpression.right > :not(Identifier[name='allowContentIter'], Identifier[name='allowContentIterWith'], Identifier[name='allowContentIterWithNext']).callee",
+            message:
+              "for-of loops must use allowContentIter(), allowContentIterWith(), or allowContentIterWithNext",
+          },
+          {
+            selector:
+              "CallExpression[callee.name='TO_PROPERTY_KEY'] > :not(Identifier).arguments:first-child",
+            message:
+              "TO_PROPERTY_KEY macro must be called with a simple identifier",
+          },
+          {
+            selector: "Identifier[name='arguments']",
+            message:
+              "'arguments' is disallowed, use ArgumentsLength(), GetArgument(n), or rest-parameters",
+          },
+        ],
+      },
+
       globals: {
         // The bytecode compiler special-cases these identifiers.
+        ArgumentsLength: "readonly",
         allowContentIter: "readonly",
+        allowContentIterWith: "readonly",
+        allowContentIterWithNext: "readonly",
         callContentFunction: "readonly",
         callFunction: "readonly",
         constructContentFunction: "readonly",
         DefineDataProperty: "readonly",
         forceInterpreter: "readonly",
+        GetArgument: "readonly",
         GetBuiltinConstructor: "readonly",
         GetBuiltinPrototype: "readonly",
         GetBuiltinSymbol: "readonly",
         getPropertySuper: "readonly",
         hasOwn: "readonly",
+        IsNullOrUndefined: "readonly",
+        IteratorClose: "readonly",
         resumeGenerator: "readonly",
         SetCanonicalName: "readonly",
         SetIsInlinableLargeFunction: "readonly",
@@ -76,32 +153,7 @@ module.exports = {
         Record: "off",
         Temporal: "off",
         Tuple: "off",
-
-        // Undefine globals from Mozilla recommended file
-        // "tools/lint/eslint/eslint-plugin-mozilla/lib/configs/recommended.js".
-        Cc: "off",
-        ChromeUtils: "off",
-        Ci: "off",
-        Components: "off",
-        Cr: "off",
-        Cu: "off",
-        Debugger: "off",
-        InstallTrigger: "off",
-        InternalError: "off",
-        Services: "off",
-        dump: "off",
-        openDialog: "off",
-        uneval: "off",
       },
     },
   ],
-
-  rules: {
-    // We should fix those at some point, but we use this to detect NaNs.
-    "no-self-compare": "off",
-    "no-lonely-if": "off",
-    // Disabled until we can use let/const to fix those erorrs,
-    // and undefined names cause an exception and abort during runtime initialization.
-    "no-redeclare": "off",
-  },
 };

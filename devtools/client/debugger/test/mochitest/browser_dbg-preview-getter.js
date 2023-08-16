@@ -7,7 +7,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger(
     "doc-preview-getter.html",
     "preview-getter.js"
@@ -18,7 +18,7 @@ add_task(async function() {
   await waitForPaused(dbg);
 
   info("Hovers over 'this' token to display the preview.");
-  await tryHovering(dbg, 5, 8, "previewPopup");
+  const { tokenEl } = await tryHovering(dbg, 5, 8, "previewPopup");
 
   info("Invokes getter and waits for the element to be rendered");
   await clickElement(dbg, "previewPopupInvokeGetterButton");
@@ -52,5 +52,5 @@ add_task(async function() {
     "Getters were invoked and three object values are displayed as expected."
   );
 
-  await closePreviewAtPos(dbg, 5, 8);
+  await closePreviewForToken(dbg, tokenEl);
 });

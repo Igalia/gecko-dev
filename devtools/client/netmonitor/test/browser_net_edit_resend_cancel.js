@@ -7,7 +7,7 @@
  * Tests if original request's header panel is visible when custom request is cancelled.
  */
 
-add_task(async function() {
+add_task(async function () {
   if (
     Services.prefs.getBoolPref(
       "devtools.netmonitor.features.newEditAndResend",
@@ -47,11 +47,7 @@ add_task(async function() {
   await waitForHeaders;
   EventUtils.sendMouseEvent({ type: "contextmenu" }, firstRequest);
   const firstRequestState = getSelectedRequest(store.getState());
-  const contextResend = getContextMenuItem(
-    monitor,
-    "request-list-context-resend"
-  );
-  contextResend.click();
+  await selectContextMenuItem(monitor, "request-list-context-edit-resend");
 
   // Waits for "Edit & Resend" panel to appear > New request "Cancel"
   await waitUntil(() => document.querySelector(".custom-request-panel"));

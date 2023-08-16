@@ -19,11 +19,13 @@
 #include "jit/WarpSnapshot.h"
 #include "js/friend/ErrorMessages.h"  // JSMSG_BAD_CONST_ASSIGN
 #include "vm/GeneratorObject.h"
+#include "vm/Interpreter.h"
 #include "vm/Opcodes.h"
 
 #include "gc/ObjectKind-inl.h"
 #include "vm/BytecodeIterator-inl.h"
 #include "vm/BytecodeLocation-inl.h"
+#include "vm/JSObject-inl.h"
 
 using namespace js;
 using namespace js::jit;
@@ -321,10 +323,17 @@ bool WarpBuilder::buildInline() {
 MInstruction* WarpBuilder::buildNamedLambdaEnv(MDefinition* callee,
                                                MDefinition* env,
                                                NamedLambdaObject* templateObj) {
-  MOZ_ASSERT(!templateObj->hasDynamicSlots());
+  MOZ_ASSERT(templateObj->numDynamicSlots() == 0);
 
   MInstruction* namedLambda = MNewNamedLambdaObject::New(alloc(), templateObj);
   current->add(namedLambda);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barriers.
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), namedLambda, env));
+  current->add(
+      MAssertCanElidePostWriteBarrier::New(alloc(), namedLambda, callee));
+#endif
 
   // Initialize the object's reserved slots. No post barrier is needed here:
   // the object will be allocated in the nursery if possible, and if the
@@ -348,6 +357,12 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
   MNewCallObject* callObj = MNewCallObject::New(alloc(), templateCst);
   current->add(callObj);
 
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barriers.
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), callObj, env));
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), callObj, callee));
+#endif
+
   // Initialize the object's reserved slots. No post barrier is needed here,
   // for the same reason as in buildNamedLambdaEnv.
   size_t enclosingSlot = CallObject::enclosingEnvironmentSlot();
@@ -356,41 +371,6 @@ MInstruction* WarpBuilder::buildCallObject(MDefinition* callee,
       MStoreFixedSlot::NewUnbarriered(alloc(), callObj, enclosingSlot, env));
   current->add(
       MStoreFixedSlot::NewUnbarriered(alloc(), callObj, calleeSlot, callee));
-
-  // Copy closed-over argument slots if there aren't parameter expressions.
-  MSlots* slots = nullptr;
-  for (PositionalFormalParameterIter fi(script_); fi; fi++) {
-    if (!fi.closedOver()) {
-      continue;
-    }
-
-    if (!alloc().ensureBallast()) {
-      return nullptr;
-    }
-
-    uint32_t slot = fi.location().slot();
-    uint32_t formal = fi.argumentSlot();
-    uint32_t numFixedSlots = templateObj->numFixedSlots();
-    MDefinition* param;
-    if (script_->functionHasParameterExprs()) {
-      param = constant(MagicValue(JS_UNINITIALIZED_LEXICAL));
-    } else {
-      param = current->getSlot(info().argSlotUnchecked(formal));
-    }
-
-    if (slot >= numFixedSlots) {
-      if (!slots) {
-        slots = MSlots::New(alloc(), callObj);
-        current->add(slots);
-      }
-      uint32_t dynamicSlot = slot - numFixedSlots;
-      current->add(MStoreDynamicSlot::NewUnbarriered(alloc(), slots,
-                                                     dynamicSlot, param));
-    } else {
-      current->add(
-          MStoreFixedSlot::NewUnbarriered(alloc(), callObj, slot, param));
-    }
-  }
 
   return callObj;
 }
@@ -943,9 +923,12 @@ bool WarpBuilder::build_GetArg(BytecodeLocation loc) {
   return true;
 }
 
-bool WarpBuilder::build_SetArg(BytecodeLocation loc) {
-  MOZ_ASSERT(script_->jitScript()->modifiesArguments());
+bool WarpBuilder::build_GetFrameArg(BytecodeLocation loc) {
+  current->pushArgUnchecked(loc.arg());
+  return true;
+}
 
+bool WarpBuilder::build_SetArg(BytecodeLocation loc) {
   uint32_t arg = loc.arg();
   MDefinition* val = current->peek(-1);
 
@@ -965,6 +948,33 @@ bool WarpBuilder::build_SetArg(BytecodeLocation loc) {
   auto* ins = MSetArgumentsObjectArg::New(alloc(), argsObj, val, arg);
   current->add(ins);
   return resumeAfter(ins, loc);
+}
+
+bool WarpBuilder::build_ArgumentsLength(BytecodeLocation) {
+  if (inlineCallInfo()) {
+    pushConstant(Int32Value(inlineCallInfo()->argc()));
+  } else {
+    auto* argsLength = MArgumentsLength::New(alloc());
+    current->add(argsLength);
+    current->push(argsLength);
+  }
+  return true;
+}
+
+bool WarpBuilder::build_GetActualArg(BytecodeLocation) {
+  MDefinition* index = current->pop();
+  MInstruction* arg;
+  if (inlineCallInfo()) {
+    arg = MGetInlinedArgument::New(alloc(), index, *inlineCallInfo());
+    if (!arg) {
+      return false;
+    }
+  } else {
+    arg = MGetFrameArgument::New(alloc(), index);
+  }
+  current->add(arg);
+  current->push(arg);
+  return true;
 }
 
 bool WarpBuilder::build_ToNumeric(BytecodeLocation loc) {
@@ -1551,6 +1561,7 @@ bool WarpBuilder::build_Arguments(BytecodeLocation loc) {
   auto* snapshot = getOpSnapshot<WarpArguments>(loc);
   MOZ_ASSERT(info().needsArgsObj());
   MOZ_ASSERT(snapshot);
+  MOZ_ASSERT(usesEnvironmentChain());
 
   ArgumentsObject* templateObj = snapshot->templateObj();
   MDefinition* env = current->environmentChain();
@@ -1830,6 +1841,8 @@ MConstant* WarpBuilder::globalLexicalEnvConstant() {
 }
 
 bool WarpBuilder::build_GetName(BytecodeLocation loc) {
+  MOZ_ASSERT(usesEnvironmentChain());
+
   MDefinition* env = current->environmentChain();
   return buildIC(loc, CacheKind::GetName, {env});
 }
@@ -1837,28 +1850,13 @@ bool WarpBuilder::build_GetName(BytecodeLocation loc) {
 bool WarpBuilder::build_GetGName(BytecodeLocation loc) {
   MOZ_ASSERT(!script_->hasNonSyntacticScope());
 
-  // Try to optimize undefined/NaN/Infinity.
-  PropertyName* name = loc.getPropertyName(script_);
-  const JSAtomState& names = mirGen().runtime->names();
-
-  if (name == names.undefined) {
-    pushConstant(UndefinedValue());
-    return true;
-  }
-  if (name == names.NaN) {
-    pushConstant(JS::NaNValue());
-    return true;
-  }
-  if (name == names.Infinity) {
-    pushConstant(JS::InfinityValue());
-    return true;
-  }
-
   MDefinition* env = globalLexicalEnvConstant();
   return buildIC(loc, CacheKind::GetName, {env});
 }
 
 bool WarpBuilder::build_BindName(BytecodeLocation loc) {
+  MOZ_ASSERT(usesEnvironmentChain());
+
   MDefinition* env = current->environmentChain();
   return buildIC(loc, CacheKind::BindName, {env});
 }
@@ -1979,11 +1977,25 @@ bool WarpBuilder::build_SetFunName(BytecodeLocation loc) {
 bool WarpBuilder::build_PushLexicalEnv(BytecodeLocation loc) {
   MOZ_ASSERT(usesEnvironmentChain());
 
-  LexicalScope* scope = &loc.getScope(script_)->as<LexicalScope>();
-  MDefinition* env = current->environmentChain();
+  const auto* snapshot = getOpSnapshot<WarpLexicalEnvironment>(loc);
+  MOZ_ASSERT(snapshot);
 
-  auto* ins = MNewLexicalEnvironmentObject::New(alloc(), env, scope);
+  MDefinition* env = current->environmentChain();
+  MConstant* templateCst = constant(ObjectValue(*snapshot->templateObj()));
+
+  auto* ins = MNewLexicalEnvironmentObject::New(alloc(), templateCst);
   current->add(ins);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barrier.
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), ins, env));
+#endif
+
+  // Initialize the object's reserved slots. No post barrier is needed here,
+  // for the same reason as in buildNamedLambdaEnv.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), ins, EnvironmentObject::enclosingEnvironmentSlot(), env));
+
   current->setEnvironmentChain(ins);
   return true;
 }
@@ -1991,11 +2003,25 @@ bool WarpBuilder::build_PushLexicalEnv(BytecodeLocation loc) {
 bool WarpBuilder::build_PushClassBodyEnv(BytecodeLocation loc) {
   MOZ_ASSERT(usesEnvironmentChain());
 
-  ClassBodyScope* scope = &loc.getScope(script_)->as<ClassBodyScope>();
-  MDefinition* env = current->environmentChain();
+  const auto* snapshot = getOpSnapshot<WarpClassBodyEnvironment>(loc);
+  MOZ_ASSERT(snapshot);
 
-  auto* ins = MNewClassBodyEnvironmentObject::New(alloc(), env, scope);
+  MDefinition* env = current->environmentChain();
+  MConstant* templateCst = constant(ObjectValue(*snapshot->templateObj()));
+
+  auto* ins = MNewClassBodyEnvironmentObject::New(alloc(), templateCst);
   current->add(ins);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barrier.
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), ins, env));
+#endif
+
+  // Initialize the object's reserved slots. No post barrier is needed here,
+  // for the same reason as in buildNamedLambdaEnv.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), ins, EnvironmentObject::enclosingEnvironmentSlot(), env));
+
   current->setEnvironmentChain(ins);
   return true;
 }
@@ -2009,33 +2035,148 @@ bool WarpBuilder::build_PopLexicalEnv(BytecodeLocation) {
   return true;
 }
 
-void WarpBuilder::buildCopyLexicalEnvOp(bool copySlots) {
+bool WarpBuilder::build_FreshenLexicalEnv(BytecodeLocation loc) {
   MOZ_ASSERT(usesEnvironmentChain());
 
-  MDefinition* env = current->environmentChain();
-  auto* ins = MCopyLexicalEnvironmentObject::New(alloc(), env, copySlots);
-  current->add(ins);
-  current->setEnvironmentChain(ins);
-}
+  const auto* snapshot = getOpSnapshot<WarpLexicalEnvironment>(loc);
+  MOZ_ASSERT(snapshot);
 
-bool WarpBuilder::build_FreshenLexicalEnv(BytecodeLocation) {
-  buildCopyLexicalEnvOp(/* copySlots = */ true);
+  MDefinition* enclosingEnv = walkEnvironmentChain(1);
+  if (!enclosingEnv) {
+    return false;
+  }
+
+  MDefinition* env = current->environmentChain();
+  MConstant* templateCst = constant(ObjectValue(*snapshot->templateObj()));
+
+  auto* templateObj = snapshot->templateObj();
+  auto* scope = &templateObj->scope();
+  MOZ_ASSERT(scope->hasEnvironment());
+
+  auto* ins = MNewLexicalEnvironmentObject::New(alloc(), templateCst);
+  current->add(ins);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barrier.
+  current->add(
+      MAssertCanElidePostWriteBarrier::New(alloc(), ins, enclosingEnv));
+#endif
+
+  // Initialize the object's reserved slots. No post barrier is needed here,
+  // for the same reason as in buildNamedLambdaEnv.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), ins, EnvironmentObject::enclosingEnvironmentSlot(),
+      enclosingEnv));
+
+  // Copy environment slots.
+  MSlots* envSlots = nullptr;
+  MSlots* slots = nullptr;
+  for (BindingIter iter(scope); iter; iter++) {
+    auto loc = iter.location();
+    if (loc.kind() != BindingLocation::Kind::Environment) {
+      MOZ_ASSERT(loc.kind() == BindingLocation::Kind::Frame);
+      continue;
+    }
+
+    if (!alloc().ensureBallast()) {
+      return false;
+    }
+
+    uint32_t slot = loc.slot();
+    uint32_t numFixedSlots = templateObj->numFixedSlots();
+    if (slot >= numFixedSlots) {
+      if (!envSlots) {
+        envSlots = MSlots::New(alloc(), env);
+        current->add(envSlots);
+      }
+      if (!slots) {
+        slots = MSlots::New(alloc(), ins);
+        current->add(slots);
+      }
+
+      uint32_t dynamicSlot = slot - numFixedSlots;
+
+      auto* load = MLoadDynamicSlot::New(alloc(), envSlots, dynamicSlot);
+      current->add(load);
+
+#ifdef DEBUG
+      // Assert in debug mode we can elide the post write barrier.
+      current->add(MAssertCanElidePostWriteBarrier::New(alloc(), ins, load));
+#endif
+
+      current->add(
+          MStoreDynamicSlot::NewUnbarriered(alloc(), slots, dynamicSlot, load));
+    } else {
+      auto* load = MLoadFixedSlot::New(alloc(), env, slot);
+      current->add(load);
+
+#ifdef DEBUG
+      // Assert in debug mode we can elide the post write barrier.
+      current->add(MAssertCanElidePostWriteBarrier::New(alloc(), ins, load));
+#endif
+
+      current->add(MStoreFixedSlot::NewUnbarriered(alloc(), ins, slot, load));
+    }
+  }
+
+  current->setEnvironmentChain(ins);
   return true;
 }
 
-bool WarpBuilder::build_RecreateLexicalEnv(BytecodeLocation) {
-  buildCopyLexicalEnvOp(/* copySlots = */ false);
+bool WarpBuilder::build_RecreateLexicalEnv(BytecodeLocation loc) {
+  MOZ_ASSERT(usesEnvironmentChain());
+
+  const auto* snapshot = getOpSnapshot<WarpLexicalEnvironment>(loc);
+  MOZ_ASSERT(snapshot);
+
+  MDefinition* enclosingEnv = walkEnvironmentChain(1);
+  if (!enclosingEnv) {
+    return false;
+  }
+
+  MConstant* templateCst = constant(ObjectValue(*snapshot->templateObj()));
+
+  auto* ins = MNewLexicalEnvironmentObject::New(alloc(), templateCst);
+  current->add(ins);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barrier.
+  current->add(
+      MAssertCanElidePostWriteBarrier::New(alloc(), ins, enclosingEnv));
+#endif
+
+  // Initialize the object's reserved slots. No post barrier is needed here,
+  // for the same reason as in buildNamedLambdaEnv.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), ins, EnvironmentObject::enclosingEnvironmentSlot(),
+      enclosingEnv));
+
+  current->setEnvironmentChain(ins);
   return true;
 }
 
 bool WarpBuilder::build_PushVarEnv(BytecodeLocation loc) {
   MOZ_ASSERT(usesEnvironmentChain());
 
-  VarScope* scope = &loc.getScope(script_)->as<VarScope>();
-  MDefinition* env = current->environmentChain();
+  const auto* snapshot = getOpSnapshot<WarpVarEnvironment>(loc);
+  MOZ_ASSERT(snapshot);
 
-  auto* ins = MNewVarEnvironmentObject::New(alloc(), env, scope);
+  MDefinition* env = current->environmentChain();
+  MConstant* templateCst = constant(ObjectValue(*snapshot->templateObj()));
+
+  auto* ins = MNewVarEnvironmentObject::New(alloc(), templateCst);
   current->add(ins);
+
+#ifdef DEBUG
+  // Assert in debug mode we can elide the post write barrier.
+  current->add(MAssertCanElidePostWriteBarrier::New(alloc(), ins, env));
+#endif
+
+  // Initialize the object's reserved slots. No post barrier is needed here,
+  // for the same reason as in buildNamedLambdaEnv.
+  current->add(MStoreFixedSlot::NewUnbarriered(
+      alloc(), ins, EnvironmentObject::enclosingEnvironmentSlot(), env));
+
   current->setEnvironmentChain(ins);
   return true;
 }
@@ -2077,6 +2218,8 @@ bool WarpBuilder::build_CheckThisReinit(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_Generator(BytecodeLocation loc) {
+  MOZ_ASSERT(usesEnvironmentChain());
+
   MDefinition* callee = getCallee();
   MDefinition* environmentChain = current->environmentChain();
   MDefinition* argsObj = info().needsArgsObj() ? current->argumentsObject()
@@ -2249,9 +2392,9 @@ bool WarpBuilder::buildSuspend(BytecodeLocation loc, MDefinition* gen,
       // Use peekUnchecked because we're also writing out the argument slots
       int32_t peek = -slotsToCopy + i;
       MDefinition* stackElem = current->peekUnchecked(peek);
-      auto* store = MStoreElement::New(alloc(), stackStorage,
-                                       constant(Int32Value(i)), stackElem,
-                                       /* needsHoleCheck = */ false);
+      auto* store = MStoreElement::NewUnbarriered(
+          alloc(), stackStorage, constant(Int32Value(i)), stackElem,
+          /* needsHoleCheck = */ false);
 
       current->add(store);
       current->add(MPostWriteBarrier::New(alloc(), arrayObj, stackElem));
@@ -2341,7 +2484,16 @@ void WarpBuilder::buildCheckLexicalOp(BytecodeLocation loc) {
   current->push(lexicalCheck);
 
   if (snapshot().bailoutInfo().failedLexicalCheck()) {
+    // If we have previously had a failed lexical check in Ion, we want to avoid
+    // hoisting any lexical checks, which can cause spurious failures. In this
+    // case, we also have to be careful not to hoist any loads of this lexical
+    // past the check. For unaliased lexical variables, we can set the local
+    // slot to create a dependency (see below). For aliased lexicals, that
+    // doesn't work, so we disable LICM instead.
     lexicalCheck->setNotMovable();
+    if (op == JSOp::CheckAliasedLexical) {
+      mirGen().disableLICM();
+    }
   }
 
   if (op == JSOp::CheckLexical) {
@@ -2436,11 +2588,7 @@ bool WarpBuilder::build_ImportMeta(BytecodeLocation loc) {
 }
 
 bool WarpBuilder::build_CallSiteObj(BytecodeLocation loc) {
-  // WarpOracle already called ProcessCallSiteObjOperation to prepare the
-  // object.
-  JSObject* obj = loc.getObject(script_);
-  pushConstant(ObjectValue(*obj));
-  return true;
+  return build_Object(loc);
 }
 
 bool WarpBuilder::build_NewArray(BytecodeLocation loc) {
@@ -2693,8 +2841,9 @@ bool WarpBuilder::build_InitElemArray(BytecodeLocation loc) {
     current->add(store);
   } else {
     current->add(MPostWriteBarrier::New(alloc(), obj, val));
-    auto* store = MStoreElement::New(alloc(), elements, indexConst, val,
-                                     /* needsHoleCheck = */ false);
+    auto* store =
+        MStoreElement::NewUnbarriered(alloc(), elements, indexConst, val,
+                                      /* needsHoleCheck = */ false);
     current->add(store);
   }
 
@@ -2881,7 +3030,7 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
     unsigned numRest = numActuals > numFormals ? numActuals - numFormals : 0;
 
     // TODO: support pre-tenuring.
-    gc::InitialHeap heap = gc::DefaultHeap;
+    gc::Heap heap = gc::Heap::Default;
 
     // Allocate an array of the correct size.
     MInstruction* newArray;
@@ -2916,8 +3065,9 @@ bool WarpBuilder::build_Rest(BytecodeLocation loc) {
       current->add(index);
 
       MDefinition* arg = inlineCallInfo()->argv()[i];
-      MStoreElement* store = MStoreElement::New(alloc(), elements, index, arg,
-                                                /* needsHoleCheck = */ false);
+      MStoreElement* store =
+          MStoreElement::NewUnbarriered(alloc(), elements, index, arg,
+                                        /* needsHoleCheck = */ false);
       current->add(store);
       current->add(MPostWriteBarrier::New(alloc(), newArray, arg));
     }
@@ -3201,7 +3351,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
     case CacheKind::NewObject: {
       auto* templateConst = constant(NullValue());
       MNewObject* ins = MNewObject::NewVM(
-          alloc(), templateConst, gc::DefaultHeap, MNewObject::ObjectLiteral);
+          alloc(), templateConst, gc::Heap::Default, MNewObject::ObjectLiteral);
       current->add(ins);
       current->push(ins);
       return resumeAfter(ins, loc);
@@ -3210,7 +3360,7 @@ bool WarpBuilder::buildIC(BytecodeLocation loc, CacheKind kind,
       uint32_t length = loc.getNewArrayLength();
       MConstant* templateConst = constant(NullValue());
       MNewArray* ins =
-          MNewArray::NewVM(alloc(), length, templateConst, gc::DefaultHeap);
+          MNewArray::NewVM(alloc(), length, templateConst, gc::Heap::Default);
       current->add(ins);
       current->push(ins);
       return true;

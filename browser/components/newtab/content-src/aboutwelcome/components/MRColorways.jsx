@@ -35,23 +35,105 @@ export function computeColorWay(themeName, systemVariations) {
     : themeName.split("-")[0];
 }
 
+// Set variationIndex based off activetheme value e.g. 'light', 'expressionist-soft'
+export function computeVariationIndex(
+  themeName,
+  systemVariations,
+  variations,
+  defaultVariationIndex
+) {
+  // Check if themeName is in systemVariations, if yes choose variationIndex by themeName
+  let index = systemVariations.findIndex(theme => theme === themeName);
+  if (index >= 0) {
+    return index;
+  }
+
+  // If themeName is one of the colorways, select variation index from colorways
+  let variation = themeName?.split("-")[1];
+  index = variations.findIndex(element => element === variation);
+  if (index >= 0) {
+    return index;
+  }
+  return defaultVariationIndex;
+}
+
 export function Colorways(props) {
   let {
     colorways,
+    darkVariation,
     defaultVariationIndex,
     systemVariations,
     variations,
   } = props.content.tiles;
+  let hasReverted = false;
 
-  // This sets a default value
+  // Active theme id from JSON e.g. "expressionist"
   const activeId = computeColorWay(props.activeTheme, systemVariations);
   const [colorwayId, setState] = useState(activeId);
+  const [variationIndex, setVariationIndex] = useState(defaultVariationIndex);
 
+  function revertToDefaultTheme() {
+    if (hasReverted) {
+      return;
+    }
+
+    // Spoofing an event with current target value of "navigate_away"
+    // helps the handleAction method to read the colorways theme as "revert"
+    // which causes the initial theme to be activated.
+    // The "navigate_away" action is set in content in the colorways screen JSON config.
+    // Any value in the JSON for theme will work, provided it is not `<event>`.
+    const event = {
+      currentTarget: {
+        value: "navigate_away",
+      },
+    };
+    props.handleAction(event);
+    hasReverted = true;
+  }
+
+  // Revert to default theme if the user navigates away from the page or spotlight modal
+  // before clicking on the primary button to officially set theme.
+  useEffect(() => {
+    addEventListener("beforeunload", revertToDefaultTheme);
+    addEventListener("pagehide", revertToDefaultTheme);
+
+    return () => {
+      removeEventListener("beforeunload", revertToDefaultTheme);
+      removeEventListener("pagehide", revertToDefaultTheme);
+    };
+  });
   // Update state any time activeTheme changes.
   useEffect(() => {
     setState(computeColorWay(props.activeTheme, systemVariations));
+    setVariationIndex(
+      computeVariationIndex(
+        props.activeTheme,
+        systemVariations,
+        variations,
+        defaultVariationIndex
+      )
+    );
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.activeTheme]);
+
+  //select a random colorway
+  useEffect(() => {
+    //We don't want the default theme to be selected
+    const randomIndex = Math.floor(Math.random() * (colorways.length - 1)) + 1;
+    const randomColorwayId = colorways[randomIndex].id;
+
+    // Change the variation to be the dark variation if configured and dark.
+    // Additional colorway changes will remain dark while system is unchanged.
+    if (
+      darkVariation !== undefined &&
+      window.matchMedia("(prefers-color-scheme: dark)").matches
+    ) {
+      variations[variationIndex] = variations[darkVariation];
+    }
+    const value = `${randomColorwayId}-${variations[variationIndex]}`;
+    props.handleAction({ currentTarget: { value } });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return (
     <div className="tiles-theme-container">
@@ -72,12 +154,12 @@ export function Colorways(props) {
                   colorwayName: label,
                 })}
               >
-                <Localized text={typeof label === "object" ? label : {}}>
+                <Localized text={typeof tooltip === "object" ? tooltip : {}}>
                   <span
                     className="sr-only colorway label"
                     id={`${id}-label`}
                     data-l10n-args={JSON.stringify({
-                      colorwayName: label,
+                      colorwayName: tooltip,
                     })}
                   />
                 </Localized>
@@ -88,8 +170,8 @@ export function Colorways(props) {
                     name="theme"
                     value={
                       id === "default"
-                        ? systemVariations[defaultVariationIndex]
-                        : `${id}-${variations[defaultVariationIndex]}`
+                        ? systemVariations[variationIndex]
+                        : `${id}-${variations[variationIndex]}`
                     }
                     checked={colorwayId === id}
                     className="sr-only input"

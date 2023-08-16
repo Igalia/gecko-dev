@@ -105,7 +105,6 @@ load 343540-1.html
 load 344057-1.xhtml
 load 344064-1.html
 load 344300-1.html
-load 344300-2.html
 load chrome://reftest/content/crashtests/layout/base/crashtests/344340-1.xhtml
 load 347898-1.html
 load 348126-1.html
@@ -138,7 +137,6 @@ load 369547-2.html
 load 369945-1.xhtml
 load 371681-1.xhtml
 load 372237-1.html
-load 372475-1.xhtml
 load 372550-1.html
 load 373628-1.html
 load 374297-1.html
@@ -180,7 +178,6 @@ load 399951-1.html
 load 399994-1.html
 load 400445-1.xhtml
 load 400904-1.xhtml
-load chrome://reftest/content/crashtests/layout/base/crashtests/401589-1.xhtml
 load 401734-1.html
 load 401734-2.html
 needs-focus pref(accessibility.browsewithcaret,true) load 403048.html
@@ -203,7 +200,6 @@ load 410967.html
 load 411870-1.html
 load 412651-1.html
 load 413587-1.svg
-load 414058-1.html
 load 415503.xhtml
 asserts(1-1) load 416107.xhtml # bug 489100, ASSERTION: Out-of-flow frame got reflowed before its placeholder
 HTTP load 419985.html
@@ -316,7 +312,6 @@ load 543648-1.html
 load 560447-1.html
 load 564063-1.html
 load 569018-1.html
-pref(layout.css.xul-display-values.content.enabled,true) load 570038-1.html
 load chrome://reftest/content/crashtests/layout/base/crashtests/572003.xhtml
 load 572582-1.xhtml
 load 576649-1.html
@@ -331,7 +326,6 @@ load 595039-1.html
 load 597924-1.html
 load 606432-1.html
 load 609821-1.xhtml
-load 613817-1.svg
 load 615146-1.html
 load 615781-1.xhtml
 load 616495-single-side-composite-color-border.html
@@ -371,7 +365,7 @@ asserts(0-2) pref(dom.disable_open_during_load,false) load 735943.html # the ass
 asserts(0-2) load 736389-1.xhtml # sometimes the above assertions are delayed and is reported on this test instead
 load 736924-1.html
 load 749816-1.html
-load 763223-1.html
+asserts(1-1) load 763223-1.html # bogus size
 test-pref(font.size.inflation.emPerLine,15) test-pref(font.size.inflation.lineThreshold,100) load 763702.xhtml
 load 767593-1.html
 load 767593-2.html
@@ -503,6 +497,7 @@ load 1463940.html
 HTTP load 1464641.html
 load 1464737.html
 load 1466638.html
+pref(layout.css.motion-path-ray.enabled,true) asserts(1-1) load 1467519.html # bogus size
 load 1467688.html
 load 1467964.html
 load 1469354.html
@@ -536,7 +531,7 @@ load 1539303.html
 load 1541679.html
 load 1547261.html
 load 1547391.html
-load 1548057.html
+pref(widget.windows.window_occlusion_tracking.enabled,false) load 1548057.html # Bug 1819154
 load 1549867.html
 load 1553874.html
 load 1560328.html
@@ -565,7 +560,14 @@ load 1729581.html
 load 1734007.html
 load 1745860.html
 pref(layout.accessiblecaret.enabled,true) load 1746989.html
+skip-if(Android) load 1747277-1.html
 load 1752649.html
 load 1753779.html
 pref(layout.css.backdrop-filter.enabled,true) load 1755790.html
 load 1771503.html
+load 1789934.html
+load 1791883.html
+load 1797995.html
+pref(layout.accessiblecaret.enabled,true) load 1818036.html
+pref(layout.accessiblecaret.enabled,true) load 1819239.html
+load 1821469.html

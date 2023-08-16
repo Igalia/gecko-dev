@@ -105,7 +105,7 @@ struct ForOfPIC {
   class Stub : public BaseStub {
    private:
     // Shape of matching array object.
-    Shape* shape_;
+    const HeapPtr<Shape*> shape_;
 
    public:
     explicit Stub(Shape* shape) : BaseStub(), shape_(shape) {
@@ -113,6 +113,8 @@ struct ForOfPIC {
     }
 
     Shape* shape() { return shape_; }
+
+    void trace(JSTracer* trc);
   };
 
   /*
@@ -188,6 +190,9 @@ struct ForOfPIC {
     // Initialize the canonical iterator function.
     bool initialize(JSContext* cx);
 
+    // Try to optimize this chain for a newly allocated array.
+    bool tryOptimizeArray(JSContext* cx, bool* optimized);
+
     // Try to optimize this chain for an object.
     bool tryOptimizeArray(JSContext* cx, Handle<ArrayObject*> array,
                           bool* optimized);
@@ -197,6 +202,8 @@ struct ForOfPIC {
 
     void trace(JSTracer* trc);
     void finalize(JS::GCContext* gcx, JSObject* obj);
+
+    void freeAllStubs(JS::GCContext* gcx);
 
    private:
     // Check if the global array-related objects have not been messed with
@@ -218,8 +225,6 @@ struct ForOfPIC {
 
     // Erase the stub chain.
     void eraseChain(JSContext* cx);
-
-    void freeAllStubs(JS::GCContext* gcx);
   };
 
   static NativeObject* createForOfPICObject(JSContext* cx,

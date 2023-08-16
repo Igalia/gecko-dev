@@ -8,7 +8,7 @@
  * show the expected stacktraces.
  */
 
-add_task(async function() {
+add_task(async function () {
   const URL = EXAMPLE_URL + "html_single-get-page.html";
   const REQUEST =
     "http://example.com/browser/devtools/client/netmonitor/test/request_0";
@@ -64,7 +64,7 @@ add_task(async function() {
     "Wait for the network request log to show"
   );
   const fetchRequestUrlNode = hud.ui.outputNode.querySelector(
-    `.webconsole-output .cm-s-mozilla.message.network span[title="${REQUEST}"]`
+    `.webconsole-output .cm-s-mozilla.message.network a[title="${REQUEST}"]`
   );
   fetchRequestUrlNode.click();
 

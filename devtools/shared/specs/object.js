@@ -9,7 +9,7 @@ const {
   Arg,
   RetVal,
   types,
-} = require("devtools/shared/protocol");
+} = require("resource://devtools/shared/protocol.js");
 
 types.addDictType("object.descriptor", {
   configurable: "boolean",
@@ -181,9 +181,7 @@ const objectSpec = generateActorSpec({
       response: RetVal("object.proxySlots"),
     },
     customFormatterBody: {
-      request: {
-        customFormatterIndex: Arg(0, "number"),
-      },
+      request: {},
       response: RetVal("object.customFormatterBody"),
     },
     addWatchpoint: {

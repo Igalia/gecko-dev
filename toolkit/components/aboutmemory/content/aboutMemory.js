@@ -32,17 +32,13 @@ const UNITS_PERCENTAGE = Ci.nsIMemoryReporter.UNITS_PERCENTAGE;
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-ChromeUtils.defineModuleGetter(
-  this,
-  "Downloads",
-  "resource://gre/modules/Downloads.jsm"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "FileUtils",
-  "resource://gre/modules/FileUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  Downloads: "resource://gre/modules/Downloads.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+});
 
 XPCOMUtils.defineLazyGetter(this, "nsBinaryStream", () =>
   CC(
@@ -146,7 +142,7 @@ function stringMatchesFilter(aString, aFilter) {
 
 // ---------------------------------------------------------------------------
 
-window.onunload = function() {};
+window.onunload = function () {};
 
 // ---------------------------------------------------------------------------
 
@@ -304,38 +300,42 @@ function appendHiddenFileInput(aP, aId, aChangeListener) {
   return input;
 }
 
-window.onload = function() {
+window.onload = function () {
   // Generate the header.
 
   let header = appendElement(document.body, "div", "ancillary");
 
   // A hidden file input element that can be invoked when necessary.
-  let fileInput1 = appendHiddenFileInput(header, "fileInput1", function() {
+  let fileInput1 = appendHiddenFileInput(header, "fileInput1", function () {
     let file = this.files[0];
     let filename = file.mozFullPath;
     updateAboutMemoryFromFile(filename);
   });
 
   // Ditto.
-  let fileInput2 = appendHiddenFileInput(header, "fileInput2", function(aElem) {
-    let file = this.files[0];
-    // First time around, we stash a copy of the filename and reinvoke.  Second
-    // time around we do the diff and display.
-    if (!this.filename1) {
-      this.filename1 = file.mozFullPath;
+  let fileInput2 = appendHiddenFileInput(
+    header,
+    "fileInput2",
+    function (aElem) {
+      let file = this.files[0];
+      // First time around, we stash a copy of the filename and reinvoke.  Second
+      // time around we do the diff and display.
+      if (!this.filename1) {
+        this.filename1 = file.mozFullPath;
 
-      // aElem.skipClick is only true when testing -- it allows fileInput2's
-      // onchange handler to be re-called without having to go via the file
-      // picker.
-      if (!aElem.skipClick) {
-        this.click();
+        // aElem.skipClick is only true when testing -- it allows fileInput2's
+        // onchange handler to be re-called without having to go via the file
+        // picker.
+        if (!aElem.skipClick) {
+          this.click();
+        }
+      } else {
+        let filename1 = this.filename1;
+        delete this.filename1;
+        updateAboutMemoryFromTwoFiles(filename1, file.mozFullPath);
       }
-    } else {
-      let filename1 = this.filename1;
-      delete this.filename1;
-      updateAboutMemoryFromTwoFiles(filename1, file.mozFullPath);
     }
-  });
+  );
 
   const CuDesc = "Measure current memory reports and show.";
   const LdDesc = "Load memory reports from file and show.";
@@ -488,13 +488,15 @@ window.onload = function() {
   gFooter = appendElement(document.body, "div", "ancillary hidden");
   gFooter.setAttribute("role", "contentinfo");
 
-  let a = appendElementWithText(
-    gFooter,
-    "a",
-    "option",
-    "Troubleshooting information"
-  );
-  a.href = "about:support";
+  if (Services.policies.isAllowed("aboutSupport")) {
+    let a = appendElementWithText(
+      gFooter,
+      "a",
+      "option",
+      "Troubleshooting information"
+    );
+    a.href = "about:support";
+  }
 
   let legendText1 =
     "Click on a non-leaf node in a tree to expand ('++') " +
@@ -640,7 +642,7 @@ function updateAboutMemoryFromReporters() {
     gFilter = "";
 
     // Record the reports from the live memory reporters then process them.
-    let handleReport = function(
+    let handleReport = function (
       aProcess,
       aUnsafePath,
       aKind,
@@ -658,7 +660,7 @@ function updateAboutMemoryFromReporters() {
       });
     };
 
-    let displayReports = function() {
+    let displayReports = function () {
       updateTitleMainAndFooter(
         "live measurement",
         "",
@@ -882,8 +884,8 @@ function updateAboutMemoryFromFile(aFilename) {
  */
 function updateAboutMemoryFromTwoFiles(aFilename1, aFilename2) {
   let titleNote = `diff of ${aFilename1} and ${aFilename2}`;
-  loadMemoryReportsFromFile(aFilename1, titleNote, function(aStr1) {
-    loadMemoryReportsFromFile(aFilename2, titleNote, function(aStr2) {
+  loadMemoryReportsFromFile(aFilename1, titleNote, function (aStr1) {
+    loadMemoryReportsFromFile(aFilename2, titleNote, function (aStr2) {
       try {
         let obj1 = parseAndUnwrapIfCrashDump(aStr1);
         let obj2 = parseAndUnwrapIfCrashDump(aStr2);
@@ -1004,7 +1006,8 @@ function makeDReportMap(aJSONReports, aForgetIsolation) {
     // Strip PIDs:
     // - pid 123
     // - pid=123
-    let pidRegex = /pid([ =])\d+/g;
+    // - pid: 123
+    let pidRegex = /pid([ =]|: )\d+/g;
     let pidSubst = "pid$1NNN";
     let process = jr.process.replace(pidRegex, pidSubst);
     let path = jr.path.replace(pidRegex, pidSubst);
@@ -1318,7 +1321,7 @@ function appendAboutMemoryMain(
   function displayReports() {
     // Sort the processes.
     let processes = Object.keys(infoByProcess);
-    processes.sort(function(aProcessA, aProcessB) {
+    processes.sort(function (aProcessA, aProcessB) {
       assert(
         aProcessA != aProcessB,
         `Elements of Object.keys() should be unique, but ` +
@@ -1452,11 +1455,11 @@ function appendAboutMemoryMain(
     // Set up event handlers to update the display if the filter input or
     // checkbox changes.
     let filterUpdateTimeout;
-    let filterUpdate = function() {
+    let filterUpdate = function () {
       if (filterUpdateTimeout) {
         window.clearTimeout(filterUpdateTimeout);
       }
-      filterUpdateTimeout = window.setTimeout(function() {
+      filterUpdateTimeout = window.setTimeout(function () {
         try {
           gFilter =
             filterRegExCheckbox.checked && filterInput.value != ""
@@ -1566,7 +1569,7 @@ TreeNode.prototype = {
 // Sort TreeNodes first by size, then by name.  The latter is important for the
 // about:memory tests, which need a predictable ordering of reporters which
 // have the same amount.
-TreeNode.compareAmounts = function(aA, aB) {
+TreeNode.compareAmounts = function (aA, aB) {
   let a, b;
   if (gIsDiff) {
     a = aA.maxAbsDescendant();
@@ -1584,7 +1587,7 @@ TreeNode.compareAmounts = function(aA, aB) {
   return TreeNode.compareUnsafeNames(aA, aB);
 };
 
-TreeNode.compareUnsafeNames = function(aA, aB) {
+TreeNode.compareUnsafeNames = function (aA, aB) {
   return aA._unsafeName.localeCompare(aB._unsafeName);
 };
 
@@ -1884,7 +1887,7 @@ function appendProcessAboutMemoryElements(
   aHasMozMallocUsableSize,
   aFiltered
 ) {
-  let appendLink = function(aHere, aThere, aArrow) {
+  let appendLink = function (aHere, aThere, aArrow) {
     let link = appendElementWithText(aP, "a", "upDownArrow", aArrow);
     link.href = "#" + aThere + aN;
     link.id = aHere + aN;
@@ -2436,7 +2439,7 @@ function saveReportsToFile() {
   fp.addToRecentDocs = true;
   fp.defaultString = "memory-report.json.gz";
 
-  let fpFinish = function(aFile) {
+  let fpFinish = function (aFile) {
     let dumper = Cc["@mozilla.org/memory-info-dumper;1"].getService(
       Ci.nsIMemoryInfoDumper
     );
@@ -2456,7 +2459,7 @@ function saveReportsToFile() {
     );
   };
 
-  let fpCallback = function(aResult) {
+  let fpCallback = function (aResult) {
     if (
       aResult == Ci.nsIFilePicker.returnOK ||
       aResult == Ci.nsIFilePicker.returnReplace
@@ -2470,7 +2473,7 @@ function saveReportsToFile() {
   } catch (ex) {
     // This will fail on Android, since there is no Save as file picker there.
     // Just save to the default downloads dir if it does.
-    Downloads.getSystemDownloadsDirectory().then(function(aDirPath) {
+    Downloads.getSystemDownloadsDirectory().then(function (aDirPath) {
       let file = FileUtils.File(aDirPath);
       file.append(fp.defaultString);
       fpFinish(file);

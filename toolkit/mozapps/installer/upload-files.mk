@@ -67,13 +67,11 @@ endif # MOZ_SYSTEM_NSPR
 ifdef MSVC_C_RUNTIME_DLL
   JSSHELL_BINS += $(MSVC_C_RUNTIME_DLL)
 endif
+ifdef MSVC_C_RUNTIME_1_DLL
+  JSSHELL_BINS += $(MSVC_C_RUNTIME_1_DLL)
+endif
 ifdef MSVC_CXX_RUNTIME_DLL
   JSSHELL_BINS += $(MSVC_CXX_RUNTIME_DLL)
-endif
-
-ifdef WIN_UCRT_REDIST_DIR
-  JSSHELL_BINS += $(notdir $(wildcard $(DIST)/bin/api-ms-win-*.dll))
-  JSSHELL_BINS += ucrtbase.dll
 endif
 
 ifdef LLVM_SYMBOLIZER
@@ -264,6 +262,7 @@ NO_PKG_FILES += \
 	BadCertAndPinningServer* \
 	DelegatedCredentialsServer* \
 	EncryptedClientHelloServer* \
+	FaultyServer* \
 	OCSPStaplingServer* \
 	SanctionsTestServer* \
 	GenerateOCSPResponse* \
@@ -372,14 +371,6 @@ ifneq ($(filter-out en-US,$(AB_CD)),)
     $(call QUOTED_WILDCARD,$(topobjdir)/$(MOZ_BUILD_APP)/installer/windows/l10ngen/setup-stub.exe)
 endif
 
-ifdef MOZ_NORMANDY
-ifndef CROSS_COMPILE
-ifndef FUZZING_SNAPSHOT
-  UPLOAD_FILES += $(call QUOTED_WILDCARD,$(MOZ_NORMANDY_JSON))
-endif
-endif
-endif
-
 ifdef MOZ_CODE_COVERAGE
   UPLOAD_FILES += \
     $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(CODE_COVERAGE_ARCHIVE_BASENAME).zip) \
@@ -390,8 +381,7 @@ endif
 
 ifdef ENABLE_MOZSEARCH_PLUGIN
   UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(MOZSEARCH_ARCHIVE_BASENAME).zip)
-  UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(MOZSEARCH_RUST_ANALYSIS_BASENAME).zip)
-  UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(MOZSEARCH_RUST_STDLIB_BASENAME).zip)
+  UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(MOZSEARCH_SCIP_INDEX_BASENAME).zip)
   UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(MOZSEARCH_INCLUDEMAP_BASENAME).map)
 endif
 
@@ -402,6 +392,9 @@ endif
 ifdef MOZ_STUB_INSTALLER
   UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_INST_PATH)$(PKG_STUB_BASENAME).exe)
 endif
+
+# Upload `.xpt` artifacts for use in artifact builds.
+UPLOAD_FILES += $(call QUOTED_WILDCARD,$(DIST)/$(PKG_PATH)$(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip)
 
 ifndef MOZ_PKG_SRCDIR
   MOZ_PKG_SRCDIR = $(topsrcdir)

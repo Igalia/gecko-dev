@@ -13,11 +13,13 @@
 #ifndef JXL_ENCODE_H_
 #define JXL_ENCODE_H_
 
-#include "jxl/cms_interface.h"
-#include "jxl/codestream_header.h"
-#include "jxl/jxl_export.h"
-#include "jxl/memory_manager.h"
-#include "jxl/parallel_runner.h"
+#include <jxl/cms_interface.h>
+#include <jxl/codestream_header.h>
+#include <jxl/jxl_export.h>
+#include <jxl/memory_manager.h>
+#include <jxl/parallel_runner.h>
+#include <jxl/stats.h>
+#include <jxl/version.h>
 
 #if defined(__cplusplus) || defined(c_plusplus)
 extern "C" {
@@ -50,10 +52,6 @@ typedef struct JxlEncoderStruct JxlEncoder;
  */
 typedef struct JxlEncoderFrameSettingsStruct JxlEncoderFrameSettings;
 
-/** DEPRECATED: Use JxlEncoderFrameSettings instead.
- */
-typedef JxlEncoderFrameSettings JxlEncoderOptions;
-
 /**
  * Return value for multiple encoder functions.
  */
@@ -70,13 +68,6 @@ typedef enum {
   /** The encoder needs more output buffer to continue encoding.
    */
   JXL_ENC_NEED_MORE_OUTPUT = 2,
-
-  /** DEPRECATED: the encoder does not return this status and there is no need
-   * to handle or expect it.
-   * Instead, JXL_ENC_ERROR is returned with error condition
-   * JXL_ENC_ERR_NOT_SUPPORTED.
-   */
-  JXL_ENC_NOT_SUPPORTED = 3,
 
 } JxlEncoderStatus;
 
@@ -338,6 +329,26 @@ typedef enum {
    */
   JXL_ENC_FRAME_SETTING_BROTLI_EFFORT = 32,
 
+  /** Enables or disables brotli compression of metadata boxes derived from
+   * a JPEG frame when using JxlEncoderAddJPEGFrame. This has no effect on boxes
+   * added using JxlEncoderAddBox.
+   * -1 = default, 0 = disable compression, 1 = enable compression.
+   */
+  JXL_ENC_FRAME_SETTING_JPEG_COMPRESS_BOXES = 33,
+
+  /** Control what kind of buffering is used, when using chunked image frames.
+   * 0 = buffers everything, basically the same as non-streamed code path
+   (mainly for testing)
+   * 1 = can buffer internal data (the tokens)
+   * 2 = can buffer the output
+   * 3 = minimize buffer usage: streamed input and chunked output, writing TOC
+   last (will not work with progressive)
+
+   When the image dimensions is smaller than 2048 x 2048 all the options are the
+   same. Using 1, 2 or 3 can result increasingly in less compression density.
+   */
+  JXL_ENC_FRAME_SETTING_BUFFERING = 34,
+
   /** Enum value not to be used as an option. This value is added to force the
    * C compiler to have the enum to take a known size.
    */
@@ -422,6 +433,11 @@ JXL_EXPORT JxlEncoderError JxlEncoderGetError(JxlEncoder* enc);
  * The returned status indicates whether the encoder needs more output bytes.
  * When the return value is not JXL_ENC_ERROR or JXL_ENC_SUCCESS, the encoding
  * requires more JxlEncoderProcessOutput calls to continue.
+ *
+ * The caller must guarantee that *avail_out >= 32 when calling
+ * JxlEncoderProcessOutput; otherwise, JXL_ENC_NEED_MORE_OUTPUT will be
+ * returned. It is guaranteed that, if *avail_out >= 32, at least one byte of
+ * output will be written.
  *
  * This encodes the frames and/or boxes added so far. If the last frame or last
  * box has been added, @ref JxlEncoderCloseInput, @ref JxlEncoderCloseFrames
@@ -515,6 +531,22 @@ JXL_EXPORT JxlEncoderStatus JxlEncoderSetFrameName(
     JxlEncoderFrameSettings* frame_settings, const char* frame_name);
 
 /**
+ * Sets the bit depth of the input buffer.
+ *
+ * For float pixel formats, only the default JXL_BIT_DEPTH_FROM_PIXEL_FORMAT
+ * setting is allowed, while for unsigned pixel formats,
+ * JXL_BIT_DEPTH_FROM_CODESTREAM setting is also allowed. See the comment on
+ * @ref JxlEncoderAddImageFrame for the effects of the bit depth setting.
+
+ * @param frame_settings set of options and metadata for this frame. Also
+ * includes reference to the encoder object.
+ * @param bit_depth the bit depth setting of the pixel input
+ * @return JXL_ENC_SUCCESS on success, JXL_ENC_ERROR on error
+ */
+JXL_EXPORT JxlEncoderStatus JxlEncoderSetFrameBitDepth(
+    JxlEncoderFrameSettings* frame_settings, const JxlBitDepth* bit_depth);
+
+/**
  * Sets the buffer to read JPEG encoded bytes from for the next frame to encode.
  *
  * If JxlEncoderSetBasicInfo has not yet been called, calling
@@ -555,15 +587,22 @@ JxlEncoderAddJPEGFrame(const JxlEncoderFrameSettings* frame_settings,
  * - JXL_TYPE_FLOAT, with nominal range 0..1
  *
  * Note: the sample data type in pixel_format is allowed to be different from
- * what is described in the JxlBasicInfo. The type in pixel_format describes the
- * format of the uncompressed pixel buffer. The bits_per_sample and
- * exponent_bits_per_sample in the JxlBasicInfo describes what will actually be
- * encoded in the JPEG XL codestream. For example, to encode a 12-bit image, you
- * would set bits_per_sample to 12, and you could use e.g. JXL_TYPE_UINT16
- * (where the values are rescaled to 16-bit, i.e. multiplied by 65535/4095) or
- * JXL_TYPE_FLOAT (where the values are rescaled to 0..1, i.e. multiplied
- * by 1.f/4095.f). While it is allowed, it is obviously not recommended to use a
- * pixel_format with lower precision than what is specified in the JxlBasicInfo.
+ * what is described in the JxlBasicInfo. The type in pixel_format, together
+ * with an optional @ref JxlBitDepth parameter set by @ref
+ * JxlEncoderSetFrameBitDepth describes the format of the uncompressed pixel
+ * buffer. The bits_per_sample and exponent_bits_per_sample in the JxlBasicInfo
+ * describes what will actually be encoded in the JPEG XL codestream.
+ * For example, to encode a 12-bit image, you would set bits_per_sample to 12,
+ * while the input frame buffer can be in the following formats:
+ *  - if pixel format is in JXL_TYPE_UINT16 with default bit depth setting
+ *    (i.e. JXL_BIT_DEPTH_FROM_PIXEL_FORMAT), input sample values are rescaled
+ *    to 16-bit, i.e. multiplied by 65535/4095;
+ *  - if pixel format is in JXL_TYPE_UINT16 with JXL_BIT_DEPTH_FROM_CODESTREAM
+ *    bit depth setting, input sample values are provided unscaled;
+ *  - if pixel format is in JXL_TYPE_FLOAT, input sample values are rescaled
+ *    to 0..1, i.e.  multiplied by 1.f/4095.f.
+ * While it is allowed, it is obviously not recommended to use a pixel_format
+ * with lower precision than what is specified in the JxlBasicInfo.
  *
  * We support interleaved channels as described by the JxlPixelFormat:
  * - single-channel data, e.g. grayscale
@@ -604,6 +643,49 @@ JxlEncoderAddJPEGFrame(const JxlEncoderFrameSettings* frame_settings,
 JXL_EXPORT JxlEncoderStatus JxlEncoderAddImageFrame(
     const JxlEncoderFrameSettings* frame_settings,
     const JxlPixelFormat* pixel_format, const void* buffer, size_t size);
+
+/**
+ * TODO(firsching): add documentation
+ *
+ */
+typedef void (*JxlEncoderOutputCallback)(void* run_opaque, size_t pos,
+                                         size_t num_bytes);
+
+/**
+ * TODO(firsching): add documentation
+ *
+ */
+JXL_EXPORT JxlEncoderStatus
+JxlEncoderSetOutputCallback(JxlEncoderOutputCallback callback);
+
+/**
+ * TODO(firsching): add documentation
+ *
+ * @param frame_settings
+ * @return JXL_ENC_SUCCESS on success, JXL_ENC_ERROR on error
+ */
+JXL_EXPORT JxlEncoderStatus
+JxlEncoderChunkedImageFrameStart(const JxlEncoderFrameSettings* frame_settings);
+
+/**
+ * TODO(firsching): add documentation
+ * We process exactly one 2048x2048 DC-group.
+ *
+ * @param frame_settings
+ * @param x horizontal position of the top-left corner of the processed group.
+ * Must be divisible by 2048.
+ * @param y vertical position of the top-left corner of the processed group.
+ * Must be divisible by 2048.
+ * @param pixel_format for pixels. Object owned by the caller and its contents
+ * are copied internally.
+ * @param input_data the input buffer.
+ * @param input_size size of the input data in bytes.
+ * @return JXL_EXPORT
+ */
+JXL_EXPORT JxlEncoderStatus JxlEncoderChunkedImageFrameAddPart(
+    const JxlEncoderFrameSettings* frame_settings, size_t x, size_t y,
+    const JxlPixelFormat* pixel_format, const void* input_data,
+    size_t input_size);
 
 /**
  * Sets the buffer to read pixels from for an extra channel at a given index.
@@ -1048,37 +1130,6 @@ JXL_EXPORT int JxlEncoderGetRequiredCodestreamLevel(const JxlEncoder* enc);
 JXL_EXPORT JxlEncoderStatus JxlEncoderSetFrameLossless(
     JxlEncoderFrameSettings* frame_settings, JXL_BOOL lossless);
 
-/** DEPRECATED: use JxlEncoderSetFrameLossless instead.
- */
-JXL_EXPORT JxlEncoderStatus
-JxlEncoderOptionsSetLossless(JxlEncoderFrameSettings*, JXL_BOOL);
-
-/**
- * @param frame_settings set of options and metadata for this frame. Also
- * includes reference to the encoder object.
- * @param effort the effort value to set.
- * @return JXL_ENC_SUCCESS if the operation was successful, JXL_ENC_ERROR
- * otherwise.
- *
- * DEPRECATED: use JxlEncoderFrameSettingsSetOption(frame_settings,
- * JXL_ENC_FRAME_SETTING_EFFORT, effort) instead.
- */
-JXL_EXPORT JXL_DEPRECATED JxlEncoderStatus
-JxlEncoderOptionsSetEffort(JxlEncoderFrameSettings* frame_settings, int effort);
-
-/**
- * @param frame_settings set of options and metadata for this frame. Also
- * includes reference to the encoder object.
- * @param tier the decoding speed tier to set.
- * @return JXL_ENC_SUCCESS if the operation was successful, JXL_ENC_ERROR
- * otherwise.
- *
- * DEPRECATED: use JxlEncoderFrameSettingsSetOption(frame_settings,
- * JXL_ENC_FRAME_SETTING_DECODING_SPEED, tier) instead.
- */
-JXL_EXPORT JXL_DEPRECATED JxlEncoderStatus JxlEncoderOptionsSetDecodingSpeed(
-    JxlEncoderFrameSettings* frame_settings, int tier);
-
 /**
  * Sets the distance level for lossy compression: target max butteraugli
  * distance, lower = higher quality. Range: 0 .. 15.
@@ -1096,10 +1147,21 @@ JXL_EXPORT JXL_DEPRECATED JxlEncoderStatus JxlEncoderOptionsSetDecodingSpeed(
 JXL_EXPORT JxlEncoderStatus JxlEncoderSetFrameDistance(
     JxlEncoderFrameSettings* frame_settings, float distance);
 
-/** DEPRECATED: use JxlEncoderSetFrameDistance instead.
+/**
+ * Sets the distance level for lossy compression of extra channels.
+ * The distance is as in JxlEncoderSetFrameDistance (lower = higher quality).
+ * If not set, or if set to the special value -1, the distance that was set with
+ * JxlEncoderSetFrameDistance will be used.
+ *
+ * @param frame_settings set of options and metadata for this frame. Also
+ * includes reference to the encoder object.
+ * @param index index of the extra channel to set a distance value for.
+ * @param distance the distance value to set.
+ * @return JXL_ENC_SUCCESS if the operation was successful, JXL_ENC_ERROR
+ * otherwise.
  */
-JXL_EXPORT JXL_DEPRECATED JxlEncoderStatus
-JxlEncoderOptionsSetDistance(JxlEncoderFrameSettings*, float);
+JXL_EXPORT JxlEncoderStatus JxlEncoderSetExtraChannelDistance(
+    JxlEncoderFrameSettings* frame_settings, size_t index, float distance);
 
 /**
  * Create a new set of encoder options, with all values initially copied from
@@ -1119,11 +1181,6 @@ JxlEncoderOptionsSetDistance(JxlEncoderFrameSettings*, float);
 JXL_EXPORT JxlEncoderFrameSettings* JxlEncoderFrameSettingsCreate(
     JxlEncoder* enc, const JxlEncoderFrameSettings* source);
 
-/** DEPRECATED: use JxlEncoderFrameSettingsCreate instead.
- */
-JXL_EXPORT JXL_DEPRECATED JxlEncoderFrameSettings* JxlEncoderOptionsCreate(
-    JxlEncoder*, const JxlEncoderFrameSettings*);
-
 /**
  * Sets a color encoding to be sRGB.
  *
@@ -1141,6 +1198,67 @@ JXL_EXPORT void JxlColorEncodingSetToSRGB(JxlColorEncoding* color_encoding,
  */
 JXL_EXPORT void JxlColorEncodingSetToLinearSRGB(
     JxlColorEncoding* color_encoding, JXL_BOOL is_gray);
+
+/**
+ * Enables usage of expert options.
+ *
+ * At the moment, the only expert option is setting an effort value of 10,
+ * which gives the best compression for pixel-lossless modes but is very slow.
+ *
+ * @param enc encoder object.
+ */
+JXL_EXPORT void JxlEncoderAllowExpertOptions(JxlEncoder* enc);
+
+/**
+ * Function type for @ref JxlEncoderSetDebugImageCallback.
+ *
+ * The callback may be called simultaneously by different threads when using a
+ * threaded parallel runner, on different debug images.
+ *
+ * @param opaque optional user data, as given to @ref
+ *   JxlEncoderSetDebugImageCallback.
+ * @param label label of debug image, can be used in filenames
+ * @param xsize width of debug image
+ * @param ysize height of debug image
+ * @param color color encoding of debug image
+ * @param pixels pixel data of debug image as big-endian 16-bit unsigned
+ *   samples. The memory is not owned by the user, and is only valid during the
+ *   time the callback is running.
+ */
+typedef void (*JxlDebugImageCallback)(void* opaque, const char* label,
+                                      size_t xsize, size_t ysize,
+                                      const JxlColorEncoding* color,
+                                      const uint16_t* pixels);
+
+/**
+ * Sets the given debug image callback that will be used by the encoder to
+ * output various debug images during encoding.
+ *
+ * This only has any effect if the encoder was compiled with the appropriate
+ * debug build flags.
+ *
+ * @param frame_settings set of options and metadata for this frame. Also
+ * includes reference to the encoder object.
+ * @param callback used to return the debug image
+ * @param opaque user supplied parameter to the image callback
+ */
+JXL_EXPORT void JxlEncoderSetDebugImageCallback(
+    JxlEncoderFrameSettings* frame_settings, JxlDebugImageCallback callback,
+    void* opaque);
+
+/**
+ * Sets the given stats object for gathering various statistics during encoding.
+ *
+ * This only has any effect if the encoder was compiled with the appropriate
+ * debug build flags.
+ *
+ * @param frame_settings set of options and metadata for this frame. Also
+ * includes reference to the encoder object.
+ * @param stats object that can be used to query the gathered stats (created
+ *   by @ref JxlEncoderStatsCreate)
+ */
+JXL_EXPORT void JxlEncoderCollectStats(JxlEncoderFrameSettings* frame_settings,
+                                       JxlEncoderStats* stats);
 
 #if defined(__cplusplus) || defined(c_plusplus)
 }

@@ -1,4 +1,5 @@
 // Copyright 2021 Google LLC
+// SPDX-License-Identifier: Apache-2.0
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -19,26 +20,38 @@
 #include <stdint.h>
 #include <string.h>  // memcpy
 
-#include <algorithm>
-#include <cmath>  // std::abs
+#include <algorithm>   // std::sort, std::min, std::max
+#include <functional>  // std::less, std::greater
 #include <vector>
 
 #include "hwy/base.h"
 #include "hwy/contrib/sort/vqsort.h"
+#include "hwy/print.h"
 
 // Third-party algorithms
 #define HAVE_AVX2SORT 0
 #define HAVE_IPS4O 0
+// When enabling, consider changing max_threads (required for Table 1a)
 #define HAVE_PARALLEL_IPS4O (HAVE_IPS4O && 1)
 #define HAVE_PDQSORT 0
 #define HAVE_SORT512 0
+#define HAVE_VXSORT 0
+#if HWY_ARCH_X86
+#define HAVE_INTEL 0
+#else
+#define HAVE_INTEL 0
+#endif
+
+#if HAVE_PARALLEL_IPS4O
+#include <thread>  // NOLINT
+#endif
 
 #if HAVE_AVX2SORT
 HWY_PUSH_ATTRIBUTES("avx2,avx")
-#include "avx2sort.h"
+#include "avx2sort.h"  //NOLINT
 HWY_POP_ATTRIBUTES
 #endif
-#if HAVE_IPS4O
+#if HAVE_IPS4O || HAVE_PARALLEL_IPS4O
 #include "third_party/ips4o/include/ips4o.hpp"
 #include "third_party/ips4o/include/ips4o/thread_pool.hpp"
 #endif
@@ -46,18 +59,59 @@ HWY_POP_ATTRIBUTES
 #include "third_party/boost/allowed/sort/sort.hpp"
 #endif
 #if HAVE_SORT512
-#include "sort512.h"
+#include "sort512.h"  //NOLINT
 #endif
+
+// vxsort is difficult to compile for multiple targets because it also uses
+// .cpp files, and we'd also have to #undef its include guards. Instead, compile
+// only for AVX2 or AVX3 depending on this macro.
+#define VXSORT_AVX3 1
+#if HAVE_VXSORT
+// inlined from vxsort_targets_enable_avx512 (must close before end of header)
+#ifdef __GNUC__
+#ifdef __clang__
+#if VXSORT_AVX3
+#pragma clang attribute push(__attribute__((target("avx512f,avx512dq"))), \
+                             apply_to = any(function))
+#else
+#pragma clang attribute push(__attribute__((target("avx2"))), \
+                             apply_to = any(function))
+#endif  // VXSORT_AVX3
+
+#else
+#pragma GCC push_options
+#if VXSORT_AVX3
+#pragma GCC target("avx512f,avx512dq")
+#else
+#pragma GCC target("avx2")
+#endif  // VXSORT_AVX3
+#endif
+#endif
+
+#if VXSORT_AVX3
+#include "vxsort/machine_traits.avx512.h"
+#else
+#include "vxsort/machine_traits.avx2.h"
+#endif  // VXSORT_AVX3
+#include "vxsort/vxsort.h"
+#ifdef __GNUC__
+#ifdef __clang__
+#pragma clang attribute pop
+#else
+#pragma GCC pop_options
+#endif
+#endif
+#endif  // HAVE_VXSORT
 
 namespace hwy {
 
 enum class Dist { kUniform8, kUniform16, kUniform32 };
 
-std::vector<Dist> AllDist() {
-  return {/*Dist::kUniform8,*/ Dist::kUniform16, Dist::kUniform32};
+static inline std::vector<Dist> AllDist() {
+  return {/*Dist::kUniform8, Dist::kUniform16,*/ Dist::kUniform32};
 }
 
-const char* DistName(Dist dist) {
+static inline const char* DistName(Dist dist) {
   switch (dist) {
     case Dist::kUniform8:
       return "uniform8";
@@ -75,31 +129,37 @@ class InputStats {
   void Notify(T value) {
     min_ = std::min(min_, value);
     max_ = std::max(max_, value);
-    sumf_ += static_cast<double>(value);
+    // Converting to integer would truncate floats, multiplying to save digits
+    // risks overflow especially when casting, so instead take the sum of the
+    // bit representations as the checksum.
+    uint64_t bits = 0;
+    static_assert(sizeof(T) <= 8, "Expected a built-in type");
+    CopyBytes<sizeof(T)>(&value, &bits);  // not same size
+    sum_ += bits;
     count_ += 1;
   }
 
   bool operator==(const InputStats& other) const {
+    char type_name[100];
+    detail::TypeName(hwy::detail::MakeTypeInfo<T>(), 1, type_name);
+
     if (count_ != other.count_) {
-      HWY_ABORT("count %d vs %d\n", static_cast<int>(count_),
-                static_cast<int>(other.count_));
+      HWY_ABORT("Sort %s: count %d vs %d\n", type_name,
+                static_cast<int>(count_), static_cast<int>(other.count_));
     }
 
     if (min_ != other.min_ || max_ != other.max_) {
-      HWY_ABORT("minmax %f/%f vs %f/%f\n", double(min_), double(max_),
-                double(other.min_), double(other.max_));
+      HWY_ABORT("Sort %s: minmax %f/%f vs %f/%f\n", type_name,
+                static_cast<double>(min_), static_cast<double>(max_),
+                static_cast<double>(other.min_),
+                static_cast<double>(other.max_));
     }
 
     // Sum helps detect duplicated/lost values
-    if (sumf_ != other.sumf_) {
-      // Allow some tolerance because kUniform32 * num can exceed double
-      // precision.
-      const double mul = 1E-9;  // prevent destructive cancellation
-      const double err = std::abs(sumf_ * mul - other.sumf_ * mul);
-      if (err > 1E-3) {
-        HWY_ABORT("Sum mismatch %.15e %.15e (%f) min %g max %g\n", sumf_,
-                  other.sumf_, err, double(min_), double(max_));
-      }
+    if (sum_ != other.sum_) {
+      HWY_ABORT("Sort %s: Sum mismatch %g %g; min %g max %g\n", type_name,
+                static_cast<double>(sum_), static_cast<double>(other.sum_),
+                static_cast<double>(min_), static_cast<double>(max_));
     }
 
     return true;
@@ -108,11 +168,14 @@ class InputStats {
  private:
   T min_ = hwy::HighestValue<T>();
   T max_ = hwy::LowestValue<T>();
-  double sumf_ = 0.0;
+  uint64_t sum_ = 0;
   size_t count_ = 0;
 };
 
 enum class Algo {
+#if HAVE_INTEL
+  kIntel,
+#endif
 #if HAVE_AVX2SORT
   kSEA,
 #endif
@@ -128,13 +191,20 @@ enum class Algo {
 #if HAVE_SORT512
   kSort512,
 #endif
+#if HAVE_VXSORT
+  kVXSort,
+#endif
   kStd,
   kVQSort,
   kHeap,
 };
 
-const char* AlgoName(Algo algo) {
+static inline const char* AlgoName(Algo algo) {
   switch (algo) {
+#if HAVE_INTEL
+    case Algo::kIntel:
+      return "intel";
+#endif
 #if HAVE_AVX2SORT
     case Algo::kSEA:
       return "sea";
@@ -154,6 +224,10 @@ const char* AlgoName(Algo algo) {
 #if HAVE_SORT512
     case Algo::kSort512:
       return "sort512";
+#endif
+#if HAVE_VXSORT
+    case Algo::kVXSort:
+      return "vxsort";
 #endif
     case Algo::kStd:
       return "std";
@@ -183,8 +257,24 @@ const char* AlgoName(Algo algo) {
 #include "hwy/tests/test_util-inl.h"
 
 HWY_BEFORE_NAMESPACE();
+
+// Requires target pragma set by HWY_BEFORE_NAMESPACE
+#if HAVE_INTEL && HWY_TARGET <= HWY_AVX3
+// #include "avx512-16bit-qsort.hpp"  // requires vbmi2
+#include "avx512-32bit-qsort.hpp"
+#include "avx512-64bit-qsort.hpp"
+#endif
+
 namespace hwy {
 namespace HWY_NAMESPACE {
+
+#if HAVE_INTEL  // only supports ascending order
+template <typename T>
+using OtherOrder = detail::OrderAscending<T>;
+#else
+template <typename T>
+using OtherOrder = detail::OrderDescending<T>;
+#endif
 
 class Xorshift128Plus {
   static HWY_INLINE uint64_t SplitMix64(uint64_t z) {
@@ -205,12 +295,11 @@ class Xorshift128Plus {
   }
 
   // Need to pass in the state because vector cannot be class members.
-  template <class DU64>
-  static Vec<DU64> RandomBits(DU64 /* tag */, Vec<DU64>& state0,
-                              Vec<DU64>& state1) {
-    Vec<DU64> s1 = state0;
-    Vec<DU64> s0 = state1;
-    const Vec<DU64> bits = Add(s1, s0);
+  template <class VU64>
+  static VU64 RandomBits(VU64& state0, VU64& state1) {
+    VU64 s1 = state0;
+    VU64 s0 = state1;
+    const VU64 bits = Add(s1, s0);
     state0 = s0;
     s1 = Xor(s1, ShiftLeft<23>(s1));
     state1 = Xor(s1, Xor(s0, Xor(ShiftRight<18>(s1), ShiftRight<5>(s0))));
@@ -218,30 +307,34 @@ class Xorshift128Plus {
   }
 };
 
-template <typename T, class DU64, HWY_IF_NOT_FLOAT(T)>
-Vec<DU64> RandomValues(DU64 du64, Vec<DU64>& s0, Vec<DU64>& s1,
-                       const Vec<DU64> mask) {
-  const Vec<DU64> bits = Xorshift128Plus::RandomBits(du64, s0, s1);
-  return And(bits, mask);
+template <class D, class VU64, HWY_IF_NOT_FLOAT_D(D)>
+Vec<D> RandomValues(D d, VU64& s0, VU64& s1, const VU64 mask) {
+  const VU64 bits = Xorshift128Plus::RandomBits(s0, s1);
+  return BitCast(d, And(bits, mask));
 }
 
-// Important to avoid denormals, which are flushed to zero by SIMD but not
+// It is important to avoid denormals, which are flushed to zero by SIMD but not
 // scalar sorts, and NaN, which may be ordered differently in scalar vs. SIMD.
-template <typename T, class DU64, HWY_IF_FLOAT(T)>
-Vec<DU64> RandomValues(DU64 du64, Vec<DU64>& s0, Vec<DU64>& s1,
-                       const Vec<DU64> mask) {
-  const Vec<DU64> bits = Xorshift128Plus::RandomBits(du64, s0, s1);
-  const Vec<DU64> values = And(bits, mask);
-#if HWY_TARGET == HWY_SCALAR  // Cannot repartition u64 to i32
-  const RebindToSigned<DU64> di;
+template <class DF, class VU64, HWY_IF_FLOAT_D(DF)>
+Vec<DF> RandomValues(DF df, VU64& s0, VU64& s1, const VU64 mask) {
+  using TF = TFromD<DF>;
+  const RebindToUnsigned<decltype(df)> du;
+  using VU = Vec<decltype(du)>;
+
+  const VU64 bits64 = And(Xorshift128Plus::RandomBits(s0, s1), mask);
+
+#if HWY_TARGET == HWY_SCALAR  // Cannot repartition u64 to smaller types
+  using TU = MakeUnsigned<TF>;
+  const VU bits = Set(du, static_cast<TU>(GetLane(bits64) & LimitsMax<TU>()));
 #else
-  const Repartition<MakeSigned<T>, DU64> di;
+  const VU bits = BitCast(du, bits64);
 #endif
-  const RebindToFloat<decltype(di)> df;
-  // Avoid NaN/denormal by converting from (range-limited) integer.
-  const Vec<DU64> no_nan =
-      And(values, Set(du64, MantissaMask<MakeUnsigned<T>>()));
-  return BitCast(du64, ConvertTo(df, BitCast(di, no_nan)));
+  // Avoid NaN/denormal by only generating values in [1, 2), i.e. random
+  // mantissas with the exponent taken from the representation of 1.0.
+  const VU k1 = BitCast(du, Set(df, TF{1.0}));
+  const VU mantissa_mask = Set(du, MantissaMask<TF>());
+  const VU representation = OrAnd(k1, bits, mantissa_mask);
+  return BitCast(df, representation);
 }
 
 template <class DU64>
@@ -269,29 +362,29 @@ InputStats<T> GenerateInput(const Dist dist, T* v, size_t num) {
   SortTag<uint64_t> du64;
   using VU64 = Vec<decltype(du64)>;
   const size_t N64 = Lanes(du64);
-  auto buf = hwy::AllocateAligned<uint64_t>(2 * N64);
-  Xorshift128Plus::GenerateSeeds(du64, buf.get());
-  auto s0 = Load(du64, buf.get());
-  auto s1 = Load(du64, buf.get() + N64);
+  auto seeds = hwy::AllocateAligned<uint64_t>(2 * N64);
+  Xorshift128Plus::GenerateSeeds(du64, seeds.get());
+  VU64 s0 = Load(du64, seeds.get());
+  VU64 s1 = Load(du64, seeds.get() + N64);
 
-  const VU64 mask = MaskForDist(du64, dist, sizeof(T));
-
+#if HWY_TARGET == HWY_SCALAR
+  const Sisd<T> d;
+#else
   const Repartition<T, decltype(du64)> d;
+#endif
+  using V = Vec<decltype(d)>;
   const size_t N = Lanes(d);
+  const VU64 mask = MaskForDist(du64, dist, sizeof(T));
+  auto buf = hwy::AllocateAligned<T>(N);
+
   size_t i = 0;
   for (; i + N <= num; i += N) {
-    const VU64 bits = RandomValues<T>(du64, s0, s1, mask);
-#if HWY_ARCH_RVV
-    // v may not be 64-bit aligned
-    StoreU(bits, du64, buf.get());
-    memcpy(v + i, buf.get(), N64 * sizeof(uint64_t));
-#else
-    StoreU(bits, du64, reinterpret_cast<uint64_t*>(v + i));
-#endif
+    const V values = RandomValues(d, s0, s1, mask);
+    StoreU(values, d, v + i);
   }
   if (i < num) {
-    const VU64 bits = RandomValues<T>(du64, s0, s1, mask);
-    StoreU(bits, du64, buf.get());
+    const V values = RandomValues(d, s0, s1, mask);
+    StoreU(values, d, buf.get());
     memcpy(v + i, buf.get(), (num - i) * sizeof(T));
   }
 
@@ -302,26 +395,77 @@ InputStats<T> GenerateInput(const Dist dist, T* v, size_t num) {
   return input_stats;
 }
 
-struct ThreadLocal {
-  Sorter sorter;
-};
-
 struct SharedState {
 #if HAVE_PARALLEL_IPS4O
-  ips4o::StdThreadPool pool{
-      HWY_MIN(16, static_cast<int>(std::thread::hardware_concurrency() / 2))};
+  const unsigned max_threads = hwy::LimitsMax<unsigned>();  // 16 for Table 1a
+  ips4o::StdThreadPool pool{static_cast<int>(
+      HWY_MIN(max_threads, std::thread::hardware_concurrency() / 2))};
 #endif
-  std::vector<ThreadLocal> tls{1};
 };
 
-template <class Order, typename T>
-void Run(Algo algo, T* HWY_RESTRICT inout, size_t num, SharedState& shared,
-         size_t thread) {
-  using detail::HeapSort;
-  using detail::LaneTraits;
+// Bridge from keys (passed to Run) to lanes as expected by HeapSort. For
+// non-128-bit keys they are the same:
+template <class Order, typename KeyType, HWY_IF_NOT_T_SIZE(KeyType, 16)>
+void CallHeapSort(KeyType* HWY_RESTRICT keys, const size_t num_keys) {
+  using detail::TraitsLane;
   using detail::SharedTraits;
+  if (Order().IsAscending()) {
+    const SharedTraits<TraitsLane<detail::OrderAscending<KeyType>>> st;
+    return detail::HeapSort(st, keys, num_keys);
+  } else {
+    const SharedTraits<TraitsLane<detail::OrderDescending<KeyType>>> st;
+    return detail::HeapSort(st, keys, num_keys);
+  }
+}
+
+#if VQSORT_ENABLED
+template <class Order>
+void CallHeapSort(hwy::uint128_t* HWY_RESTRICT keys, const size_t num_keys) {
+  using detail::SharedTraits;
+  using detail::Traits128;
+  uint64_t* lanes = reinterpret_cast<uint64_t*>(keys);
+  const size_t num_lanes = num_keys * 2;
+  if (Order().IsAscending()) {
+    const SharedTraits<Traits128<detail::OrderAscending128>> st;
+    return detail::HeapSort(st, lanes, num_lanes);
+  } else {
+    const SharedTraits<Traits128<detail::OrderDescending128>> st;
+    return detail::HeapSort(st, lanes, num_lanes);
+  }
+}
+
+template <class Order>
+void CallHeapSort(K64V64* HWY_RESTRICT keys, const size_t num_keys) {
+  using detail::SharedTraits;
+  using detail::Traits128;
+  uint64_t* lanes = reinterpret_cast<uint64_t*>(keys);
+  const size_t num_lanes = num_keys * 2;
+  if (Order().IsAscending()) {
+    const SharedTraits<Traits128<detail::OrderAscendingKV128>> st;
+    return detail::HeapSort(st, lanes, num_lanes);
+  } else {
+    const SharedTraits<Traits128<detail::OrderDescendingKV128>> st;
+    return detail::HeapSort(st, lanes, num_lanes);
+  }
+}
+#endif  // VQSORT_ENABLED
+
+template <class Order, typename KeyType>
+void Run(Algo algo, KeyType* HWY_RESTRICT inout, size_t num,
+         SharedState& shared, size_t /*thread*/) {
+  const std::less<KeyType> less;
+  const std::greater<KeyType> greater;
+
+#if !HAVE_PARALLEL_IPS4O
+  (void)shared;
+#endif
 
   switch (algo) {
+#if HAVE_INTEL && HWY_TARGET <= HWY_AVX3
+    case Algo::kIntel:
+      return avx512_qsort<KeyType>(inout, static_cast<int64_t>(num));
+#endif
+
 #if HAVE_AVX2SORT
     case Algo::kSEA:
       return avx2::quicksort(inout, static_cast<int>(num));
@@ -330,18 +474,18 @@ void Run(Algo algo, T* HWY_RESTRICT inout, size_t num, SharedState& shared,
 #if HAVE_IPS4O
     case Algo::kIPS4O:
       if (Order().IsAscending()) {
-        return ips4o::sort(inout, inout + num, std::less<T>());
+        return ips4o::sort(inout, inout + num, less);
       } else {
-        return ips4o::sort(inout, inout + num, std::greater<T>());
+        return ips4o::sort(inout, inout + num, greater);
       }
 #endif
 
 #if HAVE_PARALLEL_IPS4O
     case Algo::kParallelIPS4O:
       if (Order().IsAscending()) {
-        return ips4o::parallel::sort(inout, inout + num, std::less<T>());
+        return ips4o::parallel::sort(inout, inout + num, less, shared.pool);
       } else {
-        return ips4o::parallel::sort(inout, inout + num, std::greater<T>());
+        return ips4o::parallel::sort(inout, inout + num, greater, shared.pool);
       }
 #endif
 
@@ -354,33 +498,47 @@ void Run(Algo algo, T* HWY_RESTRICT inout, size_t num, SharedState& shared,
 #if HAVE_PDQSORT
     case Algo::kPDQ:
       if (Order().IsAscending()) {
-        return boost::sort::pdqsort_branchless(inout, inout + num,
-                                               std::less<T>());
+        return boost::sort::pdqsort_branchless(inout, inout + num, less);
       } else {
-        return boost::sort::pdqsort_branchless(inout, inout + num,
-                                               std::greater<T>());
+        return boost::sort::pdqsort_branchless(inout, inout + num, greater);
       }
 #endif
 
+#if HAVE_VXSORT
+    case Algo::kVXSort: {
+#if (VXSORT_AVX3 && HWY_TARGET != HWY_AVX3) || \
+    (!VXSORT_AVX3 && HWY_TARGET != HWY_AVX2)
+      fprintf(stderr, "Do not call for target %s\n",
+              hwy::TargetName(HWY_TARGET));
+      return;
+#else
+#if VXSORT_AVX3
+      vxsort::vxsort<KeyType, vxsort::AVX512> vx;
+#else
+      vxsort::vxsort<KeyType, vxsort::AVX2> vx;
+#endif
+      if (Order().IsAscending()) {
+        return vx.sort(inout, inout + num - 1);
+      } else {
+        fprintf(stderr, "Skipping VX - does not support descending order\n");
+        return;
+      }
+#endif  // enabled for this target
+    }
+#endif  // HAVE_VXSORT
+
     case Algo::kStd:
       if (Order().IsAscending()) {
-        return std::sort(inout, inout + num, std::less<T>());
+        return std::sort(inout, inout + num, less);
       } else {
-        return std::sort(inout, inout + num, std::greater<T>());
+        return std::sort(inout, inout + num, greater);
       }
 
     case Algo::kVQSort:
-      return shared.tls[thread].sorter(inout, num, Order());
+      return VQSort(inout, num, Order());
 
     case Algo::kHeap:
-      HWY_ASSERT(sizeof(T) < 16);
-      if (Order().IsAscending()) {
-        const SharedTraits<LaneTraits<detail::OrderAscending>> st;
-        return HeapSort(st, inout, num);
-      } else {
-        const SharedTraits<LaneTraits<detail::OrderDescending>> st;
-        return HeapSort(st, inout, num);
-      }
+      return CallHeapSort<Order>(inout, num);
 
     default:
       HWY_ABORT("Not implemented");

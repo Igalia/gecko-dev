@@ -4,23 +4,22 @@
 // This test verifies that focus is handled correctly when a
 // tab is dragged out to a new window, by checking that the
 // copy and select all commands are enabled properly.
-add_task(async function() {
+add_task(async function () {
   let tab1 = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
-    "http://www.example.com"
+    "https://www.example.com"
   );
   let tab2 = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
-    "http://www.example.com"
+    "https://www.example.com"
   );
 
   let delayedStartupPromise = BrowserTestUtils.waitForNewWindow();
   let win = gBrowser.replaceTabWithWindow(tab2);
   await delayedStartupPromise;
 
-  await BrowserTestUtils.waitForEvent(win.document, "commandupdate");
-
   let copyCommand = win.document.getElementById("cmd_copy");
+  info("Waiting for copy to be enabled");
   await BrowserTestUtils.waitForMutationCondition(
     copyCommand,
     { attributes: true },

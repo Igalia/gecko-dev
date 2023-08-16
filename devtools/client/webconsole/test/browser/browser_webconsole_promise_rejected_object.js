@@ -36,7 +36,7 @@ const TEST_URI = `data:text/html;charset=utf-8,<!DOCTYPE html>
     });
   </script>`;
 
-add_task(async function() {
+add_task(async function () {
   await pushPref("javascript.options.asyncstack_capture_debuggee_only", false);
   const hud = await openNewTabAndConsole(TEST_URI);
 
@@ -65,7 +65,7 @@ add_task(async function() {
       const frames = message.querySelectorAll(
         ".message-body-wrapper > .stacktrace .frame"
       );
-      return frames.length > 0 ? frames : null;
+      return frames.length ? frames : null;
     }, "Couldn't find stacktrace");
 
     const frames = Array.from(framesEl)

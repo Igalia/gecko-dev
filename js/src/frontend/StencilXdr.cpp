@@ -9,18 +9,15 @@
 #include "mozilla/ArrayUtils.h"             // mozilla::ArrayEqual
 #include "mozilla/OperatorNewExtensions.h"  // mozilla::KnownNotNull
 #include "mozilla/ScopeExit.h"              // mozilla::MakeScopeExit
-#include "mozilla/Variant.h"                // mozilla::AsVariant
 
 #include <stddef.h>     // size_t
 #include <stdint.h>     // uint8_t, uint16_t, uint32_t
 #include <type_traits>  // std::has_unique_object_representations
 #include <utility>      // std::forward
 
-#include "ds/LifoAlloc.h"                  // LifoAlloc
-#include "frontend/BytecodeCompilation.h"  // CanLazilyParse
+#include "ds/LifoAlloc.h"                 // LifoAlloc
 #include "frontend/CompilationStencil.h"  // CompilationStencil, ExtensibleCompilationStencil
 #include "frontend/ScriptIndex.h"  // ScriptIndex
-#include "vm/ErrorReporting.h"     // ErrorMetadata, ReportCompileErrorUTF8
 #include "vm/Scope.h"              // SizeOfParserScopeData
 #include "vm/StencilEnums.h"       // js::ImmutableScriptFlagsEnum
 
@@ -53,7 +50,7 @@ static XDRResult XDRVectorUninitialized(XDRState<mode>* xdr,
   if (mode == XDR_DECODE) {
     MOZ_ASSERT(vec.empty());
     if (!vec.resizeUninitialized(length)) {
-      js::ReportOutOfMemory(xdr->cx());
+      js::ReportOutOfMemory(xdr->fc());
       return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
@@ -69,7 +66,7 @@ static XDRResult XDRVectorInitialized(XDRState<mode>* xdr,
   if (mode == XDR_DECODE) {
     MOZ_ASSERT(vec.empty());
     if (!vec.resize(length)) {
-      js::ReportOutOfMemory(xdr->cx());
+      js::ReportOutOfMemory(xdr->fc());
       return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
@@ -113,7 +110,7 @@ static XDRResult XDRSpanInitialized(XDRState<mode>* xdr, LifoAlloc& alloc,
     if (size > 0) {
       auto* p = alloc.template newArrayUninitialized<T>(size);
       if (!p) {
-        js::ReportOutOfMemory(xdr->cx());
+        js::ReportOutOfMemory(xdr->fc());
         return xdr->fail(JS::TranscodeResult::Throw);
       }
       span = mozilla::Span(p, size);
@@ -148,7 +145,7 @@ static XDRResult XDRSpanContent(XDRState<mode>* xdr, LifoAlloc& alloc,
       } else {
         data = alloc.template newArrayUninitialized<T>(size);
         if (!data) {
-          js::ReportOutOfMemory(xdr->cx());
+          js::ReportOutOfMemory(xdr->fc());
           return xdr->fail(JS::TranscodeResult::Throw);
         }
         MOZ_TRY(xdr->codeBytes(data, sizeof(T) * size));
@@ -265,7 +262,7 @@ template <XDRMode mode>
       baseScopeData =
           reinterpret_cast<BaseParserScopeData*>(alloc.alloc(totalLength));
       if (!baseScopeData) {
-        js::ReportOutOfMemory(xdr->cx());
+        js::ReportOutOfMemory(xdr->fc());
         return xdr->fail(JS::TranscodeResult::Throw);
       }
       MOZ_TRY(xdr->codeBytes(baseScopeData, totalLength));
@@ -290,14 +287,15 @@ XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
   static_assert(frontend::CanCopyDataToDisk<TryNote>::value,
                 "TryNote cannot be bulk-copied to disk");
 
-  JSContext* cx = xdr->cx();
-
   uint32_t size;
+  uint32_t hash;
   if (mode == XDR_ENCODE) {
     if (sisd) {
       size = sisd->immutableDataLength();
+      hash = sisd->hash();
     } else {
       size = 0;
+      hash = 0;
     }
   }
   MOZ_TRY(xdr->codeUint32(&size));
@@ -313,13 +311,15 @@ XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
   MOZ_TRY(xdr->align32());
   static_assert(alignof(ImmutableScriptData) <= alignof(uint32_t));
 
+  MOZ_TRY(xdr->codeUint32(&hash));
+
   if constexpr (mode == XDR_ENCODE) {
     uint8_t* data = const_cast<uint8_t*>(sisd->get()->immutableData().data());
     MOZ_ASSERT(data == reinterpret_cast<const uint8_t*>(sisd->get()),
                "Decode below relies on the data placement");
     MOZ_TRY(xdr->codeBytes(data, size));
   } else {
-    sisd = SharedImmutableScriptData::create(cx);
+    sisd = SharedImmutableScriptData::create(xdr->fc());
     if (!sisd) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
@@ -329,15 +329,15 @@ XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
       MOZ_ASSERT(options.borrowBuffer);
       ImmutableScriptData* isd;
       MOZ_TRY(xdr->borrowedData(&isd, size));
-      sisd->setExternal(isd);
+      sisd->setExternal(isd, hash);
     } else {
-      auto isd = ImmutableScriptData::new_(xdr->cx(), size);
+      auto isd = ImmutableScriptData::new_(xdr->fc(), size);
       if (!isd) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
       uint8_t* data = reinterpret_cast<uint8_t*>(isd.get());
       MOZ_TRY(xdr->codeBytes(data, size));
-      sisd->setOwn(std::move(isd));
+      sisd->setOwn(std::move(isd), hash);
     }
 
     if (!sisd->get()->validateLayout(size)) {
@@ -347,7 +347,7 @@ XDRResult StencilXDR::codeSharedData(XDRState<mode>* xdr,
   }
 
   if (mode == XDR_DECODE) {
-    if (!SharedImmutableScriptData::shareScriptData(cx, sisd)) {
+    if (!SharedImmutableScriptData::shareScriptData(xdr->fc(), sisd)) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
   }
@@ -404,7 +404,7 @@ template <XDRMode mode>
 
     case Kind::Vector: {
       if (mode == XDR_DECODE) {
-        if (!sharedData.initVector(xdr->cx())) {
+        if (!sharedData.initVector(xdr->fc())) {
           return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
@@ -420,7 +420,7 @@ template <XDRMode mode>
 
     case Kind::Map: {
       if (mode == XDR_DECODE) {
-        if (!sharedData.initMap(xdr->cx())) {
+        if (!sharedData.initMap(xdr->fc())) {
           return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
@@ -432,7 +432,7 @@ template <XDRMode mode>
       MOZ_TRY(xdr->codeUint32(&count));
       if (mode == XDR_DECODE) {
         if (!map.reserve(count)) {
-          js::ReportOutOfMemory(xdr->cx());
+          js::ReportOutOfMemory(xdr->fc());
           return xdr->fail(JS::TranscodeResult::Throw);
         }
       }
@@ -453,7 +453,7 @@ template <XDRMode mode>
           MOZ_TRY(codeSharedData<mode>(xdr, data));
 
           if (!map.putNew(index, data)) {
-            js::ReportOutOfMemory(xdr->cx());
+            js::ReportOutOfMemory(xdr->fc());
             return xdr->fail(JS::TranscodeResult::Throw);
           }
         }
@@ -498,7 +498,7 @@ template <XDRMode mode>
     } else {
       *atomp = reinterpret_cast<ParserAtom*>(alloc.alloc(totalLength));
       if (!*atomp) {
-        js::ReportOutOfMemory(xdr->cx());
+        js::ReportOutOfMemory(xdr->fc());
         return xdr->fail(JS::TranscodeResult::Throw);
       }
       MOZ_TRY(xdr->codeBytes(*atomp, totalLength));
@@ -549,7 +549,7 @@ template <XDRMode mode>
   MOZ_TRY(XDRAtomCount(xdr, &atomVectorLength));
 
   frontend::ParserAtomSpanBuilder builder(parserAtomData);
-  if (!builder.allocate(xdr->cx(), alloc, atomVectorLength)) {
+  if (!builder.allocate(xdr->fc(), alloc, atomVectorLength)) {
     return xdr->fail(JS::TranscodeResult::Throw);
   }
 
@@ -573,15 +573,35 @@ template <XDRMode mode>
 }
 
 template <XDRMode mode>
+/* static */ XDRResult StencilXDR::codeModuleRequest(
+    XDRState<mode>* xdr, StencilModuleRequest& stencil) {
+  MOZ_TRY(xdr->codeUint32(stencil.specifier.rawDataRef()));
+  MOZ_TRY(XDRVectorContent(xdr, stencil.assertions));
+
+  return Ok();
+}
+
+template <XDRMode mode>
+/* static */ XDRResult StencilXDR::codeModuleRequestVector(
+    XDRState<mode>* xdr, StencilModuleMetadata::RequestVector& vector) {
+  MOZ_TRY(XDRVectorInitialized(xdr, vector));
+
+  for (auto& entry : vector) {
+    MOZ_TRY(codeModuleRequest<mode>(xdr, entry));
+  }
+
+  return Ok();
+}
+
+template <XDRMode mode>
 /* static */ XDRResult StencilXDR::codeModuleEntry(
     XDRState<mode>* xdr, StencilModuleEntry& stencil) {
-  MOZ_TRY(xdr->codeUint32(stencil.specifier.rawDataRef()));
+  MOZ_TRY(xdr->codeUint32(&stencil.moduleRequest));
   MOZ_TRY(xdr->codeUint32(stencil.localName.rawDataRef()));
   MOZ_TRY(xdr->codeUint32(stencil.importName.rawDataRef()));
   MOZ_TRY(xdr->codeUint32(stencil.exportName.rawDataRef()));
   MOZ_TRY(xdr->codeUint32(&stencil.lineno));
   MOZ_TRY(xdr->codeUint32(&stencil.column));
-  MOZ_TRY(XDRVectorContent(xdr, stencil.assertions));
 
   return Ok();
 }
@@ -601,6 +621,7 @@ template <XDRMode mode>
 template <XDRMode mode>
 /* static */ XDRResult StencilXDR::codeModuleMetadata(
     XDRState<mode>* xdr, StencilModuleMetadata& stencil) {
+  MOZ_TRY(codeModuleRequestVector(xdr, stencil.moduleRequests));
   MOZ_TRY(codeModuleEntryVector(xdr, stencil.requestedModules));
   MOZ_TRY(codeModuleEntryVector(xdr, stencil.importEntries));
   MOZ_TRY(codeModuleEntryVector(xdr, stencil.localExportEntries));
@@ -758,9 +779,6 @@ template <XDRMode mode>
   MOZ_TRY(xdr->codeUint8(&canLazilyParse));
   if (mode == XDR_DECODE) {
     stencil.canLazilyParse = canLazilyParse;
-    // NOTE: stencil.canLazilyParse can be different than
-    //       CanLazilyParse(static_cast<XDRStencilDecoder*>(xdr)->options()).
-    //       See bug 1726498 for removing the redundancy.
   }
 
   MOZ_TRY(xdr->codeUint32(&stencil.functionKey));
@@ -835,7 +853,7 @@ template <XDRMode mode>
   if (stencil.scriptExtra[CompilationStencil::TopLevelIndex].isModule()) {
     if (mode == XDR_DECODE) {
       stencil.moduleMetadata =
-          xdr->cx()->template new_<StencilModuleMetadata>();
+          xdr->fc()->getAllocator()->template new_<StencilModuleMetadata>();
       if (!stencil.moduleMetadata) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
@@ -881,7 +899,7 @@ struct UnretrievableSourceDecoder {
         uncompressedLength_(uncompressedLength) {}
 
   XDRResult decode() {
-    auto sourceUnits = xdr_->cx()->make_pod_array<Unit>(
+    auto sourceUnits = xdr_->fc()->getAllocator()->make_pod_array<Unit>(
         std::max<size_t>(uncompressedLength_, 1));
     if (!sourceUnits) {
       return xdr_->fail(JS::TranscodeResult::Throw);
@@ -890,7 +908,7 @@ struct UnretrievableSourceDecoder {
     MOZ_TRY(xdr_->codeChars(sourceUnits.get(), uncompressedLength_));
 
     if (!scriptSource_->initializeUnretrievableUncompressedSource(
-            xdr_->cx(), std::move(sourceUnits), uncompressedLength_)) {
+            xdr_->fc(), std::move(sourceUnits), uncompressedLength_)) {
       return xdr_->fail(JS::TranscodeResult::Throw);
     }
 
@@ -1003,14 +1021,15 @@ XDRResult StencilXDR::codeSourceCompressedData(XDRState<mode>* const xdr,
 
   if (mode == XDR_DECODE) {
     // Compressed data is always single-byte chars.
-    auto bytes = xdr->cx()->template make_pod_array<char>(compressedLength);
+    auto bytes = xdr->fc()->getAllocator()->template make_pod_array<char>(
+        compressedLength);
     if (!bytes) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
     MOZ_TRY(xdr->codeBytes(bytes.get(), compressedLength));
 
     if (!ss->initializeWithUnretrievableCompressedSource<Unit>(
-            xdr->cx(), std::move(bytes), compressedLength,
+            xdr->fc(), std::move(bytes), compressedLength,
             uncompressedLength)) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
@@ -1199,11 +1218,11 @@ template <XDRMode mode>
 XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
                                  const JS::DecodeOptions* maybeOptions,
                                  RefPtr<ScriptSource>& source) {
-  JSContext* cx = xdr->cx();
+  FrontendContext* fc = xdr->fc();
 
   if (mode == XDR_DECODE) {
     // Allocate a new ScriptSource and root it with the holder.
-    source = do_AddRef(cx->new_<ScriptSource>());
+    source = do_AddRef(fc->getAllocator()->new_<ScriptSource>());
     if (!source) {
       return xdr->fail(JS::TranscodeResult::Throw);
     }
@@ -1240,7 +1259,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
     }
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
-      if (!source->setFilename(cx, std::move(chars.ref<UniqueChars>()))) {
+      if (!source->setFilename(fc, std::move(chars.ref<UniqueChars>()))) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
@@ -1254,7 +1273,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
     }
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
-      if (!source->setDisplayURL(cx,
+      if (!source->setDisplayURL(fc,
                                  std::move(chars.ref<UniqueTwoByteChars>()))) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
@@ -1270,7 +1289,7 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
     MOZ_TRY(xdr->codeCharsZ(chars));
     if (mode == XDR_DECODE) {
       if (!source->setSourceMapURL(
-              cx, std::move(chars.ref<UniqueTwoByteChars>()))) {
+              fc, std::move(chars.ref<UniqueTwoByteChars>()))) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
@@ -1285,14 +1304,15 @@ XDRResult StencilXDR::codeSource(XDRState<mode>* xdr,
   }
 
   MOZ_TRY(xdr->codeUint32(&source->startLine_));
+  MOZ_TRY(xdr->codeUint32(&source->startColumn_));
 
   // The introduction info doesn't persist across encode/decode.
   if (mode == XDR_DECODE) {
     source->introductionType_ = maybeOptions->introductionType;
     source->setIntroductionOffset(maybeOptions->introductionOffset);
     if (maybeOptions->introducerFilename) {
-      if (!source->setIntroducerFilename(cx,
-                                         maybeOptions->introducerFilename)) {
+      if (!source->setIntroducerFilename(
+              fc, maybeOptions->introducerFilename.c_str())) {
         return xdr->fail(JS::TranscodeResult::Throw);
       }
     }
@@ -1344,7 +1364,7 @@ template <XDRMode mode>
 static XDRResult VersionCheck(XDRState<mode>* xdr) {
   JS::BuildIdCharVector buildId;
   if (!JS::GetScriptTranscodingBuildId(&buildId)) {
-    ReportOutOfMemory(xdr->cx());
+    ReportOutOfMemory(xdr->fc());
     return xdr->fail(JS::TranscodeResult::Throw);
   }
   MOZ_ASSERT(!buildId.empty());
@@ -1368,7 +1388,7 @@ static XDRResult VersionCheck(XDRState<mode>* xdr) {
     // buildIdLength is already checked against the length of current
     // buildId.
     if (!decodedBuildId.resize(buildIdLength)) {
-      ReportOutOfMemory(xdr->cx());
+      ReportOutOfMemory(xdr->fc());
       return xdr->fail(JS::TranscodeResult::Throw);
     }
 
@@ -1402,7 +1422,7 @@ XDRResult XDRStencilEncoder::codeStencil(
     const frontend::CompilationStencil& stencil) {
 #ifdef DEBUG
   auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
+      [&] { MOZ_ASSERT(validateResultCode(fc(), resultCode())); });
 #endif
 
   MOZ_TRY(frontend::StencilXDR::checkCompilationStencil(this, stencil));
@@ -1430,26 +1450,28 @@ void StencilIncrementalEncoderPtr::reset() {
 bool StencilIncrementalEncoderPtr::setInitial(
     JSContext* cx,
     UniquePtr<frontend::ExtensibleCompilationStencil>&& initial) {
-  merger_ = cx->new_<frontend::CompilationStencilMerger>();
+  AutoReportFrontendContext fc(cx);
+  merger_ = fc.getAllocator()->new_<frontend::CompilationStencilMerger>();
   if (!merger_) {
     return false;
   }
 
   return merger_->setInitial(
-      cx,
+      &fc,
       std::forward<UniquePtr<frontend::ExtensibleCompilationStencil>>(initial));
 }
 
 bool StencilIncrementalEncoderPtr::addDelazification(
     JSContext* cx, const frontend::CompilationStencil& delazification) {
-  return merger_->addDelazification(cx, delazification);
+  AutoReportFrontendContext fc(cx);
+  return merger_->addDelazification(&fc, delazification);
 }
 
 XDRResult XDRStencilDecoder::codeStencil(
     const JS::DecodeOptions& options, frontend::CompilationStencil& stencil) {
 #ifdef DEBUG
   auto sanityCheck = mozilla::MakeScopeExit(
-      [&] { MOZ_ASSERT(validateResultCode(cx(), resultCode())); });
+      [&] { MOZ_ASSERT(validateResultCode(fc(), resultCode())); });
 #endif
 
   auto resetOptions = mozilla::MakeScopeExit([&] { options_ = nullptr; });

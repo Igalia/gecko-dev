@@ -13,10 +13,11 @@
 #include <utility>
 #include <vector>
 
-#include "absl/memory/memory.h"
+#include "api/sequence_checker.h"
+#include "api/task_queue/task_queue_factory.h"
 #include "modules/rtp_rtcp/source/rtp_descriptor_authentication.h"
-#include "modules/rtp_rtcp/source/rtp_sender_video.h"
-#include "rtc_base/task_utils/to_queued_task.h"
+#include "rtc_base/checks.h"
+#include "rtc_base/event.h"
 
 namespace webrtc {
 namespace {
@@ -30,17 +31,25 @@ class TransformableVideoSenderFrame : public TransformableVideoFrameInterface {
       absl::optional<VideoCodecType> codec_type,
       uint32_t rtp_timestamp,
       absl::optional<int64_t> expected_retransmission_time_ms,
-      uint32_t ssrc)
+      uint32_t ssrc,
+      std::vector<uint32_t> csrcs,
+      const std::string& rid)
       : encoded_data_(encoded_image.GetEncodedData()),
         header_(video_header),
-        metadata_(header_),
         frame_type_(encoded_image._frameType),
         payload_type_(payload_type),
         codec_type_(codec_type),
         timestamp_(rtp_timestamp),
         capture_time_ms_(encoded_image.capture_time_ms_),
+        capture_time_identifier_(encoded_image.CaptureTimeIdentifier()),
         expected_retransmission_time_ms_(expected_retransmission_time_ms),
-        ssrc_(ssrc) {}
+        ssrc_(ssrc),
+        csrcs_(csrcs),
+        metadata_(Metadata()),
+        rid_(rid) {
+    RTC_DCHECK_GE(payload_type_, 0);
+    RTC_DCHECK_LE(payload_type_, 127);
+  }
 
   ~TransformableVideoSenderFrame() override = default;
 
@@ -60,44 +69,77 @@ class TransformableVideoSenderFrame : public TransformableVideoFrameInterface {
     return frame_type_ == VideoFrameType::kVideoFrameKey;
   }
 
-  std::vector<uint8_t> GetAdditionalData() const override {
-    return RtpDescriptorAuthentication(header_);
-  }
-
   const VideoFrameMetadata& GetMetadata() const override { return metadata_; }
 
+  VideoFrameMetadata Metadata() const override {
+    VideoFrameMetadata metadata = header_.GetAsMetadata();
+    metadata.SetSsrc(ssrc_);
+    metadata.SetCsrcs(csrcs_);
+    return metadata;
+  }
+
+  void SetMetadata(const VideoFrameMetadata& metadata) override {
+    header_.SetFromMetadata(metadata);
+    ssrc_ = metadata.GetSsrc();
+    csrcs_ = metadata.GetCsrcs();
+    // Cache a copy to allow GetMetadata() to return references.
+    // TODO(crbug.com/webrtc/14709): Remove once GetMetadata() is removed.
+    metadata_ = Metadata();
+  }
+
   const RTPVideoHeader& GetHeader() const { return header_; }
-  int GetPayloadType() const { return payload_type_; }
+  uint8_t GetPayloadType() const override { return payload_type_; }
   absl::optional<VideoCodecType> GetCodecType() const { return codec_type_; }
   int64_t GetCaptureTimeMs() const { return capture_time_ms_; }
+  absl::optional<Timestamp> GetCaptureTimeIdentifier() const override {
+    return capture_time_identifier_;
+  }
 
   const absl::optional<int64_t>& GetExpectedRetransmissionTimeMs() const {
     return expected_retransmission_time_ms_;
   }
 
+  Direction GetDirection() const override { return Direction::kSender; }
+
+  const std::string& GetRid() const override { return rid_; }
+
  private:
   rtc::scoped_refptr<EncodedImageBufferInterface> encoded_data_;
-  const RTPVideoHeader header_;
-  const VideoFrameMetadata metadata_;
+  RTPVideoHeader header_;
   const VideoFrameType frame_type_;
-  const int payload_type_;
+  const uint8_t payload_type_;
   const absl::optional<VideoCodecType> codec_type_ = absl::nullopt;
   const uint32_t timestamp_;
   const int64_t capture_time_ms_;
+  const absl::optional<Timestamp> capture_time_identifier_;
   const absl::optional<int64_t> expected_retransmission_time_ms_;
-  const uint32_t ssrc_;
+
+  uint32_t ssrc_;
+  std::vector<uint32_t> csrcs_;
+
+  // This is a copy of the value returned by `Metadata()`, only needed because
+  // the interface says GetMetadata() must return a const ref rather than a
+  // value.
+  // TODO(crbug.com/webrtc/14709): Delete once GetMetdata() is removed.
+  VideoFrameMetadata metadata_;
+  const std::string rid_;
 };
 }  // namespace
 
 RTPSenderVideoFrameTransformerDelegate::RTPSenderVideoFrameTransformerDelegate(
-    RTPSenderVideo* sender,
+    RTPVideoFrameSenderInterface* sender,
     rtc::scoped_refptr<FrameTransformerInterface> frame_transformer,
     uint32_t ssrc,
-    TaskQueueBase* send_transport_queue)
+    std::vector<uint32_t> csrcs,
+    const std::string& rid,
+    TaskQueueFactory* task_queue_factory)
     : sender_(sender),
       frame_transformer_(std::move(frame_transformer)),
       ssrc_(ssrc),
-      send_transport_queue_(send_transport_queue) {}
+      rid_(rid),
+      transformation_queue_(task_queue_factory->CreateTaskQueue(
+          "video_frame_transformer",
+          TaskQueueFactory::Priority::NORMAL)) {}
 
 void RTPSenderVideoFrameTransformerDelegate::Init() {
   frame_transformer_->RegisterTransformedFrameSinkCallback(
@@ -111,17 +153,9 @@ bool RTPSenderVideoFrameTransformerDelegate::TransformFrame(
     const EncodedImage& encoded_image,
     RTPVideoHeader video_header,
     absl::optional<int64_t> expected_retransmission_time_ms) {
-  if (!encoder_queue_) {
-    // Save the current task queue to post the transformed frame for sending
-    // once it is transformed. When there is no current task queue, i.e.
-    // encoding is done on an external thread (for example in the case of
-    // hardware encoders), use the send transport queue instead.
-    TaskQueueBase* current = TaskQueueBase::Current();
-    encoder_queue_ = current ? current : send_transport_queue_;
-  }
   frame_transformer_->Transform(std::make_unique<TransformableVideoSenderFrame>(
       encoded_image, video_header, payload_type, codec_type, rtp_timestamp,
-      expected_retransmission_time_ms, ssrc_));
+      expected_retransmission_time_ms, ssrc_, csrcs_, rid_));
   return true;
 }
 
@@ -129,40 +163,49 @@ void RTPSenderVideoFrameTransformerDelegate::OnTransformedFrame(
     std::unique_ptr<TransformableFrameInterface> frame) {
   MutexLock lock(&sender_lock_);
 
-  // The encoder queue gets destroyed after the sender; as long as the sender is
-  // alive, it's safe to post.
-  if (!sender_)
+  if (!sender_) {
     return;
-  rtc::scoped_refptr<RTPSenderVideoFrameTransformerDelegate> delegate = this;
-  encoder_queue_->PostTask(ToQueuedTask(
+  }
+  rtc::scoped_refptr<RTPSenderVideoFrameTransformerDelegate> delegate(this);
+  transformation_queue_->PostTask(
       [delegate = std::move(delegate), frame = std::move(frame)]() mutable {
+        RTC_DCHECK_RUN_ON(delegate->transformation_queue_.get());
         delegate->SendVideo(std::move(frame));
-      }));
+      });
 }
 
 void RTPSenderVideoFrameTransformerDelegate::SendVideo(
     std::unique_ptr<TransformableFrameInterface> transformed_frame) const {
-  RTC_CHECK(encoder_queue_->IsCurrent());
+  RTC_DCHECK_RUN_ON(transformation_queue_.get());
+  RTC_CHECK_EQ(transformed_frame->GetDirection(),
+               TransformableFrameInterface::Direction::kSender);
   MutexLock lock(&sender_lock_);
   if (!sender_)
     return;
   auto* transformed_video_frame =
       static_cast<TransformableVideoSenderFrame*>(transformed_frame.get());
-  sender_->SendVideo(
-      transformed_video_frame->GetPayloadType(),
-      transformed_video_frame->GetCodecType(),
-      transformed_video_frame->GetTimestamp(),
-      transformed_video_frame->GetCaptureTimeMs(),
-      transformed_video_frame->GetData(),
-      transformed_video_frame->GetHeader(),
-      transformed_video_frame->GetExpectedRetransmissionTimeMs());
+  sender_->SendVideo(transformed_video_frame->GetPayloadType(),
+                     transformed_video_frame->GetCodecType(),
+                     transformed_video_frame->GetTimestamp(),
+                     transformed_video_frame->GetCaptureTimeMs(),
+                     transformed_video_frame->GetData(),
+                     transformed_video_frame->GetHeader(),
+                     transformed_video_frame->GetExpectedRetransmissionTimeMs(),
+                     transformed_video_frame->GetMetadata().GetCsrcs());
 }
 
 void RTPSenderVideoFrameTransformerDelegate::SetVideoStructureUnderLock(
     const FrameDependencyStructure* video_structure) {
   MutexLock lock(&sender_lock_);
   RTC_CHECK(sender_);
-  sender_->SetVideoStructureUnderLock(video_structure);
+  sender_->SetVideoStructureAfterTransformation(video_structure);
+}
+
+void RTPSenderVideoFrameTransformerDelegate::SetVideoLayersAllocationUnderLock(
+    VideoLayersAllocation allocation) {
+  MutexLock lock(&sender_lock_);
+  RTC_CHECK(sender_);
+  sender_->SetVideoLayersAllocationAfterTransformation(std::move(allocation));
 }
 
 void RTPSenderVideoFrameTransformerDelegate::Reset() {
@@ -172,5 +215,34 @@ void RTPSenderVideoFrameTransformerDelegate::Reset() {
     MutexLock lock(&sender_lock_);
     sender_ = nullptr;
   }
+  // Wait until all pending tasks are executed, to ensure that the last ref
+  // standing is not on the transformation queue.
+  rtc::Event flush;
+  transformation_queue_->PostTask([this, &flush]() {
+    RTC_DCHECK_RUN_ON(transformation_queue_.get());
+    flush.Set();
+  });
+  flush.Wait(rtc::Event::kForever);
 }
+
+std::unique_ptr<TransformableVideoFrameInterface> CloneSenderVideoFrame(
+    TransformableVideoFrameInterface* original) {
+  auto encoded_image_buffer = EncodedImageBuffer::Create(
+      original->GetData().data(), original->GetData().size());
+  EncodedImage encoded_image;
+  encoded_image.SetEncodedData(encoded_image_buffer);
+  encoded_image._frameType = original->IsKeyFrame()
+                                 ? VideoFrameType::kVideoFrameKey
+                                 : VideoFrameType::kVideoFrameDelta;
+  // TODO(bugs.webrtc.org/14708): Fill in other EncodedImage parameters
+
+  VideoFrameMetadata metadata = original->Metadata();
+  RTPVideoHeader new_header = RTPVideoHeader::FromMetadata(metadata);
+  return std::make_unique<TransformableVideoSenderFrame>(
+      encoded_image, new_header, original->GetPayloadType(), new_header.codec,
+      original->GetTimestamp(),
+      absl::nullopt,  // expected_retransmission_time_ms
+      original->GetSsrc(), metadata.GetCsrcs(), original->GetRid());
+}
+
 }  // namespace webrtc

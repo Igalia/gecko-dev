@@ -4,13 +4,10 @@
 
 "use strict";
 
-const Services = require("Services");
-const InspectorUtils = require("InspectorUtils");
-
 loader.lazyRequireGetter(
   this,
   "CssLogic",
-  "devtools/server/actors/inspector/css-logic",
+  "resource://devtools/server/actors/inspector/css-logic.js",
   true
 );
 
@@ -73,6 +70,20 @@ const REPLACED_ELEMENTS_NAMES = new Set([
   "video",
 ]);
 
+const HIGHLIGHT_PSEUDO_ELEMENTS_STYLING_SPEC_URL =
+  "https://www.w3.org/TR/css-pseudo-4/#highlight-styling";
+const HIGHLIGHT_PSEUDO_ELEMENTS = [
+  "::highlight",
+  "::selection",
+  // Below are properties not yet implemented in Firefox (Bug 1694053)
+  "::grammar-error",
+  "::spelling-error",
+  "::target-text",
+];
+const REGEXP_HIGHLIGHT_PSEUDO_ELEMENTS = new RegExp(
+  `${HIGHLIGHT_PSEUDO_ELEMENTS.join("|")}`
+);
+
 class InactivePropertyHelper {
   /**
    * A list of rules for when CSS properties have no effect.
@@ -90,7 +101,7 @@ class InactivePropertyHelper {
    * properties:
    * {
    *   invalidProperties:
-   *     Array of CSS property names that are inactive if the rule matches.
+   *     Set of CSS property names that are inactive if the rule matches.
    *   when:
    *     The rule itself, a JS function used to identify the conditions
    *     indicating whether a property is valid or not.
@@ -122,7 +133,7 @@ class InactivePropertyHelper {
    * <ol> element, or even the <html> element) in order to concisely adjust the
    * rendering of a whole list (or all the lists in a document).
    */
-  get VALIDATORS() {
+  get INVALID_PROPERTIES_VALIDATORS() {
     return [
       // Flex container property used on non-flex container.
       {
@@ -303,18 +314,19 @@ class InactivePropertyHelper {
         fixId: "inactive-css-position-property-on-unpositioned-box-fix",
         msgId: "inactive-css-position-property-on-unpositioned-box",
       },
-      // text-overflow property used on elements for which overflow is not set to hidden.
-      // Note that this validator only checks if overflow:hidden is set on the element.
+      // text-overflow property used on elements for which 'overflow' is set to 'visible'
+      // (the initial value) in the inline axis. Note that this validator only checks if
+      // 'overflow-inline' computes to 'visible' on the element.
       // In theory, we should also be checking if the element is a block as this doesn't
       // normally work on inline element. However there are many edge cases that made it
       // impossible for the JS code to determine whether the type of box would support
       // text-overflow. So, rather than risking to show invalid warnings, we decided to
-      // only warn when overflow:hidden wasn't set. There is more information about this
-      // in this discussion https://phabricator.services.mozilla.com/D62407 and on the bug
-      // https://bugzilla.mozilla.org/show_bug.cgi?id=1551578
+      // only warn when 'overflow-inline: visible' was set. There is more information
+      // about this in this discussion https://phabricator.services.mozilla.com/D62407 and
+      // on the bug https://bugzilla.mozilla.org/show_bug.cgi?id=1551578
       {
         invalidProperties: ["text-overflow"],
-        when: () => !this.hasInlineOverflow,
+        when: () => this.checkComputedStyle("overflow-inline", ["visible"]),
         fixId: "inactive-text-overflow-when-no-overflow-fix",
         msgId: "inactive-text-overflow-when-no-overflow",
       },
@@ -421,6 +433,70 @@ class InactivePropertyHelper {
   }
 
   /**
+   * A list of rules for when CSS properties have no effect,
+   * based on an allow list of properties.
+   * We're setting this as a different array than INVALID_PROPERTIES_VALIDATORS as we
+   * need to check every properties, which we don't do for invalid properties ( see check
+   * on this.invalidProperties).
+   *
+   * This file contains "rules" in the form of objects with the following
+   * properties:
+   * {
+   *   acceptedProperties:
+   *     Array of CSS property names that are the only one accepted if the rule matches.
+   *   when:
+   *     The rule itself, a JS function used to identify the conditions
+   *     indicating whether a property is valid or not.
+   *   fixId:
+   *     A Fluent id containing a suggested solution to the problem that is
+   *     causing a property to be inactive.
+   *   msgId:
+   *     A Fluent id containing an error message explaining why a property is
+   *     inactive in this situation.
+   * }
+   *
+   * If you add a new rule, also add a test for it in:
+   * server/tests/chrome/test_inspector-inactive-property-helper.html
+   *
+   * The main export is `isPropertyUsed()`, which can be used to check if a
+   * property is used or not, and why.
+   */
+  ACCEPTED_PROPERTIES_VALIDATORS = [
+    // Constrained set of properties on highlight pseudo-elements
+    {
+      acceptedProperties: new Set([
+        // At the moment, for shorthand we don't look into each properties it covers,
+        // and so, although `background` might hold inactive values (e.g. background-image)
+        // we don't want to mark it as inactive if it sets a background-color (e.g. background: red).
+        "background",
+        "background-color",
+        "color",
+        "text-decoration",
+        "text-decoration-color",
+        "text-decoration-line",
+        "text-decoration-style",
+        "text-decoration-thickness",
+        "text-shadow",
+        "text-underline-offset",
+        "text-underline-position",
+        "-webkit-text-fill-color",
+        "-webkit-text-stroke-color",
+        "-webkit-text-stroke-width",
+        "-webkit-text-stroke",
+      ]),
+      when: () => {
+        const { selectorText } = this.cssRule;
+        return (
+          selectorText && REGEXP_HIGHLIGHT_PSEUDO_ELEMENTS.test(selectorText)
+        );
+      },
+      msgId: "inactive-css-highlight-pseudo-elements-not-supported",
+      fixId: "learn-more",
+      learnMoreURL: HIGHLIGHT_PSEUDO_ELEMENTS_STYLING_SPEC_URL,
+    },
+  ];
+
+  /**
    * Get a list of unique CSS property names for which there are checks
    * for used/unused state.
    *
@@ -429,7 +505,9 @@ class InactivePropertyHelper {
    */
   get invalidProperties() {
     if (!this._invalidProperties) {
-      const allProps = this.VALIDATORS.map(v => v.invalidProperties).flat();
+      const allProps = this.INVALID_PROPERTIES_VALIDATORS.map(
+        v => v.invalidProperties
+      ).flat();
       this._invalidProperties = new Set(allProps);
     }
 
@@ -466,10 +544,8 @@ class InactivePropertyHelper {
    *         true if the property is used.
    */
   isPropertyUsed(el, elStyle, cssRule, property) {
-    // Assume the property is used when:
-    // - the Inactive CSS pref is not enabled
-    // - the property is not in the list of properties to check
-    if (!INACTIVE_CSS_ENABLED || !this.invalidProperties.has(property)) {
+    // Assume the property is used when the Inactive CSS pref is not enabled
+    if (!INACTIVE_CSS_ENABLED) {
       return { used: true };
     }
 
@@ -478,12 +554,14 @@ class InactivePropertyHelper {
     let learnMoreURL = null;
     let used = true;
 
-    this.VALIDATORS.some(validator => {
+    const someFn = validator => {
       // First check if this rule cares about this property.
       let isRuleConcerned = false;
 
       if (validator.invalidProperties) {
         isRuleConcerned = validator.invalidProperties.includes(property);
+      } else if (validator.acceptedProperties) {
+        isRuleConcerned = !validator.acceptedProperties.has(property);
       }
 
       if (!isRuleConcerned) {
@@ -500,11 +578,28 @@ class InactivePropertyHelper {
         learnMoreURL = validator.learnMoreURL;
         used = false;
 
+        // We can bail out as soon as a validator reported an issue.
         return true;
       }
 
       return false;
-    });
+    };
+
+    // First run the accepted properties validators
+    const isNotAccepted = this.ACCEPTED_PROPERTIES_VALIDATORS.some(someFn);
+
+    // If the property is not in the list of properties to check and there was no issues
+    // in the accepted properties validators, assume the property is used.
+    if (!isNotAccepted && !this.invalidProperties.has(property)) {
+      this.unselect();
+      return { used: true };
+    }
+
+    // Otherwise, if there was no issue from the accepted properties validators,
+    // run the invalid properties validators.
+    if (!isNotAccepted) {
+      this.INVALID_PROPERTIES_VALIDATORS.some(someFn);
+    }
 
     this.unselect();
 
@@ -850,17 +945,6 @@ class InactivePropertyHelper {
   }
 
   /**
-   * Check if the current node has inline overflow
-   */
-  get hasInlineOverflow() {
-    const property = this.hasVerticalWritingMode(this.node)
-      ? "overflow-y"
-      : "overflow-x";
-
-    return !this.checkComputedStyle(property, ["visible"]);
-  }
-
-  /**
    * Check if the current node is a replaced element i.e. an element with
    * content that will be replaced e.g. <img>, <audio>, <video> or <object>
    * elements.
@@ -975,13 +1059,7 @@ class InactivePropertyHelper {
     for (let i = 0; i < selectors.length; i++) {
       if (
         !selectors[i].endsWith(":visited") &&
-        InspectorUtils.selectorMatchesElement(
-          bindingElement,
-          this.cssRule,
-          i,
-          pseudo,
-          true
-        )
+        this.cssRule.selectorMatchesElement(i, bindingElement, pseudo, true)
       ) {
         // Match non :visited selector.
         return false;
@@ -1061,8 +1139,9 @@ class InactivePropertyHelper {
    * Check if the given node's writing mode is vertical
    */
   hasVerticalWritingMode(node) {
-    const writingMode = computedStyle(node).writingMode;
-    return writingMode.includes("vertical") || writingMode.includes("sideways");
+    // Only 'horizontal-tb' has a horizontal writing mode.
+    // See https://drafts.csswg.org/css-writing-modes-4/#propdef-writing-mode
+    return computedStyle(node).writingMode !== "horizontal-tb";
   }
 
   /**

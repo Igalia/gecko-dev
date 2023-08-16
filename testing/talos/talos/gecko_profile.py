@@ -5,16 +5,14 @@
 """
 module to handle Gecko profiling.
 """
-from __future__ import absolute_import
-
 import json
 import os
 import tempfile
 import zipfile
 
 import mozfile
-from mozlog import get_proxy_logger
 from mozgeckoprofiler import ProfileSymbolicator, save_gecko_profile
+from mozlog import get_proxy_logger
 
 LOG = get_proxy_logger()
 
@@ -39,7 +37,7 @@ class GeckoProfile(object):
         gecko_profile_interval = test_config.get("gecko_profile_interval", 1)
         gecko_profile_entries = test_config.get("gecko_profile_entries", 1000000)
         gecko_profile_features = test_config.get(
-            "gecko_profile_features", "js,leaf,stackwalk,cpu"
+            "gecko_profile_features", "js,stackwalk,cpu,screenshots"
         )
         gecko_profile_threads = test_config.get(
             "gecko_profile_threads", "GeckoMain,Compositor"
@@ -142,7 +140,7 @@ class GeckoProfile(object):
                 # Trace-level logging (verbose)
                 "enableTracing": 0,
                 # Fallback server if symbol is not found locally
-                "remoteSymbolServer": "https://symbols.mozilla.org/symbolicate/v4",
+                "remoteSymbolServer": "https://symbolication.services.mozilla.com/symbolicate/v4",
                 # Maximum number of symbol files to keep in memory
                 "maxCacheEntries": 2000000,
                 # Frequency of checking for recent symbols to

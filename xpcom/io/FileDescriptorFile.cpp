@@ -274,7 +274,9 @@ FileDescriptorFile::RenameToNative(nsIFile* aNewParentDir,
 }
 
 NS_IMETHODIMP
-FileDescriptorFile::Remove(bool aRecursive) { return NS_ERROR_NOT_IMPLEMENTED; }
+FileDescriptorFile::Remove(bool aRecursive, uint32_t* aRemoveCount) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
 
 NS_IMETHODIMP
 FileDescriptorFile::GetPermissions(uint32_t* aPermissions) {
@@ -293,6 +295,26 @@ FileDescriptorFile::GetPermissionsOfLink(uint32_t* aPermissionsOfLink) {
 
 NS_IMETHODIMP
 FileDescriptorFile::SetPermissionsOfLink(uint32_t aPermissions) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+FileDescriptorFile::GetLastAccessedTime(PRTime* aLastAccessedTime) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+FileDescriptorFile::SetLastAccessedTime(PRTime aLastAccessedTime) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+FileDescriptorFile::GetLastAccessedTimeOfLink(PRTime* aLastAccessedTime) {
+  return NS_ERROR_NOT_IMPLEMENTED;
+}
+
+NS_IMETHODIMP
+FileDescriptorFile::SetLastAccessedTimeOfLink(PRTime aLastAccessedTime) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

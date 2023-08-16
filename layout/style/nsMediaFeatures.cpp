@@ -19,6 +19,7 @@
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/DocumentInlines.h"
 #include "mozilla/dom/BrowsingContextBinding.h"
+#include "mozilla/dom/ScreenBinding.h"
 #include "nsIWidget.h"
 #include "nsContentUtils.h"
 #include "mozilla/RelativeLuminanceUtils.h"
@@ -37,8 +38,8 @@ using mozilla::dom::DisplayMode;
 using mozilla::dom::Document;
 
 // A helper for four features below
-static nsSize GetSize(const Document* aDocument) {
-  nsPresContext* pc = aDocument->GetPresContext();
+static nsSize GetSize(const Document& aDocument) {
+  nsPresContext* pc = aDocument.GetPresContext();
 
   // Per spec, return a 0x0 viewport if we're not being rendered. See:
   //
@@ -60,20 +61,20 @@ static nsSize GetSize(const Document* aDocument) {
 }
 
 // A helper for three features below.
-static nsSize GetDeviceSize(const Document* aDocument) {
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+static nsSize GetDeviceSize(const Document& aDocument) {
+  if (aDocument.ShouldResistFingerprinting(RFPTarget::CSSDeviceSize)) {
     return GetSize(aDocument);
   }
 
   // Media queries in documents in an RDM pane should use the simulated
   // device size.
   Maybe<CSSIntSize> deviceSize =
-      nsGlobalWindowOuter::GetRDMDeviceSize(*aDocument);
+      nsGlobalWindowOuter::GetRDMDeviceSize(aDocument);
   if (deviceSize.isSome()) {
     return CSSPixel::ToAppUnits(deviceSize.value());
   }
 
-  nsPresContext* pc = aDocument->GetPresContext();
+  nsPresContext* pc = aDocument.GetPresContext();
   // NOTE(emilio): We should probably figure out how to return an appropriate
   // device size here, though in a multi-screen world that makes no sense
   // really.
@@ -91,10 +92,6 @@ static nsSize GetDeviceSize(const Document* aDocument) {
   nsSize size;
   pc->DeviceContext()->GetDeviceSurfaceDimensions(size.width, size.height);
   return size;
-}
-
-bool Gecko_MediaFeatures_WindowsNonNativeMenus() {
-  return LookAndFeel::WindowsNonNativeMenusEnabled();
 }
 
 bool Gecko_MediaFeatures_IsResourceDocument(const Document* aDocument) {
@@ -124,17 +121,17 @@ static nsDeviceContext* GetDeviceContextFor(const Document* aDocument) {
 
 void Gecko_MediaFeatures_GetDeviceSize(const Document* aDocument,
                                        nscoord* aWidth, nscoord* aHeight) {
-  nsSize size = GetDeviceSize(aDocument);
+  nsSize size = GetDeviceSize(*aDocument);
   *aWidth = size.width;
   *aHeight = size.height;
 }
 
-uint32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
+int32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
     const Document* aDocument) {
   // The default bits per pixel for a monochrome device. We could propagate this
   // further to nsIPrintSettings, but Gecko doesn't actually know this value
   // from the hardware, so it seems silly to do so.
-  static constexpr uint32_t kDefaultMonochromeBpp = 8;
+  static constexpr int32_t kDefaultMonochromeBpp = 8;
 
   nsPresContext* pc = aDocument->GetPresContext();
   if (!pc) {
@@ -149,7 +146,18 @@ uint32_t Gecko_MediaFeatures_GetMonochromeBitsPerPixel(
   return color ? 0 : kDefaultMonochromeBpp;
 }
 
-uint32_t Gecko_MediaFeatures_GetColorDepth(const Document* aDocument) {
+dom::ScreenColorGamut Gecko_MediaFeatures_ColorGamut(
+    const Document* aDocument) {
+  auto colorGamut = dom::ScreenColorGamut::Srgb;
+  if (!aDocument->ShouldResistFingerprinting(RFPTarget::CSSColorInfo)) {
+    if (auto* dx = GetDeviceContextFor(aDocument)) {
+      colorGamut = dx->GetColorGamut();
+    }
+  }
+  return colorGamut;
+}
+
+int32_t Gecko_MediaFeatures_GetColorDepth(const Document* aDocument) {
   if (Gecko_MediaFeatures_GetMonochromeBitsPerPixel(aDocument) != 0) {
     // If we're a monochrome device, then the color depth is zero.
     return 0;
@@ -157,9 +165,9 @@ uint32_t Gecko_MediaFeatures_GetColorDepth(const Document* aDocument) {
 
   // Use depth of 24 when resisting fingerprinting, or when we're not being
   // rendered.
-  uint32_t depth = 24;
+  int32_t depth = 24;
 
-  if (!nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (!aDocument->ShouldResistFingerprinting(RFPTarget::CSSColorInfo)) {
     if (nsDeviceContext* dx = GetDeviceContextFor(aDocument)) {
       depth = dx->GetDepth();
     }
@@ -185,7 +193,7 @@ float Gecko_MediaFeatures_GetResolution(const Document* aDocument) {
     return pc->GetOverrideDPPX();
   }
 
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (aDocument->ShouldResistFingerprinting(RFPTarget::CSSResolution)) {
     return pc->DeviceContext()->GetFullZoom();
   }
   // Get the actual device pixel ratio, which also takes zoom into account.
@@ -235,17 +243,6 @@ bool Gecko_MediaFeatures_MatchesPlatform(StylePlatform aPlatform) {
 #if defined(XP_WIN)
     case StylePlatform::Windows:
       return true;
-    case StylePlatform::WindowsWin10:
-    case StylePlatform::WindowsWin7:
-    case StylePlatform::WindowsWin8: {
-      if (IsWin10OrLater()) {
-        return aPlatform == StylePlatform::WindowsWin10;
-      }
-      if (IsWin8OrLater()) {
-        return aPlatform == StylePlatform::WindowsWin8;
-      }
-      return aPlatform == StylePlatform::WindowsWin7;
-    }
 #elif defined(ANDROID)
     case StylePlatform::Android:
       return true;
@@ -264,10 +261,20 @@ bool Gecko_MediaFeatures_MatchesPlatform(StylePlatform aPlatform) {
 }
 
 bool Gecko_MediaFeatures_PrefersReducedMotion(const Document* aDocument) {
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (aDocument->ShouldResistFingerprinting(
+          RFPTarget::CSSPrefersReducedMotion)) {
     return false;
   }
   return LookAndFeel::GetInt(LookAndFeel::IntID::PrefersReducedMotion, 0) == 1;
+}
+
+bool Gecko_MediaFeatures_PrefersReducedTransparency(const Document* aDocument) {
+  if (aDocument->ShouldResistFingerprinting(
+          RFPTarget::CSSPrefersReducedTransparency)) {
+    return false;
+  }
+  return LookAndFeel::GetInt(LookAndFeel::IntID::PrefersReducedTransparency,
+                             0) == 1;
 }
 
 StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
@@ -283,7 +290,7 @@ StylePrefersColorScheme Gecko_MediaFeatures_PrefersColorScheme(
 // as a signal.
 StylePrefersContrast Gecko_MediaFeatures_PrefersContrast(
     const Document* aDocument) {
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (aDocument->ShouldResistFingerprinting(RFPTarget::CSSPrefersContrast)) {
     return StylePrefersContrast::NoPreference;
   }
   const auto& prefs = PreferenceSheet::PrefsFor(*aDocument);
@@ -304,6 +311,23 @@ StylePrefersContrast Gecko_MediaFeatures_PrefersContrast(
   return StylePrefersContrast::Custom;
 }
 
+bool Gecko_MediaFeatures_InvertedColors(const Document* aDocument) {
+  if (aDocument->ShouldResistFingerprinting(RFPTarget::CSSInvertedColors)) {
+    return false;
+  }
+  return LookAndFeel::GetInt(LookAndFeel::IntID::InvertedColors, 0) == 1;
+}
+
+StyleScripting Gecko_MediaFeatures_Scripting(const Document* aDocument) {
+  const auto* doc = aDocument;
+  if (aDocument->IsStaticDocument()) {
+    doc = aDocument->GetOriginalDocument();
+  }
+
+  return doc->IsScriptEnabled() ? StyleScripting::Enabled
+                                : StyleScripting::None;
+}
+
 StyleDynamicRange Gecko_MediaFeatures_DynamicRange(const Document* aDocument) {
   // Bug 1759772: Once HDR color is available, update each platform
   // LookAndFeel implementation to return StyleDynamicRange::High when
@@ -313,7 +337,7 @@ StyleDynamicRange Gecko_MediaFeatures_DynamicRange(const Document* aDocument) {
 
 StyleDynamicRange Gecko_MediaFeatures_VideoDynamicRange(
     const Document* aDocument) {
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (aDocument->ShouldResistFingerprinting(RFPTarget::CSSVideoDynamicRange)) {
     return StyleDynamicRange::Standard;
   }
   // video-dynamic-range: high has 3 requirements:
@@ -354,8 +378,8 @@ static PointerCapabilities GetPointerCapabilities(const Document* aDocument,
 #else
       PointerCapabilities::Fine | PointerCapabilities::Hover;
 #endif
-
-  if (nsContentUtils::ShouldResistFingerprinting(aDocument)) {
+  if (aDocument->ShouldResistFingerprinting(
+          RFPTarget::CSSPointerCapabilities)) {
     return kDefaultCapabilities;
   }
 

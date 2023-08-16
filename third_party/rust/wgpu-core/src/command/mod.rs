@@ -21,9 +21,13 @@ use crate::error::{ErrorFormatter, PrettyError};
 use crate::init_tracker::BufferInitTrackerAction;
 use crate::track::{Tracker, UsageScope};
 use crate::{
-    hub::{Global, GlobalIdentityHandlerFactory, HalApi, Storage, Token},
+    global::Global,
+    hal_api::HalApi,
+    hub::Token,
     id,
+    identity::GlobalIdentityHandlerFactory,
     resource::{Buffer, Texture},
+    storage::Storage,
     Label, Stored,
 };
 
@@ -51,6 +55,15 @@ struct CommandEncoder<A: hal::Api> {
 
 //TODO: handle errors better
 impl<A: hal::Api> CommandEncoder<A> {
+    /// Closes the live encoder
+    fn close_and_swap(&mut self) {
+        if self.is_open {
+            self.is_open = false;
+            let new = unsafe { self.raw.end_encoding().unwrap() };
+            self.list.insert(self.list.len() - 1, new);
+        }
+    }
+
     fn close(&mut self) {
         if self.is_open {
             self.is_open = false;
@@ -149,7 +162,7 @@ impl<A: HalApi> CommandBuffer<A> {
 
         base.buffers.set_from_tracker(&head.buffers);
         base.textures
-            .set_from_tracker(&*texture_guard, &head.textures);
+            .set_from_tracker(texture_guard, &head.textures);
 
         Self::drain_barriers(raw, base, buffer_guard, texture_guard);
     }
@@ -165,7 +178,7 @@ impl<A: HalApi> CommandBuffer<A> {
 
         base.buffers.set_from_usage_scope(&head.buffers);
         base.textures
-            .set_from_usage_scope(&*texture_guard, &head.textures);
+            .set_from_usage_scope(texture_guard, &head.textures);
 
         Self::drain_barriers(raw, base, buffer_guard, texture_guard);
     }
@@ -227,7 +240,7 @@ impl<A: HalApi> CommandBuffer<A> {
     }
 }
 
-impl<A: HalApi> crate::hub::Resource for CommandBuffer<A> {
+impl<A: HalApi> crate::resource::Resource for CommandBuffer<A> {
     const TYPE: &'static str = "CommandBuffer";
 
     fn life_guard(&self) -> &crate::LifeGuard {
@@ -328,10 +341,11 @@ impl<C: Clone> BasePass<C> {
 }
 
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum CommandEncoderError {
-    #[error("command encoder is invalid")]
+    #[error("Command encoder is invalid")]
     Invalid,
-    #[error("command encoder must be active")]
+    #[error("Command encoder must be active")]
     NotRecording,
 }
 
@@ -341,7 +355,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         encoder_id: id::CommandEncoderId,
         _desc: &wgt::CommandBufferDescriptor<Label>,
     ) -> (id::CommandBufferId, Option<CommandEncoderError>) {
-        profiling::scope!("finish", "CommandEncoder");
+        profiling::scope!("CommandEncoder::finish");
 
         let hub = A::hub(self);
         let mut token = Token::root();
@@ -374,7 +388,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         encoder_id: id::CommandEncoderId,
         label: &str,
     ) -> Result<(), CommandEncoderError> {
-        profiling::scope!("push_debug_group", "CommandEncoder");
+        profiling::scope!("CommandEncoder::push_debug_group");
 
         let hub = A::hub(self);
         let mut token = Token::root();
@@ -399,7 +413,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         encoder_id: id::CommandEncoderId,
         label: &str,
     ) -> Result<(), CommandEncoderError> {
-        profiling::scope!("insert_debug_marker", "CommandEncoder");
+        profiling::scope!("CommandEncoder::insert_debug_marker");
 
         let hub = A::hub(self);
         let mut token = Token::root();
@@ -423,7 +437,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
         &self,
         encoder_id: id::CommandEncoderId,
     ) -> Result<(), CommandEncoderError> {
-        profiling::scope!("pop_debug_marker", "CommandEncoder");
+        profiling::scope!("CommandEncoder::pop_debug_marker");
 
         let hub = A::hub(self);
         let mut token = Token::root();
@@ -511,7 +525,8 @@ impl BindGroupStateChange {
     ) -> bool {
         // For now never deduplicate bind groups with dynamic offsets.
         if offset_length == 0 {
-            // If this get returns None, that means we're well over the limit, so let the call through to get a proper error
+            // If this get returns None, that means we're well over the limit,
+            // so let the call through to get a proper error
             if let Some(current_bind_group) = self.last_states.get_mut(index as usize) {
                 // Bail out if we're binding the same bind group.
                 if current_bind_group.set_and_check_redundant(bind_group_id) {
@@ -525,9 +540,13 @@ impl BindGroupStateChange {
             if let Some(current_bind_group) = self.last_states.get_mut(index as usize) {
                 current_bind_group.reset();
             }
-            dynamic_offsets.extend_from_slice(slice::from_raw_parts(offsets, offset_length));
+            dynamic_offsets
+                .extend_from_slice(unsafe { slice::from_raw_parts(offsets, offset_length) });
         }
         false
+    }
+    fn reset(&mut self) {
+        self.last_states = [StateChange::new(); hal::MAX_BIND_GROUPS];
     }
 }
 

@@ -17,10 +17,19 @@ if CONFIG["ENABLE_TESTS"]:
         "gmock-custom/gmock-port.h",
     ]
 
+    EXPORTS.mozilla.gtest += [
+        "MozAssertions.h",
+        "MozHelpers.h",
+        "WaitFor.h",
+    ]
+
     SOURCES += [
         "GTestRunner.cpp",
+        "MozAssertions.cpp",
         "MozGTestBench.cpp",
+        "MozHelpers.cpp",
         "SanityTest.cpp",
+        "WaitFor.cpp",
     ]
 
     if CONFIG["OS_ARCH"] == "WINNT":

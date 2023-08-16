@@ -20,7 +20,7 @@ const {
   VIEW_NODE_PROPERTY_TYPE,
   VIEW_NODE_VALUE_TYPE,
   VIEW_NODE_IMAGE_URL_TYPE,
-} = require("devtools/client/inspector/shared/node-types");
+} = require("resource://devtools/client/inspector/shared/node-types.js");
 
 const TEST_URI = `
   <style type="text/css">
@@ -163,7 +163,7 @@ const TEST_DATA = [
   },
 ];
 
-add_task(async function() {
+add_task(async function () {
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
   const { inspector, view } = await openComputedView();
   await selectNode("#testElement", inspector);

@@ -1,30 +1,19 @@
 /* Any copyright is dedicated to the Public Domain.
  * http://creativecommons.org/publicdomain/zero/1.0/ */
 
-var { PromiseUtils } = ChromeUtils.import(
-  "resource://gre/modules/PromiseUtils.jsm"
-);
 ChromeUtils.defineESModuleGetters(this, {
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  ExperimentFakes: "resource://testing-common/NimbusTestUtils.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  PanelTestProvider: "resource://activity-stream/lib/PanelTestProvider.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  this,
-  "TestUtils",
-  "resource://testing-common/TestUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "FileUtils",
-  "resource://gre/modules/FileUtils.jsm"
-);
 
 XPCOMUtils.defineLazyModuleGetters(this, {
   ASRouter: "resource://activity-stream/lib/ASRouter.jsm",
-  ExperimentAPI: "resource://nimbus/ExperimentAPI.jsm",
-  ExperimentFakes: "resource://testing-common/NimbusTestUtils.jsm",
-  PanelTestProvider: "resource://activity-stream/lib/PanelTestProvider.jsm",
-  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.jsm",
 });
 
 function whenNewWindowLoaded(aOptions, aCallback) {
@@ -42,11 +31,10 @@ function whenNewWindowLoaded(aOptions, aCallback) {
 }
 
 function openWindow(aParent, aOptions) {
-  let win = aParent.OpenBrowserWindow(aOptions);
-  return TestUtils.topicObserved(
-    "browser-delayed-startup-finished",
-    subject => subject == win
-  ).then(() => win);
+  return BrowserWindowTracker.promiseOpenWindow({
+    openerWindow: aParent,
+    ...aOptions,
+  });
 }
 
 /**
@@ -66,7 +54,7 @@ async function openAboutPrivateBrowsing() {
  */
 async function openTabAndWaitForRender() {
   let { win, tab } = await openAboutPrivateBrowsing();
-  await SpecialPowers.spawn(tab, [], async function() {
+  await SpecialPowers.spawn(tab, [], async function () {
     // Wait for render to complete
     await ContentTaskUtils.waitForCondition(() =>
       content.document.documentElement.hasAttribute(
@@ -78,9 +66,7 @@ async function openTabAndWaitForRender() {
 }
 
 function newDirectory() {
-  let tmpDir = FileUtils.getDir("TmpD", [], true);
-  let dir = tmpDir.clone();
-  dir.append("testdir");
+  let dir = FileUtils.getDir("TmpD", ["testdir"]);
   dir.createUnique(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
   return dir;
 }

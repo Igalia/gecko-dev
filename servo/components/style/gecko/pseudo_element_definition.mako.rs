@@ -11,7 +11,9 @@ pub enum PseudoElement {
     % for pseudo in PSEUDOS:
         /// ${pseudo.value}
         % if pseudo.is_tree_pseudo_element():
-        ${pseudo.capitalized_pseudo()}(Box<Box<[Atom]>>),
+        ${pseudo.capitalized_pseudo()}(thin_vec::ThinVec<Atom>),
+        % elif pseudo.pseudo_ident == "highlight":
+        ${pseudo.capitalized_pseudo()}(AtomIdent),
         % else:
         ${pseudo.capitalized_pseudo()},
         % endif
@@ -25,7 +27,7 @@ pub enum PseudoElement {
 /// nsCSSPseudoElements::IsEagerlyCascadedInServo.
 <% EAGER_PSEUDOS = ["Before", "After", "FirstLine", "FirstLetter"] %>
 <% TREE_PSEUDOS = [pseudo for pseudo in PSEUDOS if pseudo.is_tree_pseudo_element()] %>
-<% SIMPLE_PSEUDOS = [pseudo for pseudo in PSEUDOS if not pseudo.is_tree_pseudo_element()] %>
+<% SIMPLE_PSEUDOS = [pseudo for pseudo in PSEUDOS if pseudo.is_simple_pseudo_element()] %>
 
 /// The number of eager pseudo-elements.
 pub const EAGER_PSEUDO_COUNT: usize = ${len(EAGER_PSEUDOS)};
@@ -47,7 +49,7 @@ pub const EAGER_PSEUDOS: [PseudoElement; EAGER_PSEUDO_COUNT] = [
 ];
 
 <%def name="pseudo_element_variant(pseudo, tree_arg='..')">\
-PseudoElement::${pseudo.capitalized_pseudo()}${"({})".format(tree_arg) if pseudo.is_tree_pseudo_element() else ""}\
+PseudoElement::${pseudo.capitalized_pseudo()}${"({})".format(tree_arg) if not pseudo.is_simple_pseudo_element() else ""}\
 </%def>
 
 impl PseudoElement {
@@ -131,7 +133,7 @@ impl PseudoElement {
     pub fn from_pseudo_type(type_: PseudoStyleType) -> Option<Self> {
         match type_ {
             % for pseudo in PSEUDOS:
-            % if not pseudo.is_tree_pseudo_element():
+            % if pseudo.is_simple_pseudo_element():
                 PseudoStyleType::${pseudo.pseudo_ident} => {
                     Some(${pseudo_element_variant(pseudo)})
                 },
@@ -148,6 +150,8 @@ impl PseudoElement {
             % for pseudo in PSEUDOS:
             % if pseudo.is_tree_pseudo_element():
                 PseudoElement::${pseudo.capitalized_pseudo()}(..) => PseudoStyleType::XULTree,
+            % elif pseudo.pseudo_ident == "highlight":
+                PseudoElement::${pseudo.capitalized_pseudo()}(..) => PseudoStyleType::${pseudo.pseudo_ident},
             % else:
                 PseudoElement::${pseudo.capitalized_pseudo()} => PseudoStyleType::${pseudo.pseudo_ident},
             % endif
@@ -184,7 +188,7 @@ impl PseudoElement {
     ///
     /// Returns `None` if the pseudo-element is not recognised.
     #[inline]
-    pub fn from_slice(name: &str) -> Option<Self> {
+    pub fn from_slice(name: &str, allow_unkown_webkit: bool) -> Option<Self> {
         // We don't need to support tree pseudos because functional
         // pseudo-elements needs arguments, and thus should be created
         // via other methods.
@@ -204,12 +208,19 @@ impl PseudoElement {
             "-moz-list-bullet" | "-moz-list-number" => {
                 return Some(PseudoElement::Marker);
             },
+            // Compat aliases for some `::-webkit-` pseudo-elements.
+            "-webkit-slider-runnable-track" if static_prefs::pref!("layout.css.webkit-range-pseudos.enabled") => {
+                return Some(PseudoElement::MozRangeTrack);
+            },
+            "-webkit-slider-thumb" if static_prefs::pref!("layout.css.webkit-range-pseudos.enabled") => {
+                return Some(PseudoElement::MozRangeThumb);
+            },
             _ => {
                 if starts_with_ignore_ascii_case(name, "-moz-tree-") {
-                    return PseudoElement::tree_pseudo_element(name, Box::new([]))
+                    return PseudoElement::tree_pseudo_element(name, Default::default())
                 }
                 const WEBKIT_PREFIX: &str = "-webkit-";
-                if starts_with_ignore_ascii_case(name, WEBKIT_PREFIX) {
+                if allow_unkown_webkit && starts_with_ignore_ascii_case(name, WEBKIT_PREFIX) {
                     let part = string_as_ascii_lowercase(&name[WEBKIT_PREFIX.len()..]);
                     return Some(PseudoElement::UnknownWebkit(part.into()));
                 }
@@ -224,12 +235,12 @@ impl PseudoElement {
     ///
     /// Returns `None` if the pseudo-element is not recognized.
     #[inline]
-    pub fn tree_pseudo_element(name: &str, args: Box<[Atom]>) -> Option<Self> {
+    pub fn tree_pseudo_element(name: &str, args: thin_vec::ThinVec<Atom>) -> Option<Self> {
         debug_assert!(starts_with_ignore_ascii_case(name, "-moz-tree-"));
         let tree_part = &name[10..];
         % for pseudo in TREE_PSEUDOS:
             if tree_part.eq_ignore_ascii_case("${pseudo.value[11:]}") {
-                return Some(${pseudo_element_variant(pseudo, "args.into()")});
+                return Some(${pseudo_element_variant(pseudo, "args")});
             }
         % endfor
         None
@@ -240,9 +251,14 @@ impl ToCss for PseudoElement {
     fn to_css<W>(&self, dest: &mut W) -> fmt::Result where W: fmt::Write {
         dest.write_char(':')?;
         match *self {
-            % for pseudo in PSEUDOS:
+            % for pseudo in (p for p in PSEUDOS if p.pseudo_ident != "highlight"):
                 ${pseudo_element_variant(pseudo)} => dest.write_str("${pseudo.value}")?,
             % endfor
+            PseudoElement::Highlight(ref name) => {
+                dest.write_str(":highlight(")?;
+                serialize_atom_identifier(name, dest)?;
+                dest.write_char(')')?;
+            }
             PseudoElement::UnknownWebkit(ref atom) => {
                 dest.write_str(":-webkit-")?;
                 serialize_atom_identifier(atom, dest)?;

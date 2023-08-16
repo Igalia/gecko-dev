@@ -2,38 +2,22 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  RemoteSettings: "resource://services-settings/remote-settings.js",
 });
 
 const USER_LOCALE = "$USER_LOCALE";
 const USER_REGION = "$USER_REGION";
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "SearchEngineSelector",
     maxLogLevel: lazy.SearchUtils.loggingEnabled ? "Debug" : "Warn",
   });
 });
-
-function getAppInfo(key) {
-  let value = null;
-  try {
-    // Services.appinfo is often null in tests.
-    value = Services.appinfo[key].toLowerCase();
-  } catch (e) {}
-  return value;
-}
 
 function hasAppKey(config, key) {
   return "application" in config && key in config.application;
@@ -83,7 +67,7 @@ function aboveMaxVersion(config, version) {
  */
 export class SearchEngineSelector {
   /**
-   * @param {function} listener
+   * @param {Function} listener
    *   A listener for configuration update changes.
    */
   constructor(listener) {
@@ -102,7 +86,8 @@ export class SearchEngineSelector {
       return this._getConfigurationPromise;
     }
 
-    this._configuration = await (this._getConfigurationPromise = this._getConfiguration());
+    this._configuration = await (this._getConfigurationPromise =
+      this._getConfiguration());
     delete this._getConfigurationPromise;
 
     if (!this._configuration?.length) {
@@ -132,7 +117,7 @@ export class SearchEngineSelector {
    *
    * @param {boolean} [firstTime]
    *   Internal boolean to indicate if this is the first time check or not.
-   * @returns {array}
+   * @returns {Array}
    *   An array of objects in the database, or an empty array if none
    *   could be obtained.
    */
@@ -163,6 +148,13 @@ export class SearchEngineSelector {
   /**
    * Handles updating of the configuration. Note that the search service is
    * only updated after a period where the user is observed to be idle.
+   *
+   * @param {object} options
+   *   The options object
+   * @param {object} options.data
+   *   The data to update
+   * @param {Array} options.data.current
+   *   The new configuration object
    */
   _onConfigurationUpdated({ data: { current } }) {
     this._configuration = current;
@@ -174,6 +166,7 @@ export class SearchEngineSelector {
 
   /**
    * @param {object} options
+   *   The options object
    * @param {string} options.locale
    *   Users locale.
    * @param {string} options.region
@@ -184,6 +177,10 @@ export class SearchEngineSelector {
    *   The distribution ID of the application.
    * @param {string} [options.experiment]
    *   Any associated experiment id.
+   * @param {string} [options.name]
+   *   The name of the application.
+   * @param {string} [options.version]
+   *   The version of the application.
    * @returns {object}
    *   An object with "engines" field, a sorted list of engines and
    *   optionally "privateDefault" which is an object containing the engine
@@ -195,16 +192,18 @@ export class SearchEngineSelector {
     channel = "default",
     distroID,
     experiment,
+    name = Services.appinfo.name ?? "",
+    version = Services.appinfo.version ?? "",
   }) {
     if (!this._configuration) {
       await this.getEngineConfiguration();
     }
-    let name = getAppInfo("name");
-    let version = getAppInfo("version");
     lazy.logConsole.debug(
       `fetchEngineConfiguration ${locale}:${region}:${channel}:${distroID}:${experiment}:${name}:${version}`
     );
     let engines = [];
+    const lcName = name.toLowerCase();
+    const lcVersion = version.toLowerCase();
     const lcLocale = locale.toLowerCase();
     const lcRegion = region.toLowerCase();
     for (let config of this._configuration) {
@@ -243,10 +242,10 @@ export class SearchEngineSelector {
 
         if (
           sectionExcludes(section, "channel", channel) ||
-          sectionExcludes(section, "name", name) ||
+          sectionExcludes(section, "name", lcName) ||
           distroExcluded ||
-          belowMinVersion(section, version) ||
-          aboveMaxVersion(section, version)
+          belowMinVersion(section, lcVersion) ||
+          aboveMaxVersion(section, lcVersion)
         ) {
           return false;
         }
@@ -354,6 +353,7 @@ export class SearchEngineSelector {
   /**
    * Create an index order to ensure default (and backup default)
    * engines are ordered correctly.
+   *
    * @param {object} obj
    *   Object representing the engine configation.
    * @param {object} defaultEngine
@@ -375,6 +375,7 @@ export class SearchEngineSelector {
 
   /**
    * Is the engine marked to be the default search engine.
+   *
    * @param {object} obj - Object representing the engine configation.
    * @returns {boolean} - Whether the engine should be default.
    */
@@ -384,6 +385,7 @@ export class SearchEngineSelector {
 
   /**
    * Object.assign but ignore some keys
+   *
    * @param {object} target - Object to copy to.
    * @param {object} source - Object top copy from.
    * @returns {object} - The source object.
@@ -409,6 +411,7 @@ export class SearchEngineSelector {
   /**
    * Determines wether the section of the config applies to a user
    * given what region + locale they are using.
+   *
    * @param {string} region - The region the user is in.
    * @param {string} locale - The language the user has configured.
    * @param {object} config - Section of configuration.

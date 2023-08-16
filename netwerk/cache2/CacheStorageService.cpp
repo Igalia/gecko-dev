@@ -691,7 +691,7 @@ NS_IMETHODIMP CacheStorageService::ClearOrigin(nsIPrincipal* aPrincipal) {
   }
 
   nsAutoString origin;
-  rv = nsContentUtils::GetUTFOrigin(aPrincipal, origin);
+  rv = nsContentUtils::GetWebExposedOriginSerialization(aPrincipal, origin);
   NS_ENSURE_SUCCESS(rv, rv);
 
   rv = ClearOriginInternal(origin, aPrincipal->OriginAttributesRef(), true);
@@ -789,7 +789,7 @@ NS_IMETHODIMP CacheStorageService::ClearBaseDomain(
         }
 
         bool hasRootDomain = false;
-        rv = NS_HasRootDomain(host, cBaseDomain, &hasRootDomain);
+        rv = HasRootDomain(host, cBaseDomain, &hasRootDomain);
         if (NS_WARN_IF(NS_FAILED(rv))) {
           continue;
         }
@@ -855,7 +855,7 @@ nsresult CacheStorageService::ClearOriginInternal(
         NS_ENSURE_SUCCESS(rv, rv);
 
         nsAutoString origin;
-        rv = nsContentUtils::GetUTFOrigin(uri, origin);
+        rv = nsContentUtils::GetWebExposedOriginSerialization(uri, origin);
         NS_ENSURE_SUCCESS(rv, rv);
 
         if (origin != aOrigin) {

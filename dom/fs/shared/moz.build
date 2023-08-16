@@ -5,15 +5,30 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 EXPORTS.mozilla.dom += [
-    "FileSystemActorHolder.h",
+    "FileSystemHelpers.h",
+    "FileSystemLog.h",
     "FileSystemTypes.h",
+]
+
+EXPORTS.mozilla.dom.fs += [
+    "IPCRejectReporter.h",
+    "ManagedMozPromiseRequestHolder.h",
+    "TargetPtrHolder.h",
+]
+
+UNIFIED_SOURCES += [
+    "FileSystemHelpers.cpp",
+    "FileSystemLog.cpp",
+    "IPCRejectReporter.cpp",
 ]
 
 FINAL_LIBRARY = "xul"
 
 IPDL_SOURCES += [
-    "PBackgroundFileSystem.ipdl",
-    "POriginPrivateFileSystem.ipdl",
+    "PFileSystemAccessHandle.ipdl",
+    "PFileSystemAccessHandleControl.ipdl",
+    "PFileSystemManager.ipdl",
+    "PFileSystemWritableFileStream.ipdl",
 ]
 
 include("/ipc/chromium/chromium-config.mozbuild")

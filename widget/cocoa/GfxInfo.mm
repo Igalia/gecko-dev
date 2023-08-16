@@ -206,10 +206,6 @@ GfxInfo::GetCleartypeParameters(nsAString& aCleartypeParams) { return NS_ERROR_F
 NS_IMETHODIMP
 GfxInfo::GetWindowProtocol(nsAString& aWindowProtocol) { return NS_ERROR_NOT_IMPLEMENTED; }
 
-/* readonly attribute DOMString desktopEnvironment; */
-NS_IMETHODIMP
-GfxInfo::GetDesktopEnvironment(nsAString& aDesktopEnvironment) { return NS_ERROR_NOT_IMPLEMENTED; }
-
 /* readonly attribute DOMString testType; */
 NS_IMETHODIMP
 GfxInfo::GetTestType(nsAString& aTestType) { return NS_ERROR_NOT_IMPLEMENTED; }
@@ -405,26 +401,25 @@ const nsTArray<GfxDriverInfo>& GfxInfo::GetGfxDriverInfo() {
         OperatingSystem::OSX, DeviceFamily::All, nsIGfxInfo::FEATURE_GL_SWIZZLE,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, "FEATURE_FAILURE_MAC_GPU_SWITCHING_NO_SWIZZLE");
 
-    // FEATURE_WEBRENDER - ALLOWLIST
-    IMPLEMENT_MAC_DRIVER_BLOCKLIST(OperatingSystem::OSX, DeviceFamily::IntelRolloutWebRender,
-                                   nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-                                   "FEATURE_ROLLOUT_INTEL_MAC");
+    // Older generation Intel devices do not perform well with WebRender.
+    IMPLEMENT_MAC_DRIVER_BLOCKLIST(
+        OperatingSystem::OSX, DeviceFamily::IntelWebRenderBlocked, nsIGfxInfo::FEATURE_WEBRENDER,
+        nsIGfxInfo::FEATURE_BLOCKED_DEVICE, "FEATURE_FAILURE_INTEL_GEN5_OR_OLDER");
+
     // Intel HD3000 disabled due to bug 1661505
     IMPLEMENT_MAC_DRIVER_BLOCKLIST(
         OperatingSystem::OSX, DeviceFamily::IntelSandyBridge, nsIGfxInfo::FEATURE_WEBRENDER,
         nsIGfxInfo::FEATURE_BLOCKED_DEVICE, "FEATURE_FAILURE_INTEL_MAC_HD3000_NO_WEBRENDER");
-    IMPLEMENT_MAC_DRIVER_BLOCKLIST(OperatingSystem::OSX, DeviceFamily::AtiRolloutWebRender,
-                                   nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-                                   "FEATURE_ROLLOUT_AMD_MAC");
-    IMPLEMENT_MAC_DRIVER_BLOCKLIST(OperatingSystem::OSX, DeviceFamily::NvidiaRolloutWebRender,
-                                   nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-                                   "FEATURE_ROLLOUT_NVIDIA_MAC");
-    IMPLEMENT_MAC_DRIVER_BLOCKLIST(OperatingSystem::OSX, DeviceFamily::AppleAll,
-                                   nsIGfxInfo::FEATURE_WEBRENDER, nsIGfxInfo::FEATURE_ALLOW_ALWAYS,
-                                   "FEATURE_ROLLOUT_APPLE_SILICON_MAC");
+
+    // wgpu doesn't safely support OOB behavior on Metal yet.
+    IMPLEMENT_MAC_DRIVER_BLOCKLIST(OperatingSystem::OSX, DeviceFamily::All,
+                                   nsIGfxInfo::FEATURE_WEBGPU, nsIGfxInfo::FEATURE_BLOCKED_DEVICE,
+                                   "FEATURE_FAILURE_MAC_WGPU_NO_METAL_BOUNDS_CHECKS");
   }
   return *sDriverInfo;
 }
+
+OperatingSystem GfxInfo::GetOperatingSystem() { return OSXVersionToOperatingSystem(mOSXVersion); }
 
 nsresult GfxInfo::GetFeatureStatusImpl(int32_t aFeature, int32_t* aStatus,
                                        nsAString& aSuggestedDriverVersion,
@@ -496,8 +491,5 @@ NS_IMETHODIMP GfxInfo::SpoofOSVersion(uint32_t aVersion) {
   mOSXVersion = aVersion;
   return NS_OK;
 }
-
-/* void fireTestProcess (); */
-NS_IMETHODIMP GfxInfo::FireTestProcess() { return NS_OK; }
 
 #endif

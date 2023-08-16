@@ -1,10 +1,13 @@
 "use strict";
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
-const { ExtensionPermissions } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionPermissions.jsm"
+const { permissionToL10nId } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionPermissionMessages.sys.mjs"
+);
+const { ExtensionPermissions } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionPermissions.sys.mjs"
 );
 
 Services.prefs.setBoolPref("extensions.manifestV3.enabled", true);
@@ -14,13 +17,17 @@ Services.prefs.setBoolPref("extensions.manifestV3.enabled", true);
 // will not be returning the version set by AddonTestUtils.createAppInfo and this test will
 // fail on non-nightly builds (because the cached appinfo.version will be undefined and
 // AddonManager startup will fail).
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionParent",
-  "resource://gre/modules/ExtensionParent.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
+});
 
-const BROWSER_PROPERTIES = "chrome://browser/locale/browser.properties";
+const l10n = new Localization([
+  "toolkit/global/extensions.ftl",
+  "toolkit/global/extensionPermissions.ftl",
+  "branding/brand.ftl",
+]);
+// Localization resources need to be first iterated outside a test
+l10n.formatValue("webext-perms-sideload-text");
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
@@ -31,7 +38,7 @@ AddonTestUtils.createAppInfo(
   "42"
 );
 
-add_task(async function setup() {
+add_setup(async () => {
   // Bug 1646182: Force ExtensionPermissions to run in rkv mode, the legacy
   // storage mode will run in xpcshell-legacy-ep.ini
   await ExtensionPermissions._uninit();
@@ -46,7 +53,7 @@ add_task(async function test_permissions_on_startup() {
   let extensionId = "@permissionTest";
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: {
+      browser_specific_settings: {
         gecko: { id: extensionId },
       },
       permissions: ["tabs"],
@@ -320,14 +327,18 @@ async function test_permissions({
     "contains() returns true for runtime requested permissions"
   );
 
-  // Restart extension, verify permissions are still present.
-  if (useAddonManager === "permanent") {
-    await AddonTestUtils.promiseRestartManager();
-  } else {
-    // Manually reload for temporarily loaded.
-    await extension.addon.reload();
+  async function restart() {
+    if (useAddonManager === "permanent") {
+      await AddonTestUtils.promiseRestartManager();
+    } else {
+      // Manually reload for temporarily loaded.
+      await extension.addon.reload();
+    }
+    await extension.awaitBackgroundStarted();
   }
-  await extension.awaitBackgroundStarted();
+
+  // Restart extension, verify permissions are still present.
+  await restart();
 
   result = await call("getAll");
   deepEqual(
@@ -354,6 +365,30 @@ async function test_permissions({
   perms.origins = REQUIRED_ORIGINS_EXPECTED;
   result = await call("getAll");
   deepEqual(result, perms, "Back to default permissions after removing more");
+
+  if (granted_host_permissions && expectAllGranted) {
+    // Check that all (granted) host permissions in MV3 can be revoked.
+
+    result = await call("remove", { origins: REQUIRED_ORIGINS });
+    equal(result, true, "remove() succeeded");
+    perms.origins = [];
+
+    result = await call("getAll");
+    deepEqual(
+      result,
+      perms,
+      "Expected only api permissions remain after removing all origins in mv3."
+    );
+  }
+
+  // Clear cache to confirm same result after rebuilding it (after an update).
+  await ExtensionParent.StartupCache.clearAddonData(extension.id);
+
+  // Restart again, verify optional permissions state is still preserved.
+  await restart();
+
+  result = await call("getAll");
+  deepEqual(result, perms, "Expected the same permissions after restart.");
 
   await extension.unload();
 }
@@ -522,7 +557,7 @@ async function test_alreadyGranted(manifest_version) {
       granted_host_permissions: true,
     },
     temporarilyInstalled: true,
-
+    startupReason: "ADDON_INSTALL",
     files: {
       "page.html": `<html><head>
           <script src="page.js"><\/script>
@@ -626,7 +661,6 @@ const GRANTED_WITHOUT_USER_PROMPT = [
   "contextMenus",
   "contextualIdentities",
   "cookies",
-  "declarativeNetRequestFeedback",
   "declarativeNetRequestWithHostAccess",
   "dns",
   "geckoProfiler",
@@ -646,10 +680,11 @@ const GRANTED_WITHOUT_USER_PROMPT = [
   "urlbar",
   "webRequest",
   "webRequestBlocking",
+  "webRequestFilterResponse",
   "webRequestFilterResponse.serviceWorkerScript",
 ];
 
-add_task(function test_permissions_have_localization_strings() {
+add_task(async function test_permissions_have_localization_strings() {
   let noPromptNames = Schemas.getPermissionNames([
     "PermissionNoPrompt",
     "OptionalPermissionNoPrompt",
@@ -661,14 +696,12 @@ add_task(function test_permissions_have_localization_strings() {
     "List of no-prompt permissions is correct."
   );
 
-  const bundle = Services.strings.createBundle(BROWSER_PROPERTIES);
-
   for (const perm of Schemas.getPermissionNames()) {
-    try {
-      const str = bundle.GetStringFromName(`webextPerms.description.${perm}`);
-
+    const permId = permissionToL10nId(perm);
+    if (permId) {
+      const str = await l10n.formatValue(permId);
       ok(str.length, `Found localization string for '${perm}' permission`);
-    } catch (e) {
+    } else {
       ok(
         GRANTED_WITHOUT_USER_PROMPT.includes(perm),
         `Permission '${perm}' intentionally granted without prompting the user`
@@ -857,7 +890,7 @@ async function test_permissions_prompt(manifest_version) {
       manifest_version,
       version: "2.0",
 
-      applications: { gecko: { id: extension.id } },
+      browser_specific_settings: { gecko: { id: extension.id } },
 
       permissions: PERMS,
       host_permissions: ORIGINS,

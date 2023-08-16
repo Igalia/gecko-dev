@@ -6,11 +6,11 @@
  * Tests that we apply dark theme variants to PBM windows where applicable.
  */
 
-const { BuiltInThemes } = ChromeUtils.import(
-  "resource:///modules/BuiltInThemes.jsm"
+const { BuiltInThemes } = ChromeUtils.importESModule(
+  "resource:///modules/BuiltInThemes.sys.mjs"
 );
-const { PromptTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromptTestUtils.jsm"
+const { PromptTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromptTestUtils.sys.mjs"
 );
 
 const IS_LINUX = AppConstants.platform == "linux";
@@ -23,6 +23,7 @@ requestLongerTimeout(2);
 
 /**
  * Test a window's theme color scheme.
+ *
  * @param {*} options - Test options.
  * @param {Window} options.win - Window object to test.
  * @param {boolean} options.colorScheme - Whether expected chrome color scheme
@@ -66,7 +67,8 @@ async function testWindowColorScheme({
 
 /**
  * Match the prefers-color-scheme media query and return the results.
- * @param {Object} options
+ *
+ * @param {object} options
  * @param {Window} options.win - If chrome=true, window to test, otherwise
  * parent window of the content window to test.
  * @param {boolean} options.chrome - If true the media queries will be matched
@@ -98,7 +100,7 @@ function getPrefersColorSchemeInfo({ win, chrome = false }) {
   return SpecialPowers.spawn(win.gBrowser.selectedBrowser, [], fn);
 }
 
-add_setup(async function() {
+add_setup(async function () {
   // Set system theme to light to ensure consistency across test machines.
   await SpecialPowers.pushPrefEnv({
     set: [

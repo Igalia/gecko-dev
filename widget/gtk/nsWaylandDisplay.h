@@ -12,12 +12,10 @@
 
 #include "mozilla/widget/mozwayland.h"
 #include "mozilla/widget/gbm.h"
-#include "mozilla/widget/gtk-primary-selection-client-protocol.h"
 #include "mozilla/widget/idle-inhibit-unstable-v1-client-protocol.h"
 #include "mozilla/widget/relative-pointer-unstable-v1-client-protocol.h"
 #include "mozilla/widget/pointer-constraints-unstable-v1-client-protocol.h"
 #include "mozilla/widget/linux-dmabuf-unstable-v1-client-protocol.h"
-#include "mozilla/widget/primary-selection-unstable-v1-client-protocol.h"
 #include "mozilla/widget/viewporter-client-protocol.h"
 #include "mozilla/widget/xdg-activation-v1-client-protocol.h"
 #include "mozilla/widget/xdg-output-unstable-v1-client-protocol.h"
@@ -30,36 +28,14 @@ namespace widget {
 // We have a global nsWaylandDisplay object for each thread.
 class nsWaylandDisplay {
  public:
-  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(nsWaylandDisplay)
-
   // Create nsWaylandDisplay object on top of native Wayland wl_display
   // connection.
   explicit nsWaylandDisplay(wl_display* aDisplay);
 
-  bool DispatchEventQueue();
-
-  void SyncBegin();
-  void QueueSyncBegin();
-  void SyncEnd();
-  void WaitForSyncEnd();
-
-  bool Matches(wl_display* aDisplay);
-
   wl_display* GetDisplay() { return mDisplay; };
-  wl_event_queue* GetEventQueue() { return mEventQueue; };
   wl_compositor* GetCompositor() { return mCompositor; };
   wl_subcompositor* GetSubcompositor() { return mSubcompositor; };
-  wl_data_device_manager* GetDataDeviceManager() { return mDataDeviceManager; };
-  wl_seat* GetSeat();
   wl_shm* GetShm() { return mShm; };
-  gtk_primary_selection_device_manager* GetPrimarySelectionDeviceManagerGtk(
-      void) {
-    return mPrimarySelectionDeviceManagerGtk;
-  };
-  zwp_primary_selection_device_manager_v1*
-  GetPrimarySelectionDeviceManagerZwpV1() {
-    return mPrimarySelectionDeviceManagerZwpV1;
-  };
   zwp_idle_inhibit_manager_v1* GetIdleInhibitManager() {
     return mIdleInhibitManager;
   }
@@ -73,16 +49,10 @@ class nsWaylandDisplay {
   zwp_linux_dmabuf_v1* GetDmabuf() { return mDmabuf; };
   xdg_activation_v1* GetXdgActivation() { return mXdgActivation; };
 
-  bool IsMainThreadDisplay() { return mEventQueue == nullptr; }
-
   void SetShm(wl_shm* aShm);
   void SetCompositor(wl_compositor* aCompositor);
   void SetSubcompositor(wl_subcompositor* aSubcompositor);
   void SetDataDeviceManager(wl_data_device_manager* aDataDeviceManager);
-  void SetPrimarySelectionDeviceManager(
-      gtk_primary_selection_device_manager* aPrimarySelectionDeviceManager);
-  void SetPrimarySelectionDeviceManager(
-      zwp_primary_selection_device_manager_v1* aPrimarySelectionDeviceManager);
   void SetIdleInhibitManager(zwp_idle_inhibit_manager_v1* aIdleInhibitManager);
   void SetViewporter(wp_viewporter* aViewporter);
   void SetRelativePointerManager(
@@ -91,23 +61,15 @@ class nsWaylandDisplay {
   void SetDmabuf(zwp_linux_dmabuf_v1* aDmabuf);
   void SetXdgActivation(xdg_activation_v1* aXdgActivation);
 
-  bool IsExplicitSyncEnabled() { return mExplicitSync; }
-
- private:
   ~nsWaylandDisplay();
 
+ private:
   PRThread* mThreadId = nullptr;
+  wl_registry* mRegistry = nullptr;
   wl_display* mDisplay = nullptr;
-  wl_event_queue* mEventQueue = nullptr;
-  wl_data_device_manager* mDataDeviceManager = nullptr;
   wl_compositor* mCompositor = nullptr;
   wl_subcompositor* mSubcompositor = nullptr;
   wl_shm* mShm = nullptr;
-  wl_callback* mSyncCallback = nullptr;
-  gtk_primary_selection_device_manager* mPrimarySelectionDeviceManagerGtk =
-      nullptr;
-  zwp_primary_selection_device_manager_v1* mPrimarySelectionDeviceManagerZwpV1 =
-      nullptr;
   zwp_idle_inhibit_manager_v1* mIdleInhibitManager = nullptr;
   zwp_relative_pointer_manager_v1* mRelativePointerManager = nullptr;
   zwp_pointer_constraints_v1* mPointerConstraints = nullptr;
@@ -117,11 +79,9 @@ class nsWaylandDisplay {
   bool mExplicitSync = false;
 };
 
-void WaylandDispatchDisplays();
+wl_display* WaylandDisplayGetWLDisplay();
+nsWaylandDisplay* WaylandDisplayGet();
 void WaylandDisplayRelease();
-
-RefPtr<nsWaylandDisplay> WaylandDisplayGet(GdkDisplay* aGdkDisplay = nullptr);
-wl_display* WaylandDisplayGetWLDisplay(GdkDisplay* aGdkDisplay = nullptr);
 
 }  // namespace widget
 }  // namespace mozilla

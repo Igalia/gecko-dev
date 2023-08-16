@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2022 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -32,7 +32,6 @@ const tests = [
   ["+0019761118T15:23:30.1+0000", 1976, 11, "M11", 18],
   ["+0019761118T152330.1+00:00", 1976, 11, "M11", 18],
   ["+0019761118T152330.1+0000", 1976, 11, "M11", 18],
-  ["2020-01-01[Asia/Kolkata]", 2020, 1, "M01", 1],
 ];
 
 for (const [input, ...expected] of tests) {

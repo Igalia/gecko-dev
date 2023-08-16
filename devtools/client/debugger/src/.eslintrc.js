@@ -3,7 +3,7 @@
  * file, You can obtain one at <http://mozilla.org/MPL/2.0/>. */
 
 module.exports = {
-  plugins: ["react", "mozilla", "@babel", "prettier", "import", "file-header"],
+  plugins: ["react", "mozilla", "@babel", "import", "file-header"],
   globals: {
     atob: true,
     btoa: true,
@@ -18,10 +18,8 @@ module.exports = {
     EventEmitter: true,
     isWorker: true,
     loader: true,
-    reportError: true,
     Services: true,
     Task: true,
-    XPCNativeWrapper: true,
     XPCOMUtils: true,
     _Iterator: true,
     __dirname: true,
@@ -299,11 +297,6 @@ module.exports = {
     strict: [2, "global"],
     // Disallow comparisons with the value NaN.
     "use-isnan": 2,
-    // Warn about invalid JSDoc comments.
-    // Disabled for now because of https://github.com/eslint/eslint/issues/2270
-    // The rule fails on some jsdoc comments like in:
-    // devtools/client/webconsole/console-output.js
-    "valid-jsdoc": 0,
     // Ensure that the results of typeof are compared against a valid string.
     "valid-typeof": 2,
     // Allow vars to be declared anywhere in the scope.
@@ -365,9 +358,6 @@ module.exports = {
     // entirely
     "operator-assignment": 0,
 
-    // Rules from the prettier plugin
-    "prettier/prettier": "error",
-
     "file-header/file-header": [
       "error",
       [
@@ -378,6 +368,5 @@ module.exports = {
       "block",
       ["-\\*-(.*)-\\*-", "eslint(.*)", "vim(.*)"],
     ],
-    "consistent-return": "off",
   },
 };

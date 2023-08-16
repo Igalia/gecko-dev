@@ -4,10 +4,10 @@
 
 "use strict";
 
-const React = require("devtools/client/shared/vendor/react");
+const React = require("resource://devtools/client/shared/vendor/react.js");
 const { Component, createFactory } = React;
-const dom = require("devtools/client/shared/vendor/react-dom-factories");
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
+const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
 
 // depth
 const AUTO_EXPAND_DEPTH = 0;
@@ -91,7 +91,7 @@ class TreeNode extends Component {
     const elms = this.getFocusableElements();
     if (this.props.active) {
       const doc = this.treeNodeRef.current.ownerDocument;
-      if (elms.length > 0 && !elms.includes(doc.activeElement)) {
+      if (elms.length && !elms.includes(doc.activeElement)) {
         elms[0].focus();
       }
     } else {
@@ -241,7 +241,7 @@ const TreeNodeFactory = createFactory(TreeNode);
 function oncePerAnimationFrame(fn, { getDocument }) {
   let animationId = null;
   let argsToPass = null;
-  return function(...args) {
+  return function (...args) {
     argsToPass = args;
     if (animationId !== null) {
       return;
@@ -549,11 +549,8 @@ class Tree extends Component {
   }
 
   _autoExpand() {
-    const {
-      autoExpandDepth,
-      autoExpandNodeChildrenLimit,
-      initiallyExpanded,
-    } = this.props;
+    const { autoExpandDepth, autoExpandNodeChildrenLimit, initiallyExpanded } =
+      this.props;
 
     if (!autoExpandDepth && !initiallyExpanded) {
       return;

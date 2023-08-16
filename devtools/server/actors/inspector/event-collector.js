@@ -7,21 +7,20 @@
 
 "use strict";
 
-const { Cu } = require("chrome");
-const Services = require("Services");
 const {
   isAfterPseudoElement,
   isBeforePseudoElement,
   isMarkerPseudoElement,
   isNativeAnonymous,
-} = require("devtools/shared/layout/utils");
+} = require("resource://devtools/shared/layout/utils.js");
 const Debugger = require("Debugger");
 const {
   EXCLUDED_LISTENER,
-} = require("devtools/server/actors/inspector/constants");
+} = require("resource://devtools/server/actors/inspector/constants.js");
 
 // eslint-disable-next-line
-const JQUERY_LIVE_REGEX = /return typeof \w+.*.event\.triggered[\s\S]*\.event\.(dispatch|handle).*arguments/;
+const JQUERY_LIVE_REGEX =
+  /return typeof \w+.*.event\.triggered[\s\S]*\.event\.(dispatch|handle).*arguments/;
 
 const REACT_EVENT_NAMES = [
   "onAbort",
@@ -1005,7 +1004,7 @@ class EventCollector {
       // Arrow function text always contains the parameters. Function
       // parameters are often missing e.g. if Array.sort is used as a handler.
       // If they are missing we provide the parameters ourselves.
-      if (parameterNames && parameterNames.length > 0) {
+      if (parameterNames && parameterNames.length) {
         const prefix = "function " + name + "()";
         const paramString = parameterNames.join(", ");
 

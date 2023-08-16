@@ -5,7 +5,7 @@ Getting Started with GeckoView
 
 How to use GeckoView in your Android app.
 
-*Building a browser? Check out* `Android Components <https://mozilla-mobile.github.io/android-components/>`_, *our collection of ready-to-use support libraries!*
+*Building a browser? Check out* `Android Components <https://mozilla-mobile.github.io/firefox-android/>`_, *our collection of ready-to-use support libraries!*
 
 The following article is a brief guide to embedding GeckoView in an app. For a more in depth tutorial on getting started with GeckoView please read the article we have published on `raywenderlich.com <https://www.raywenderlich.com/1381698-android-tutorial-for-geckoview-getting-started>`_.
 
@@ -39,15 +39,15 @@ You need to add or edit four stanzas inside your module's ``build.gradle`` file.
     }
 
 
-**3. Java 11 required support**
+**3. Java 17 required support**
 
-As GeckoView uses some Java 11 APIs, it requires these compatibility flags:
+As GeckoView uses some Java 17 APIs, it requires these compatibility flags:
 
 .. code-block:: groovy
 
     compileOptions {
-        sourceCompatibility JavaVersion.VERSION_11
-        targetCompatibility JavaVersion.VERSION_11
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
     }
 
 **4. Add GeckoView Implementations**

@@ -318,7 +318,7 @@ void DebugState::adjustEnterAndLeaveFrameTrapsState(JSContext* cx,
   }
 
   MOZ_RELEASE_ASSERT(&instance->metadata() == &metadata());
-  uint32_t numFuncs = metadata().debugFuncReturnTypes.length();
+  uint32_t numFuncs = metadata().debugNumFuncs();
   if (enabled) {
     MOZ_ASSERT(enterAndLeaveFrameTrapsCounter_ > 0);
     for (uint32_t funcIdx = 0; funcIdx < numFuncs; funcIdx++) {
@@ -372,8 +372,10 @@ void DebugState::ensureEnterFrameTrapsState(JSContext* cx, Instance* instance,
 bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
                                     size_t* argsLength,
                                     StackResults* stackResults) {
-  const ValTypeVector& args = metadata().debugFuncArgTypes[funcIndex];
-  const ValTypeVector& results = metadata().debugFuncReturnTypes[funcIndex];
+  const TypeContext& types = *metadata().types;
+  const FuncType& funcType = metadata().debugFuncType(funcIndex);
+  const ValTypeVector& args = funcType.args();
+  const ValTypeVector& results = funcType.results();
   ResultType resultType(ResultType::Vector(results));
   *argsLength = args.length();
   *stackResults = ABIResultIter::HasStackResults(resultType)
@@ -391,7 +393,7 @@ bool DebugState::debugGetLocalTypes(uint32_t funcIndex, ValTypeVector* locals,
   Decoder d(bytecode().begin() + offsetInModule, bytecode().end(),
             offsetInModule,
             /* error = */ nullptr);
-  return DecodeValidatedLocalEntries(d, locals);
+  return DecodeValidatedLocalEntries(types, d, locals);
 }
 
 bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
@@ -430,8 +432,7 @@ bool DebugState::getGlobal(Instance& instance, uint32_t globalIndex,
     return true;
   }
 
-  uint8_t* globalData = instance.globalData();
-  void* dataPtr = globalData + global.offset();
+  void* dataPtr = instance.data() + global.offset();
   if (global.isIndirect()) {
     dataPtr = *static_cast<void**>(dataPtr);
   }

@@ -5,7 +5,6 @@
 // except according to those terms.
 
 use std::cell::RefCell;
-use std::cmp::{max, min};
 use std::convert::TryFrom;
 use std::rc::{Rc, Weak};
 use std::time::Duration;
@@ -39,7 +38,7 @@ impl Period {
 impl From<Duration> for Period {
     fn from(p: Duration) -> Self {
         let rounded = u8::try_from(p.as_millis()).unwrap_or(Self::MAX.0);
-        Self(max(Self::MIN.0, min(rounded, Self::MAX.0)))
+        Self(rounded.clamp(Self::MIN.0, Self::MAX.0))
     }
 }
 
@@ -82,6 +81,7 @@ impl PeriodSet {
 #[allow(non_camel_case_types)]
 mod mac {
     use std::mem::size_of;
+    use std::ptr::addr_of_mut;
 
     // These are manually extracted from the many bindings generated
     // by bindgen when provided with the simple header:
@@ -162,7 +162,7 @@ mod mac {
             thread_policy_set(
                 pthread_mach_thread_np(pthread_self()),
                 THREAD_TIME_CONSTRAINT_POLICY,
-                &mut policy as *mut thread_time_constraint_policy as *mut _,
+                addr_of_mut!(policy) as _, // horror!
                 THREAD_TIME_CONSTRAINT_POLICY_COUNT,
             )
         };
@@ -197,7 +197,7 @@ mod mac {
             thread_policy_get(
                 pthread_mach_thread_np(pthread_self()),
                 THREAD_TIME_CONSTRAINT_POLICY,
-                &mut policy as *mut thread_time_constraint_policy as *mut _,
+                addr_of_mut!(policy) as _, // horror!
                 &mut count,
                 &mut get_default,
             )

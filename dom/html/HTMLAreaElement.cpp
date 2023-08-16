@@ -36,7 +36,7 @@ NS_IMPL_ELEMENT_CLONE(HTMLAreaElement)
 int32_t HTMLAreaElement::TabIndexDefault() { return 0; }
 
 void HTMLAreaElement::GetTarget(DOMString& aValue) {
-  if (!GetAttr(kNameSpaceID_None, nsGkAtoms::target, aValue)) {
+  if (!GetAttr(nsGkAtoms::target, aValue)) {
     GetBaseTarget(aValue);
   }
 }
@@ -50,7 +50,7 @@ nsresult HTMLAreaElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
 }
 
 void HTMLAreaElement::GetLinkTarget(nsAString& aTarget) {
-  GetAttr(kNameSpaceID_None, nsGkAtoms::target, aTarget);
+  GetAttr(nsGkAtoms::target, aTarget);
   if (aTarget.IsEmpty()) {
     GetBaseTarget(aTarget);
   }
@@ -58,8 +58,7 @@ void HTMLAreaElement::GetLinkTarget(nsAString& aTarget) {
 
 nsDOMTokenList* HTMLAreaElement::RelList() {
   if (!mRelList) {
-    mRelList = new nsDOMTokenList(this, nsGkAtoms::rel,
-                                  HTMLAnchorElement::sSupportedRelValues);
+    mRelList = new nsDOMTokenList(this, nsGkAtoms::rel, sSupportedRelValues);
   }
   return mRelList;
 }
@@ -83,11 +82,11 @@ void HTMLAreaElement::UnbindFromTree(bool aNullParent) {
   nsGenericHTMLElement::UnbindFromTree(aNullParent);
 }
 
-nsresult HTMLAreaElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                       const nsAttrValue* aValue,
-                                       const nsAttrValue* aOldValue,
-                                       nsIPrincipal* aSubjectPrincipal,
-                                       bool aNotify) {
+void HTMLAreaElement::AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                                   const nsAttrValue* aValue,
+                                   const nsAttrValue* aOldValue,
+                                   nsIPrincipal* aSubjectPrincipal,
+                                   bool aNotify) {
   if (aNamespaceID == kNameSpaceID_None) {
     // This must happen after the attribute is set. We will need the updated
     // attribute value because notifying the document that content states have

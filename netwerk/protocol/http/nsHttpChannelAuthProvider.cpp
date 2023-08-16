@@ -10,6 +10,7 @@
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/StoragePrincipalHelper.h"
 #include "mozilla/Tokenizer.h"
+#include "MockHttpAuth.h"
 #include "nsHttpChannelAuthProvider.h"
 #include "nsCRT.h"
 #include "nsNetUtil.h"
@@ -87,6 +88,7 @@ nsHttpChannelAuthProvider::nsHttpChannelAuthProvider()
       mHttpHandler(gHttpHandler) {}
 
 nsHttpChannelAuthProvider::~nsHttpChannelAuthProvider() {
+  MOZ_RELEASE_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!mAuthChannel, "Disconnect wasn't called");
 }
 
@@ -1176,6 +1178,9 @@ nsresult nsHttpChannelAuthProvider::GetAuthenticator(
     authenticator = nsHttpDigestAuth::GetOrCreate();
   } else if (authType.EqualsLiteral("ntlm")) {
     authenticator = nsHttpNTLMAuth::GetOrCreate();
+  } else if (authType.EqualsLiteral("mock_auth") &&
+             PR_GetEnv("XPCSHELL_TEST_PROFILE_DIR")) {
+    authenticator = MockHttpAuth::Create();
   } else {
     return NS_ERROR_FACTORY_NOT_REGISTERED;
   }
@@ -1791,7 +1796,7 @@ bool nsHttpChannelAuthProvider::ConfirmAuth(const char* bundleKey,
   if (NS_FAILED(rv)) return true;
 
   nsCOMPtr<nsIPromptService> promptSvc =
-      do_GetService("@mozilla.org/embedcomp/prompt-service;1", &rv);
+      do_GetService("@mozilla.org/prompter;1", &rv);
   if (NS_FAILED(rv) || !promptSvc) {
     return true;
   }

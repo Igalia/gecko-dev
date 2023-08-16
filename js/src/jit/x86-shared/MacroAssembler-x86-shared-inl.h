@@ -466,6 +466,12 @@ void MacroAssembler::branch8(Condition cond, const Address& lhs, Imm32 rhs,
   j(cond, label);
 }
 
+void MacroAssembler::branch8(Condition cond, const BaseIndex& lhs, Register rhs,
+                             Label* label) {
+  cmp8(Operand(lhs), rhs);
+  j(cond, label);
+}
+
 void MacroAssembler::branch16(Condition cond, const Address& lhs, Imm32 rhs,
                               Label* label) {
   cmp16(lhs, rhs);
@@ -3056,24 +3062,24 @@ void MacroAssembler::unsignedTruncSatFloat64x2ToInt32x4(FloatRegister src,
   MacroAssemblerX86Shared::unsignedTruncSatFloat64x2ToInt32x4(src, temp, dest);
 }
 
-void MacroAssembler::truncSatFloat32x4ToInt32x4Relaxed(FloatRegister src,
-                                                       FloatRegister dest) {
+void MacroAssembler::truncFloat32x4ToInt32x4Relaxed(FloatRegister src,
+                                                    FloatRegister dest) {
   vcvttps2dq(src, dest);
 }
 
-void MacroAssembler::unsignedTruncSatFloat32x4ToInt32x4Relaxed(
+void MacroAssembler::unsignedTruncFloat32x4ToInt32x4Relaxed(
     FloatRegister src, FloatRegister dest) {
-  MacroAssemblerX86Shared::unsignedTruncSatFloat32x4ToInt32x4Relaxed(src, dest);
+  MacroAssemblerX86Shared::unsignedTruncFloat32x4ToInt32x4Relaxed(src, dest);
 }
 
-void MacroAssembler::truncSatFloat64x2ToInt32x4Relaxed(FloatRegister src,
-                                                       FloatRegister dest) {
+void MacroAssembler::truncFloat64x2ToInt32x4Relaxed(FloatRegister src,
+                                                    FloatRegister dest) {
   vcvttpd2dq(src, dest);
 }
 
-void MacroAssembler::unsignedTruncSatFloat64x2ToInt32x4Relaxed(
+void MacroAssembler::unsignedTruncFloat64x2ToInt32x4Relaxed(
     FloatRegister src, FloatRegister dest) {
-  MacroAssemblerX86Shared::unsignedTruncSatFloat64x2ToInt32x4Relaxed(src, dest);
+  MacroAssemblerX86Shared::unsignedTruncFloat64x2ToInt32x4Relaxed(src, dest);
 }
 
 // Floating point widening
@@ -3209,14 +3215,22 @@ void MacroAssembler::unsignedWidenHighInt32x4(FloatRegister src,
 
 void MacroAssembler::fmaFloat32x4(FloatRegister src1, FloatRegister src2,
                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfmadd231ps(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat32x4(src1, src2, scratch);
   addFloat32x4(srcDest, scratch, srcDest);
 }
 
-void MacroAssembler::fmsFloat32x4(FloatRegister src1, FloatRegister src2,
-                                  FloatRegister srcDest) {
+void MacroAssembler::fnmaFloat32x4(FloatRegister src1, FloatRegister src2,
+                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfnmadd231ps(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat32x4(src1, src2, scratch);
@@ -3225,14 +3239,22 @@ void MacroAssembler::fmsFloat32x4(FloatRegister src1, FloatRegister src2,
 
 void MacroAssembler::fmaFloat64x2(FloatRegister src1, FloatRegister src2,
                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfmadd231pd(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat64x2(src1, src2, scratch);
   addFloat64x2(srcDest, scratch, srcDest);
 }
 
-void MacroAssembler::fmsFloat64x2(FloatRegister src1, FloatRegister src2,
-                                  FloatRegister srcDest) {
+void MacroAssembler::fnmaFloat64x2(FloatRegister src1, FloatRegister src2,
+                                   FloatRegister srcDest) {
+  if (HasFMA()) {
+    vfnmadd231pd(src2, src1, srcDest);
+    return;
+  }
   ScratchSimd128Scope scratch(*this);
   src1 = moveSimd128FloatIfNotAVX(src1, scratch);
   mulFloat64x2(src1, src2, scratch);

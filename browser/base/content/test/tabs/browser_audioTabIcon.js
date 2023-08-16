@@ -23,7 +23,7 @@ async function pause(tab, options) {
         "DOMAudioPlaybackStopped event should get fired after pause"
       );
     }
-    await SpecialPowers.spawn(browser, [], async function() {
+    await SpecialPowers.spawn(browser, [], async function () {
       let audio = content.document.querySelector("audio");
       audio.pause();
     });
@@ -451,7 +451,7 @@ async function test_browser_swapping(tab, browser) {
       gBrowser,
       url: "about:blank",
     },
-    async function(newBrowser) {
+    async function (newBrowser) {
       await test_swapped_browser_while_playing(tab, newBrowser);
 
       // Now, test swapping with a muted but not playing tab.
@@ -536,7 +536,7 @@ async function test_cross_process_load() {
     );
 
     // Go to a different process.
-    BrowserTestUtils.loadURI(browser, "about:mozilla");
+    BrowserTestUtils.loadURIString(browser, "about:mozilla");
     await BrowserTestUtils.browserLoaded(browser);
 
     await soundPlayingStoppedPromise;

@@ -14,7 +14,7 @@ const TEST_URI = `
   <div>Testing the color picker tooltip!</div>
 `;
 
-add_task(async function() {
+add_task(async function () {
   await addTab("data:text/html;charset=utf-8," + encodeURIComponent(TEST_URI));
 
   const { inspector, view } = await openRuleView();
@@ -93,7 +93,7 @@ async function testColorPickerEdit(inspector, view) {
   await onColorPickerReady;
 
   const newColor = "#53B759";
-  const { colorUtils } = require("devtools/shared/css/color");
+  const { colorUtils } = require("resource://devtools/shared/css/color.js");
 
   const { r, g, b, a } = new colorUtils.CssColor(newColor).getRGBATuple();
   await simulateColorPickerChange(view, picker, [r, g, b, a]);

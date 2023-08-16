@@ -11,13 +11,11 @@
  */
 
 /* eslint-env node */
-/* global serverPort */
 
 "use strict";
 
 const pps = Cc["@mozilla.org/network/protocol-proxy-service;1"].getService();
 
-let proxy_port;
 let filter;
 
 class ProxyFilter {
@@ -82,7 +80,7 @@ function get_response(channel, flags = CL_ALLOW_UNKNOWN_CL, delay = 0) {
       flags
     );
     if (delay > 0) {
-      do_timeout(delay, function() {
+      do_timeout(delay, function () {
         channel.asyncOpen(listener);
       });
     } else {
@@ -102,10 +100,7 @@ add_task(async function setup() {
   );
   addCertFromFile(certdb, "http2-ca.pem", "CTu,u,u");
 
-  const env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  let proxy_port = env.get("MOZHTTP2_PORT");
+  let proxy_port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(proxy_port, null);
 
   Services.prefs.setBoolPref("network.http.http2.enabled", true);
@@ -164,3 +159,16 @@ add_task(
     Assert.equal(failed2.http_code, undefined);
   }
 );
+
+add_task(async function test_http2_h11required_stream() {
+  let should_failed = await get_response(
+    make_channel(`http://h11required.com`),
+    CL_EXPECT_FAILURE
+  );
+
+  // See HTTP/1.1 connect handler in moz-http2.js. The handler returns
+  // "404 Not Found", so the expected error code is NS_ERROR_UNKNOWN_HOST.
+  Assert.equal(should_failed.status, Cr.NS_ERROR_UNKNOWN_HOST);
+  Assert.equal(should_failed.proxy_connect_response_code, 404);
+  Assert.equal(should_failed.http_code, undefined);
+});

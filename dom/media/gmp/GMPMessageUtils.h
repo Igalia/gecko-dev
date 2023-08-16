@@ -10,9 +10,15 @@
 #include "gmp-video-frame-encoded.h"
 #include "ipc/EnumSerializer.h"
 #include "ipc/IPCMessageUtilsSpecializations.h"
+#include "GMPNativeTypes.h"
 #include "GMPSanitizedExports.h"
 
 namespace IPC {
+
+template <>
+struct ParamTraits<GMPPluginType>
+    : public ContiguousEnumSerializerInclusive<
+          GMPPluginType, GMPPluginType::Unknown, GMPPluginType::Widevine> {};
 
 template <>
 struct ParamTraits<GMPErr>
@@ -43,6 +49,11 @@ template <>
 struct ParamTraits<GMPVideoCodecMode>
     : public ContiguousEnumSerializer<GMPVideoCodecMode, kGMPRealtimeVideo,
                                       kGMPCodecModeInvalid> {};
+
+template <>
+struct ParamTraits<GMPLogLevel>
+    : public ContiguousEnumSerializerInclusive<GMPLogLevel, kGMPLogDefault,
+                                               kGMPLogInvalid> {};
 
 template <>
 struct ParamTraits<GMPBufferType>
@@ -87,13 +98,6 @@ struct ParamTraits<GMPSimulcastStream> {
     }
     return false;
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"[%u, %u, %u, %u, %u, %u, %u]", aParam.mWidth,
-                              aParam.mHeight, aParam.mNumberOfTemporalLayers,
-                              aParam.mMaxBitrate, aParam.mTargetBitrate,
-                              aParam.mMinBitrate, aParam.mQPMax));
-  }
 };
 
 template <>
@@ -120,12 +124,15 @@ struct ParamTraits<GMPVideoCodec> {
       WriteParam(aWriter, aParam.mSimulcastStream[i]);
     }
     WriteParam(aWriter, aParam.mMode);
+    WriteParam(aWriter, aParam.mUseThreadedDecode);
+    WriteParam(aWriter, aParam.mLogLevel);
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
     // NOTE: make sure this matches any versions supported
     if (!ReadParam(aReader, &(aResult->mGMPApiVersion)) ||
-        aResult->mGMPApiVersion != kGMPVersion33) {
+        (aResult->mGMPApiVersion != kGMPVersion33 &&
+         aResult->mGMPApiVersion != kGMPVersion34)) {
       return false;
     }
     if (!ReadParam(aReader, &(aResult->mCodecType))) {
@@ -168,20 +175,13 @@ struct ParamTraits<GMPVideoCodec> {
       }
     }
 
-    if (!ReadParam(aReader, &(aResult->mMode))) {
+    if (!ReadParam(aReader, &(aResult->mMode)) ||
+        !ReadParam(aReader, &(aResult->mUseThreadedDecode)) ||
+        !ReadParam(aReader, &(aResult->mLogLevel))) {
       return false;
     }
 
     return true;
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    const char* codecName = nullptr;
-    if (aParam.mCodecType == kGMPVideoCodecVP8) {
-      codecName = "VP8";
-    }
-    aLog->append(StringPrintf(L"[%s, %u, %u]", codecName, aParam.mWidth,
-                              aParam.mHeight));
   }
 };
 

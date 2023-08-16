@@ -15,6 +15,7 @@
 #include "mozilla/dom/BindingDeclarations.h"
 #include "mozilla/dom/Document.h"
 #include "mozilla/dom/IDBFactoryBinding.h"
+#include "mozilla/dom/quota/PersistenceType.h"
 #include "mozilla/dom/quota/QuotaManager.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/WorkerPrivate.h"
@@ -359,21 +360,6 @@ bool IDBFactory::AllowedForPrincipal(nsIPrincipal* aPrincipal,
   return !aPrincipal->GetIsNullPrincipal();
 }
 
-bool IDBFactory::IsEnabled(JSContext* aCx, JSObject* aGlobal) {
-  if (StaticPrefs::dom_indexedDB_privateBrowsing_enabled()) {
-    return true;
-  }
-  if (StaticPrefs::dom_indexedDB_hide_in_pbmode_enabled()) {
-    if (const nsCOMPtr<nsIGlobalObject> global =
-            xpc::CurrentNativeGlobal(aCx)) {
-      if (global->GetStorageAccess() == StorageAccess::ePrivateBrowsing) {
-        return false;
-      }
-    }
-  }
-  return true;
-}
-
 void IDBFactory::UpdateActiveTransactionCount(int32_t aDelta) {
   AssertIsOnOwningThread();
   MOZ_DIAGNOSTIC_ASSERT(aDelta > 0 || (mActiveTransactionCount + aDelta) <
@@ -416,6 +402,7 @@ RefPtr<IDBOpenDBRequest> IDBFactory::Open(JSContext* aCx,
                                           const IDBOpenDBOptions& aOptions,
                                           CallerType aCallerType,
                                           ErrorResult& aRv) {
+  // This overload is nonstandard, see bug 1275496.
   // Ignore calls with empty options for telemetry of usage count.
   // Unfortunately, we cannot distinguish between the use of the method with
   // only a single argument (which actually is a standard overload we don't want
@@ -551,6 +538,20 @@ RefPtr<IDBOpenDBRequest> IDBFactory::OpenInternal(
       return nullptr;
     }
   } else {
+    if (mGlobal->GetStorageAccess() == StorageAccess::ePrivateBrowsing) {
+      if (NS_IsMainThread()) {
+        SetUseCounter(
+            mGlobal->GetGlobalJSObject(),
+            aDeleting
+                ? eUseCounter_custom_PrivateBrowsingIDBFactoryOpen
+                : eUseCounter_custom_PrivateBrowsingIDBFactoryDeleteDatabase);
+      } else {
+        SetUseCounter(
+            aDeleting ? UseCounterWorker::Custom_PrivateBrowsingIDBFactoryOpen
+                      : UseCounterWorker::
+                            Custom_PrivateBrowsingIDBFactoryDeleteDatabase);
+      }
+    }
     principalInfo = *mPrincipalInfo;
   }
 
@@ -581,9 +582,15 @@ RefPtr<IDBOpenDBRequest> IDBFactory::OpenInternal(
     isInternal = QuotaManager::IsOriginInternal(origin);
   }
 
+  const bool isPrivate =
+      principalInfo.type() == PrincipalInfo::TContentPrincipalInfo &&
+      principalInfo.get_ContentPrincipalInfo().attrs().mPrivateBrowsingId > 0;
+
   if (isInternal) {
     // Chrome privilege and internal origins always get persistent storage.
     persistenceType = PERSISTENCE_TYPE_PERSISTENT;
+  } else if (isPrivate) {
+    persistenceType = PERSISTENCE_TYPE_PRIVATE;
   } else {
     persistenceType = PERSISTENCE_TYPE_DEFAULT;
   }

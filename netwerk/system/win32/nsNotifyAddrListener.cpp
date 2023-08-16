@@ -26,7 +26,6 @@
 #include <netioapi.h>
 #include <netlistmgr.h>
 #include <iprtrmib.h>
-#include "plstr.h"
 #include "mozilla/Logging.h"
 #include "nsComponentManagerUtils.h"
 #include "nsThreadUtils.h"
@@ -45,6 +44,7 @@
 #include "mozilla/Base64.h"
 #include "mozilla/ScopeExit.h"
 #include "mozilla/Telemetry.h"
+#include "../LinkServiceCommon.h"
 #include <iptypes.h>
 #include <iphlpapi.h>
 
@@ -248,7 +248,7 @@ void nsNotifyAddrListener::calculateNetworkId(void) {
   nsAutoCString output;
   SHA1Sum::Hash digest;
   HashSortedNetworkIds(nwGUIDS, sha1);
-
+  SeedNetworkId(sha1);
   sha1.finish(digest);
   nsCString newString(reinterpret_cast<char*>(digest), SHA1Sum::kHashSize);
   nsresult rv = Base64Encode(newString, output);
@@ -258,7 +258,8 @@ void nsNotifyAddrListener::calculateNetworkId(void) {
       mNetworkId.Truncate();
     }
     Telemetry::Accumulate(Telemetry::NETWORK_ID2, 0);
-    LOG(("calculateNetworkId: no network ID Base64Encode error %X", rv));
+    LOG(("calculateNetworkId: no network ID Base64Encode error %X",
+         uint32_t(rv)));
     return;
   }
 

@@ -33,7 +33,6 @@
 typedef double      __double_t;
 typedef __double_t  double_t;
 typedef float       __float_t;
-typedef __float_t   float_t;
 
 /*
  * The original fdlibm code used statements like:
@@ -872,22 +871,34 @@ irintl(long double x)
 #define	__ieee754_scalbf scalbf
 
 #define acos fdlibm::acos
+#define acosf fdlibm::acosf
 #define asin fdlibm::asin
+#define asinf fdlibm::asinf
 #define atan fdlibm::atan
+#define atanf fdlibm::atanf
 #define atan2 fdlibm::atan2
 #define cos fdlibm::cos
+#define cosf fdlibm::cosf
 #define sin fdlibm::sin
+#define sinf fdlibm::sinf
 #define tan fdlibm::tan
+#define tanf fdlibm::tanf
 #define cosh fdlibm::cosh
 #define sinh fdlibm::sinh
 #define tanh fdlibm::tanh
 #define exp fdlibm::exp
+#define expf fdlibm::expf
+#define exp2 fdlibm::exp2
+#define exp2f fdlibm::exp2f
 #define log fdlibm::log
+#define logf fdlibm::logf
 #define log10 fdlibm::log10
 #define pow fdlibm::pow
+#define powf fdlibm::powf
 #define ceil fdlibm::ceil
 #define ceilf fdlibm::ceilf
 #define fabs fdlibm::fabs
+#define fabsf fdlibm::fabsf
 #define floor fdlibm::floor
 #define acosh fdlibm::acosh
 #define asinh fdlibm::asinh
@@ -900,6 +911,7 @@ irintl(long double x)
 #define scalb fdlibm::scalb
 #define copysign fdlibm::copysign
 #define scalbn fdlibm::scalbn
+#define scalbnf fdlibm::scalbnf
 #define trunc fdlibm::trunc
 #define truncf fdlibm::truncf
 #define floorf fdlibm::floorf
@@ -907,6 +919,7 @@ irintl(long double x)
 #define nearbyintf fdlibm::nearbyintf
 #define rint fdlibm::rint
 #define rintf fdlibm::rintf
+#define sqrtf fdlibm::sqrtf
 
 /* fdlibm kernel function */
 int	__kernel_rem_pio2(double*,double*,int,int,int);

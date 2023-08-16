@@ -28,6 +28,8 @@
 #include "nsPrintfCString.h"
 
 #if defined(XP_WIN)
+#  include "windef.h"
+#  include "winnetwk.h"
 #  include "npapi.h"
 #  include "WinUtils.h"
 #endif  // #if defined (XP_WIN)
@@ -498,10 +500,6 @@ bool WidgetEvent::IsAllowedToDispatchInSystemGroup() const {
 }
 
 bool WidgetEvent::IsBlockedForFingerprintingResistance() const {
-  if (!nsContentUtils::ShouldResistFingerprinting()) {
-    return false;
-  }
-
   switch (mClass) {
     case eKeyboardEventClass: {
       const WidgetKeyboardEvent* keyboardEvent = AsKeyboardEvent();
@@ -615,7 +613,7 @@ Modifier WidgetInputEvent::GetModifier(const nsAString& aDOMKeyName) {
 Modifier WidgetInputEvent::AccelModifier() {
   static Modifier sAccelModifier = MODIFIER_NONE;
   if (sAccelModifier == MODIFIER_NONE) {
-    switch (Preferences::GetInt("ui.key.accelKey", 0)) {
+    switch (StaticPrefs::ui_key_accelKey()) {
       case dom::KeyboardEvent_Binding::DOM_VK_META:
         sAccelModifier = MODIFIER_META;
         break;
@@ -1186,6 +1184,37 @@ void WidgetKeyboardEvent::GetDOMCodeName(CodeNameIndex aCodeNameIndex,
   MOZ_RELEASE_ASSERT(
       static_cast<size_t>(aCodeNameIndex) < ArrayLength(kCodeNames),
       "Illegal physical code enumeration value");
+
+  // Generate some continuous runs of codes, rather than looking them up.
+  if (aCodeNameIndex >= CODE_NAME_INDEX_KeyA &&
+      aCodeNameIndex <= CODE_NAME_INDEX_KeyZ) {
+    uint32_t index = aCodeNameIndex - CODE_NAME_INDEX_KeyA;
+    aCodeName.AssignLiteral(u"Key");
+    aCodeName.Append(u'A' + index);
+    return;
+  }
+  if (aCodeNameIndex >= CODE_NAME_INDEX_Digit0 &&
+      aCodeNameIndex <= CODE_NAME_INDEX_Digit9) {
+    uint32_t index = aCodeNameIndex - CODE_NAME_INDEX_Digit0;
+    aCodeName.AssignLiteral(u"Digit");
+    aCodeName.AppendInt(index);
+    return;
+  }
+  if (aCodeNameIndex >= CODE_NAME_INDEX_Numpad0 &&
+      aCodeNameIndex <= CODE_NAME_INDEX_Numpad9) {
+    uint32_t index = aCodeNameIndex - CODE_NAME_INDEX_Numpad0;
+    aCodeName.AssignLiteral(u"Numpad");
+    aCodeName.AppendInt(index);
+    return;
+  }
+  if (aCodeNameIndex >= CODE_NAME_INDEX_F1 &&
+      aCodeNameIndex <= CODE_NAME_INDEX_F24) {
+    uint32_t index = aCodeNameIndex - CODE_NAME_INDEX_F1;
+    aCodeName.Assign(u'F');
+    aCodeName.AppendInt(index + 1);
+    return;
+  }
+
   aCodeName = kCodeNames[aCodeNameIndex];
 }
 

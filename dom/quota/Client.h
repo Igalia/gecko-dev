@@ -25,6 +25,7 @@ class nsIFile;
 #define IDB_DIRECTORY_NAME "idb"
 #define DOMCACHE_DIRECTORY_NAME "cache"
 #define SDB_DIRECTORY_NAME "sdb"
+#define FILESYSTEM_DIRECTORY_NAME "fs"
 #define LS_DIRECTORY_NAME "ls"
 
 // Deprecated
@@ -54,6 +55,7 @@ class Client {
     // APPCACHE,
     DOMCACHE,
     SDB,
+    FILESYSTEM,
     LS,
     TYPE_MAX
   };
@@ -79,6 +81,9 @@ class Client {
   static bool IsValidType(Type aType);
 
   static bool TypeToText(Type aType, nsAString& aText, const fallible_t&);
+
+  // TODO: Rename other similar methods to use String/CString instead of Text.
+  static nsAutoString TypeToString(Type aType);
 
   static nsAutoCString TypeToText(Type aType);
 
@@ -142,6 +147,8 @@ class Client {
 
   virtual void OnOriginClearCompleted(PersistenceType aPersistenceType,
                                       const nsACString& aOrigin) = 0;
+
+  virtual void OnRepositoryClearCompleted(PersistenceType aPersistenceType) = 0;
 
   virtual void ReleaseIOThreadObjects() = 0;
 

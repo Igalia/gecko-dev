@@ -8,7 +8,6 @@
 
 #include "mozilla/BinarySearch.h"
 #include "mozilla/Casting.h"
-#include "mozilla/DebugOnly.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/ScopeExit.h"  // mozilla::MakeScopeExit
 #include "mozilla/Utf8.h"       // mozilla::Utf8Unit
@@ -24,7 +23,6 @@
 
 #include "builtin/Array.h"
 #include "builtin/BigInt.h"
-#include "vm/ErrorContext.h"
 #ifdef JS_HAS_INTL_API
 #  include "builtin/intl/Collator.h"
 #  include "builtin/intl/DateTimeFormat.h"
@@ -43,58 +41,46 @@
 #include "builtin/RegExp.h"
 #include "builtin/SelfHostingDefines.h"
 #include "builtin/String.h"
-#include "builtin/Symbol.h"
 #ifdef ENABLE_RECORD_TUPLE
 #  include "builtin/TupleObject.h"
 #endif
-#include "builtin/WeakMapObject.h"
-#include "frontend/BytecodeCompilation.h"  // CompileGlobalScriptToStencil
-#include "frontend/CompilationStencil.h"   // js::frontend::CompilationStencil
-#include "gc/Marking.h"
-#include "gc/Policy.h"
+#include "frontend/BytecodeCompiler.h"    // CompileGlobalScriptToStencil
+#include "frontend/CompilationStencil.h"  // js::frontend::CompilationStencil
+#include "frontend/FrontendContext.h"     // AutoReportFrontendContext
 #include "jit/AtomicOperations.h"
 #include "jit/InlinableNatives.h"
-#include "js/CallAndConstruct.h"  // JS::Construct, JS::IsCallable, JS::IsConstructor
-#include "js/CharacterEncoding.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/Conversions.h"
-#include "js/Date.h"
 #include "js/ErrorReport.h"  // JS::PrintError
-#include "js/Exception.h"
-#include "js/experimental/JSStencil.h"  // RefPtrTraits<JS::Stencil>
+#include "js/experimental/JSStencil.h"
 #include "js/experimental/TypedData.h"  // JS_GetArrayBufferViewType
 #include "js/friend/ErrorMessages.h"    // js::GetErrorMessage, JSMSG_*
 #include "js/HashTable.h"
-#include "js/PropertyAndElement.h"  // JS_DefineProperty, JS_DefinePropertyById
+#include "js/Printer.h"
 #include "js/PropertySpec.h"
 #include "js/ScalarType.h"  // js::Scalar::Type
 #include "js/SourceText.h"  // JS::SourceText
-#include "js/StableStringChars.h"
 #include "js/TracingAPI.h"
 #include "js/Transcoding.h"
 #include "js/Warnings.h"  // JS::{,Set}WarningReporter
 #include "js/Wrapper.h"
-#include "util/StringBuffer.h"
 #include "vm/ArgumentsObject.h"
 #include "vm/AsyncFunction.h"
 #include "vm/AsyncIteration.h"
 #include "vm/BigIntType.h"
-#include "vm/BytecodeIterator.h"
-#include "vm/BytecodeLocation.h"
 #include "vm/Compression.h"
 #include "vm/DateObject.h"
 #include "vm/ErrorReporting.h"  // js::MaybePrintAndClearPendingException
 #include "vm/FrameIter.h"       // js::ScriptFrameIter
-#include "vm/FunctionFlags.h"   // js::FunctionFlags
 #include "vm/GeneratorObject.h"
 #include "vm/Interpreter.h"
 #include "vm/Iteration.h"
+#include "vm/JSAtomUtils.h"  // Atomize
 #include "vm/JSContext.h"
 #include "vm/JSFunction.h"
 #include "vm/JSObject.h"
 #include "vm/PIC.h"
 #include "vm/PlainObject.h"  // js::PlainObject
-#include "vm/Printer.h"
 #include "vm/Realm.h"
 #include "vm/RegExpObject.h"
 #include "vm/StringType.h"
@@ -103,18 +89,11 @@
 #include "vm/Uint8Clamped.h"
 #include "vm/WrapperObject.h"
 
-#include "gc/GC-inl.h"
-#include "vm/BooleanObject-inl.h"
-#include "vm/BytecodeIterator-inl.h"
-#include "vm/BytecodeLocation-inl.h"
 #include "vm/Compartment-inl.h"
-#include "vm/JSAtom-inl.h"
+#include "vm/JSAtomUtils-inl.h"  // PrimitiveValueToId
 #include "vm/JSFunction-inl.h"
 #include "vm/JSObject-inl.h"
-#include "vm/JSScript-inl.h"
 #include "vm/NativeObject-inl.h"
-#include "vm/NumberObject-inl.h"
-#include "vm/StringObject-inl.h"
 #include "vm/TypedArrayObject-inl.h"
 
 using namespace js;
@@ -122,16 +101,6 @@ using namespace js::selfhosted;
 
 using JS::CompileOptions;
 using mozilla::Maybe;
-
-static void selfHosting_WarningReporter(JSContext* cx, JSErrorReport* report) {
-  MOZ_ASSERT(report->isWarning());
-
-  js::selfHosting_ErrorReporter(report);
-}
-
-void js::selfHosting_ErrorReporter(JSErrorReport* report) {
-  JS::PrintError(stderr, report, true);
-}
 
 static bool intrinsic_ToObject(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
@@ -485,21 +454,6 @@ static bool intrinsic_DumpMessage(JSContext* cx, unsigned argc, Value* vp) {
 #endif
   args.rval().setUndefined();
   return true;
-}
-
-static bool intrinsic_FinishBoundFunctionInit(JSContext* cx, unsigned argc,
-                                              Value* vp) {
-  CallArgs args = CallArgsFromVp(argc, vp);
-  MOZ_ASSERT(args.length() == 3);
-  MOZ_ASSERT(IsCallable(args[1]));
-  MOZ_RELEASE_ASSERT(args[2].isInt32());
-
-  RootedFunction bound(cx, &args[0].toObject().as<JSFunction>());
-  RootedObject targetObj(cx, &args[1].toObject());
-  int32_t argCount = args[2].toInt32();
-
-  args.rval().setUndefined();
-  return JSFunction::finishBoundFunctionInit(cx, bound, targetObj, argCount);
 }
 
 /*
@@ -1356,6 +1310,32 @@ static bool intrinsic_TypedArrayInitFromPackedArray(JSContext* cx,
   return true;
 }
 
+template <bool ForTest>
+static bool intrinsic_RegExpBuiltinExec(JSContext* cx, unsigned argc,
+                                        Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(args[0].toObject().is<RegExpObject>());
+  MOZ_ASSERT(args[1].isString());
+
+  Rooted<RegExpObject*> obj(cx, &args[0].toObject().as<RegExpObject>());
+  Rooted<JSString*> string(cx, args[1].toString());
+  return RegExpBuiltinExec(cx, obj, string, ForTest, args.rval());
+}
+
+template <bool ForTest>
+static bool intrinsic_RegExpExec(JSContext* cx, unsigned argc, Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+  MOZ_ASSERT(args[0].isObject());
+  MOZ_ASSERT(args[1].isString());
+
+  Rooted<JSObject*> obj(cx, &args[0].toObject());
+  Rooted<JSString*> string(cx, args[1].toString());
+  return RegExpExec(cx, obj, string, ForTest, args.rval());
+}
+
 static bool intrinsic_RegExpCreate(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
 
@@ -1537,7 +1517,7 @@ bool js::IsCallSelfHostedNonGenericMethod(NativeImpl impl) {
 }
 
 bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
-                                            const CallArgs& args) {
+                                            Handle<Value> thisValue) {
   // The contract for this function is the same as
   // CallSelfHostedNonGenericMethod. The normal ReportIncompatible function
   // doesn't work for selfhosted functions, because they always call the
@@ -1552,10 +1532,7 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
   // in the somethingSelfHosted, not in the sort() call.
 
   static const char* const internalNames[] = {
-      "IsTypedArrayEnsuringArrayBuffer",
-      "UnwrapAndCallRegExpBuiltinExec",
-      "RegExpBuiltinExec",
-      "RegExpExec",
+      "EnsureTypedArrayWithArrayBuffer",
       "RegExpSearchSlowPath",
       "RegExpReplaceSlowPath",
       "RegExpMatchSlowPath",
@@ -1565,8 +1542,7 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
   MOZ_ASSERT(iter.isFunctionFrame());
 
   while (!iter.done()) {
-    MOZ_ASSERT(iter.callee(cx)->isSelfHostedOrIntrinsic() &&
-               !iter.callee(cx)->isBoundFunction());
+    MOZ_ASSERT(iter.callee(cx)->isSelfHostedOrIntrinsic());
     UniqueChars funNameBytes;
     const char* funName =
         GetFunctionNameBytes(cx, iter.callee(cx), &funNameBytes);
@@ -1578,7 +1554,7 @@ bool js::ReportIncompatibleSelfHostedMethod(JSContext* cx,
             [funName](auto* name) { return strcmp(funName, name) != 0; })) {
       JS_ReportErrorNumberUTF8(cx, GetErrorMessage, nullptr,
                                JSMSG_INCOMPATIBLE_METHOD, funName, "method",
-                               InformalValueTypeName(args.thisv()));
+                               InformalValueTypeName(thisValue));
       return false;
     }
     ++iter;
@@ -1813,6 +1789,64 @@ static bool intrinsic_NewAsyncIteratorHelper(JSContext* cx, unsigned argc,
   return true;
 }
 
+static JSObject* NewIteratorRecord(JSContext* cx, HandleObject iterator,
+                                   HandleValue nextMethod) {
+  gc::AllocKind allocKind = gc::GetGCObjectKind(3);
+  Rooted<PlainObject*> obj(
+      cx, NewPlainObjectWithProtoAndAllocKind(cx, nullptr, allocKind));
+  if (!obj) {
+    return nullptr;
+  }
+
+  RootedId propid(cx, NameToId(cx->names().iterator));
+  RootedValue value(cx, ObjectValue(*iterator));
+  if (!NativeDefineDataProperty(cx, obj, propid, value, JSPROP_ENUMERATE)) {
+    return nullptr;
+  }
+
+  propid = NameToId(cx->names().nextMethod);
+  value.set(nextMethod);
+  if (!NativeDefineDataProperty(cx, obj, propid, value, JSPROP_ENUMERATE)) {
+    return nullptr;
+  }
+
+  propid = NameToId(cx->names().done);
+  value.setBoolean(false);
+  if (!NativeDefineDataProperty(cx, obj, propid, value, JSPROP_ENUMERATE)) {
+    return nullptr;
+  }
+
+  return obj;
+}
+
+static bool intrinsic_CreateAsyncFromSyncIterator(JSContext* cx, unsigned argc,
+                                                  Value* vp) {
+  CallArgs args = CallArgsFromVp(argc, vp);
+  MOZ_ASSERT(args.length() == 2);
+
+  RootedObject iterator(cx, &args[0].toObject());
+  RootedObject asyncIterator(
+      cx, CreateAsyncFromSyncIterator(cx, iterator, args[1]));
+  if (!asyncIterator) {
+    return false;
+  }
+
+  RootedValue nextMethod(cx);
+  if (!GetProperty(cx, asyncIterator, asyncIterator, cx->names().next,
+                   &nextMethod)) {
+    return false;
+  }
+
+  RootedObject iteratorRecord(cx,
+                              NewIteratorRecord(cx, asyncIterator, nextMethod));
+  if (!iteratorRecord) {
+    return false;
+  }
+
+  args.rval().setObject(*iteratorRecord);
+  return true;
+}
+
 static bool intrinsic_NoPrivateGetter(JSContext* cx, unsigned argc, Value* vp) {
   CallArgs args = CallArgsFromVp(argc, vp);
   MOZ_ASSERT(args.length() == 0);
@@ -1883,6 +1917,8 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("ConstructorForTypedArray", intrinsic_ConstructorForTypedArray, 1, 0),
     JS_FN("CopyDataPropertiesOrGetOwnKeys",
           intrinsic_CopyDataPropertiesOrGetOwnKeys, 3, 0),
+    JS_FN("CreateAsyncFromSyncIterator", intrinsic_CreateAsyncFromSyncIterator,
+          2, 0),
     JS_FN("CreateMapIterationResultPair",
           intrinsic_CreateMapIterationResultPair, 0, 0),
     JS_FN("CreateSetIterationResult", intrinsic_CreateSetIterationResult, 0, 0),
@@ -1890,9 +1926,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("DefineDataProperty", intrinsic_DefineDataProperty, 4, 0),
     JS_FN("DefineProperty", intrinsic_DefineProperty, 6, 0),
     JS_FN("DumpMessage", intrinsic_DumpMessage, 1, 0),
-    JS_INLINABLE_FN("FinishBoundFunctionInit",
-                    intrinsic_FinishBoundFunctionInit, 3, 0,
-                    IntrinsicFinishBoundFunctionInit),
     JS_FN("FlatStringMatch", FlatStringMatch, 2, 0),
     JS_FN("FlatStringSearch", FlatStringSearch, 2, 0),
     JS_FN("GeneratorIsRunning", intrinsic_GeneratorIsRunning, 1, 0),
@@ -2019,8 +2052,17 @@ static const JSFunctionSpec intrinsic_functions[] = {
                     intrinsic_PossiblyWrappedTypedArrayLength, 1, 0,
                     IntrinsicPossiblyWrappedTypedArrayLength),
     JS_FN("PromiseResolve", intrinsic_PromiseResolve, 2, 0),
+    JS_INLINABLE_FN("RegExpBuiltinExec", intrinsic_RegExpBuiltinExec<false>, 2,
+                    0, IntrinsicRegExpBuiltinExec),
+    JS_INLINABLE_FN("RegExpBuiltinExecForTest",
+                    intrinsic_RegExpBuiltinExec<true>, 2, 0,
+                    IntrinsicRegExpBuiltinExecForTest),
     JS_FN("RegExpConstructRaw", regexp_construct_raw_flags, 2, 0),
     JS_FN("RegExpCreate", intrinsic_RegExpCreate, 2, 0),
+    JS_INLINABLE_FN("RegExpExec", intrinsic_RegExpExec<false>, 2, 0,
+                    IntrinsicRegExpExec),
+    JS_INLINABLE_FN("RegExpExecForTest", intrinsic_RegExpExec<true>, 2, 0,
+                    IntrinsicRegExpExecForTest),
     JS_FN("RegExpGetSubstitution", intrinsic_RegExpGetSubstitution, 5, 0),
     JS_INLINABLE_FN("RegExpInstanceOptimizable", RegExpInstanceOptimizable, 1,
                     0, RegExpInstanceOptimizable),
@@ -2028,7 +2070,6 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_INLINABLE_FN("RegExpPrototypeOptimizable", RegExpPrototypeOptimizable, 1,
                     0, RegExpPrototypeOptimizable),
     JS_INLINABLE_FN("RegExpSearcher", RegExpSearcher, 3, 0, RegExpSearcher),
-    JS_INLINABLE_FN("RegExpTester", RegExpTester, 3, 0, RegExpTester),
     JS_INLINABLE_FN("SameValue", js::obj_is, 2, 0, ObjectIs),
     JS_FN("SharedArrayBufferByteLength",
           intrinsic_ArrayBufferByteLength<SharedArrayBufferObject>, 1, 0),
@@ -2210,13 +2251,13 @@ static const JSFunctionSpec intrinsic_functions[] = {
     JS_FN("std_Set_values", SetObject::values, 0, 0),
     JS_INLINABLE_FN("std_String_charCodeAt", str_charCodeAt, 1, 0,
                     StringCharCodeAt),
-    JS_FN("std_String_endsWith", str_endsWith, 1, 0),
+    JS_INLINABLE_FN("std_String_endsWith", str_endsWith, 1, 0, StringEndsWith),
     JS_INLINABLE_FN("std_String_fromCharCode", str_fromCharCode, 1, 0,
                     StringFromCharCode),
     JS_INLINABLE_FN("std_String_fromCodePoint", str_fromCodePoint, 1, 0,
                     StringFromCodePoint),
     JS_FN("std_String_includes", str_includes, 1, 0),
-    JS_FN("std_String_indexOf", str_indexOf, 1, 0),
+    JS_INLINABLE_FN("std_String_indexOf", str_indexOf, 1, 0, StringIndexOf),
     JS_INLINABLE_FN("std_String_startsWith", str_startsWith, 1, 0,
                     StringStartsWith),
 #ifdef ENABLE_RECORD_TUPLE
@@ -2251,7 +2292,7 @@ class CheckTenuredTracer : public JS::CallbackTracer {
       JS::TraceChildren(this, stack.popCopy());
     }
   }
-  void onChild(JS::GCCellPtr thing) override {
+  void onChild(JS::GCCellPtr thing, const char* name) override {
     gc::Cell* cell = thing.asCell();
     MOZ_RELEASE_ASSERT(cell->isTenured(), "Expected tenured cell");
     if (!visited.has(cell)) {
@@ -2337,23 +2378,38 @@ void js::FillSelfHostingCompileOptions(CompileOptions& options) {
   options.setNoScriptRval(true);
 }
 
-class MOZ_STACK_CLASS AutoSelfHostingErrorReporter {
+// Report all errors and warnings to stderr because it is too early in the
+// startup process for any other error reporting to be used, and we don't want
+// errors in self-hosted code to be silently swallowed.
+class MOZ_STACK_CLASS AutoPrintSelfHostingFrontendContext
+    : public FrontendContext {
   JSContext* cx_;
-  JS::WarningReporter oldReporter_;
 
  public:
-  explicit AutoSelfHostingErrorReporter(JSContext* cx) : cx_(cx) {
-    oldReporter_ = JS::SetWarningReporter(cx_, selfHosting_WarningReporter);
+  explicit AutoPrintSelfHostingFrontendContext(JSContext* cx)
+      : FrontendContext(), cx_(cx) {
+    setCurrentJSContext(cx_);
   }
-  ~AutoSelfHostingErrorReporter() {
-    JS::SetWarningReporter(cx_, oldReporter_);
-
-    // Exceptions in self-hosted code will usually be printed to stderr in
-    // ErrorToException, but not all exceptions are handled there. For
-    // instance, ReportOutOfMemory will throw the "out of memory" string
-    // without going through ErrorToException. We handle these other
-    // exceptions here.
+  ~AutoPrintSelfHostingFrontendContext() {
+    // TODO: Remove this once JSContext is removed from frontend.
     MaybePrintAndClearPendingException(cx_);
+
+    if (hadOutOfMemory()) {
+      fprintf(stderr, "Out of memory\n");
+    }
+
+    if (maybeError()) {
+      JS::PrintError(stderr, &*maybeError(), true);
+    }
+    for (CompileError& error : warnings()) {
+      JS::PrintError(stderr, &error, true);
+    }
+    if (hadOverRecursed()) {
+      fprintf(stderr, "Over recursed\n");
+    }
+    if (hadAllocationOverflow()) {
+      fprintf(stderr, "Allocation overflow\n");
+    }
   }
 };
 
@@ -2435,22 +2491,13 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
     return true;
   }
 
-  /*
-   * Set a temporary error reporter printing to stderr because it is too
-   * early in the startup process for any other reporter to be registered
-   * and we don't want errors in self-hosted code to be silently swallowed.
-   *
-   * This class also overrides the warning reporter to print warnings to
-   * stderr. See selfHosting_WarningReporter.
-   */
-  AutoSelfHostingErrorReporter errorReporter(cx);
-
   // Variables used to instantiate scripts.
   CompileOptions options(cx);
   FillSelfHostingCompileOptions(options);
 
   // Try initializing from Stencil XDR.
   bool decodeOk = false;
+  AutoPrintSelfHostingFrontendContext fc(cx);
   if (xdrCache.Length() > 0) {
     // Allow the VM to directly use bytecode from the XDR buffer without
     // copying it. The buffer must outlive all runtimes (including workers).
@@ -2462,8 +2509,11 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
     if (!input) {
       return false;
     }
-    if (!input->initForSelfHostingGlobal(cx)) {
-      return false;
+    {
+      AutoReportFrontendContext fc(cx);
+      if (!input->initForSelfHostingGlobal(&fc)) {
+        return false;
+      }
     }
 
     RefPtr<frontend::CompilationStencil> stencil(
@@ -2471,7 +2521,7 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
     if (!stencil) {
       return false;
     }
-    if (!stencil->deserializeStencils(cx, *input, xdrCache, &decodeOk)) {
+    if (!stencil->deserializeStencils(&fc, options, xdrCache, &decodeOk)) {
       return false;
     }
 
@@ -2511,11 +2561,11 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
   if (!input) {
     return false;
   }
-  MainThreadErrorContext ec(cx);
+  frontend::NoScopeBindingCache scopeCache;
   RefPtr<frontend::CompilationStencil> stencil =
-      frontend::CompileGlobalScriptToStencil(
-          cx, &ec, cx->stackLimitForCurrentPrincipal(), cx->tempLifoAlloc(),
-          *input, srcBuf, ScopeKind::Global);
+      frontend::CompileGlobalScriptToStencil(cx, &fc, cx->tempLifoAlloc(),
+                                             *input, &scopeCache, srcBuf,
+                                             ScopeKind::Global);
   if (!stencil) {
     return false;
   }
@@ -2523,7 +2573,12 @@ bool JSRuntime::initSelfHostingStencil(JSContext* cx,
   // Serialize the stencil to XDR.
   if (xdrWriter) {
     JS::TranscodeBuffer xdrBuffer;
-    if (!stencil->serializeStencils(cx, *input, xdrBuffer)) {
+    bool succeeded = false;
+    if (!stencil->serializeStencils(cx, *input, xdrBuffer, &succeeded)) {
+      return false;
+    }
+    if (!succeeded) {
+      JS_ReportErrorASCII(cx, "Encoding failure");
       return false;
     }
 
@@ -2620,23 +2675,27 @@ ScriptSourceObject* GlobalObject::getOrCreateSelfHostingScriptSourceObject(
     return nullptr;
   }
 
-  if (!source->initFromOptions(cx, options)) {
-    return nullptr;
+  Rooted<ScriptSourceObject*> sourceObject(cx);
+  {
+    AutoReportFrontendContext fc(cx);
+    if (!source->initFromOptions(&fc, options)) {
+      return nullptr;
+    }
+
+    sourceObject = ScriptSourceObject::create(cx, source.get());
+    if (!sourceObject) {
+      return nullptr;
+    }
+
+    JS::InstantiateOptions instantiateOptions(options);
+    if (!ScriptSourceObject::initFromOptions(cx, sourceObject,
+                                             instantiateOptions)) {
+      return nullptr;
+    }
+
+    global->data().selfHostingScriptSource.init(sourceObject);
   }
 
-  Rooted<ScriptSourceObject*> sourceObject(
-      cx, ScriptSourceObject::create(cx, source.get()));
-  if (!sourceObject) {
-    return nullptr;
-  }
-
-  JS::InstantiateOptions instantiateOptions(options);
-  if (!ScriptSourceObject::initFromOptions(cx, sourceObject,
-                                           instantiateOptions)) {
-    return nullptr;
-  }
-
-  global->data().selfHostingScriptSource.init(sourceObject);
   return sourceObject;
 }
 
@@ -2762,6 +2821,14 @@ void JSRuntime::assertSelfHostedFunctionHasCanonicalName(
 bool js::IsSelfHostedFunctionWithName(JSFunction* fun, JSAtom* name) {
   return fun->isSelfHostedBuiltin() && fun->isExtended() &&
          GetClonedSelfHostedFunctionName(fun) == name;
+}
+
+bool js::IsSelfHostedFunctionWithName(const Value& v, JSAtom* name) {
+  if (!v.isObject() || !v.toObject().is<JSFunction>()) {
+    return false;
+  }
+  JSFunction* fun = &v.toObject().as<JSFunction>();
+  return IsSelfHostedFunctionWithName(fun, name);
 }
 
 static_assert(

@@ -10,17 +10,23 @@ function mockServicesChromeScript() {
   );
   const ALERTS_SERVICE_CONTRACT_ID = "@mozilla.org/alerts-service;1";
 
-  const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+  const { setTimeout } = ChromeUtils.importESModule(
+    "resource://gre/modules/Timer.sys.mjs"
+  );
   const registrar = Components.manager.QueryInterface(Ci.nsIComponentRegistrar);
 
   let activeNotifications = Object.create(null);
 
   const mockAlertsService = {
-    showPersistentNotification: function(persistentData, alert, alertListener) {
+    showPersistentNotification: function (
+      persistentData,
+      alert,
+      alertListener
+    ) {
       this.showAlert(alert, alertListener);
     },
 
-    showAlert: function(alert, listener) {
+    showAlert: function (alert, listener) {
       activeNotifications[alert.name] = {
         listener: listener,
         cookie: alert.cookie,
@@ -29,13 +35,13 @@ function mockServicesChromeScript() {
 
       // fake async alert show event
       if (listener) {
-        setTimeout(function() {
+        setTimeout(function () {
           listener.observe(null, "alertshow", alert.cookie);
         }, 100);
       }
     },
 
-    showAlertNotification: function(
+    showAlertNotification: function (
       imageUrl,
       title,
       text,
@@ -54,7 +60,7 @@ function mockServicesChromeScript() {
       );
     },
 
-    closeAlert: function(name) {
+    closeAlert: function (name) {
       let alertNotification = activeNotifications[name];
       if (alertNotification) {
         if (alertNotification.listener) {
@@ -70,7 +76,7 @@ function mockServicesChromeScript() {
 
     QueryInterface: ChromeUtils.generateQI(["nsIAlertsService"]),
 
-    createInstance: function(iid) {
+    createInstance: function (iid) {
       return this.QueryInterface(iid);
     },
   };

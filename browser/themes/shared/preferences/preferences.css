@@ -5,24 +5,8 @@
 @namespace html "http://www.w3.org/1999/xhtml";
 
 /* Global rules */
-* {
+:root {
   user-select: text;
-}
-
-body {
-  font-size: 1.25em;
-}
-
-@media (-moz-platform: macos) {
-  body {
-    font-size: 1.36em;
-  }
-}
-
-@media (-moz-platform: linux) {
-  body {
-    font-size: 1.11em;
-  }
 }
 
 #preferences-root {
@@ -46,8 +30,8 @@ body {
 
 #preferences-body {
   vertical-align: top; /* See bug 1606130 */
-  display: -moz-box;
-  -moz-box-orient: vertical;
+  display: flex;
+  flex-direction: column;
 
   --main-pane-width: 664px;
 }
@@ -64,12 +48,16 @@ body {
 
 .main-content {
   padding-top: 0;
+  /* the 32px min-height, plus 20+30px margin below, plus some leeway: */
+  scroll-padding-top: 90px;
+  contain: inline-size;
 }
 
 .pane-container {
   /* A workaround to keep the container always float on the `top: 0` (Bug 1377009) */
   display: block;
-  width: var(--main-pane-width);
+  width: min(100%, var(--main-pane-width));
+  min-width: min-content;
 }
 
 #mainPrefPane {
@@ -96,13 +84,14 @@ html|h2 {
 
 description.indent,
 .indent:not(#browserPrivateEngineSelection) > description {
-  color: var(--in-content-deemphasized-text);
+  color: var(--text-color-deemphasized);
 }
 
 button,
 treecol,
-html|option {
-  /* override the * rule */
+menulist,
+html|select {
+  /* override the root rule */
   user-select: none;
 }
 
@@ -122,6 +111,7 @@ label {
 
 .tip-caption {
   font-size: .9em;
+  color: var(--text-color-deemphasized);
 }
 
 menulist::part(label),
@@ -184,7 +174,7 @@ checkbox {
 }
 
 .ac-site-icon {
-  display: -moz-box;
+  display: flex;
 }
 
 /* Subcategory title */
@@ -202,7 +192,8 @@ checkbox {
 /* Category List */
 
 #categories {
-  overflow: visible !important; /* Cancel scrollbar and do not clip overflow content when window size goes very small */
+  overflow: visible;
+  min-height: auto;
   padding: 1px; /* Adding padding around richlistitem in order to make entire keyboard focusing outline visible */
 }
 
@@ -232,19 +223,6 @@ checkbox {
 
 #category-more-from-mozilla > .category-icon {
   list-style-image: url("chrome://browser/skin/preferences/mozilla-logo.svg");
-  -moz-context-properties: fill, stroke, fill-opacity, stroke-opacity;
-  fill: currentColor;
-  stroke: var(--in-content-page-background);
-}
-
-@media (prefers-contrast) {
-  #category-more-from-mozilla:hover > .category-icon {
-    stroke: var(--in-content-button-background-hover);
-  }
-
-  #category-more-from-mozilla[selected] > .category-icon {
-    stroke: var(--in-content-button-background-hover);
-  }
 }
 
 /* All panes */
@@ -266,6 +244,18 @@ checkbox {
 #isDefaultLabel,
 #isNotDefaultLabel {
   font-weight: 600;
+}
+
+@supports not -moz-bool-pref("browser.migrate.preferences-entrypoint.enabled") {
+  #dataMigrationGroup {
+    display: none;
+  }
+}
+
+#dataMigration {
+  /* This should really be using baseline, but that doesn't work properly with
+   * the <description> and XUL <button> markup. */
+  align-items: center;
 }
 
 #browserContainersExtensionContent {
@@ -312,7 +302,7 @@ checkbox {
 #FontsDialog menulist:empty {
   /* When there's no menupopup, while the font builder is running,
    * the height of the menulist would otherwise shrink. This throws
-   * off the height determination SubDialog.jsm does, which then
+   * off the height determination SubDialog.sys.mjs does, which then
    * leads to content being cut off. Fix by enforcing a minimum height
    * when there's no content: */
   min-height: max(32px, calc(1.4em + 16px));
@@ -322,17 +312,12 @@ checkbox {
   margin: 4px 0;
 }
 
-#translationAttributionImage {
-  width: 70px;
-  cursor: pointer;
-}
-
 #activeLanguages > richlistitem {
   padding: 0.3em;
 }
 
 #saveWhere {
-  -moz-box-align: center;
+  align-items: center;
 }
 
 #saveTo {
@@ -340,7 +325,7 @@ checkbox {
 }
 
 #downloadFolder {
-  -moz-box-flex: 1;
+  flex: 1;
   margin-block: 4px;
   margin-inline-start: 0;
   padding-inline-start: 30px;
@@ -357,13 +342,9 @@ checkbox {
   margin-block: 4px 32px;
 }
 
-#updateDeck > *:not(.selected) {
-  visibility: hidden;
-}
-
 /* Work around bug 560067 - animated images in visibility: hidden
  * still eat CPU. */
-#updateDeck > *:not(.selected) > .update-throbber {
+#updateDeck > *:not(.deck-selected) > .update-throbber {
   display: none;
 }
 
@@ -373,15 +354,15 @@ checkbox {
 }
 
 #updateDeck > hbox > label {
-  -moz-box-flex: 1;
+  flex: 1;
 }
 
-#manualLink {
+.manualLink {
   margin-inline-start: 6px !important;
 }
 
 #updateRadioGroup > radio {
-  height: 30px;
+  min-height: 30px;
   margin: 2px 0;
 }
 
@@ -408,10 +389,6 @@ checkbox {
 
 #handlersView .actionsMenu::part(label) {
   margin: 0;
-}
-
-.certManagerRichlistBox > richlistitem {
-  min-height: 30px !important;
 }
 
 .typeIcon,
@@ -466,6 +443,10 @@ richlistitem[selected] .actionsMenu:focus-visible {
   direction: rtl;
 }
 
+.homepage-buttons > .homepage-button {
+  flex: 1 auto;
+}
+
 .homepage-button:first-of-type {
   margin-inline-start: 0;
 }
@@ -495,6 +476,11 @@ richlistitem[selected] .actionsMenu:focus-visible {
 
 .addon-with-favicon .menu-iconic-icon {
   margin-inline-start: 0;
+}
+
+a[is="moz-support-link"]:not(.sidebar-footer-link) {
+  display: inline-block;
+  white-space: initial;
 }
 
 /* Search Pane */
@@ -589,14 +575,6 @@ richlistitem[selected] .actionsMenu:focus-visible {
   margin-inline-start: 0;
 }
 
-@media (-moz-platform: windows-win7),
-       (-moz-platform: windows-win8) {
-  #windows-sso,
-  #windows-sso-caption {
-    display: none;
-  }
-}
-
 /**
  * Dialog
  */
@@ -605,8 +583,20 @@ richlistitem[selected] .actionsMenu:focus-visible {
   visibility: hidden;
 }
 
+html|dialog {
+  padding: 24px;
+}
+
+html|dialog::backdrop,
 .dialogOverlay[topmost="true"] {
   background-color: rgba(0,0,0,0.5);
+}
+
+html|dialog,
+.dialogBox {
+  border: 1px solid transparent;
+  border-radius: 8px;
+  box-shadow: 0 2px 6px 0 rgba(0,0,0,0.3);
 }
 
 .dialogBox {
@@ -615,10 +605,7 @@ richlistitem[selected] .actionsMenu:focus-visible {
   color: var(--in-content-page-color);
   /* `transparent` will use the dialogText color in high-contrast themes and
      when page colors are disabled */
-  border: 1px solid transparent;
-  border-radius: 8px;
-  box-shadow: 0 2px 6px 0 rgba(0,0,0,0.3);
-  display: -moz-box;
+  display: flex;
   margin: 0;
   padding: 0;
   overflow-x: auto;
@@ -626,6 +613,7 @@ richlistitem[selected] .actionsMenu:focus-visible {
 
 @media (prefers-color-scheme: dark) {
   @media not (prefers-contrast) {
+    html|dialog,
     .dialogBox {
       --in-content-page-background: #42414d;
     }
@@ -640,13 +628,11 @@ richlistitem[selected] .actionsMenu:focus-visible {
 }
 
 .dialogTitleBar {
-  margin-top: 0;
-  padding: 6px 4px;
+  padding: .4em .2em;
   border-bottom: 1px solid var(--in-content-border-color);
 }
 
 .dialogTitle {
-  font-size: .9em;
   font-weight: 600;
   text-align: center;
   user-select: none;
@@ -679,9 +665,9 @@ richlistitem[selected] .actionsMenu:focus-visible {
 
 .dialogFrame {
   margin: 10px;
-  -moz-box-flex: 1;
+  flex: 1;
   /* Default dialog dimensions */
-  width: 66ch;
+  min-width: 66ch;
 }
 
 /**
@@ -692,14 +678,20 @@ richlistitem[selected] .actionsMenu:focus-visible {
  * Font group and font dialog menulist fixes
  */
 
+#font-chooser-group {
+  display: grid;
+  grid-template-columns: max-content 1fr max-content max-content;
+}
+
 #defaultFont {
-  width: 25ch;
+  flex: 1 25ch;
 }
 
 #defaultFontType,
 #serif,
 #sans-serif,
 #monospace {
+  width: 0; /* Might be able to be removed */
   min-width: 30ch;
 }
 
@@ -739,7 +731,7 @@ richlistitem[selected] .actionsMenu:focus-visible {
 }
 
 #fxaSyncComputerName {
-  -moz-box-flex: 1;
+  flex: 1;
   margin-block: 4px;
   margin-inline-start: 0;
 }
@@ -817,6 +809,10 @@ richlistitem[selected] .actionsMenu:focus-visible {
   display: block;
 }
 
+.sync-choose-dialog-description {
+  margin-block-end: 10px;
+}
+
 .sync-engines-list > div,
 .sync-engines-list + hbox {
   margin-top: 0;
@@ -846,16 +842,18 @@ dialog > .sync-engines-list + hbox {
 }
 
 .sync-engines-list .checkbox-label-box {
-  -moz-box-align: center;
+  align-items: center;
 }
 
 .sync-engines-list {
   column-count: 2;
   column-fill: balance;
+  margin-block-end: 10px;
 }
 
 .sync-engines-list > div:not([hidden]) {
   display: flex;
+  break-inside: avoid;
 }
 
 .sync-engine-bookmarks .checkbox-icon,
@@ -919,20 +917,11 @@ dialog > .sync-engines-list + hbox {
   min-height: 16px;
   margin-block: 7px;
   margin-inline-end: 8px;
-}
-
-html|img.update-throbber {
   vertical-align: middle;
 }
 
-image.update-throbber {
-  list-style-image: url("chrome://global/skin/icons/loading.png");
-}
-
-@media (min-resolution: 1.1dppx) {
-  .update-throbber {
-    list-style-image: url("chrome://global/skin/icons/loading@2x.png");
-  }
+.update-throbber {
+  content: image-set(url("chrome://global/skin/icons/loading.png"), url("chrome://global/skin/icons/loading@2x.png") 2x);
 }
 
 .navigation {
@@ -954,25 +943,16 @@ image.update-throbber {
   }
 }
 
-.face-sad {
-  list-style-image: url("chrome://browser/skin/preferences/face-sad.svg");
-  width: 20px;
-  height: 20px;
-  margin-block: 5px;
+.face-sad::before {
+  content: "\01F641";
+  font-size: 1.3em;
   margin-inline-end: 8px;
 }
 
-.face-smile {
-  list-style-image: url("chrome://browser/skin/preferences/face-smile.svg");
-  width: 20px;
-  height: 20px;
-  margin-block: 5px;
+.face-smile::before {
+  content: "\01F600";
+  font-size: 1.3em;
   margin-inline-end: 8px;
-}
-
-.main-content {
-  /* the 32px min-height, plus 20+30px margin below, plus some leeway: */
-  scroll-padding-top: 90px;
 }
 
 #policies-container,
@@ -1006,7 +986,7 @@ image.update-throbber {
 }
 
 .info-icon {
-  list-style-image: url("chrome://global/skin/icons/info.svg");
+  content: url("chrome://global/skin/icons/info.svg");
   width: 16px;
   height: 16px;
   margin-inline-end: 6px;
@@ -1031,19 +1011,19 @@ image.update-throbber {
 }
 
 .sticky-inner-container {
-  -moz-box-flex: 1;
+  flex: 1;
   max-width: var(--main-pane-width);
 }
 
 .search-tooltip {
-  max-width: 150px;
-  font-size: 1.25rem;
+  max-width: 10em;
+  font-size: 1rem;
   position: absolute;
-  padding: 0 10px;
+  padding: 0 .7em;
   background-color: #ffe900;
   color: #000;
   border: 1px solid #d7b600;
-  bottom: 36px;
+  margin-top: -18px;
   opacity: .85;
 }
 
@@ -1058,6 +1038,7 @@ image.update-throbber {
   border-top-color: #d7b600;
   top: 100%;
   inset-inline-start: calc(50% - 7px);
+  forced-color-adjust: none;
 }
 
 .search-tooltip::after {
@@ -1067,6 +1048,17 @@ image.update-throbber {
   border-top-color: #ffe900;
   top: 100%;
   inset-inline-start: calc(50% - 6px);
+  forced-color-adjust: none;
+}
+
+@media (forced-colors: active) {
+  .search-tooltip::before {
+    border-top-color: CanvasText;
+  }
+
+  .search-tooltip::after {
+    border-top-color: Canvas;
+  }
 }
 
 .search-tooltip-parent {
@@ -1074,6 +1066,7 @@ image.update-throbber {
 }
 
 .search-tooltip > span {
+  display: block;
   user-select: none;
   white-space: nowrap;
   overflow: hidden;
@@ -1085,7 +1078,7 @@ image.update-throbber {
 }
 
 menulist[indicator=true] > menupopup menuitem:not([image]) > .menu-iconic-left {
-  display: -moz-box;
+  display: flex;
   min-width: auto; /* Override the min-width defined in menu.css */
   margin-inline-end: 6px;
 }
@@ -1222,11 +1215,11 @@ richlistitem .text-link:hover {
 
 .featureGateCheckbox {
   font-size: 1.14em;
-  -moz-box-align: center;
+  align-items: center;
 }
 
 .featureGateCheckbox > .checkbox-label-box {
-  -moz-box-align: center;
+  align-items: center;
 }
 
 .featureGateDescription {
@@ -1278,12 +1271,14 @@ richlistitem .text-link:hover {
   background-position-x: right;
 }
 
-#moreFromMozillaCategory .description {
-  display: inline flow-root;
-  color: var(--in-content-text-color);
+#moreFromMozillaCategory .product-description-box {
   padding-inline-start: 30px;
   margin: 2px 0;
   line-height: 1.4em;
+}
+
+#moreFromMozillaCategory .description {
+  display: inline;
 }
 
 #moreFromMozillaCategory .small-button {
@@ -1291,33 +1286,16 @@ richlistitem .text-link:hover {
   margin-inline: 30px 0;
 }
 
-#moreFromMozillaCategory .text-link {
-  line-height: 1.4em;
-
-  margin-block: 2px 0;
-  margin-inline: 6px 0;
-}
-
-#moreFromMozillaCategory .simple .text-link {
-  display: inline flow-root;
-  margin-inline-start: 4px;
-}
-
-#moreFromMozillaCategory .text-link.hidden {
-  display: none;
-}
-
 #firefox-mobile {
-  background-image: url("chrome://devtools/skin/images/browsers/mobile.svg");
-  padding-top: 5px;
+  background-image: url("chrome://browser/skin/device-phone.svg");
 }
 
 #mozilla-vpn {
   background-image: url("chrome://browser/skin/preferences/vpn-logo.svg");
 }
 
-#mozilla-rally {
-  background-image: url("chrome://browser/skin/preferences/rally-logo.svg");
+#firefox-relay {
+  background-image: url("chrome://browser/skin/preferences/relay-logo.svg");
 }
 
 /*
@@ -1384,8 +1362,6 @@ richlistitem .text-link:hover {
 #moreFromMozillaCategory .qr-code-link {
   font-size: .87em;
   line-height: 1.42em;
-  margin-block-start: 0;
-  margin-inline: 0; /* make sure we're correctly centered by overriding button rule */
 }
 
 @media (prefers-color-scheme: dark) {
@@ -1455,7 +1431,7 @@ richlistitem .text-link:hover {
   content: url("chrome://browser/content/preferences/web-appearance-dark.svg")
 }
 
-.web-appearance-choice img:dir(rtl) {
+.web-appearance-choice img:-moz-locale-dir(rtl) {
   transform: scaleX(-1);
 }
 
@@ -1470,6 +1446,37 @@ richlistitem .text-link:hover {
   margin-top: 0.4em;
 }
 
+#translations-manage-install-list {
+  height: 220px;
+  overflow: auto;
+  background-color: var(--in-content-box-background);
+  border: 1px solid var(--in-content-box-border-color);
+  border-radius: 4px;
+  resize: vertical;
+  margin: 4px 0;
+}
+
+.translations-manage-language:first-child {
+  border-bottom: 1px solid var(--in-content-box-border-color);
+  padding: 8px;
+  margin-bottom: 8px;
+}
+
+.translations-manage-language {
+  align-items: center;
+  padding: 0 8px;
+}
+
+.translations-manage-language > label {
+  flex: 1;
+  margin: 0 15px;
+}
+
+#translations-manage-error {
+  color: var(--in-content-error-text-color);
+  margin: 16px 0;
+}
+
 /* Platform-specific tweaks & overrides */
 
 @media (-moz-platform: macos) {
@@ -1481,10 +1488,6 @@ richlistitem .text-link:hover {
   #browserUseBookmark,
   #browserUseBlank {
     margin-top: 10px;
-  }
-
-  #advancedPrefs {
-    margin: 0 8px;
   }
 
   #privacyPrefs {

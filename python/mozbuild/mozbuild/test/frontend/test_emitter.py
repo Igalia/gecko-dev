@@ -2,12 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import os
-import six
 import unittest
 
+import mozpack.path as mozpath
+import six
 from mozunit import main
 
 from mozbuild.frontend.context import ObjDirPath, Path
@@ -47,11 +46,7 @@ from mozbuild.frontend.reader import (
     BuildReaderError,
     SandboxValidationError,
 )
-
 from mozbuild.test.common import MockConfig
-
-import mozpack.path as mozpath
-
 
 data_path = mozpath.abspath(mozpath.dirname(__file__))
 data_path = mozpath.join(data_path, "data")
@@ -1456,17 +1451,22 @@ class TestEmitterBasic(unittest.TestCase):
             self.assertEqual(
                 sources.files, [mozpath.join(reader.config.topsrcdir, f) for f in files]
             )
-            self.assertTrue(sources.have_unified_mapping)
 
-            for f in dict(sources.unified_source_mapping).keys():
-                self.assertIn(
-                    mozpath.join(
-                        reader.config.topobjdir,
-                        "%s.%s"
-                        % (mozpath.splitext(f)[0], reader.config.substs["OBJ_SUFFIX"]),
-                    ),
-                    linkable.objs,
-                )
+            # Unified sources are not required
+            if sources.have_unified_mapping:
+
+                for f in dict(sources.unified_source_mapping).keys():
+                    self.assertIn(
+                        mozpath.join(
+                            reader.config.topobjdir,
+                            "%s.%s"
+                            % (
+                                mozpath.splitext(f)[0],
+                                reader.config.substs["OBJ_SUFFIX"],
+                            ),
+                        ),
+                        linkable.objs,
+                    )
 
     def test_unified_sources_non_unified(self):
         """Test that UNIFIED_SOURCES with FILES_PER_UNIFIED_FILE=1 works properly."""
@@ -1653,10 +1653,11 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 3)
-        ldflags, lib, cflags = objs
+        self.assertEqual(len(objs), 4)
+        ldflags, host_cflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
         self.assertRegex(lib.lib_name, "random_crate")
         self.assertRegex(lib.import_name, "random_crate")
@@ -1681,10 +1682,11 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 3)
-        ldflags, lib, cflags = objs
+        self.assertEqual(len(objs), 4)
+        ldflags, host_cflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
         self.assertEqual(lib.features, ["musthave", "cantlivewithout"])
 
@@ -1740,10 +1742,11 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 3)
-        ldflags, cflags, prog = objs
+        self.assertEqual(len(objs), 4)
+        ldflags, host_cflags, cflags, prog = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(prog, RustProgram)
         self.assertEqual(prog.name, "some")
 
@@ -1776,10 +1779,11 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 3)
-        ldflags, lib, cflags = objs
+        self.assertEqual(len(objs), 4)
+        ldflags, host_cflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(lib, HostRustLibrary)
         self.assertRegex(lib.lib_name, "host_lib")
         self.assertRegex(lib.import_name, "host_lib")
@@ -1792,11 +1796,30 @@ class TestEmitterBasic(unittest.TestCase):
         )
         objs = self.read_topsrcdir(reader)
 
-        self.assertEqual(len(objs), 3)
-        ldflags, lib, cflags = objs
+        self.assertEqual(len(objs), 4)
+        ldflags, host_cflags, lib, cflags = objs
         self.assertIsInstance(ldflags, ComputedFlags)
         self.assertIsInstance(cflags, ComputedFlags)
+        self.assertIsInstance(host_cflags, ComputedFlags)
         self.assertIsInstance(lib, RustLibrary)
+
+    def test_missing_workspace_hack(self):
+        """Test detection of a missing workspace hack."""
+        reader = self.reader("rust-no-workspace-hack")
+        with six.assertRaisesRegex(
+            self, SandboxValidationError, "doesn't contain the workspace hack"
+        ):
+            self.read_topsrcdir(reader)
+
+    def test_old_workspace_hack(self):
+        """Test detection of an old workspace hack."""
+        reader = self.reader("rust-old-workspace-hack")
+        with six.assertRaisesRegex(
+            self,
+            SandboxValidationError,
+            "needs an update to its mozilla-central-workspace-hack dependency",
+        ):
+            self.read_topsrcdir(reader)
 
     def test_install_shared_lib(self):
         """Test that we can install a shared library with TEST_HARNESS_FILES"""

@@ -3,10 +3,6 @@
 
 "use strict";
 
-const { ContentTaskUtils } = ChromeUtils.import(
-  "resource://testing-common/ContentTaskUtils.jsm"
-);
-
 add_task(async function testStopStartingAutoScroll() {
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -22,7 +18,7 @@ add_task(async function testStopStartingAutoScroll() {
 
   await BrowserTestUtils.withNewTab(
     "https://example.com/browser/toolkit/content/tests/browser/file_empty.html",
-    async function(browser) {
+    async function (browser) {
       async function doTest({
         aInnerHTML,
         aDescription,

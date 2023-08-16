@@ -1,6 +1,6 @@
 # This file is used by all AArch64 Win64 builds
 
-ac_add_options --target=aarch64-windows-mingw32
+ac_add_options --target=aarch64-pc-windows-msvc
 
 . $topsrcdir/build/win64-aarch64/mozconfig.vs-latest
 
@@ -12,14 +12,5 @@ export UPX="${MOZ_FETCHES_DIR}/upx-3.95-win64/upx.exe"
 if [ -f "${UPX}" ]; then
     chmod +x "${UPX}"
 fi
-mk_add_options "export PATH=${VC_PATH}/bin/hostx64/arm64:${PATH}"
-mk_add_options "export WINEPATH=${VC_PATH}/bin/hostx64/x64"
 
-unset VC_PATH
-
-fi
-
-pdbstr="${MOZ_FETCHES_DIR}/pdbstr/pdbstr.exe"
-if [ -f "${pdbstr}" ]; then
-    chmod +x "${pdbstr}"
 fi

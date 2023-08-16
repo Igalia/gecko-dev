@@ -5,9 +5,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "UtilityProcessManager.h"
 
+#include "JSOracleParent.h"
 #include "mozilla/ipc/UtilityProcessHost.h"
 #include "mozilla/MemoryReportingProcess.h"
 #include "mozilla/Preferences.h"
+#include "mozilla/ProfilerMarkers.h"
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/SyncRunnable.h"  // for LaunchUtilityProcess
 #include "mozilla/ipc/UtilityProcessParent.h"
@@ -20,9 +22,16 @@
 #include "nsAppRunner.h"
 #include "nsContentUtils.h"
 
+#ifdef XP_WIN
+#  include "mozilla/dom/WindowsUtilsParent.h"
+#endif
+
 #include "mozilla/GeckoArgs.h"
 
 namespace mozilla::ipc {
+
+extern LazyLogModule gUtilityProcessLog;
+#define LOGD(...) MOZ_LOG(gUtilityProcessLog, LogLevel::Debug, (__VA_ARGS__))
 
 static StaticRefPtr<UtilityProcessManager> sSingleton;
 
@@ -39,6 +48,7 @@ RefPtr<UtilityProcessManager> UtilityProcessManager::GetSingleton() {
 
   if (!sXPCOMShutdown && sSingleton == nullptr) {
     sSingleton = new UtilityProcessManager();
+    sSingleton->Init();
   }
   return sSingleton;
 }
@@ -48,23 +58,29 @@ RefPtr<UtilityProcessManager> UtilityProcessManager::GetIfExists() {
   return sSingleton;
 }
 
-UtilityProcessManager::UtilityProcessManager() : mObserver(new Observer(this)) {
+UtilityProcessManager::UtilityProcessManager() {
+  LOGD("[%p] UtilityProcessManager::UtilityProcessManager", this);
+}
+
+void UtilityProcessManager::Init() {
   // Start listening for pref changes so we can
   // forward them to the process once it is running.
+  mObserver = new Observer(this);
   nsContentUtils::RegisterShutdownObserver(mObserver);
   Preferences::AddStrongObserver(mObserver, "");
 }
 
 UtilityProcessManager::~UtilityProcessManager() {
+  LOGD("[%p] UtilityProcessManager::~UtilityProcessManager", this);
+
   // The Utility process should ALL have already been shut down.
   MOZ_ASSERT(NoMoreProcesses());
 }
 
 NS_IMPL_ISUPPORTS(UtilityProcessManager::Observer, nsIObserver);
 
-UtilityProcessManager::Observer::Observer(
-    RefPtr<UtilityProcessManager> aManager)
-    : mManager(std::move(aManager)) {}
+UtilityProcessManager::Observer::Observer(UtilityProcessManager* aManager)
+    : mManager(aManager) {}
 
 NS_IMETHODIMP
 UtilityProcessManager::Observer::Observe(nsISupports* aSubject,
@@ -79,6 +95,8 @@ UtilityProcessManager::Observer::Observe(nsISupports* aSubject,
 }
 
 void UtilityProcessManager::OnXPCOMShutdown() {
+  LOGD("[%p] UtilityProcessManager::OnXPCOMShutdown", this);
+
   MOZ_ASSERT(NS_IsMainThread());
   sXPCOMShutdown = true;
   nsContentUtils::UnregisterShutdownObserver(mObserver);
@@ -123,6 +141,9 @@ RefPtr<UtilityProcessManager::ProcessFields> UtilityProcessManager::GetProcess(
 
 RefPtr<GenericNonExclusivePromise> UtilityProcessManager::LaunchProcess(
     SandboxingKind aSandbox) {
+  LOGD("[%p] UtilityProcessManager::LaunchProcess SandboxingKind=%" PRIu64,
+       this, aSandbox);
+
   MOZ_ASSERT(NS_IsMainThread());
 
   if (IsShutdown()) {
@@ -212,6 +233,13 @@ RefPtr<GenericNonExclusivePromise> UtilityProcessManager::LaunchProcess(
 template <typename Actor>
 RefPtr<GenericNonExclusivePromise> UtilityProcessManager::StartUtility(
     RefPtr<Actor> aActor, SandboxingKind aSandbox) {
+  LOGD(
+      "[%p] UtilityProcessManager::StartUtility actor=%p "
+      "SandboxingKind=%" PRIu64,
+      this, aActor.get(), aSandbox);
+
+  TimeStamp utilityStart = TimeStamp::Now();
+
   if (!aActor) {
     MOZ_ASSERT(false, "Actor singleton failure");
     return GenericNonExclusivePromise::CreateAndReject(NS_ERROR_FAILURE,
@@ -222,15 +250,25 @@ RefPtr<GenericNonExclusivePromise> UtilityProcessManager::StartUtility(
     // Actor has already been setup, so we:
     //   - know the process has been launched
     //   - the ipc actors are ready
+    PROFILER_MARKER_TEXT(
+        "UtilityProcessManager::StartUtility", IPC,
+        MarkerOptions(MarkerTiming::InstantNow()),
+        nsPrintfCString("SandboxingKind=%" PRIu64 " aActor->CanSend()",
+                        aSandbox));
     return GenericNonExclusivePromise::CreateAndResolve(true, __func__);
   }
 
   RefPtr<UtilityProcessManager> self = this;
   return LaunchProcess(aSandbox)->Then(
       GetMainThreadSerialEventTarget(), __func__,
-      [self, aActor, aSandbox]() {
+      [self, aActor, aSandbox, utilityStart]() {
         RefPtr<UtilityProcessParent> utilityParent =
             self->GetProcessParent(aSandbox);
+        if (!utilityParent) {
+          NS_WARNING("Missing parent in StartUtility");
+          return GenericNonExclusivePromise::CreateAndReject(NS_ERROR_FAILURE,
+                                                             __func__);
+        }
 
         // It is possible if multiple processes concurrently request a utility
         // actor that the previous CanSend() check returned false for both but
@@ -251,36 +289,68 @@ RefPtr<GenericNonExclusivePromise> UtilityProcessManager::StartUtility(
           self->RegisterActor(utilityParent, aActor->GetActorName());
         }
 
+        PROFILER_MARKER_TEXT(
+            "UtilityProcessManager::StartUtility", IPC,
+            MarkerOptions(MarkerTiming::IntervalUntilNowFrom(utilityStart)),
+            nsPrintfCString("SandboxingKind=%" PRIu64 " Resolve", aSandbox));
         return GenericNonExclusivePromise::CreateAndResolve(true, __func__);
       },
-      [self](nsresult aError) {
-        if (!self->IsShutdown()) {
-          MOZ_ASSERT_UNREACHABLE("Failure when starting actor");
-        }
+      [self, aSandbox, utilityStart](nsresult aError) {
         NS_WARNING("Reject StartUtility() for LaunchProcess() rejection");
+        if (!self->IsShutdown()) {
+          NS_WARNING("Reject StartUtility() when !IsShutdown()");
+        }
+        PROFILER_MARKER_TEXT(
+            "UtilityProcessManager::StartUtility", IPC,
+            MarkerOptions(MarkerTiming::IntervalUntilNowFrom(utilityStart)),
+            nsPrintfCString("SandboxingKind=%" PRIu64 " Reject", aSandbox));
         return GenericNonExclusivePromise::CreateAndReject(aError, __func__);
       });
 }
 
-RefPtr<UtilityProcessManager::AudioDecodingPromise>
-UtilityProcessManager::StartAudioDecoding(base::ProcessId aOtherProcess) {
+RefPtr<UtilityProcessManager::StartRemoteDecodingUtilityPromise>
+UtilityProcessManager::StartProcessForRemoteMediaDecoding(
+    base::ProcessId aOtherProcess, SandboxingKind aSandbox) {
+  // Not supported kinds.
+  if (aSandbox != SandboxingKind::GENERIC_UTILITY
+#ifdef MOZ_APPLEMEDIA
+      && aSandbox != SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA
+#endif
+#ifdef XP_WIN
+      && aSandbox != SandboxingKind::UTILITY_AUDIO_DECODING_WMF
+#endif
+#ifdef MOZ_WMF_MEDIA_ENGINE
+      && aSandbox != SandboxingKind::MF_MEDIA_ENGINE_CDM
+#endif
+  ) {
+    return StartRemoteDecodingUtilityPromise::CreateAndReject(NS_ERROR_FAILURE,
+                                                              __func__);
+  }
+  TimeStamp remoteDecodingStart = TimeStamp::Now();
+
   RefPtr<UtilityProcessManager> self = this;
   RefPtr<UtilityAudioDecoderChild> uadc =
-      UtilityAudioDecoderChild::GetSingleton();
+      UtilityAudioDecoderChild::GetSingleton(aSandbox);
   MOZ_ASSERT(uadc, "Unable to get a singleton for UtilityAudioDecoderChild");
-  return StartUtility(uadc, SandboxingKind::UTILITY_AUDIO_DECODING)
+  return StartUtility(uadc, aSandbox)
       ->Then(
           GetMainThreadSerialEventTarget(), __func__,
-          [self, uadc, aOtherProcess]() {
-            base::ProcessId process =
-                self->GetProcessParent(SandboxingKind::UTILITY_AUDIO_DECODING)
-                    ->OtherPid();
+          [self, uadc, aOtherProcess, aSandbox, remoteDecodingStart]() {
+            RefPtr<UtilityProcessParent> parent =
+                self->GetProcessParent(aSandbox);
+            if (!parent) {
+              NS_WARNING("UtilityAudioDecoderParent lost in the middle");
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  NS_ERROR_FAILURE, __func__);
+            }
 
             if (!uadc->CanSend()) {
-              MOZ_ASSERT(false, "UtilityAudioDecoderChild lost in the middle");
-              return AudioDecodingPromise::CreateAndReject(NS_ERROR_FAILURE,
-                                                           __func__);
+              NS_WARNING("UtilityAudioDecoderChild lost in the middle");
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  NS_ERROR_FAILURE, __func__);
             }
+
+            base::ProcessId process = parent->OtherPid();
 
             Endpoint<PRemoteDecoderManagerChild> childPipe;
             Endpoint<PRemoteDecoderManagerParent> parentPipe;
@@ -288,29 +358,98 @@ UtilityProcessManager::StartAudioDecoding(base::ProcessId aOtherProcess) {
                 process, aOtherProcess, &parentPipe, &childPipe);
             if (NS_FAILED(rv)) {
               MOZ_ASSERT(false, "Could not create content remote decoder");
-              return AudioDecodingPromise::CreateAndReject(rv, __func__);
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  rv, __func__);
             }
 
             if (!uadc->SendNewContentRemoteDecoderManager(
                     std::move(parentPipe))) {
               MOZ_ASSERT(false, "SendNewContentRemoteDecoderManager failure");
-              return AudioDecodingPromise::CreateAndReject(NS_ERROR_FAILURE,
-                                                           __func__);
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  NS_ERROR_FAILURE, __func__);
             }
 
-            return AudioDecodingPromise::CreateAndResolve(std::move(childPipe),
-                                                          __func__);
-          },
-          [self](nsresult aError) {
-            if (!self->IsShutdown()) {
-              MOZ_ASSERT_UNREACHABLE(
-                  "PUtilityAudioDecoder: failure when starting actor");
+#ifdef MOZ_WMF_MEDIA_ENGINE
+            if (aSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM &&
+                !uadc->CreateVideoBridge()) {
+              MOZ_ASSERT(false, "Failed to create video bridge");
+              return StartRemoteDecodingUtilityPromise::CreateAndReject(
+                  NS_ERROR_FAILURE, __func__);
             }
+#endif
+            PROFILER_MARKER_TEXT(
+                "UtilityProcessManager::StartProcessForRemoteMediaDecoding",
+                MEDIA,
+                MarkerOptions(
+                    MarkerTiming::IntervalUntilNowFrom(remoteDecodingStart)),
+                "Resolve"_ns);
+            return StartRemoteDecodingUtilityPromise::CreateAndResolve(
+                std::move(childPipe), __func__);
+          },
+          [self, remoteDecodingStart](nsresult aError) {
             NS_WARNING(
-                "Reject StartAudioDecoding() for StartUtility() rejection");
-            return AudioDecodingPromise::CreateAndReject(aError, __func__);
+                "Reject StartProcessForRemoteMediaDecoding() for "
+                "StartUtility() rejection");
+            PROFILER_MARKER_TEXT(
+                "UtilityProcessManager::StartProcessForRemoteMediaDecoding",
+                MEDIA,
+                MarkerOptions(
+                    MarkerTiming::IntervalUntilNowFrom(remoteDecodingStart)),
+                "Reject"_ns);
+            return StartRemoteDecodingUtilityPromise::CreateAndReject(aError,
+                                                                      __func__);
           });
 }
+
+RefPtr<UtilityProcessManager::JSOraclePromise>
+UtilityProcessManager::StartJSOracle(dom::JSOracleParent* aParent) {
+  return StartUtility(RefPtr{aParent}, SandboxingKind::GENERIC_UTILITY);
+}
+
+#ifdef XP_WIN
+
+// Windows Utils
+
+RefPtr<UtilityProcessManager::WindowsUtilsPromise>
+UtilityProcessManager::GetWindowsUtilsPromise() {
+  TimeStamp windowsUtilsStart = TimeStamp::Now();
+  RefPtr<UtilityProcessManager> self = this;
+  if (!mWindowsUtils) {
+    mWindowsUtils = new dom::WindowsUtilsParent();
+  }
+
+  RefPtr<dom::WindowsUtilsParent> wup = mWindowsUtils;
+  MOZ_ASSERT(wup, "Unable to get a singleton for WindowsUtils");
+  return StartUtility(wup, SandboxingKind::WINDOWS_UTILS)
+      ->Then(
+          GetMainThreadSerialEventTarget(), __func__,
+          [self, wup, windowsUtilsStart]() {
+            if (!wup->CanSend()) {
+              MOZ_ASSERT(false, "WindowsUtilsParent can't send");
+              return WindowsUtilsPromise::CreateAndReject(NS_ERROR_FAILURE,
+                                                          __func__);
+            }
+            PROFILER_MARKER_TEXT(
+                "UtilityProcessManager::GetWindowsUtilsPromise", OTHER,
+                MarkerOptions(
+                    MarkerTiming::IntervalUntilNowFrom(windowsUtilsStart)),
+                "Resolve"_ns);
+            return WindowsUtilsPromise::CreateAndResolve(wup, __func__);
+          },
+          [self, windowsUtilsStart](nsresult aError) {
+            NS_WARNING("StartUtility rejected promise for PWindowsUtils");
+            PROFILER_MARKER_TEXT(
+                "UtilityProcessManager::GetWindowsUtilsPromise", OTHER,
+                MarkerOptions(
+                    MarkerTiming::IntervalUntilNowFrom(windowsUtilsStart)),
+                "Reject"_ns);
+            return WindowsUtilsPromise::CreateAndReject(aError, __func__);
+          });
+}
+
+void UtilityProcessManager::ReleaseWindowsUtils() { mWindowsUtils = nullptr; }
+
+#endif  // XP_WIN
 
 bool UtilityProcessManager::IsProcessLaunching(SandboxingKind aSandbox) {
   MOZ_ASSERT(NS_IsMainThread());
@@ -352,6 +491,8 @@ void UtilityProcessManager::OnProcessUnexpectedShutdown(
 }
 
 void UtilityProcessManager::CleanShutdownAllProcesses() {
+  LOGD("[%p] UtilityProcessManager::CleanShutdownAllProcesses", this);
+
   for (auto& it : mProcesses) {
     if (it) {
       DestroyProcess(it->mSandbox);
@@ -360,6 +501,9 @@ void UtilityProcessManager::CleanShutdownAllProcesses() {
 }
 
 void UtilityProcessManager::CleanShutdown(SandboxingKind aSandbox) {
+  LOGD("[%p] UtilityProcessManager::CleanShutdown SandboxingKind=%" PRIu64,
+       this, aSandbox);
+
   DestroyProcess(aSandbox);
 }
 
@@ -376,6 +520,9 @@ uint16_t UtilityProcessManager::AliveProcesses() {
 bool UtilityProcessManager::NoMoreProcesses() { return AliveProcesses() == 0; }
 
 void UtilityProcessManager::DestroyProcess(SandboxingKind aSandbox) {
+  LOGD("[%p] UtilityProcessManager::DestroyProcess SandboxingKind=%" PRIu64,
+       this, aSandbox);
+
   MOZ_RELEASE_ASSERT(NS_IsMainThread());
 
   if (AliveProcesses() <= 1) {
@@ -384,7 +531,6 @@ void UtilityProcessManager::DestroyProcess(SandboxingKind aSandbox) {
     }
 
     mObserver = nullptr;
-    sSingleton = nullptr;
   }
 
   RefPtr<ProcessFields> p = GetProcess(aSandbox);
@@ -406,6 +552,10 @@ void UtilityProcessManager::DestroyProcess(SandboxingKind aSandbox) {
 
   CrashReporter::AnnotateCrashReport(
       CrashReporter::Annotation::UtilityProcessStatus, "Destroyed"_ns);
+
+  if (NoMoreProcesses()) {
+    sSingleton = nullptr;
+  }
 }
 
 Maybe<base::ProcessId> UtilityProcessManager::ProcessPid(

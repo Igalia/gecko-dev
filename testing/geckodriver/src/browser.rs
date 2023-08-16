@@ -17,6 +17,7 @@ use webdriver::error::{ErrorStatus, WebDriverError, WebDriverResult};
 
 /// A running Gecko instance.
 #[derive(Debug)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Browser {
     Local(LocalBrowser),
     Remote(RemoteBrowser),
@@ -160,10 +161,12 @@ impl LocalBrowser {
             }
         }
         self.process.kill()?;
+
         // Restoring the prefs if the browser fails to stop perhaps doesn't work anyway
         if let Some(prefs_backup) = self.prefs_backup {
             prefs_backup.restore();
         };
+
         Ok(())
     }
 
@@ -228,6 +231,7 @@ fn read_marionette_port(profile_path: &Path) -> Option<u16> {
 pub(crate) struct RemoteBrowser {
     handler: AndroidHandler,
     marionette_port: u16,
+    prefs_backup: Option<PrefsBackup>,
 }
 
 impl RemoteBrowser {
@@ -253,7 +257,7 @@ impl RemoteBrowser {
             ProfileType::Temporary => (Profile::new(profile_root)?, false),
         };
 
-        set_prefs(
+        let prefs_backup = set_prefs(
             handler.marionette_target_port,
             &mut profile,
             is_custom_profile,
@@ -274,11 +278,18 @@ impl RemoteBrowser {
         Ok(RemoteBrowser {
             handler,
             marionette_port,
+            prefs_backup,
         })
     }
 
     fn close(self) -> WebDriverResult<()> {
         self.handler.force_stop()?;
+
+        // Restoring the prefs if the browser fails to stop perhaps doesn't work anyway
+        if let Some(prefs_backup) = self.prefs_backup {
+            prefs_backup.restore();
+        };
+
         Ok(())
     }
 
@@ -380,6 +391,8 @@ mod tests {
     use super::set_prefs;
     use crate::browser::read_marionette_port;
     use crate::capabilities::{FirefoxOptions, ProfileType};
+    use base64::prelude::BASE64_STANDARD;
+    use base64::Engine;
     use mozprofile::preferences::{Pref, PrefValue};
     use mozprofile::profile::Profile;
     use serde_json::{Map, Value};
@@ -392,7 +405,7 @@ mod tests {
         let mut profile_data = Vec::with_capacity(1024);
         let mut profile = File::open("src/tests/profile.zip").unwrap();
         profile.read_to_end(&mut profile_data).unwrap();
-        Value::String(base64::encode(&profile_data))
+        Value::String(BASE64_STANDARD.encode(&profile_data))
     }
 
     // This is not a pretty test, mostly due to the nature of
@@ -472,7 +485,7 @@ mod tests {
         let prefs_path = initial_prefs.path.clone();
 
         let mut conflicting_backup_path = initial_prefs.path.clone();
-        conflicting_backup_path.set_extension("geckodriver_backup".to_string());
+        conflicting_backup_path.set_extension("geckodriver_backup");
         println!("{:?}", conflicting_backup_path);
         let mut file = File::create(&conflicting_backup_path).unwrap();
         file.write_all(b"test").unwrap();
@@ -491,7 +504,7 @@ mod tests {
 
         assert!(user_prefs.path.exists());
         let mut backup_path = user_prefs.path.clone();
-        backup_path.set_extension("geckodriver_backup_1".to_string());
+        backup_path.set_extension("geckodriver_backup_1");
 
         assert!(backup_path.exists());
 

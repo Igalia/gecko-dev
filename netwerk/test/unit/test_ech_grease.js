@@ -107,7 +107,7 @@ class ServerSocketListener {
 
   onSocketAccepted(socket, transport) {
     info("accepted TLS client connection");
-    let connectionInfo = transport.securityInfo.QueryInterface(
+    let connectionInfo = transport.securityCallbacks.getInterface(
       Ci.nsITLSServerConnectionInfo
     );
     let input = transport.openInputStream(0, 0, 0);
@@ -149,18 +149,7 @@ function storeCertOverride(port, cert) {
   let certOverrideService = Cc[
     "@mozilla.org/security/certoverride;1"
   ].getService(Ci.nsICertOverrideService);
-  let overrideBits =
-    Ci.nsICertOverrideService.ERROR_UNTRUSTED |
-    Ci.nsICertOverrideService.ERROR_TIME |
-    Ci.nsICertOverrideService.ERROR_MISMATCH;
-  certOverrideService.rememberValidityOverride(
-    hostname,
-    port,
-    {},
-    cert,
-    overrideBits,
-    true
-  );
+  certOverrideService.rememberValidityOverride(hostname, port, {}, cert, true);
 }
 
 function startClient(port, useGREASE, beConservative) {
@@ -273,7 +262,7 @@ add_task(async function GreaseNConservativeN() {
   server.close();
 });
 
-registerCleanupFunction(function() {
+registerCleanupFunction(function () {
   Services.prefs.clearUserPref("security.tls.version.max");
   Services.prefs.clearUserPref("network.dns.localDomains");
   Services.prefs.clearUserPref("security.tls.ech.grease_probability");

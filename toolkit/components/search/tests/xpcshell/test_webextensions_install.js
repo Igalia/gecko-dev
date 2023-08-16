@@ -39,7 +39,7 @@ add_task(async function basic_install_test() {
     {
       encoding: "windows-1252",
     },
-    true
+    { skipUnload: true }
   );
   Assert.deepEqual((await getEngineNames()).sort(), [
     "Example",
@@ -62,12 +62,14 @@ add_task(async function basic_install_test() {
 });
 
 add_task(async function test_install_duplicate_engine() {
+  let name = "Plain";
+  consoleAllowList.push(`An engine called ${name} already exists`);
   let extension = await SearchTestUtils.installSearchExtension(
     {
-      name: "Plain",
+      name,
       search_url: "https://example.com/plain",
     },
-    true
+    { skipUnload: true }
   );
 
   let engine = await Services.search.getEngineByName("Plain");
@@ -132,7 +134,7 @@ add_task(async function test_load_favicon_invalid() {
     {
       favicon_url: `${gDataUrl}engine.xml`,
     },
-    true
+    { skipUnload: true }
   );
 
   await observed;
@@ -158,7 +160,7 @@ add_task(async function test_load_favicon_invalid_redirect() {
     {
       favicon_url: `${gDataUrl}/iconsRedirect.sjs?type=invalid`,
     },
-    true
+    { skipUnload: true }
   );
 
   await observed;
@@ -183,7 +185,7 @@ add_task(async function test_load_favicon_redirect() {
     {
       favicon_url: `${gDataUrl}/iconsRedirect.sjs`,
     },
-    true
+    { skipUnload: true }
   );
 
   let engine = await Services.search.getEngineByName("Example");

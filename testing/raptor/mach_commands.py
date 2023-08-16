@@ -6,29 +6,19 @@
 
 # Integrates raptor mozharness with mach
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import json
 import logging
 import os
-import shutil
 import socket
 import subprocess
 import sys
 
-import mozfile
 from mach.decorators import Command
 from mach.util import get_state_dir
-from mozbuild.base import (
-    MozbuildObject,
-    BinaryNotFoundException,
-)
+from mozbuild.base import BinaryNotFoundException, MozbuildObject
 from mozbuild.base import MachCommandConditions as Conditions
 
 HERE = os.path.dirname(os.path.realpath(__file__))
-
-BENCHMARK_REPOSITORY = "https://github.com/mozilla/perf-automation"
-BENCHMARK_REVISION = "61332db584026b73e37066d717a162825408c36b"
 
 ANDROID_BROWSERS = ["geckoview", "refbrow", "fenix", "chrome-m"]
 
@@ -43,13 +33,15 @@ class RaptorRunner(MozbuildObject):
         2. Make the config for Raptor mozharness
         3. Run mozharness
         """
-        # Bug 1759450
-        if sys.version_info.minor >= 10:
-            raise Exception(
-                "Please downgrade your Python version as Raptor does not yet support Python 3.10"
+        # Validate that the user is using a supported python version before doing anything else
+        max_py_major, max_py_minor = 3, 10
+        sys_maj, sys_min = sys.version_info.major, sys.version_info.minor
+        if sys_min > max_py_minor:
+            raise PythonVersionException(
+                f"Please downgrade your Python version as Raptor does not yet support Python versions greater than {max_py_major}.{max_py_minor}. "
+                f"You seem to currently be using Python {sys_maj}.{sys_min}"
             )
         self.init_variables(raptor_args, kwargs)
-        self.setup_benchmarks()
         self.make_config()
         self.write_config()
         self.make_args()
@@ -62,9 +54,6 @@ class RaptorRunner(MozbuildObject):
             kwargs["host"] = os.environ["HOST_IP"]
         self.host = kwargs["host"]
         self.is_release_build = kwargs["is_release_build"]
-        self.memory_test = kwargs["memory_test"]
-        self.power_test = kwargs["power_test"]
-        self.cpu_test = kwargs["cpu_test"]
         self.live_sites = kwargs["live_sites"]
         self.disable_perf_tuning = kwargs["disable_perf_tuning"]
         self.conditioned_profile = kwargs["conditioned_profile"]
@@ -92,63 +81,6 @@ class RaptorRunner(MozbuildObject):
         )
         self.virtualenv_path = os.path.join(self._topobjdir, "testing", "raptor-venv")
 
-    def setup_benchmarks(self):
-        """Make sure benchmarks are linked to the proper location in the objdir.
-
-        Benchmarks can either live in-tree or in an external repository. In the latter
-        case also clone/update the repository if necessary.
-        """
-        external_repo_path = os.path.join(get_state_dir(), "performance-tests")
-
-        print("Updating external benchmarks from {}".format(BENCHMARK_REPOSITORY))
-
-        try:
-            subprocess.check_output(["git", "--version"])
-        except Exception as ex:
-            print(
-                "Git is not available! Please install git and "
-                "ensure it is included in the terminal path"
-            )
-            raise ex
-
-        if not os.path.isdir(external_repo_path):
-            print("Cloning the benchmarks to {}".format(external_repo_path))
-            subprocess.check_call(
-                ["git", "clone", BENCHMARK_REPOSITORY, external_repo_path]
-            )
-        else:
-            subprocess.check_call(["git", "checkout", "master"], cwd=external_repo_path)
-            subprocess.check_call(["git", "pull"], cwd=external_repo_path)
-
-        subprocess.check_call(
-            ["git", "checkout", BENCHMARK_REVISION], cwd=external_repo_path
-        )
-
-        # Link or copy benchmarks to the objdir
-        benchmark_paths = (
-            os.path.join(external_repo_path, "benchmarks"),
-            os.path.join(self.topsrcdir, "third_party", "webkit", "PerformanceTests"),
-        )
-
-        benchmark_dest = os.path.join(self.topobjdir, "testing", "raptor", "benchmarks")
-        if not os.path.isdir(benchmark_dest):
-            os.makedirs(benchmark_dest)
-
-        for benchmark_path in benchmark_paths:
-            for name in os.listdir(benchmark_path):
-                path = os.path.join(benchmark_path, name)
-                dest = os.path.join(benchmark_dest, name)
-                if not os.path.isdir(path) or name.startswith("."):
-                    continue
-
-                if hasattr(os, "symlink") and os.name != "nt":
-                    if not os.path.exists(dest):
-                        os.symlink(path, dest)
-                else:
-                    # Clobber the benchmark in case a recent update removed any files.
-                    mozfile.remove(dest)
-                    shutil.copytree(path, dest)
-
     def make_config(self):
         default_actions = [
             "populate-webroot",
@@ -174,9 +106,6 @@ class RaptorRunner(MozbuildObject):
             "default_actions": default_actions,
             "raptor_cmd_line_args": self.raptor_args,
             "host": self.host,
-            "power_test": self.power_test,
-            "memory_test": self.memory_test,
-            "cpu_test": self.cpu_test,
             "live_sites": self.live_sites,
             "disable_perf_tuning": self.disable_perf_tuning,
             "conditioned_profile": self.conditioned_profile,
@@ -191,8 +120,9 @@ class RaptorRunner(MozbuildObject):
 
         sys.path.insert(0, os.path.join(self.topsrcdir, "tools", "browsertime"))
         try:
-            import mach_commands as browsertime
             import platform
+
+            import mach_commands as browsertime
 
             # We don't set `browsertime_{chromedriver,geckodriver} -- those will be found by
             # browsertime in its `node_modules` directory, which is appropriate for local builds.
@@ -332,10 +262,11 @@ class RaptorRunner(MozbuildObject):
 
 def setup_node(command_context):
     """Fetch the latest node-16 binary and install it into the .mozbuild directory."""
+    import platform
+    from distutils.version import StrictVersion
+
     from mozbuild.artifact_commands import artifact_toolchain
     from mozbuild.nodeutil import find_node_executable
-    from distutils.version import StrictVersion
-    import platform
 
     print("Setting up node for browsertime...")
     state_dir = get_state_dir()
@@ -433,10 +364,6 @@ def create_parser():
     parser=create_parser,
 )
 def run_raptor(command_context, **kwargs):
-    # Defers this import so that a transitive dependency doesn't
-    # stop |mach bootstrap| from running
-    from raptor.power import enable_charging, disable_charging
-
     build_obj = command_context
 
     # Setup node for browsertime
@@ -446,10 +373,9 @@ def run_raptor(command_context, **kwargs):
 
     if is_android:
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
-        from mozdevice import ADBDeviceFactory
 
         install = (
             InstallIntent.NO if kwargs.pop("noinstall", False) else InstallIntent.YES
@@ -486,12 +412,8 @@ def run_raptor(command_context, **kwargs):
             in_mach = False
 
     raptor = command_context._spawn(RaptorRunner)
-    device = None
 
     try:
-        if kwargs["power_test"] and is_android:
-            device = ADBDeviceFactory(verbose=True)
-            disable_charging(device)
         return raptor.run_test(argv, kwargs)
     except BinaryNotFoundException as e:
         command_context.log(
@@ -502,9 +424,6 @@ def run_raptor(command_context, **kwargs):
     except Exception as e:
         print(repr(e))
         return 1
-    finally:
-        if kwargs["power_test"] and device:
-            enable_charging(device)
 
 
 @Command(
@@ -515,3 +434,7 @@ def run_raptor(command_context, **kwargs):
 )
 def run_raptor_test(command_context, **kwargs):
     return run_raptor(command_context, **kwargs)
+
+
+class PythonVersionException(Exception):
+    pass

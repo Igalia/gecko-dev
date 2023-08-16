@@ -1,35 +1,27 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2020 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-temporal.now.plaindatetime
 description: The value returned by TimeZone.getOffsetNanosecondsFor affects the result
-includes: [compareArray.js]
+includes: [compareArray.js, temporalHelpers.js]
 features: [Temporal]
 ---*/
 
 const actual = [];
 const expected = [
-  "has timeZone.timeZone",
+  "has timeZone.getOffsetNanosecondsFor",
+  "has timeZone.getPossibleInstantsFor",
+  "has timeZone.id",
   "get timeZone.getOffsetNanosecondsFor",
   "call timeZone.getOffsetNanosecondsFor",
 ];
 
-const timeZone = new Proxy({
+const timeZone = TemporalHelpers.timeZoneObserver(actual, "timeZone", {
   getOffsetNanosecondsFor(instant) {
-    actual.push("call timeZone.getOffsetNanosecondsFor");
     assert.sameValue(instant instanceof Temporal.Instant, true, "Instant");
     return -Number(instant.epochNanoseconds % 86400_000_000_000n);
-  },
-}, {
-  has(target, property) {
-    actual.push(`has timeZone.${property}`);
-    return property in target;
-  },
-  get(target, property) {
-    actual.push(`get timeZone.${property}`);
-    return target[property];
   },
 });
 

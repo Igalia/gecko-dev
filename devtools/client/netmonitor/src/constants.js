@@ -226,12 +226,16 @@ const UPDATE_PROPS = [
   "formDataSections",
   "stacktrace",
   "isThirdPartyTrackingResource",
+  "isResolvedByTRR",
   "referrerPolicy",
   "priority",
   "blockedReason",
   "blockingExtension",
   "channelId",
   "waitingTime",
+  "proxyHttpVersion",
+  "proxyStatus",
+  "proxyStatusText",
 ];
 
 const PANELS = {

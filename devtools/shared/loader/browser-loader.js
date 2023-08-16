@@ -3,11 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const BaseLoader = ChromeUtils.import(
-  "resource://devtools/shared/loader/base-loader.js"
+const BaseLoader = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/base-loader.sys.mjs"
 );
-const { require: devtoolsRequire, loader } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+const { require: devtoolsRequire, loader } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
 const flags = devtoolsRequire("devtools/shared/flags");
 const { joinURI } = devtoolsRequire("devtools/shared/path");
@@ -18,7 +18,7 @@ const lazy = {};
 loader.lazyRequireGetter(
   lazy,
   "getMockedModule",
-  "devtools/shared/loader/browser-loader-mocks",
+  "resource://devtools/shared/loader/browser-loader-mocks.js",
   {}
 );
 
@@ -35,10 +35,8 @@ const BROWSER_BASED_DIRS = [
   "resource://devtools/client/jsonview",
   "resource://devtools/client/netmonitor/src/utils",
   "resource://devtools/client/shared/fluent-l10n",
-  "resource://devtools/client/shared/source-map",
   "resource://devtools/client/shared/redux",
   "resource://devtools/client/shared/vendor",
-  "resource://devtools/client/shared/worker-utils",
 ];
 
 const COMMON_LIBRARY_DIRS = ["resource://devtools/client/shared/vendor"];
@@ -50,7 +48,8 @@ const COMMON_LIBRARY_DIRS = ["resource://devtools/client/shared/vendor"];
 // An example:
 // * `resource://devtools/client/inspector/components`
 // * `resource://devtools/client/inspector/shared/components`
-const browserBasedDirsRegExp = /^resource\:\/\/devtools\/client\/\S*\/components\//;
+const browserBasedDirsRegExp =
+  /^resource\:\/\/devtools\/client\/\S*\/components\//;
 
 /*
  * Create a loader to be used in a browser environment. This evaluates
@@ -179,7 +178,6 @@ function BrowserLoaderBuilder({
       // Allow modules to use the DevToolsLoader lazy loading helpers.
       loader: {
         lazyGetter: loader.lazyGetter,
-        lazyImporter: loader.lazyImporter,
         lazyServiceGetter: loader.lazyServiceGetter,
         lazyRequireGetter: this.lazyRequireGetter.bind(this),
       },

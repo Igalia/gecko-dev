@@ -18,11 +18,6 @@ function processKeyedSnapshot(snapshot) {
 }
 
 add_task(async function test_telemetry() {
-  Services.prefs.setBoolPref(
-    "toolkit.telemetry.testing.overrideProductsCheck",
-    true
-  );
-
   let extension1 = ExtensionTestUtils.loadExtension({});
   let extension2 = ExtensionTestUtils.loadExtension({});
 
@@ -52,9 +47,8 @@ add_task(async function test_telemetry() {
   );
 
   let histogram = Services.telemetry.getHistogramById(HISTOGRAM);
-  let histogramKeyed = Services.telemetry.getKeyedHistogramById(
-    HISTOGRAM_KEYED
-  );
+  let histogramKeyed =
+    Services.telemetry.getKeyedHistogramById(HISTOGRAM_KEYED);
   let histogramSum = histogram.snapshot().sum;
   let histogramSumExt1 = histogramKeyed.snapshot()[extension1.extension.id].sum;
 

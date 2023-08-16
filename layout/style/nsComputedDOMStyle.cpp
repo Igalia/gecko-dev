@@ -68,21 +68,6 @@ using namespace mozilla::dom;
  * returned by the getComputedStyle() function.
  */
 
-static bool ShouldReturnEmptyStyleForInvalidPseudoElement(
-    const nsAString& aPseudoElt) {
-  // Old behavior is historical. New behavior is as discussed in
-  // https://github.com/w3c/csswg-drafts/issues/6501.
-  if (!StaticPrefs::
-          layout_css_computed_style_new_invalid_pseudo_element_behavior()) {
-    if (aPseudoElt.Length() < 2) {
-      return false;
-    }
-    const char16_t* chars = aPseudoElt.BeginReading();
-    return chars[0] == u':' && chars[1] == u':';
-  }
-  return !aPseudoElt.IsEmpty() && aPseudoElt.First() == u':';
-}
-
 already_AddRefed<nsComputedDOMStyle> NS_NewComputedDOMStyle(
     dom::Element* aElement, const nsAString& aPseudoElt, Document* aDocument,
     nsComputedDOMStyle::StyleType aStyleType, mozilla::ErrorResult&) {
@@ -90,7 +75,7 @@ already_AddRefed<nsComputedDOMStyle> NS_NewComputedDOMStyle(
       aPseudoElt, CSSEnabledState::ForAllContent);
   auto returnEmpty = nsComputedDOMStyle::AlwaysReturnEmptyStyle::No;
   if (!pseudo) {
-    if (ShouldReturnEmptyStyleForInvalidPseudoElement(aPseudoElt)) {
+    if (!aPseudoElt.IsEmpty() && aPseudoElt.First() == u':') {
       returnEmpty = nsComputedDOMStyle::AlwaysReturnEmptyStyle::Yes;
     }
     pseudo.emplace(PseudoStyleType::NotPseudo);
@@ -162,19 +147,10 @@ static bool ElementNeedsRestyle(Element* aElement, PseudoStyleType aPseudo,
   }
 
   // If the pseudo-element is animating, make sure to flush.
-  if (aElement->MayHaveAnimations() && aPseudo != PseudoStyleType::NotPseudo) {
-    if (aPseudo == PseudoStyleType::before) {
-      if (EffectSet::GetEffectSet(aElement, PseudoStyleType::before)) {
-        return true;
-      }
-    } else if (aPseudo == PseudoStyleType::after) {
-      if (EffectSet::GetEffectSet(aElement, PseudoStyleType::after)) {
-        return true;
-      }
-    } else if (aPseudo == PseudoStyleType::marker) {
-      if (EffectSet::GetEffectSet(aElement, PseudoStyleType::marker)) {
-        return true;
-      }
+  if (aElement->MayHaveAnimations() && aPseudo != PseudoStyleType::NotPseudo &&
+      AnimationUtils::IsSupportedPseudoForAnimations(aPseudo)) {
+    if (EffectSet::Get(aElement, aPseudo)) {
+      return true;
     }
   }
 
@@ -364,7 +340,7 @@ nsComputedDOMStyle::~nsComputedDOMStyle() {
              "Should have called ClearComputedStyle() during last release.");
 }
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(nsComputedDOMStyle)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(nsComputedDOMStyle)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsComputedDOMStyle)
   tmp->ClearComputedStyle();  // remove observer before clearing mElement
@@ -376,17 +352,31 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(nsComputedDOMStyle)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mElement)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(nsComputedDOMStyle)
+// We can skip the nsComputedDOMStyle if it has no wrapper and its
+// element is skippable, because it will have no outgoing edges, so
+// it can't be part of a cycle.
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_BEGIN(nsComputedDOMStyle)
+  if (!tmp->GetWrapperPreserveColor()) {
+    return !tmp->mElement ||
+           mozilla::dom::FragmentOrElement::CanSkip(tmp->mElement, true);
+  }
   return tmp->HasKnownLiveWrapper();
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_BEGIN(nsComputedDOMStyle)
+  if (!tmp->GetWrapperPreserveColor()) {
+    return !tmp->mElement ||
+           mozilla::dom::FragmentOrElement::CanSkipInCC(tmp->mElement);
+  }
   return tmp->HasKnownLiveWrapper();
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_IN_CC_END
 
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_BEGIN(nsComputedDOMStyle)
+  if (!tmp->GetWrapperPreserveColor()) {
+    return !tmp->mElement ||
+           mozilla::dom::FragmentOrElement::CanSkipThis(tmp->mElement);
+  }
   return tmp->HasKnownLiveWrapper();
 NS_IMPL_CYCLE_COLLECTION_CAN_SKIP_THIS_END
 
@@ -400,8 +390,8 @@ NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_ADDREF(nsComputedDOMStyle)
 NS_IMPL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_RELEASE_WITH_LAST_RELEASE(
     nsComputedDOMStyle, ClearComputedStyle())
 
-nsresult nsComputedDOMStyle::GetPropertyValue(const nsCSSPropertyID aPropID,
-                                              nsACString& aValue) {
+void nsComputedDOMStyle::GetPropertyValue(const nsCSSPropertyID aPropID,
+                                          nsACString& aValue) {
   return GetPropertyValue(aPropID, EmptyCString(), aValue);
 }
 
@@ -442,14 +432,13 @@ uint32_t nsComputedDOMStyle::Length() {
 
 css::Rule* nsComputedDOMStyle::GetParentRule() { return nullptr; }
 
-NS_IMETHODIMP
-nsComputedDOMStyle::GetPropertyValue(const nsACString& aPropertyName,
-                                     nsACString& aReturn) {
+void nsComputedDOMStyle::GetPropertyValue(const nsACString& aPropertyName,
+                                          nsACString& aReturn) {
   nsCSSPropertyID prop = nsCSSProps::LookupProperty(aPropertyName);
-  return GetPropertyValue(prop, aPropertyName, aReturn);
+  GetPropertyValue(prop, aPropertyName, aReturn);
 }
 
-nsresult nsComputedDOMStyle::GetPropertyValue(
+void nsComputedDOMStyle::GetPropertyValue(
     nsCSSPropertyID aPropID, const nsACString& aMaybeCustomPropertyName,
     nsACString& aReturn) {
   MOZ_ASSERT(aReturn.IsEmpty());
@@ -458,13 +447,13 @@ nsresult nsComputedDOMStyle::GetPropertyValue(
   if (aPropID != eCSSPropertyExtra_variable) {
     entry = GetComputedStyleMap()->FindEntryForProperty(aPropID);
     if (!entry) {
-      return NS_OK;
+      return;
     }
   }
 
   UpdateCurrentStyleSources(aPropID);
   if (!mComputedStyle) {
-    return NS_OK;
+    return;
   }
 
   auto cleanup = mozilla::MakeScopeExit([&] { ClearCurrentStyleSources(); });
@@ -474,7 +463,7 @@ nsresult nsComputedDOMStyle::GetPropertyValue(
     const nsACString& name =
         Substring(aMaybeCustomPropertyName, CSS_CUSTOM_NAME_PREFIX_LENGTH);
     Servo_GetCustomPropertyValue(mComputedStyle, &name, &aReturn);
-    return NS_OK;
+    return;
   }
 
   if (nsCSSProps::PropHasFlags(aPropID, CSSPropFlags::IsLogical)) {
@@ -493,18 +482,16 @@ nsresult nsComputedDOMStyle::GetPropertyValue(
 
   if (!nsCSSProps::PropHasFlags(aPropID, CSSPropFlags::SerializedByServo)) {
     if (RefPtr<CSSValue> value = (this->*entry->mGetter)()) {
-      ErrorResult rv;
       nsAutoString text;
-      value->GetCssText(text, rv);
+      value->GetCssText(text);
       CopyUTF16toUTF8(text, aReturn);
-      return rv.StealNSResult();
     }
-    return NS_OK;
+    return;
   }
 
   MOZ_ASSERT(entry->mGetter == &nsComputedDOMStyle::DummyGetter);
-  mComputedStyle->GetComputedPropertyValue(aPropID, aReturn);
-  return NS_OK;
+  Servo_GetResolvedValue(mComputedStyle, aPropID,
+                         mPresShell->StyleSet()->RawData(), mElement, &aReturn);
 }
 
 /* static */
@@ -624,7 +611,7 @@ nsComputedDOMStyle::GetUnanimatedComputedStyleNoFlush(Element* aElement,
              "How in the world did we get a style a few lines above?");
 
   Element* elementOrPseudoElement =
-      EffectCompositor::GetElementToRestyle(aElement, aPseudo);
+      AnimationUtils::GetElementForRestyle(aElement, aPseudo);
   if (!elementOrPseudoElement) {
     return nullptr;
   }
@@ -1143,7 +1130,7 @@ void nsComputedDOMStyle::UpdateCurrentStyleSources(nsCSSPropertyID aPropID) {
   MOZ_ASSERT(!mExposeVisitedStyle || nsContentUtils::IsCallerChrome(),
              "mExposeVisitedStyle set incorrectly");
   if (mExposeVisitedStyle && mComputedStyle->RelevantLinkVisited()) {
-    if (ComputedStyle* styleIfVisited = mComputedStyle->GetStyleIfVisited()) {
+    if (const auto* styleIfVisited = mComputedStyle->GetStyleIfVisited()) {
       mComputedStyle = styleIfVisited;
     }
   }
@@ -1228,12 +1215,6 @@ void nsComputedDOMStyle::IndexedGetter(uint32_t aIndex, bool& aFound,
 
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetBottom() {
   return GetOffsetWidthFor(eSideBottom);
-}
-
-already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetColumnRuleWidth() {
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-  val->SetAppUnits(StyleColumn()->GetComputedColumnRuleWidth());
-  return val.forget();
 }
 
 static Position MaybeResolvePositionForTransform(const LengthPercentage& aX,
@@ -1357,7 +1338,8 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::MatrixToCSSValue(
 
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetMozOsxFontSmoothing() {
   if (nsContentUtils::ShouldResistFingerprinting(
-          mPresShell->GetPresContext()->GetDocShell())) {
+          mPresShell->GetPresContext()->GetDocShell(),
+          RFPTarget::DOMStyleOsxFontSmoothing)) {
     return nullptr;
   }
 
@@ -1397,31 +1379,6 @@ void nsComputedDOMStyle::SetValueToPosition(const Position& aPosition,
   RefPtr<nsROCSSPrimitiveValue> valY = new nsROCSSPrimitiveValue;
   SetValueToLengthPercentage(valY, aPosition.vertical, false);
   aValueList->AppendCSSValue(valY.forget());
-}
-
-void nsComputedDOMStyle::SetValueToURLValue(const StyleComputedUrl* aURL,
-                                            nsROCSSPrimitiveValue* aValue) {
-  if (!aURL) {
-    aValue->SetString("none");
-    return;
-  }
-
-  // If we have a usable nsIURI in the URLValue, and the url() wasn't
-  // a fragment-only URL, serialize the nsIURI.
-  if (!aURL->IsLocalRef()) {
-    if (nsIURI* uri = aURL->GetURI()) {
-      aValue->SetURI(uri);
-      return;
-    }
-  }
-
-  // Otherwise, serialize the specified URL value.
-  NS_ConvertUTF8toUTF16 source(aURL->SpecifiedSerialization());
-  nsAutoString url;
-  url.AppendLiteral(u"url(");
-  nsStyleUtil::AppendEscapedCSSString(source, url, '"');
-  url.Append(')');
-  aValue->SetString(url);
 }
 
 enum class Brackets { No, Yes };
@@ -1539,8 +1496,8 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
   }
 
   MOZ_ASSERT(aTrackSize.IsMinmax());
-  auto& min = aTrackSize.AsMinmax()._0;
-  auto& max = aTrackSize.AsMinmax()._1;
+  const auto& min = aTrackSize.AsMinmax()._0;
+  const auto& max = aTrackSize.AsMinmax()._1;
   if (min == max) {
     return GetGridTrackBreadth(min);
   }
@@ -1556,7 +1513,7 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
 
   {
     RefPtr<nsROCSSPrimitiveValue> argValue = GetGridTrackBreadth(min);
-    argValue->GetCssText(argumentStr, IgnoreErrors());
+    argValue->GetCssText(argumentStr);
     minmaxStr.Append(argumentStr);
     argumentStr.Truncate();
   }
@@ -1565,7 +1522,7 @@ already_AddRefed<nsROCSSPrimitiveValue> nsComputedDOMStyle::GetGridTrackSize(
 
   {
     RefPtr<nsROCSSPrimitiveValue> argValue = GetGridTrackBreadth(max);
-    argValue->GetCssText(argumentStr, IgnoreErrors());
+    argValue->GetCssText(argumentStr);
     minmaxStr.Append(argumentStr);
   }
 
@@ -1848,31 +1805,6 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetMarginRight() {
   return GetMarginFor(eSideRight);
 }
 
-already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetLineHeight() {
-  RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
-
-  {
-    nscoord lineHeight;
-    if (GetLineHeightCoord(lineHeight)) {
-      val->SetAppUnits(lineHeight);
-      return val.forget();
-    }
-  }
-
-  auto& lh = StyleText()->mLineHeight;
-  if (lh.IsLength()) {
-    val->SetPixels(lh.AsLength().ToCSSPixels());
-  } else if (lh.IsNumber()) {
-    val->SetNumber(lh.AsNumber());
-  } else if (lh.IsMozBlockHeight()) {
-    val->SetString("-moz-block-height");
-  } else {
-    MOZ_ASSERT(lh.IsNormal());
-    val->SetString("normal");
-  }
-  return val.forget();
-}
-
 already_AddRefed<CSSValue> nsComputedDOMStyle::DoGetHeight() {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
 
@@ -2150,50 +2082,6 @@ already_AddRefed<CSSValue> nsComputedDOMStyle::GetPaddingWidthFor(
   return val.forget();
 }
 
-bool nsComputedDOMStyle::GetLineHeightCoord(nscoord& aCoord) {
-  nscoord blockHeight = NS_UNCONSTRAINEDSIZE;
-  const auto& lh = StyleText()->mLineHeight;
-  if (lh.IsNormal()) {
-    return false;
-  }
-
-  if (lh.IsMozBlockHeight()) {
-    if (!mInnerFrame) {
-      return false;
-    }
-
-    AssertFlushedPendingReflows();
-
-    if (nsLayoutUtils::IsNonWrapperBlock(mInnerFrame)) {
-      blockHeight = mInnerFrame->GetContentRect().height;
-    } else {
-      GetCBContentHeight(blockHeight);
-    }
-  }
-
-  nsPresContext* presContext = mPresShell->GetPresContext();
-
-  // lie about font size inflation since we lie about font size (since
-  // the inflation only applies to text)
-  aCoord = ReflowInput::CalcLineHeight(mElement, mComputedStyle, presContext,
-                                       blockHeight, 1.0f);
-
-  // CalcLineHeight uses font->mFont.size, but we want to use
-  // font->mSize as the font size.  Adjust for that.  Also adjust for
-  // the text zoom, if any.
-  const nsStyleFont* font = StyleFont();
-  float fCoord = float(aCoord);
-  if (font->mAllowZoomAndMinSize) {
-    fCoord /= presContext->EffectiveTextZoom();
-  }
-  if (font->mFont.size != font->mSize) {
-    fCoord *= font->mSize.ToCSSPixels() / font->mFont.size.ToCSSPixels();
-  }
-  aCoord = NSToCoordRound(fCoord);
-
-  return true;
-}
-
 already_AddRefed<CSSValue> nsComputedDOMStyle::GetBorderWidthFor(
     mozilla::Side aSide) {
   RefPtr<nsROCSSPrimitiveValue> val = new nsROCSSPrimitiveValue;
@@ -2251,7 +2139,7 @@ void nsComputedDOMStyle::SetValueFromFitContentFunction(
     nsROCSSPrimitiveValue* aValue, const LengthPercentage& aLength) {
   nsAutoString argumentStr;
   SetValueToLengthPercentage(aValue, aLength, true);
-  aValue->GetCssText(argumentStr, IgnoreErrors());
+  aValue->GetCssText(argumentStr);
 
   nsAutoString fitContentStr;
   fitContentStr.AppendLiteral("fit-content(");

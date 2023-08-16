@@ -21,7 +21,7 @@ const expectedMessages = [
 // __and__ from test-iframe3.html as well, so we should see it twice.
 const expectedDupedMessage = "iframe 1";
 
-add_task(async function() {
+add_task(async function () {
   // On e10s, the exception is triggered in child process
   // and is ignored by test harness
   if (!Services.appinfo.browserTabsRemoteAutostart) {
@@ -35,9 +35,6 @@ add_task(async function() {
   info("web console closed");
 
   // Show the content messages
-  await pushPref("devtools.browserconsole.contentMessages", true);
-  // Enable Fission browser console to see the logged content object
-  await pushPref("devtools.browsertoolbox.fission", true);
   await pushPref("devtools.browsertoolbox.scope", "everything");
   hud = await BrowserConsoleManager.toggleBrowserConsole();
   ok(hud, "browser console opened");

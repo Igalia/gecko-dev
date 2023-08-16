@@ -6,7 +6,7 @@
 
 requestLongerTimeout(2);
 
-add_task(async function() {
+add_task(async function () {
   // NOTE: the CORS call makes the test run times inconsistent
   const dbg = await initDebugger("doc-sourcemaps.html");
   const {
@@ -19,9 +19,7 @@ add_task(async function() {
 
   await selectSource(dbg, entrySrc);
   ok(
-    getCM(dbg)
-      .getValue()
-      .includes("window.keepMeAlive"),
+    getCM(dbg).getValue().includes("window.keepMeAlive"),
     "Original source text loaded correctly"
   );
 
@@ -30,8 +28,8 @@ add_task(async function() {
   await disableBreakpoint(dbg, entrySrc, 15, 0);
 
   // Test reloading the debugger
-  await reload(dbg, "opts.js");
-  await waitForDispatch(dbg.store, "LOAD_SOURCE_TEXT");
+  const onReloaded = reload(dbg, "opts.js");
+  await waitForDispatch(dbg.store, "LOAD_ORIGINAL_SOURCE_TEXT");
 
   await waitForPaused(dbg);
   await waitForDispatch(dbg.store, "ADD_INLINE_PREVIEW");
@@ -40,16 +38,20 @@ add_task(async function() {
   await waitForBreakpointCount(dbg, 2);
   is(getBreakpointCount(), 2, "Two breakpoints exist");
 
-  ok(
-    getBreakpoint({
-      sourceId: entrySrc.id,
+  const bp = getBreakpoint(
+    createLocation({
+      source: entrySrc,
       line: 15,
       column: 0,
-      disabled: true,
-    }),
-    "Breakpoint is on the correct line and is disabled"
+    })
   );
+  ok(bp, "Breakpoint is on the correct line");
+  ok(bp.disabled, "Breakpoint is disabled");
   await assertBreakpoint(dbg, 15);
+
+  await resume(dbg);
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 });
 
 async function waitForBreakpointCount(dbg, count) {

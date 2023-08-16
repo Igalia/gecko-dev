@@ -15,20 +15,21 @@
 #include <utility>
 #include <vector>
 
-#include "lib/jxl/aux_out.h"
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/padded_bytes.h"
 #include "lib/jxl/base/printf_macros.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/compressed_dc.h"
 #include "lib/jxl/dec_ans.h"
+#include "lib/jxl/enc_aux_out.h"
 #include "lib/jxl/enc_bit_writer.h"
 #include "lib/jxl/enc_cluster.h"
+#include "lib/jxl/enc_fields.h"
+#include "lib/jxl/enc_gaborish.h"
 #include "lib/jxl/enc_params.h"
 #include "lib/jxl/enc_patch_dictionary.h"
 #include "lib/jxl/enc_quant_weights.h"
 #include "lib/jxl/frame_header.h"
-#include "lib/jxl/gaborish.h"
 #include "lib/jxl/modular/encoding/context_predict.h"
 #include "lib/jxl/modular/encoding/enc_debug_tree.h"
 #include "lib/jxl/modular/encoding/enc_encoding.h"
@@ -42,6 +43,8 @@
 namespace jxl {
 
 namespace {
+// constexpr bool kPrintTree = false;
+
 // Squeeze default quantization factors
 // these quantization factors are for -Q 50  (other qualities simply scale the
 // factors; things are rounded down and obviously cannot get below 1)
@@ -175,7 +178,7 @@ Tree PredefinedTree(ModularOptions::TreeKind tree_kind, size_t total_pixels) {
     return MakeFixedTree(kGradientProp, cutoffs, Predictor::Gradient,
                          total_pixels);
   }
-  JXL_ABORT("Unreachable");
+  JXL_UNREACHABLE("Unreachable");
   return {};
 }
 
@@ -303,7 +306,7 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
     : frame_dim_(frame_header.ToFrameDimensions()), cparams_(cparams_orig) {
   size_t num_streams =
       ModularStreamId::Num(frame_dim_, frame_header.passes.num_passes);
-  if (cparams_.IsLossless()) {
+  if (cparams_.ModularPartIsLossless()) {
     switch (cparams_.decoding_speed_tier) {
       case 0:
         break;
@@ -328,7 +331,7 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
     }
   }
   if (cparams_.decoding_speed_tier >= 1 && cparams_.responsive &&
-      cparams_.IsLossless()) {
+      cparams_.ModularPartIsLossless()) {
     cparams_.options.tree_kind =
         ModularOptions::TreeKind::kTrivialTreeNoPredictor;
     cparams_.options.nb_repeats = 0;
@@ -338,18 +341,16 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
   // use a sensible default if nothing explicit is specified:
   // Squeeze for lossy, no squeeze for lossless
   if (cparams_.responsive < 0) {
-    if (cparams_.IsLossless()) {
+    if (cparams_.ModularPartIsLossless()) {
       cparams_.responsive = 0;
     } else {
       cparams_.responsive = 1;
     }
   }
 
-  if (cparams_.speed_tier > SpeedTier::kWombat) {
-    cparams_.options.splitting_heuristics_node_threshold = 192;
-  } else {
-    cparams_.options.splitting_heuristics_node_threshold = 96;
-  }
+  cparams_.options.splitting_heuristics_node_threshold =
+      82 + 14 * static_cast<int>(cparams_.speed_tier);
+
   {
     // Set properties.
     std::vector<uint32_t> prop_order;
@@ -360,17 +361,31 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
     } else {
       // Same, but for the non-Squeeze case.
       prop_order = {0, 1, 15, 9, 10, 11, 12, 13, 14, 2, 3, 4, 5, 6, 7, 8};
+      // if few groups, don't use group as a property
+      if (num_streams < 30 && cparams_.speed_tier > SpeedTier::kTortoise) {
+        prop_order.erase(prop_order.begin() + 1);
+      }
     }
     switch (cparams_.speed_tier) {
+      case SpeedTier::kHare:
+        cparams_.options.splitting_heuristics_properties.assign(
+            prop_order.begin(), prop_order.begin() + 4);
+        cparams_.options.max_property_values = 24;
+        break;
+      case SpeedTier::kWombat:
+        cparams_.options.splitting_heuristics_properties.assign(
+            prop_order.begin(), prop_order.begin() + 5);
+        cparams_.options.max_property_values = 32;
+        break;
       case SpeedTier::kSquirrel:
         cparams_.options.splitting_heuristics_properties.assign(
-            prop_order.begin(), prop_order.begin() + 8);
-        cparams_.options.max_property_values = 32;
+            prop_order.begin(), prop_order.begin() + 7);
+        cparams_.options.max_property_values = 48;
         break;
       case SpeedTier::kKitten:
         cparams_.options.splitting_heuristics_properties.assign(
             prop_order.begin(), prop_order.begin() + 10);
-        cparams_.options.max_property_values = 64;
+        cparams_.options.max_property_values = 96;
         break;
       case SpeedTier::kTortoise:
         cparams_.options.splitting_heuristics_properties = prop_order;
@@ -378,7 +393,7 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
         break;
       default:
         cparams_.options.splitting_heuristics_properties.assign(
-            prop_order.begin(), prop_order.begin() + 6);
+            prop_order.begin(), prop_order.begin() + 3);
         cparams_.options.max_property_values = 16;
         break;
     }
@@ -425,7 +440,7 @@ ModularFrameEncoder::ModularFrameEncoder(const FrameHeader& frame_header,
     delta_pred_ = cparams_.options.predictor;
     if (cparams_.lossy_palette) cparams_.options.predictor = Predictor::Zero;
   }
-  if (!cparams_.IsLossless()) {
+  if (!cparams_.ModularPartIsLossless()) {
     if (cparams_.options.predictor == Predictor::Weighted ||
         cparams_.options.predictor == Predictor::Variable ||
         cparams_.options.predictor == Predictor::Best)
@@ -473,7 +488,9 @@ Status ModularFrameEncoder::ComputeEncodingData(
               frame_header.DebugString().c_str());
 
   if (do_color && frame_header.loop_filter.gab) {
-    GaborishInverse(color, 0.9908511000000001f, pool);
+    float w = 0.9908511000000001f;
+    float weights[3] = {w, w, w};
+    GaborishInverse(color, weights, pool);
   }
 
   if (do_color && metadata.bit_depth.bits_per_sample <= 16 &&
@@ -634,8 +651,7 @@ Status ModularFrameEncoder::ComputeEncodingData(
         cparams_.level, max_bitdepth, level_max_bitdepth);
 
   // Set options and apply transformations
-
-  if (cparams_.butteraugli_distance > 0) {
+  if (!cparams_.ModularPartIsLossless()) {
     if (cparams_.palette_colors != 0) {
       JXL_DEBUG_V(3, "Lossy encode, not doing palette transforms");
     }
@@ -647,26 +663,41 @@ Status ModularFrameEncoder::ComputeEncodingData(
     cparams_.lossy_palette = false;
   }
 
-  // if few colors, do all-channel palette before trying channel palette
-  // Logic is as follows:
-  // - if you can make a palette with few colors (arbitrary threshold: 200),
-  //   then you can also make channel palettes, but they will just be extra
-  //   signaling cost for almost no benefit
-  // - if the palette needs more colors, then channel palette might help to
-  //   reduce palette signaling cost
-  if (cparams_.palette_colors != 0 &&
-      cparams_.speed_tier < SpeedTier::kFalcon) {
+  // Global palette
+  if (cparams_.palette_colors != 0 || cparams_.lossy_palette) {
     // all-channel palette (e.g. RGBA)
-    if (gi.channel.size() > 1) {
+    if (gi.channel.size() - gi.nb_meta_channels > 1) {
       Transform maybe_palette(TransformId::kPalette);
       maybe_palette.begin_c = gi.nb_meta_channels;
       maybe_palette.num_c = gi.channel.size() - gi.nb_meta_channels;
       maybe_palette.nb_colors =
-          std::min(std::min(200, (int)(xsize * ysize / 8)),
-                   std::abs(cparams_.palette_colors) / 16);
+          std::min((int)(xsize * ysize / 2), std::abs(cparams_.palette_colors));
       maybe_palette.ordered_palette = cparams_.palette_colors >= 0;
-      maybe_palette.lossy_palette = false;
-      do_transform(gi, maybe_palette, weighted::Header(), pool);
+      maybe_palette.lossy_palette =
+          (cparams_.lossy_palette && maybe_palette.num_c == 3);
+      if (maybe_palette.lossy_palette) {
+        maybe_palette.predictor = delta_pred_;
+      }
+      // TODO(veluca): use a custom weighted header if using the weighted
+      // predictor.
+      do_transform(gi, maybe_palette, weighted::Header(), pool,
+                   cparams_.options.zero_tokens);
+    }
+    // all-minus-one-channel palette (RGB with separate alpha, or CMY with
+    // separate K)
+    if (gi.channel.size() - gi.nb_meta_channels > 3) {
+      Transform maybe_palette_3(TransformId::kPalette);
+      maybe_palette_3.begin_c = gi.nb_meta_channels;
+      maybe_palette_3.num_c = gi.channel.size() - gi.nb_meta_channels - 1;
+      maybe_palette_3.nb_colors =
+          std::min((int)(xsize * ysize / 3), std::abs(cparams_.palette_colors));
+      maybe_palette_3.ordered_palette = cparams_.palette_colors >= 0;
+      maybe_palette_3.lossy_palette = cparams_.lossy_palette;
+      if (maybe_palette_3.lossy_palette) {
+        maybe_palette_3.predictor = delta_pred_;
+      }
+      do_transform(gi, maybe_palette_3, weighted::Header(), pool,
+                   cparams_.options.zero_tokens);
     }
   }
 
@@ -682,7 +713,7 @@ Status ModularFrameEncoder::ComputeEncodingData(
     for (size_t i = 0; i < nb_channels; i++) {
       int32_t min, max;
       compute_minmax(gi.channel[gi.nb_meta_channels + i], &min, &max);
-      int64_t colors = max - min + 1;
+      int64_t colors = (int64_t)max - min + 1;
       JXL_DEBUG_V(10, "Channel %" PRIuS ": range=%i..%i", i, min, max);
       Transform maybe_palette_1(TransformId::kPalette);
       maybe_palette_1.begin_c = i + gi.nb_meta_channels;
@@ -706,51 +737,12 @@ Status ModularFrameEncoder::ComputeEncodingData(
     }
   }
 
-  // Global palette
-  if ((cparams_.palette_colors != 0 || cparams_.lossy_palette) &&
-      cparams_.speed_tier < SpeedTier::kFalcon) {
-    // all-channel palette (e.g. RGBA)
-    if (gi.channel.size() - gi.nb_meta_channels > 1) {
-      Transform maybe_palette(TransformId::kPalette);
-      maybe_palette.begin_c = gi.nb_meta_channels;
-      maybe_palette.num_c = gi.channel.size() - gi.nb_meta_channels;
-      maybe_palette.nb_colors =
-          std::min((int)(xsize * ysize / 8), std::abs(cparams_.palette_colors));
-      maybe_palette.ordered_palette = cparams_.palette_colors >= 0;
-      maybe_palette.lossy_palette =
-          (cparams_.lossy_palette && maybe_palette.num_c == 3);
-      if (maybe_palette.lossy_palette) {
-        maybe_palette.predictor = delta_pred_;
-      }
-      // TODO(veluca): use a custom weighted header if using the weighted
-      // predictor.
-      do_transform(gi, maybe_palette, weighted::Header(), pool,
-                   cparams_.options.zero_tokens);
-    }
-    // all-minus-one-channel palette (RGB with separate alpha, or CMY with
-    // separate K)
-    if (gi.channel.size() - gi.nb_meta_channels > 3) {
-      Transform maybe_palette_3(TransformId::kPalette);
-      maybe_palette_3.begin_c = gi.nb_meta_channels;
-      maybe_palette_3.num_c = gi.channel.size() - gi.nb_meta_channels - 1;
-      maybe_palette_3.nb_colors =
-          std::min((int)(xsize * ysize / 8), std::abs(cparams_.palette_colors));
-      maybe_palette_3.ordered_palette = cparams_.palette_colors >= 0;
-      maybe_palette_3.lossy_palette = cparams_.lossy_palette;
-      if (maybe_palette_3.lossy_palette) {
-        maybe_palette_3.predictor = delta_pred_;
-      }
-      do_transform(gi, maybe_palette_3, weighted::Header(), pool,
-                   cparams_.options.zero_tokens);
-    }
-  }
-
   // don't do an RCT if we're short on bits
   if (cparams_.color_transform == ColorTransform::kNone && do_color &&
       gi.channel.size() - gi.nb_meta_channels >= 3 &&
       max_bitdepth + 1 < level_max_bitdepth) {
-    if (cparams_.colorspace < 0 &&
-        (!cparams_.IsLossless() || cparams_.speed_tier > SpeedTier::kHare)) {
+    if (cparams_.colorspace < 0 && (!cparams_.ModularPartIsLossless() ||
+                                    cparams_.speed_tier > SpeedTier::kHare)) {
       Transform ycocg{TransformId::kRCT};
       ycocg.rct_type = 6;
       ycocg.begin_c = gi.nb_meta_channels;
@@ -782,20 +774,32 @@ Status ModularFrameEncoder::ComputeEncodingData(
 
   std::vector<uint32_t> quants;
 
-  if (cparams_.butteraugli_distance > 0) {
+  if (!cparams_.ModularPartIsLossless()) {
     quants.resize(gi.channel.size(), 1);
-    float quality = 0.25f * cparams_.butteraugli_distance;
-    JXL_DEBUG_V(2,
-                "Adding quantization constants corresponding to distance %.3f ",
-                quality);
+    float quantizer = 0.25f;
     if (!cparams_.responsive) {
       JXL_DEBUG_V(1,
                   "Warning: lossy compression without Squeeze "
                   "transform is just color quantization.");
-      quality *= 0.1f;
+      quantizer *= 0.1f;
     }
+    float bitdepth_correction = 1.f;
     if (cparams_.color_transform != ColorTransform::kXYB) {
-      quality *= maxval / 255.f;
+      bitdepth_correction = maxval / 255.f;
+    }
+    std::vector<float> quantizers;
+    float dist = cparams_.butteraugli_distance;
+    for (size_t i = 0; i < 3; i++) {
+      quantizers.push_back(quantizer * dist * bitdepth_correction);
+    }
+    for (size_t i = 0; i < extra_channels.size(); i++) {
+      int ec_bitdepth =
+          metadata.extra_channel_info[i].bit_depth.bits_per_sample;
+      pixel_type ec_maxval = ec_bitdepth < 32 ? (1u << ec_bitdepth) - 1 : 0;
+      bitdepth_correction = ec_maxval / 255.f;
+      if (i < cparams_.ec_distance.size()) dist = cparams_.ec_distance[i];
+      if (dist < 0) dist = cparams_.butteraugli_distance;
+      quantizers.push_back(quantizer * dist * bitdepth_correction);
     }
     if (cparams_.options.nb_repeats == 0) {
       return JXL_FAILURE("nb_repeats = 0 not supported with modular lossy!");
@@ -814,14 +818,15 @@ Status ModularFrameEncoder::ComputeEncodingData(
         component = 1;
       }
       if (cparams_.color_transform == ColorTransform::kXYB && component < 3) {
-        q = quality * squeeze_quality_factor_xyb *
+        q = quantizers[component] * squeeze_quality_factor_xyb *
             squeeze_xyb_qtable[component][shift];
       } else {
         if (cparams_.colorspace != 0 && component > 0 && component < 3) {
-          q = quality * squeeze_quality_factor * squeeze_chroma_qtable[shift];
+          q = quantizers[component] * squeeze_quality_factor *
+              squeeze_chroma_qtable[shift];
         } else {
-          q = quality * squeeze_quality_factor * squeeze_luma_factor *
-              squeeze_luma_qtable[shift];
+          q = quantizers[component] * squeeze_quality_factor *
+              squeeze_luma_factor * squeeze_luma_qtable[shift];
         }
       }
       if (q < 1) q = 1;
@@ -956,10 +961,12 @@ Status ModularFrameEncoder::ComputeEncodingData(
 
   JXL_RETURN_IF_ERROR(ValidateChannelDimensions(gi, stream_options_[0]));
 
-  return PrepareEncoding(pool, enc_state->heuristics.get(), aux_out);
+  return PrepareEncoding(frame_header, pool, enc_state->heuristics.get(),
+                         aux_out);
 }
 
-Status ModularFrameEncoder::PrepareEncoding(ThreadPool* pool,
+Status ModularFrameEncoder::PrepareEncoding(const FrameHeader& frame_header,
+                                            ThreadPool* pool,
                                             EncoderHeuristics* heuristics,
                                             AuxOut* aux_out) {
   if (!tree_.empty()) return true;
@@ -981,9 +988,7 @@ Status ModularFrameEncoder::PrepareEncoding(ThreadPool* pool,
       size_t start = tree_splits_[chunk];
       size_t stop = tree_splits_[chunk + 1];
       for (size_t i = start; i < stop; i++) {
-        for (const Channel& c : stream_images_[i].channel) {
-          if (c.w && c.h) has_pixels = true;
-        }
+        if (!stream_images_[i].empty()) has_pixels = true;
       }
       if (has_pixels) {
         useful_splits.push_back(tree_splits_[chunk]);
@@ -1003,6 +1008,8 @@ Status ModularFrameEncoder::PrepareEncoding(ThreadPool* pool,
           size_t total_pixels = 0;
           uint32_t start = useful_splits[chunk];
           uint32_t stop = useful_splits[chunk + 1];
+          while (start < stop && stream_images_[start].empty()) ++start;
+          while (start < stop && stream_images_[stop - 1].empty()) --stop;
           uint32_t max_c = 0;
           if (stream_options_[start].tree_kind !=
               ModularOptions::TreeKind::kLearn) {
@@ -1088,19 +1095,21 @@ Status ModularFrameEncoder::PrepareEncoding(ThreadPool* pool,
   JXL_ASSERT(tree_.size() == decoded_tree.size());
   tree_ = std::move(decoded_tree);
 
-  if (WantDebugOutput(aux_out)) {
-    PrintTree(tree_, aux_out->debug_prefix + "/global_tree");
-  }
+  /* TODO(szabadka) Add text output callback to cparams
+  if (kPrintTree && WantDebugOutput(aux_out)) {
+    if (frame_header.dc_level > 0) {
+      PrintTree(tree_, aux_out->debug_prefix + "/dc_frame_level" +
+                           std::to_string(frame_header.dc_level) + "_tree");
+    } else {
+      PrintTree(tree_, aux_out->debug_prefix + "/global_tree");
+    }
+  } */
 
   image_widths_.resize(num_streams);
   JXL_RETURN_IF_ERROR(RunOnPool(
       pool, 0, num_streams, ThreadPool::NoInit,
       [&](const uint32_t stream_id, size_t /* thread */) {
         AuxOut my_aux_out;
-        if (aux_out) {
-          my_aux_out.dump_image = aux_out->dump_image;
-          my_aux_out.debug_prefix = aux_out->debug_prefix;
-        }
         tokens_[stream_id].clear();
         JXL_CHECK(ModularGenericCompress(
             stream_images_[stream_id], stream_options_[stream_id],
@@ -1121,11 +1130,11 @@ Status ModularFrameEncoder::EncodeGlobalInfo(BitWriter* writer,
   // If we are using brotli, or not using modular mode.
   if (tree_tokens_.empty() || tree_tokens_[0].empty()) {
     writer->Write(1, 0);
-    ReclaimAndCharge(writer, &allotment, kLayerModularTree, aux_out);
+    allotment.ReclaimAndCharge(writer, kLayerModularTree, aux_out);
     return true;
   }
   writer->Write(1, 1);
-  ReclaimAndCharge(writer, &allotment, kLayerModularTree, aux_out);
+  allotment.ReclaimAndCharge(writer, kLayerModularTree, aux_out);
 
   // Write tree
   HistogramParams params;
@@ -1362,7 +1371,7 @@ Status ModularFrameEncoder::PrepareStreamParams(const Rect& rect,
       for (size_t i = 0; i < nb_channels; i++) {
         int32_t min, max;
         compute_minmax(gi.channel[gi.nb_meta_channels + i], &min, &max);
-        int colors = max - min + 1;
+        int64_t colors = (int64_t)max - min + 1;
         JXL_DEBUG_V(10, "Channel %" PRIuS ": range=%i..%i", i, min, max);
         Transform maybe_palette_1(TransformId::kPalette);
         maybe_palette_1.begin_c = i + gi.nb_meta_channels;
@@ -1408,6 +1417,7 @@ Status ModularFrameEncoder::PrepareStreamParams(const Rect& rect,
       case SpeedTier::kKitten:
         nb_rcts_to_try = 9;
         break;
+      case SpeedTier::kGlacier:
       case SpeedTier::kTortoise:
         nb_rcts_to_try = 19;
         break;

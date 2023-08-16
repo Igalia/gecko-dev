@@ -21,6 +21,7 @@
 #include "util/Text.h"
 #include "vm/GlobalObject.h"
 
+#include "wasm/WasmFeatures.h"
 #include "wasm/WasmGenerator.h"
 #include "wasm/WasmIntrinsicGenerated.h"
 #include "wasm/WasmJS.h"
@@ -98,23 +99,28 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
   featureOptions.intrinsics = true;
 
   // Initialize the compiler environment, choosing the best tier possible
-  SharedCompileArgs compileArgs =
-      CompileArgs::buildAndReport(cx, ScriptedCaller(), featureOptions);
+  SharedCompileArgs compileArgs = CompileArgs::buildAndReport(
+      cx, ScriptedCaller(), featureOptions, /* reportOOM */ true);
   if (!compileArgs) {
     return false;
   }
   CompilerEnvironment compilerEnv(
       CompileMode::Once, IonAvailable(cx) ? Tier::Optimized : Tier::Baseline,
-      OptimizedBackend::Ion, DebugEnabled::False);
+      DebugEnabled::False);
   compilerEnv.computeParameters();
 
   // Build a module environment
   ModuleEnvironment moduleEnv(compileArgs->features);
+  if (!moduleEnv.init()) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
 
   // Add (import (memory 0))
   CacheableName emptyString;
   CacheableName memoryString;
   if (!CacheableName::fromUTF8Chars("memory", &memoryString)) {
+    ReportOutOfMemory(cx);
     return false;
   }
   if (!moduleEnv.imports.append(Import(std::move(emptyString),
@@ -123,10 +129,9 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
     ReportOutOfMemory(cx);
     return false;
   }
-  moduleEnv.memory = Some(MemoryDesc(Limits(0, Nothing(), sharedMemory)));
-
-  // Initialize the type section
-  if (!moduleEnv.initTypes(ids.size())) {
+  if (!moduleEnv.memories.append(
+          MemoryDesc(Limits(0, Nothing(), sharedMemory)))) {
+    ReportOutOfMemory(cx);
     return false;
   }
 
@@ -137,19 +142,18 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
     const Intrinsic& intrinsic = Intrinsic::getFromId(id);
 
     FuncType type;
-    if (!intrinsic.funcType(&type)) {
+    if (!intrinsic.funcType(&type) ||
+        !moduleEnv.types->addType(std::move(type))) {
       ReportOutOfMemory(cx);
       return false;
     }
-    (*moduleEnv.types)[funcIndex] = TypeDef(std::move(type));
   }
 
   // Add (func (type $i)) declarations. Do this after all types have been added
   // as the function declaration metadata uses pointers into the type vectors
   // that must be stable.
   for (uint32_t funcIndex = 0; funcIndex < ids.size(); funcIndex++) {
-    FuncDesc decl(&(*moduleEnv.types)[funcIndex].funcType(),
-                  &moduleEnv.typeIds[funcIndex], funcIndex);
+    FuncDesc decl(&(*moduleEnv.types)[funcIndex].funcType(), funcIndex);
     if (!moduleEnv.funcs.append(decl)) {
       ReportOutOfMemory(cx);
       return false;
@@ -214,8 +218,14 @@ bool wasm::CompileIntrinsicModule(JSContext* cx,
     return false;
   }
 
-  // Finish the module
+  // Create a dummy bytecode vector, that will not be used
   SharedBytes bytecode = js_new<ShareableBytes>();
+  if (!bytecode) {
+    ReportOutOfMemory(cx);
+    return false;
+  }
+
+  // Finish the module
   SharedModule module = mg.finishModule(*bytecode, nullptr);
   if (!module) {
     ReportOutOfMemory(cx);

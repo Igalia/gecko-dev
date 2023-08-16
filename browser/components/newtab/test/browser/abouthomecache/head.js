@@ -3,8 +3,8 @@
 
 "use strict";
 
-let { AboutHomeStartupCache } = ChromeUtils.import(
-  "resource:///modules/BrowserGlue.jsm"
+let { AboutHomeStartupCache } = ChromeUtils.importESModule(
+  "resource:///modules/BrowserGlue.sys.mjs"
 );
 
 // Some Activity Stream preferences are JSON encoded, and quite complex.
@@ -40,6 +40,33 @@ let { AboutHomeStartupCache } = ChromeUtils.import(
 }
 
 /**
+ * Utility function that loads about:home in the current window in a new tab, and waits
+ * for the Discovery Stream cards to finish loading before running the taskFn function.
+ * Once taskFn exits, the about:home tab will be closed.
+ *
+ * @param {function} taskFn
+ *   A function that will be run after about:home has finished loading. This can be
+ *   an async function.
+ * @return {Promise}
+ * @resolves {undefined}
+ */
+function withFullyLoadedAboutHome(taskFn) {
+  return BrowserTestUtils.withNewTab("about:home", async browser => {
+    await SpecialPowers.spawn(browser, [], async () => {
+      await ContentTaskUtils.waitForCondition(
+        () =>
+          content.document.querySelectorAll(
+            "[data-section-id='topstories'] .ds-card-link"
+          ).length,
+        "Waiting for Discovery Stream to be rendered."
+      );
+    });
+
+    await taskFn(browser);
+  });
+}
+
+/**
  * Shuts down the AboutHomeStartupCache components in the parent process
  * and privileged about content process, and then restarts them, simulating
  * the parent process having restarted.
@@ -70,18 +97,22 @@ let { AboutHomeStartupCache } = ChromeUtils.import(
  *       timeout when shutting down. If false, such timeouts will result in
  *       test failures. Defaults to false.
  *
+ *     skipAboutHomeLoad (boolean, optional):
+ *       If true, doesn't automatically load about:home after the simulated
+ *       restart. Defaults to false.
+ *
  * @returns Promise
  * @resolves undefined
  *   Resolves once the restart simulation is complete, and the <xul:browser>
  *   pointed at about:home finishes reloading.
  */
-// eslint-disable-next-line no-unused-vars
 async function simulateRestart(
   browser,
   {
     withAutoShutdownWrite = true,
     ensureCacheWinsRace = true,
     expectTimeout = false,
+    skipAboutHomeLoad = false,
   } = {}
 ) {
   info("Simulating restart of the browser");
@@ -146,11 +177,13 @@ async function simulateRestart(
     }
   }
 
-  info("Waiting for about:home to load");
-  let loaded = BrowserTestUtils.browserLoaded(browser, false, "about:home");
-  BrowserTestUtils.loadURI(browser, "about:home");
-  await loaded;
-  info("about:home loaded");
+  if (!skipAboutHomeLoad) {
+    info("Waiting for about:home to load");
+    let loaded = BrowserTestUtils.browserLoaded(browser, false, "about:home");
+    BrowserTestUtils.loadURIString(browser, "about:home");
+    await loaded;
+    info("about:home loaded");
+  }
 }
 
 /**
@@ -170,7 +203,6 @@ async function simulateRestart(
  * @resolves undefined
  *   When the page and script content has been successfully written.
  */
-// eslint-disable-next-line no-unused-vars
 async function injectIntoCache(page, script) {
   if (!page || !script) {
     throw new Error("Cannot injectIntoCache with falsey values");
@@ -203,7 +235,6 @@ async function injectIntoCache(page, script) {
  * @resolves undefined
  *   Resolves when the cache is cleared.
  */
-// eslint-disable-next-line no-unused-vars
 async function clearCache() {
   info("Test is clearing the cache");
   AboutHomeStartupCache.clearCache();
@@ -246,7 +277,6 @@ function assertCacheResultScalar(cacheResultScalar) {
  * @resolves undefined
  *   Resolves once the cache entry has been destroyed.
  */
-// eslint-disable-next-line no-unused-vars
 async function ensureCachedAboutHome(browser) {
   await SpecialPowers.spawn(browser, [], async () => {
     let scripts = Array.from(content.document.querySelectorAll("script"));
@@ -299,7 +329,6 @@ async function ensureCachedAboutHome(browser) {
  * @resolves undefined
  *   Resolves once the cache entry has been destroyed.
  */
-// eslint-disable-next-line no-unused-vars
 async function ensureDynamicAboutHome(browser, expectedResultScalar) {
   await SpecialPowers.spawn(browser, [], async () => {
     let scripts = Array.from(content.document.querySelectorAll("script"));

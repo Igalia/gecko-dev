@@ -186,7 +186,7 @@ const TEST_CASES = [
   },
 ];
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       // Disable mixed content blocking to be able to test downgrade scenario.
@@ -213,7 +213,7 @@ async function runTestIniFrame(gBrowser, enabled, expectNoConsole) {
 
           Services.console.reset();
 
-          BrowserTestUtils.loadURI(browser, referrerURL);
+          BrowserTestUtils.loadURIString(browser, referrerURL);
           await BrowserTestUtils.browserLoaded(browser, false, referrerURL);
 
           let iframeURL = test.test_url + "?show";
@@ -268,7 +268,7 @@ async function runTestForLinkClick(gBrowser, enabled, expectNoConsole) {
 
           Services.console.reset();
 
-          BrowserTestUtils.loadURI(browser, referrerURL);
+          BrowserTestUtils.loadURIString(browser, referrerURL);
           await BrowserTestUtils.browserLoaded(browser, false, referrerURL);
 
           let linkURL = test.test_url + "?show";

@@ -1,19 +1,19 @@
 "use strict";
 
-const { IndexedDB } = ChromeUtils.import(
-  "resource://gre/modules/IndexedDB.jsm"
+const { IndexedDB } = ChromeUtils.importESModule(
+  "resource://gre/modules/IndexedDB.sys.mjs"
 );
-const { TelemetryEnvironment } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryEnvironment.jsm"
-);
-const { PreferenceRollouts } = ChromeUtils.import(
-  "resource://normandy/lib/PreferenceRollouts.jsm"
+
+const { PreferenceRollouts } = ChromeUtils.importESModule(
+  "resource://normandy/lib/PreferenceRollouts.sys.mjs"
 );
 const {
   NormandyTestUtils: {
     factories: { preferenceRolloutFactory },
   },
-} = ChromeUtils.import("resource://testing-common/NormandyTestUtils.jsm");
+} = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
+);
 
 decorate_task(
   PreferenceRollouts.withTestMock(),

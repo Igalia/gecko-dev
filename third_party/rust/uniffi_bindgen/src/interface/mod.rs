@@ -45,69 +45,69 @@
 //!   * Error messages and general developer experience leave a lot to be desired.
 
 use std::{
-    collections::{hash_map::DefaultHasher, HashSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet, HashSet},
     convert::TryFrom,
-    hash::{Hash, Hasher},
     iter,
-    str::FromStr,
 };
 
-use anyhow::{bail, Result};
+use anyhow::{anyhow, bail, ensure, Result};
 
 pub mod types;
-pub use types::Type;
+pub use types::{AsType, ExternalKind, ObjectImpl, Type};
 use types::{TypeIterator, TypeUniverse};
 
 mod attributes;
 mod callbacks;
 pub use callbacks::CallbackInterface;
 mod enum_;
-pub use enum_::Enum;
-mod error;
-pub use error::Error;
+pub use enum_::{Enum, Variant};
 mod function;
-pub use function::{Argument, Function};
+pub use function::{Argument, Callable, Function, ResultType};
 mod literal;
 pub use literal::{Literal, Radix};
 mod namespace;
 pub use namespace::Namespace;
 mod object;
-pub use object::{Constructor, Method, Object};
+pub use object::{Constructor, Method, Object, UniffiTrait};
 mod record;
 pub use record::{Field, Record};
 
 pub mod ffi;
-pub use ffi::{FFIArgument, FFIFunction, FFIType};
+pub use ffi::{FfiArgument, FfiFunction, FfiType};
+use uniffi_meta::{ConstructorMetadata, ObjectMetadata, TraitMethodMetadata};
+
+// This needs to match the minor version of the `uniffi` crate.  See
+// `docs/uniffi-versioning.md` for details.
+//
+// Once we get to 1.0, then we'll need to update the scheme to something like 100 + major_version
+const UNIFFI_CONTRACT_VERSION: u32 = 22;
 
 /// The main public interface for this module, representing the complete details of an interface exposed
 /// by a rust component and the details of consuming it via an extern-C FFI layer.
-///
 #[derive(Debug, Default)]
 pub struct ComponentInterface {
-    /// Every ComponentInterface gets tagged with the version of uniffi used to create it.
-    /// This helps us avoid using a lib compiled with one version together with bindings created
-    /// using a different version, which might introduce unsafety.
-    uniffi_version: String,
     /// All of the types used in the interface.
-    types: TypeUniverse,
+    // We can't checksum `self.types`, but its contents are implied by the other fields
+    // anyway, so it's safe to ignore it.
+    pub(super) types: TypeUniverse,
     /// The unique prefix that we'll use for namespacing when exposing this component's API.
     namespace: String,
     /// The high-level API provided by the component.
-    enums: Vec<Enum>,
-    records: Vec<Record>,
+    enums: BTreeMap<String, Enum>,
+    records: BTreeMap<String, Record>,
     functions: Vec<Function>,
     objects: Vec<Object>,
     callback_interfaces: Vec<CallbackInterface>,
-    errors: Vec<Error>,
+    // Type names which were seen used as an error.
+    errors: HashSet<String>,
+    // Types which were seen used as callback interface error.
+    callback_interface_throws_types: BTreeSet<Type>,
 }
 
 impl ComponentInterface {
     /// Parse a `ComponentInterface` from a string containing a WebIDL definition.
     pub fn from_webidl(idl: &str) -> Result<Self> {
-        let mut ci = Self {
-            uniffi_version: env!("CARGO_PKG_VERSION").to_string(),
-            ..Default::default()
-        };
+        let mut ci = Self::default();
         // There's some lifetime thing with the errors returned from weedle::Definitions::parse
         // that my own lifetime is too short to worry about figuring out; unwrap and move on.
 
@@ -117,19 +117,23 @@ impl ComponentInterface {
         let (remaining, defns) = weedle::Definitions::parse(idl.trim()).unwrap();
         if !remaining.is_empty() {
             println!("Error parsing the IDL. Text remaining to be parsed is:");
-            println!("{}", remaining);
+            println!("{remaining}");
             bail!("parse error");
         }
         // Unconditionally add the String type, which is used by the panic handling
-        let _ = ci.types.add_known_type(Type::String);
+        ci.types.add_known_type(&Type::String);
         // We process the WebIDL definitions in two passes.
         // First, go through and look for all the named types.
         ci.types.add_type_definitions_from(defns.as_slice())?;
         // With those names resolved, we can build a complete representation of the API.
         APIBuilder::process(&defns, &mut ci)?;
+
+        // The following two methods will be called later anyways, but we call them here because
+        // it's convenient for UDL-only tests.
         ci.check_consistency()?;
         // Now that the high-level API is settled, we can derive the low-level FFI.
         ci.derive_ffi_funcs()?;
+
         Ok(ci)
     }
 
@@ -141,26 +145,33 @@ impl ComponentInterface {
         self.namespace.as_str()
     }
 
+    pub fn uniffi_contract_version(&self) -> u32 {
+        // This is set by the scripts in the version-mismatch fixture
+        let force_version = std::env::var("UNIFFI_FORCE_CONTRACT_VERSION");
+        match force_version {
+            Ok(v) if !v.is_empty() => v.parse().unwrap(),
+            _ => UNIFFI_CONTRACT_VERSION,
+        }
+    }
+
     /// Get the definitions for every Enum type in the interface.
-    pub fn enum_definitions(&self) -> &[Enum] {
-        &self.enums
+    pub fn enum_definitions(&self) -> impl Iterator<Item = &Enum> {
+        self.enums.values()
     }
 
     /// Get an Enum definition by name, or None if no such Enum is defined.
     pub fn get_enum_definition(&self, name: &str) -> Option<&Enum> {
-        // TODO: probably we could store these internally in a HashMap to make this easier?
-        self.enums.iter().find(|e| e.name == name)
+        self.enums.get(name)
     }
 
     /// Get the definitions for every Record type in the interface.
-    pub fn record_definitions(&self) -> &[Record] {
-        &self.records
+    pub fn record_definitions(&self) -> impl Iterator<Item = &Record> {
+        self.records.values()
     }
 
     /// Get a Record definition by name, or None if no such Record is defined.
     pub fn get_record_definition(&self, name: &str) -> Option<&Record> {
-        // TODO: probably we could store these internally in a HashMap to make this easier?
-        self.records.iter().find(|r| r.name == name)
+        self.records.get(name)
     }
 
     /// Get the definitions for every Function in the interface.
@@ -196,21 +207,49 @@ impl ComponentInterface {
         self.callback_interfaces.iter().find(|o| o.name == name)
     }
 
-    /// Get the definitions for every Error type in the interface.
-    pub fn error_definitions(&self) -> &[Error] {
-        &self.errors
+    /// Get the definitions for every Method type in the interface.
+    pub fn iter_callables(&self) -> impl Iterator<Item = &dyn Callable> {
+        // Each of the `as &dyn Callable` casts is a trivial cast, but it seems like the clearest
+        // way to express the logic in the current Rust
+        #[allow(trivial_casts)]
+        self.function_definitions()
+            .iter()
+            .map(|f| f as &dyn Callable)
+            .chain(self.objects.iter().flat_map(|o| {
+                o.constructors()
+                    .into_iter()
+                    .map(|c| c as &dyn Callable)
+                    .chain(o.methods().into_iter().map(|m| m as &dyn Callable))
+            }))
     }
 
-    /// Get an Error definition by name, or None if no such Error is defined.
-    pub fn get_error_definition(&self, name: &str) -> Option<&Error> {
-        // TODO: probably we could store these internally in a HashMap to make this easier?
-        self.errors.iter().find(|e| e.name == name)
+    /// Should we generate read (and lift) functions for errors?
+    ///
+    /// This is a workaround for the fact that lower/write can't be generated for some errors,
+    /// specifically errors that are defined as flat in the UDL, but actually have fields in the
+    /// Rust source.
+    pub fn should_generate_error_read(&self, e: &Enum) -> bool {
+        // We can and should always generate read() methods for fielded errors
+        let fielded = !e.is_flat();
+        // For flat errors, we should only generate read() methods if we need them to support
+        // callback interface errors
+        let used_in_callback_interface = self
+            .callback_interface_definitions()
+            .iter()
+            .flat_map(|cb| cb.methods())
+            .any(|m| m.throws_type() == Some(&e.as_type()));
+
+        self.is_name_used_as_error(&e.name) && (fielded || used_in_callback_interface)
     }
 
     /// Get details about all `Type::External` types
-    pub fn iter_external_types(&self) -> impl Iterator<Item = (&String, &String)> {
+    pub fn iter_external_types(&self) -> impl Iterator<Item = (&String, &String, ExternalKind)> {
         self.types.iter_known_types().filter_map(|t| match t {
-            Type::External { name, crate_name } => Some((name, crate_name)),
+            Type::External {
+                name,
+                crate_name,
+                kind,
+            } => Some((name, crate_name, *kind)),
             _ => None,
         })
     }
@@ -233,6 +272,10 @@ impl ComponentInterface {
         self.types.get_type_definition(name)
     }
 
+    pub fn is_callback_interface_throws_type(&self, type_: Type) -> bool {
+        self.callback_interface_throws_types.contains(&type_)
+    }
+
     /// Iterate over all types contained in the given item.
     ///
     /// This method uses `iter_types` to iterate over the types contained within the given type,
@@ -248,7 +291,7 @@ impl ComponentInterface {
     /// tightly with the host GC, and hence need to perform manual destruction of objects.
     pub fn item_contains_object_references(&self, item: &Type) -> bool {
         self.iter_types_in_item(item)
-            .any(|t| matches!(t, Type::Object(_)))
+            .any(|t| matches!(t, Type::Object { .. }))
     }
 
     /// Check whether the given item contains any (possibly nested) unsigned types
@@ -278,126 +321,136 @@ impl ComponentInterface {
             .any(|t| matches!(t, Type::Map(_, _)))
     }
 
-    /// Calculate a numeric checksum for this ComponentInterface.
-    ///
-    /// The checksum can be used to guard against accidentally using foreign-language bindings
-    /// generated from one version of an interface with the compiled Rust code from a different
-    /// version of that interface. It offers the following properties:
-    ///
-    ///   - Two ComponentIntefaces generated from the same WebIDL file, using the same version of uniffi
-    ///     and the same version of Rust, will always have the same checksum value.
-    ///   - Two ComponentInterfaces will, with high probability, have different checksum values if:
-    ///         - They were generated from two different WebIDL files.
-    ///         - They were generated by two different versions of uniffi
-    ///
-    /// The checksum may or may not change depending on the version of Rust used; since we expect
-    /// consumers to be using the same executable to generate both the scaffolding and the bindings,
-    /// assuming the same version of Rust seems acceptable.
-    ///
-    /// Note that this is designed to prevent accidents, not attacks, so there is no need for the
-    /// checksum to be cryptographically secure.
-    ///
-    /// TODO: it's not clear to me if the derivation of `Hash` is actually deterministic enough to
-    /// ensure the guarantees above, or if it might be sensitive to e.g. compiler-driven re-ordering
-    /// of struct field. Let's see how it goes...
-    pub fn checksum(&self) -> u64 {
-        let mut hasher = DefaultHasher::new();
-        // Our implementation of `Hash` mixes in all of the public API of the component,
-        // as well as the version string of uniffi.
-        self.hash(&mut hasher);
-        hasher.finish()
-    }
-
     /// The namespace to use in FFI-level function definitions.
     ///
-    /// The value returned by this method is used as a prefix to namespace all FFI-level functions
-    /// used in this ComponentInterface.
-    ///
-    /// Since these names are an internal implementation detail that is not typically visible to
-    /// consumers, we take the opportunity to add an additional safety guard by including a 4-hex-char
-    /// checksum in each name. If foreign-language bindings attempt to load and use a version of the
-    /// Rust code compiled from a different UDL definition than the one used for the bindings themselves,
-    /// then there is a high probability of checksum mismatch and they will fail to link against the
-    /// compiled Rust code. The result will be an ugly inscrutable link-time error, but that is a lot
-    /// better than triggering potentially arbitrary memory unsafety!
-    pub fn ffi_namespace(&self) -> String {
-        format!(
-            "{}_{:x}",
-            self.namespace,
-            (self.checksum() & 0x000000000000FFFF) as u16
-        )
+    /// The value returned by this method is used as a prefix to namespace all UDL-defined FFI
+    /// functions used in this ComponentInterface.
+    pub fn ffi_namespace(&self) -> &str {
+        &self.namespace
+    }
+
+    /// Builtin FFI function to get the current contract version
+    /// This is needed so that the foreign language bindings can check that they are using the same
+    /// ABI as the scaffolding
+    pub fn ffi_uniffi_contract_version(&self) -> FfiFunction {
+        FfiFunction {
+            name: format!("ffi_{}_uniffi_contract_version", self.ffi_namespace()),
+            is_async: false,
+            arguments: vec![],
+            return_type: Some(FfiType::UInt32),
+            has_rust_call_status_arg: false,
+            is_object_free_function: false,
+        }
     }
 
     /// Builtin FFI function for allocating a new `RustBuffer`.
     /// This is needed so that the foreign language bindings can create buffers in which to pass
     /// complex data types across the FFI.
-    pub fn ffi_rustbuffer_alloc(&self) -> FFIFunction {
-        FFIFunction {
+    pub fn ffi_rustbuffer_alloc(&self) -> FfiFunction {
+        FfiFunction {
             name: format!("ffi_{}_rustbuffer_alloc", self.ffi_namespace()),
-            arguments: vec![FFIArgument {
+            is_async: false,
+            arguments: vec![FfiArgument {
                 name: "size".to_string(),
-                type_: FFIType::Int32,
+                type_: FfiType::Int32,
             }],
-            return_type: Some(FFIType::RustBuffer),
+            return_type: Some(FfiType::RustBuffer(None)),
+            has_rust_call_status_arg: true,
+            is_object_free_function: false,
         }
     }
 
     /// Builtin FFI function for copying foreign-owned bytes
     /// This is needed so that the foreign language bindings can create buffers in which to pass
     /// complex data types across the FFI.
-    pub fn ffi_rustbuffer_from_bytes(&self) -> FFIFunction {
-        FFIFunction {
+    pub fn ffi_rustbuffer_from_bytes(&self) -> FfiFunction {
+        FfiFunction {
             name: format!("ffi_{}_rustbuffer_from_bytes", self.ffi_namespace()),
-            arguments: vec![FFIArgument {
+            is_async: false,
+            arguments: vec![FfiArgument {
                 name: "bytes".to_string(),
-                type_: FFIType::ForeignBytes,
+                type_: FfiType::ForeignBytes,
             }],
-            return_type: Some(FFIType::RustBuffer),
+            return_type: Some(FfiType::RustBuffer(None)),
+            has_rust_call_status_arg: true,
+            is_object_free_function: false,
         }
     }
 
     /// Builtin FFI function for freeing a `RustBuffer`.
     /// This is needed so that the foreign language bindings can free buffers in which they received
     /// complex data types returned across the FFI.
-    pub fn ffi_rustbuffer_free(&self) -> FFIFunction {
-        FFIFunction {
+    pub fn ffi_rustbuffer_free(&self) -> FfiFunction {
+        FfiFunction {
             name: format!("ffi_{}_rustbuffer_free", self.ffi_namespace()),
-            arguments: vec![FFIArgument {
+            is_async: false,
+            arguments: vec![FfiArgument {
                 name: "buf".to_string(),
-                type_: FFIType::RustBuffer,
+                type_: FfiType::RustBuffer(None),
             }],
             return_type: None,
+            has_rust_call_status_arg: true,
+            is_object_free_function: false,
         }
     }
 
     /// Builtin FFI function for reserving extra space in a `RustBuffer`.
     /// This is needed so that the foreign language bindings can grow buffers used for passing
     /// complex data types across the FFI.
-    pub fn ffi_rustbuffer_reserve(&self) -> FFIFunction {
-        FFIFunction {
+    pub fn ffi_rustbuffer_reserve(&self) -> FfiFunction {
+        FfiFunction {
             name: format!("ffi_{}_rustbuffer_reserve", self.ffi_namespace()),
+            is_async: false,
             arguments: vec![
-                FFIArgument {
+                FfiArgument {
                     name: "buf".to_string(),
-                    type_: FFIType::RustBuffer,
+                    type_: FfiType::RustBuffer(None),
                 },
-                FFIArgument {
+                FfiArgument {
                     name: "additional".to_string(),
-                    type_: FFIType::Int32,
+                    type_: FfiType::Int32,
                 },
             ],
-            return_type: Some(FFIType::RustBuffer),
+            return_type: Some(FfiType::RustBuffer(None)),
+            has_rust_call_status_arg: true,
+            is_object_free_function: false,
         }
+    }
+
+    /// Does this interface contain async functions?
+    pub fn has_async_fns(&self) -> bool {
+        self.iter_ffi_function_definitions().any(|f| f.is_async())
+    }
+
+    /// Iterate over `T` parameters of the `FutureCallback<T>` callbacks in this interface
+    pub fn iter_future_callback_params(&self) -> impl Iterator<Item = FfiType> {
+        let unique_results = self
+            .iter_callables()
+            .map(|c| c.result_type().future_callback_param())
+            .collect::<BTreeSet<_>>();
+        unique_results.into_iter()
+    }
+
+    /// Iterate over return/throws types for async functions
+    pub fn iter_async_result_types(&self) -> impl Iterator<Item = ResultType> {
+        let unique_results = self
+            .iter_callables()
+            .map(|c| c.result_type())
+            .collect::<BTreeSet<_>>();
+        unique_results.into_iter()
     }
 
     /// List the definitions of all FFI functions in the interface.
     ///
     /// The set of FFI functions is derived automatically from the set of higher-level types
     /// along with the builtin FFI helper functions.
-    pub fn iter_ffi_function_definitions(&self) -> impl Iterator<Item = FFIFunction> + '_ {
+    pub fn iter_ffi_function_definitions(&self) -> impl Iterator<Item = FfiFunction> + '_ {
         self.iter_user_ffi_function_definitions()
             .cloned()
             .chain(self.iter_rust_buffer_ffi_function_definitions())
+            .chain(self.iter_checksum_ffi_functions())
+            .chain(self.ffi_foreign_executor_callback_set())
+            .chain([self.ffi_uniffi_contract_version()])
     }
 
     /// List all FFI functions definitions for user-defined interfaces
@@ -406,7 +459,7 @@ impl ComponentInterface {
     ///   - Top-level functions
     ///   - Object methods
     ///   - Callback interfaces
-    pub fn iter_user_ffi_function_definitions(&self) -> impl Iterator<Item = &FFIFunction> + '_ {
+    pub fn iter_user_ffi_function_definitions(&self) -> impl Iterator<Item = &FfiFunction> + '_ {
         iter::empty()
             .chain(
                 self.objects
@@ -421,8 +474,8 @@ impl ComponentInterface {
             .chain(self.functions.iter().map(|f| &f.ffi_func))
     }
 
-    /// List all FFI functions definitions for RustBuffer functionality
-    pub fn iter_rust_buffer_ffi_function_definitions(&self) -> impl Iterator<Item = FFIFunction> {
+    /// List all FFI functions definitions for RustBuffer functionality.
+    pub fn iter_rust_buffer_ffi_function_definitions(&self) -> impl Iterator<Item = FfiFunction> {
         [
             self.ffi_rustbuffer_alloc(),
             self.ffi_rustbuffer_from_bytes(),
@@ -432,7 +485,73 @@ impl ComponentInterface {
         .into_iter()
     }
 
-    //
+    /// The ffi_foreign_executor_callback_set FFI function
+    ///
+    /// We only include this in the FFI if the `ForeignExecutor` type is actually used
+    pub fn ffi_foreign_executor_callback_set(&self) -> Option<FfiFunction> {
+        if self.types.contains(&Type::ForeignExecutor) {
+            Some(FfiFunction {
+                name: "uniffi_foreign_executor_callback_set".into(),
+                arguments: vec![FfiArgument {
+                    name: "callback".into(),
+                    type_: FfiType::ForeignExecutorCallback,
+                }],
+                return_type: None,
+                is_async: false,
+                has_rust_call_status_arg: false,
+                is_object_free_function: false,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// List all API checksums to check
+    ///
+    /// Returns a list of (export_symbol_name, checksum) items
+    pub fn iter_checksums(&self) -> impl Iterator<Item = (String, u16)> + '_ {
+        let func_checksums = self
+            .functions
+            .iter()
+            .map(|f| (f.checksum_fn_name(), f.checksum()));
+        let method_checksums = self.objects.iter().flat_map(|o| {
+            o.methods()
+                .into_iter()
+                .map(|m| (m.checksum_fn_name(), m.checksum()))
+        });
+        let constructor_checksums = self.objects.iter().flat_map(|o| {
+            o.constructors()
+                .into_iter()
+                .map(|c| (c.checksum_fn_name(), c.checksum()))
+        });
+        let callback_method_checksums = self.callback_interfaces.iter().flat_map(|cbi| {
+            cbi.methods().into_iter().filter_map(|m| {
+                if m.checksum_fn_name().is_empty() {
+                    // UDL-based callbacks don't have checksum functions, skip these
+                    None
+                } else {
+                    Some((m.checksum_fn_name(), m.checksum()))
+                }
+            })
+        });
+        func_checksums
+            .chain(method_checksums)
+            .chain(constructor_checksums)
+            .chain(callback_method_checksums)
+            .map(|(fn_name, checksum)| (fn_name.to_string(), checksum))
+    }
+
+    pub fn iter_checksum_ffi_functions(&self) -> impl Iterator<Item = FfiFunction> + '_ {
+        self.iter_checksums().map(|(name, _)| FfiFunction {
+            name,
+            is_async: false,
+            arguments: vec![],
+            return_type: Some(FfiType::UInt16),
+            has_rust_call_status_arg: false,
+            is_object_free_function: false,
+        })
+    }
+
     // Private methods for building a ComponentInterface.
     //
 
@@ -440,7 +559,7 @@ impl ComponentInterface {
     ///
     /// This method uses the current state of our `TypeUniverse` to turn a weedle type expression
     /// into a concrete `Type` (or error if the type expression is not well defined). It abstracts
-    /// away the complexity of walking weedle's type struct heirarchy by dispatching to the `TypeResolver`
+    /// away the complexity of walking weedle's type struct hierarchy by dispatching to the `TypeResolver`
     /// trait.
     fn resolve_type_expression<T: types::TypeResolver>(&mut self, expr: T) -> Result<Type> {
         self.types.resolve_type_expression(expr)
@@ -479,19 +598,66 @@ impl ComponentInterface {
     }
 
     /// Called by `APIBuilder` impls to add a newly-parsed enum definition to the `ComponentInterface`.
-    fn add_enum_definition(&mut self, defn: Enum) {
-        // Note that there will be no duplicates thanks to the previous type-finding pass.
-        self.enums.push(defn);
+    pub(super) fn add_enum_definition(&mut self, defn: Enum) -> Result<()> {
+        match self.enums.entry(defn.name().to_owned()) {
+            Entry::Vacant(v) => {
+                for variant in defn.variants() {
+                    for field in variant.fields() {
+                        self.types.add_known_type(&field.as_type());
+                    }
+                }
+                v.insert(defn);
+            }
+            Entry::Occupied(o) => {
+                let existing_def = o.get();
+                if defn != *existing_def {
+                    bail!(
+                        "Mismatching definition for enum `{}`!\n\
+                        existing definition: {existing_def:#?},\n\
+                        new definition: {defn:#?}",
+                        defn.name(),
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Called by `APIBuilder` impls to add a newly-parsed record definition to the `ComponentInterface`.
-    fn add_record_definition(&mut self, defn: Record) {
-        // Note that there will be no duplicates thanks to the previous type-finding pass.
-        self.records.push(defn);
+    pub(super) fn add_record_definition(&mut self, defn: Record) -> Result<()> {
+        match self.records.entry(defn.name().to_owned()) {
+            Entry::Vacant(v) => {
+                for field in defn.fields() {
+                    self.types.add_known_type(&field.as_type());
+                }
+                v.insert(defn);
+            }
+            Entry::Occupied(o) => {
+                let existing_def = o.get();
+                if defn != *existing_def {
+                    bail!(
+                        "Mismatching definition for record `{}`!\n\
+                         existing definition: {existing_def:#?},\n\
+                         new definition: {defn:#?}",
+                        defn.name(),
+                    );
+                }
+            }
+        }
+
+        Ok(())
     }
 
     /// Called by `APIBuilder` impls to add a newly-parsed function definition to the `ComponentInterface`.
-    fn add_function_definition(&mut self, defn: Function) -> Result<()> {
+    pub(super) fn add_function_definition(&mut self, defn: Function) -> Result<()> {
+        for arg in &defn.arguments {
+            self.types.add_known_type(&arg.type_);
+        }
+        if let Some(ty) = &defn.return_type {
+            self.types.add_known_type(ty);
+        }
+
         // Since functions are not a first-class type, we have to check for duplicates here
         // rather than relying on the type-finding pass to catch them.
         if self.functions.iter().any(|f| f.name == defn.name) {
@@ -500,8 +666,54 @@ impl ComponentInterface {
         if !matches!(self.types.get_type_definition(defn.name()), None) {
             bail!("Conflicting type definition for \"{}\"", defn.name());
         }
+        if defn.is_async() {
+            // Async functions depend on the foreign executor
+            self.types.add_known_type(&Type::ForeignExecutor);
+        }
         self.functions.push(defn);
+
         Ok(())
+    }
+
+    pub(super) fn add_constructor_meta(&mut self, meta: ConstructorMetadata) -> Result<()> {
+        let object = get_object(&mut self.objects, &meta.self_name)
+            .ok_or_else(|| anyhow!("add_constructor_meta: object {} not found", &meta.self_name))?;
+        let defn: Constructor = meta.into();
+
+        for arg in &defn.arguments {
+            self.types.add_known_type(&arg.type_);
+        }
+        object.constructors.push(defn);
+
+        Ok(())
+    }
+
+    pub(super) fn add_method_meta(&mut self, meta: impl Into<Method>) -> Result<()> {
+        let defn: Method = meta.into();
+        let object = get_object(&mut self.objects, &defn.object_name)
+            .ok_or_else(|| anyhow!("add_method_meta: object {} not found", &defn.object_name))?;
+
+        for arg in &defn.arguments {
+            self.types.add_known_type(&arg.type_);
+        }
+        if let Some(ty) = &defn.return_type {
+            self.types.add_known_type(ty);
+        }
+        if defn.is_async() {
+            // Async functions depend on the foreign executor
+            self.types.add_known_type(&Type::ForeignExecutor);
+        }
+        object.methods.push(defn);
+
+        Ok(())
+    }
+
+    pub(super) fn add_object_meta(&mut self, meta: ObjectMetadata) {
+        let free_name = meta.free_ffi_symbol_name();
+        let mut obj = Object::new(meta.name, ObjectImpl::from_is_trait(meta.is_trait));
+        obj.ffi_func_free.name = free_name;
+        self.types.add_known_type(&obj.as_type());
+        self.add_object_definition(obj);
     }
 
     /// Called by `APIBuilder` impls to add a newly-parsed object definition to the `ComponentInterface`.
@@ -510,16 +722,43 @@ impl ComponentInterface {
         self.objects.push(defn);
     }
 
+    pub(super) fn note_name_used_as_error(&mut self, name: &str) {
+        self.errors.insert(name.to_string());
+    }
+
+    pub fn is_name_used_as_error(&self, name: &str) -> bool {
+        self.errors.contains(name)
+    }
+
     /// Called by `APIBuilder` impls to add a newly-parsed callback interface definition to the `ComponentInterface`.
-    fn add_callback_interface_definition(&mut self, defn: CallbackInterface) {
+    pub(super) fn add_callback_interface_definition(&mut self, defn: CallbackInterface) {
         // Note that there will be no duplicates thanks to the previous type-finding pass.
+        for method in defn.methods() {
+            if let Some(error) = method.throws_type() {
+                self.callback_interface_throws_types.insert(error.clone());
+            }
+        }
         self.callback_interfaces.push(defn);
     }
 
-    /// Called by `APIBuilder` impls to add a newly-parsed error definition to the `ComponentInterface`.
-    fn add_error_definition(&mut self, defn: Error) {
-        // Note that there will be no duplicates thanks to the previous type-finding pass.
-        self.errors.push(defn);
+    pub(super) fn add_trait_method_meta(&mut self, meta: TraitMethodMetadata) -> Result<()> {
+        if let Some(cbi) = get_callback_interface(&mut self.callback_interfaces, &meta.trait_name) {
+            // uniffi_meta should ensure that we process callback interface methods in order, double
+            // check that here
+            if cbi.methods.len() != meta.index as usize {
+                bail!(
+                    "UniFFI internal error: callback interface method index mismatch for {}::{} (expected {}, saw {})",
+                    meta.trait_name,
+                    meta.name,
+                    cbi.methods.len(),
+                    meta.index,
+                );
+            }
+            cbi.methods.push(meta.into());
+        } else {
+            self.add_method_meta(meta)?;
+        }
+        Ok(())
     }
 
     /// Perform global consistency checks on the declared interface.
@@ -527,21 +766,51 @@ impl ComponentInterface {
     /// This method checks for consistency problems in the declared interface
     /// as a whole, and which can only be detected after we've finished defining
     /// the entire interface.
-    fn check_consistency(&self) -> Result<()> {
+    pub fn check_consistency(&self) -> Result<()> {
         if self.namespace.is_empty() {
             bail!("missing namespace definition");
         }
+
         // To keep codegen tractable, enum variant names must not shadow type names.
-        for e in &self.enums {
-            for variant in &e.variants {
-                if self.types.get_type_definition(variant.name()).is_some() {
-                    bail!(
-                        "Enum variant names must not shadow type names: \"{}\"",
-                        variant.name()
-                    )
+        for e in self.enums.values() {
+            // Not sure why this was deemed important for "normal" enums but
+            // not those used as errors, but this is what we've always done.
+            if !self.is_name_used_as_error(&e.name) {
+                for variant in &e.variants {
+                    if self.types.get_type_definition(variant.name()).is_some() {
+                        bail!(
+                            "Enum variant names must not shadow type names: \"{}\"",
+                            variant.name()
+                        )
+                    }
                 }
             }
         }
+
+        for ty in self.iter_types() {
+            match ty {
+                Type::Object { name, .. } => {
+                    ensure!(
+                        self.objects.iter().any(|o| o.name == *name),
+                        "Object `{name}` has no definition"
+                    );
+                }
+                Type::Record(name) => {
+                    ensure!(
+                        self.records.contains_key(name),
+                        "Record `{name}` has no definition",
+                    );
+                }
+                Type::Enum(name) => {
+                    ensure!(
+                        self.enums.contains_key(name),
+                        "Enum `{name}` has no definition",
+                    );
+                }
+                _ => {}
+            }
+        }
+
         Ok(())
     }
 
@@ -549,44 +818,30 @@ impl ComponentInterface {
     ///
     /// This should only be called after the high-level types have been completed defined, otherwise
     /// the resulting set will be missing some entries.
-    fn derive_ffi_funcs(&mut self) -> Result<()> {
-        let ci_prefix = self.ffi_namespace();
+    pub fn derive_ffi_funcs(&mut self) -> Result<()> {
+        let ci_namespace = self.ffi_namespace().to_owned();
         for func in self.functions.iter_mut() {
-            func.derive_ffi_func(&ci_prefix)?;
+            func.derive_ffi_func(&ci_namespace)?;
         }
         for obj in self.objects.iter_mut() {
-            obj.derive_ffi_funcs(&ci_prefix)?;
+            obj.derive_ffi_funcs(&ci_namespace)?;
         }
         for callback in self.callback_interfaces.iter_mut() {
-            callback.derive_ffi_funcs(&ci_prefix);
+            callback.derive_ffi_funcs(&ci_namespace);
         }
         Ok(())
     }
 }
 
-/// Convenience implementation for parsing a `ComponentInterface` from a string.
-impl FromStr for ComponentInterface {
-    type Err = anyhow::Error;
-    fn from_str(s: &str) -> Result<Self> {
-        ComponentInterface::from_webidl(s)
-    }
+fn get_object<'a>(objects: &'a mut [Object], name: &str) -> Option<&'a mut Object> {
+    objects.iter_mut().find(|o| o.name == name)
 }
 
-/// `ComponentInterface` structs can be hashed, but this is mostly a convenient way to
-/// produce a checksum of their contents. They're not really intended to live in a hashtable.
-impl Hash for ComponentInterface {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        // We can't hash `self.types`, but its contents are implied by the other fields
-        // anyway, so it's safe to ignore it.
-        self.uniffi_version.hash(state);
-        self.namespace.hash(state);
-        self.enums.hash(state);
-        self.records.hash(state);
-        self.functions.hash(state);
-        self.objects.hash(state);
-        self.callback_interfaces.hash(state);
-        self.errors.hash(state);
-    }
+fn get_callback_interface<'a>(
+    callback_interfaces: &'a mut [CallbackInterface],
+    name: &str,
+) -> Option<&'a mut CallbackInterface> {
+    callback_interfaces.iter_mut().find(|o| o.name == name)
 }
 
 /// Stateful iterator for yielding all types contained in a given type.
@@ -633,8 +888,7 @@ impl<'a> RecursiveTypeIterator<'a> {
         match type_ {
             Type::Record(nm)
             | Type::Enum(nm)
-            | Type::Error(nm)
-            | Type::Object(nm)
+            | Type::Object { name: nm, .. }
             | Type::CallbackInterface(nm) => {
                 if !self.seen.contains(nm.as_str()) {
                     self.pending.push(type_);
@@ -658,9 +912,10 @@ impl<'a> RecursiveTypeIterator<'a> {
             // call to `next()` to try again with the next pending type.
             let next_iter = match next_type {
                 Type::Record(nm) => self.ci.get_record_definition(nm).map(Record::iter_types),
-                Type::Enum(nm) => self.ci.get_enum_definition(nm).map(Enum::iter_types),
-                Type::Error(nm) => self.ci.get_error_definition(nm).map(Error::iter_types),
-                Type::Object(nm) => self.ci.get_object_definition(nm).map(Object::iter_types),
+                Type::Enum(name) => self.ci.get_enum_definition(name).map(Enum::iter_types),
+                Type::Object { name: nm, .. } => {
+                    self.ci.get_object_definition(nm).map(Object::iter_types)
+                }
                 Type::CallbackInterface(nm) => self
                     .ci
                     .get_callback_interface_definition(nm)
@@ -723,25 +978,27 @@ impl APIBuilder for weedle::Definition<'_> {
                 // We check if the enum represents an error...
                 let attrs = attributes::EnumAttributes::try_from(d.attributes.as_ref())?;
                 if attrs.contains_error_attr() {
-                    let err = d.convert(ci)?;
-                    ci.add_error_definition(err);
+                    let e = d.convert(ci)?;
+                    ci.note_name_used_as_error(&e.name);
+                    ci.add_enum_definition(e)?;
                 } else {
                     let e = d.convert(ci)?;
-                    ci.add_enum_definition(e);
+                    ci.add_enum_definition(e)?;
                 }
             }
             weedle::Definition::Dictionary(d) => {
                 let rec = d.convert(ci)?;
-                ci.add_record_definition(rec);
+                ci.add_record_definition(rec)?;
             }
             weedle::Definition::Interface(d) => {
                 let attrs = attributes::InterfaceAttributes::try_from(d.attributes.as_ref())?;
                 if attrs.contains_enum_attr() {
                     let e = d.convert(ci)?;
-                    ci.add_enum_definition(e);
+                    ci.add_enum_definition(e)?;
                 } else if attrs.contains_error_attr() {
-                    let e = d.convert(ci)?;
-                    ci.add_error_definition(e);
+                    let e: Enum = d.convert(ci)?;
+                    ci.note_name_used_as_error(&e.name);
+                    ci.add_enum_definition(e)?;
                 } else {
                     let obj = d.convert(ci)?;
                     ci.add_object_definition(obj);
@@ -782,60 +1039,22 @@ impl<U, T: APIConverter<U>> APIConverter<Vec<U>> for Vec<T> {
     }
 }
 
+// Helpers for functions/methods/constructors which all have the same "throws" semantics.
+fn throws_name(throws: &Option<Type>) -> Option<&str> {
+    // Type has no `name()` method, just `canonical_name()` which isn't what we want.
+    match throws {
+        None => None,
+        Some(Type::Enum(name)) => Some(name),
+        _ => panic!("unknown throw type: {throws:?}"),
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
 
     // Note that much of the functionality of `ComponentInterface` is tested via its interactions
     // with specific member types, in the sub-modules defining those member types.
-
-    const UDL1: &str = r#"
-        namespace foobar{};
-        enum Test {
-            "test_me",
-        };
-    "#;
-
-    const UDL2: &str = r#"
-        namespace hello {
-            u64 world();
-        };
-        dictionary Test {
-            boolean me;
-        };
-    "#;
-
-    #[test]
-    fn test_checksum_always_matches_for_same_webidl() {
-        for udl in &[UDL1, UDL2] {
-            let ci1 = ComponentInterface::from_webidl(udl).unwrap();
-            let ci2 = ComponentInterface::from_webidl(udl).unwrap();
-            assert_eq!(ci1.checksum(), ci2.checksum());
-        }
-    }
-
-    #[test]
-    fn test_checksum_differs_for_different_webidl() {
-        // There is a small probability of this test spuriously failing due to hash collision.
-        // If it happens often enough to be a problem, probably this whole "checksum" thing
-        // is not working out as intended.
-        let ci1 = ComponentInterface::from_webidl(UDL1).unwrap();
-        let ci2 = ComponentInterface::from_webidl(UDL2).unwrap();
-        assert_ne!(ci1.checksum(), ci2.checksum());
-    }
-
-    #[test]
-    fn test_checksum_differs_for_different_uniffi_version() {
-        // There is a small probability of this test spuriously failing due to hash collision.
-        // If it happens often enough to be a problem, probably this whole "checksum" thing
-        // is not working out as intended.
-        for udl in &[UDL1, UDL2] {
-            let ci1 = ComponentInterface::from_webidl(udl).unwrap();
-            let mut ci2 = ComponentInterface::from_webidl(udl).unwrap();
-            ci2.uniffi_version = String::from("fake-version");
-            assert_ne!(ci1.checksum(), ci2.checksum());
-        }
-    }
 
     #[test]
     fn test_duplicate_type_names_are_an_error() {
@@ -851,7 +1070,9 @@ mod test {
         let err = ComponentInterface::from_webidl(UDL).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Conflicting type definition for \"Testing\""
+            "Conflicting type definition for `Testing`! \
+             existing definition: Object { name: \"Testing\", imp: Struct }, \
+             new definition: Record(\"Testing\")"
         );
 
         const UDL2: &str = r#"
@@ -865,7 +1086,34 @@ mod test {
         let err = ComponentInterface::from_webidl(UDL2).unwrap_err();
         assert_eq!(
             err.to_string(),
-            "Conflicting type definition for \"Testing\""
+            "Mismatching definition for enum `Testing`!\nexisting definition: Enum {
+    name: \"Testing\",
+    variants: [
+        Variant {
+            name: \"one\",
+            fields: [],
+        },
+        Variant {
+            name: \"two\",
+            fields: [],
+        },
+    ],
+    flat: true,
+},
+new definition: Enum {
+    name: \"Testing\",
+    variants: [
+        Variant {
+            name: \"three\",
+            fields: [],
+        },
+        Variant {
+            name: \"four\",
+            fields: [],
+        },
+    ],
+    flat: true,
+}",
         );
 
         const UDL3: &str = r#"
@@ -969,7 +1217,10 @@ mod test {
             };
         "#;
         let ci = ComponentInterface::from_webidl(UDL).unwrap();
-        assert!(!ci.item_contains_unsigned_types(&Type::Object("Testing".into())));
+        assert!(!ci.item_contains_unsigned_types(&Type::Object {
+            name: "Testing".into(),
+            imp: ObjectImpl::Struct,
+        }));
     }
 
     #[test]
@@ -987,6 +1238,9 @@ mod test {
             };
         "#;
         let ci = ComponentInterface::from_webidl(UDL).unwrap();
-        assert!(ci.item_contains_unsigned_types(&Type::Object("TestObj".into())));
+        assert!(ci.item_contains_unsigned_types(&Type::Object {
+            name: "TestObj".into(),
+            imp: ObjectImpl::Struct,
+        }));
     }
 }

@@ -2,17 +2,17 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { ExtensionStorageIDB } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionStorageIDB.jsm"
+const { ExtensionStorageIDB } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionStorageIDB.sys.mjs"
 );
-const { getTrimmedString } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionTelemetry.jsm"
+const { getTrimmedString } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionTelemetry.sys.mjs"
 );
-const { TelemetryController } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryController.jsm"
+const { TelemetryController } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryController.sys.mjs"
 );
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 const HISTOGRAM_JSON_IDS = [
@@ -93,7 +93,7 @@ async function test_telemetry_background() {
     ...baseExtInfo,
     manifest: {
       ...baseManifest,
-      applications: {
+      browser_specific_settings: {
         gecko: { id: EXTENSION_ID1 },
       },
     },
@@ -102,7 +102,7 @@ async function test_telemetry_background() {
     ...baseExtInfo,
     manifest: {
       ...baseManifest,
-      applications: {
+      browser_specific_settings: {
         gecko: { id: EXTENSION_ID2 },
       },
     },
@@ -263,11 +263,6 @@ async function test_telemetry_background() {
 }
 
 add_task(async function setup() {
-  Services.prefs.setBoolPref(
-    "toolkit.telemetry.testing.overrideProductsCheck",
-    true
-  );
-
   // Telemetry test setup needed to ensure that the builtin events are defined
   // and they can be collected and verified.
   await TelemetryController.testSetup();
@@ -319,9 +314,7 @@ add_task(async function test_telemetry_storage_local_unexpected_error() {
   Services.telemetry.clearEvents();
 
   const methods = ["clear", "get", "remove", "set"];
-  const veryLongErrorName = `VeryLongErrorName${Array(200)
-    .fill(0)
-    .join("")}`;
+  const veryLongErrorName = `VeryLongErrorName${Array(200).fill(0).join("")}`;
   const otherError = new Error("an error recorded as OtherError");
 
   const recordedErrors = [

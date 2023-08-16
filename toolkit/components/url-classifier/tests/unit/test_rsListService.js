@@ -6,11 +6,11 @@
 
 /* Unit tests for the nsIUrlClassifierRemoteSettingsService implementation. */
 
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
-const { SBRS_UPDATE_MINIMUM_DELAY } = ChromeUtils.import(
-  "resource://gre/modules/UrlClassifierRemoteSettingsService.jsm"
+const { SBRS_UPDATE_MINIMUM_DELAY } = ChromeUtils.importESModule(
+  "resource://gre/modules/UrlClassifierRemoteSettingsService.sys.mjs"
 );
 
 const COLLECTION_NAME = "tracking-protection-lists";
@@ -40,6 +40,19 @@ const REMOTE_SETTINGS_DATA = [
       mimetype: "text/plain",
     },
     id: "mozplugin-block-digest256",
+    Version: 1575583456,
+  },
+  {
+    Name: "google-trackwhite-digest256",
+    attachment: {
+      hash: "1cd6d9353e97d66ac737a9716cd3a33416d6a4884dd12dcd1d65266e4c81dfad",
+      size: 1470328,
+      filename: "google-trackwhite-digest256",
+      location:
+        "main-workspace/tracking-protection-lists/google-trackwhite-digest256",
+      mimetype: "text/plain",
+    },
+    id: "google-trackwhite-digest256",
     Version: 1575583456,
   },
   // Entry with non-exist attachment
@@ -75,7 +88,7 @@ let gDbService = Cc["@mozilla.org/url-classifier/dbservice;1"].getService(
 
 class UpdateEvent extends EventTarget {}
 function waitForEvent(element, eventName) {
-  return new Promise(function(resolve) {
+  return new Promise(function (resolve) {
     element.addEventListener(eventName, e => resolve(e.detail), { once: true });
   });
 }
@@ -93,7 +106,7 @@ function buildPayload(tables) {
 }
 
 let server;
-add_task(async function init() {
+add_setup(async function init() {
   Services.prefs.setCharPref(
     "browser.safebrowsing.provider.mozilla.updateURL",
     `moz-sbrs://tracking-protection-list`
@@ -367,4 +380,45 @@ add_test(function test_update_update_error() {
     updateError,
     updateSuccessOrDownloadError
   );
+});
+
+add_task(async function test_update_large_file() {
+  let updateEvent = new UpdateEvent();
+  let promise = waitForEvent(updateEvent, "update");
+
+  const TEST_TABLES = [
+    ["google-trackwhite-digest256", 1575583456 - 1], // up-to-date
+  ];
+
+  gListService.fetchList(buildPayload(TEST_TABLES), {
+    // observer
+    // nsIStreamListener observer
+    onStartRequest(request) {},
+    onDataAvailable(aRequest, aStream, aOffset, aCount) {
+      let stream = Cc["@mozilla.org/scriptableinputstream;1"].createInstance(
+        Ci.nsIScriptableInputStream
+      );
+      stream.init(aStream);
+      let event = new CustomEvent("update", {
+        detail: stream.readBytes(aCount),
+      });
+      updateEvent.dispatchEvent(event);
+    },
+    onStopRequest(request, status) {},
+  });
+
+  // Build request with no version
+  let expected = "n:" + SBRS_UPDATE_MINIMUM_DELAY + "\n";
+  for (const table of TEST_TABLES) {
+    if (["google-trackwhite-digest256"].includes(table[0])) {
+      expected += `i:${table[0]}\n` + readFileToString(`data/${table[0]}`);
+    }
+  }
+
+  Assert.equal(
+    await promise,
+    expected,
+    "Receive expected data from onDataAvailable"
+  );
+  gListService.clear();
 });

@@ -29,7 +29,7 @@ add_task(async function test_eternal_xslt() {
   await resetCounter();
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: SERVER_SCRIPT, waitForLoad: false },
-    async function(browser) {
+    async function (browser) {
       info("Waiting for XSLT to keep loading");
 
       ok(
@@ -38,7 +38,7 @@ add_task(async function test_eternal_xslt() {
       );
 
       info("Navigating to about:blank");
-      BrowserTestUtils.loadURI(browser, "about:blank");
+      BrowserTestUtils.loadURIString(browser, "about:blank");
       await BrowserTestUtils.browserLoaded(browser);
 
       info("Check to see if XSLT stops loading");
@@ -53,14 +53,14 @@ add_task(async function test_eternal_xslt() {
   await resetCounter();
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: `${BASE}/file_bug1309630.html` },
-    async function(browser) {
+    async function (browser) {
       ok(
         await waitForCounterChangeAbove(1),
         "We should receive at least a request from the document function call."
       );
 
       info("Navigating to about:blank");
-      BrowserTestUtils.loadURI(browser, "about:blank");
+      BrowserTestUtils.loadURIString(browser, "about:blank");
       await BrowserTestUtils.browserLoaded(browser);
 
       info("Check to see if XSLT stops loading");

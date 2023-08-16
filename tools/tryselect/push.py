@@ -11,12 +11,13 @@ import traceback
 import six
 from mach.util import get_state_dir
 from mozbuild.base import MozbuildObject
-from mozversioncontrol import get_repository_object, MissingVCSExtension
+from mozversioncontrol import MissingVCSExtension, get_repository_object
+
+from .util.estimates import duration_summary
 from .util.manage_estimates import (
     download_task_history_data,
     make_trimmed_taskgraph_cache,
 )
-from .util.estimates import duration_summary
 
 GIT_CINNABAR_NOT_FOUND = """
 Could not detect `git-cinnabar`.
@@ -176,6 +177,7 @@ def push_to_try(
     dry_run=False,
     closed_tree=False,
     files_to_change=None,
+    allow_log_capture=False,
 ):
     push = not stage_changes and not dry_run
     check_working_directory(push)
@@ -223,7 +225,7 @@ def push_to_try(
         vcs.add_remove_files(*changed_files)
 
         try:
-            vcs.push_to_try(commit_message)
+            vcs.push_to_try(commit_message, allow_log_capture=allow_log_capture)
         except MissingVCSExtension as e:
             if e.ext == "push-to-try":
                 print(HG_PUSH_TO_TRY_NOT_FOUND)

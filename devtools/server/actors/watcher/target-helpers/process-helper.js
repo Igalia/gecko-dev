@@ -4,15 +4,19 @@
 
 "use strict";
 
-const Services = require("Services");
-const {
-  WatcherRegistry,
-} = require("devtools/server/actors/watcher/WatcherRegistry.jsm");
+const { WatcherRegistry } = ChromeUtils.importESModule(
+  "resource://devtools/server/actors/watcher/WatcherRegistry.sys.mjs",
+  {
+    // WatcherRegistry needs to be a true singleton and loads ActorManagerParent
+    // which also has to be a true singleton.
+    loadInDevToolsLoader: false,
+  }
+);
 
 loader.lazyRequireGetter(
   this,
   "ChildDebuggerTransport",
-  "devtools/shared/transport/child-transport",
+  "resource://devtools/shared/transport/child-transport.js",
   true
 );
 
@@ -99,7 +103,7 @@ function onContentProcessActorDestroyed(msg) {
 
 function onMessageManagerClose(messageManager, topic, data) {
   const list = actors.get(messageManager);
-  if (!list || list.length == 0) {
+  if (!list || !list.length) {
     return;
   }
   for (const { prefix, childTransport, actor, watcher } of list) {
@@ -127,7 +131,7 @@ function onMessageManagerClose(messageManager, topic, data) {
  */
 function unregisterWatcherForMessageManager(watcher, messageManager, options) {
   const targetActorDescriptions = actors.get(messageManager);
-  if (!targetActorDescriptions || targetActorDescriptions.length == 0) {
+  if (!targetActorDescriptions || !targetActorDescriptions.length) {
     return;
   }
 
@@ -150,7 +154,7 @@ function unregisterWatcherForMessageManager(watcher, messageManager, options) {
   const remainingTargetActorDescriptions = targetActorDescriptions.filter(
     item => item.watcher !== watcher
   );
-  if (remainingTargetActorDescriptions.length == 0) {
+  if (!remainingTargetActorDescriptions.length) {
     actors.delete(messageManager);
   } else {
     actors.set(messageManager, remainingTargetActorDescriptions);

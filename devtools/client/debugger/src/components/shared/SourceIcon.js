@@ -18,8 +18,9 @@ class SourceIcon extends PureComponent {
   static get propTypes() {
     return {
       modifier: PropTypes.func.isRequired,
-      source: PropTypes.object.isRequired,
+      location: PropTypes.object.isRequired,
       iconClass: PropTypes.string,
+      forTab: PropTypes.bool,
     };
   }
 
@@ -40,15 +41,23 @@ class SourceIcon extends PureComponent {
 }
 
 export default connect((state, props) => {
-  const { source } = props;
-  const symbols = getSymbols(state, source);
-  const isBlackBoxed = isSourceBlackBoxed(state, source);
-  const hasMatchingPrettyTab = hasPrettyTab(state, source.url);
+  const { forTab, location } = props;
+  // BreakpointHeading sometimes spawn locations without source actor for generated sources
+  // which disallows fetching symbols. In such race condition return the default icon.
+  // (this reproduces when running browser_dbg-breakpoints-popup.js)
+  if (!location.source.isOriginal && !location.sourceActor) {
+    return "file";
+  }
+  const symbols = getSymbols(state, location);
+  const isBlackBoxed = isSourceBlackBoxed(state, location.source);
+  // For the tab icon, we don't want to show the pretty icon for the non-pretty tab
+  const hasMatchingPrettyTab =
+    !forTab && hasPrettyTab(state, location.source.url);
 
   // This is the key function that will compute the icon type,
   // In addition to the "modifier" implemented by each callsite.
   const iconClass = getSourceClassnames(
-    source,
+    location.source,
     symbols,
     isBlackBoxed,
     hasMatchingPrettyTab

@@ -18,9 +18,6 @@ NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_WITH_JS_MEMBERS(XRRigidTransform,
                                                        mOrientation, mInverse),
                                                       (mMatrixArray))
 
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(XRRigidTransform, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(XRRigidTransform, Release)
-
 XRRigidTransform::XRRigidTransform(nsISupports* aParent,
                                    const gfx::PointDouble3D& aPosition,
                                    const gfx::QuaternionDouble& aOrientation)
@@ -96,6 +93,10 @@ gfx::QuaternionDouble XRRigidTransform::RawOrientation() const {
 }
 gfx::PointDouble3D XRRigidTransform::RawPosition() const {
   return mRawPosition;
+}
+
+gfx::Matrix4x4Double XRRigidTransform::RawTransform() const {
+  return mRawTransformMatrix;
 }
 
 void XRRigidTransform::Update(const gfx::PointDouble3D& aPosition,

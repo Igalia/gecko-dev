@@ -9,8 +9,10 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.sys.mjs",
 });
 
 XPCOMUtils.defineLazyServiceGetters(lazy, {
@@ -45,6 +47,27 @@ const ToastNotification = {
     let title = await lazy.RemoteL10n.formatLocalizableText(content.title);
     let body = await lazy.RemoteL10n.formatLocalizableText(content.body);
 
+    // The only link between background task message experiment and user
+    // re-engagement via the notification is the associated "tag".  Said tag is
+    // usually controlled by the message content, but for message experiments,
+    // we want to avoid a missing tag and to ensure a deterministic tag for
+    // easier analysis, including across branches.
+    let { tag } = content;
+
+    let experimentMetadata =
+      lazy.ExperimentAPI.getExperimentMetaData({
+        featureId: "backgroundTaskMessage",
+      }) || {};
+
+    if (
+      experimentMetadata?.active &&
+      experimentMetadata?.slug &&
+      experimentMetadata?.branch?.slug
+    ) {
+      // Like `my-experiment:my-branch`.
+      tag = `${experimentMetadata?.slug}:${experimentMetadata?.branch?.slug}`;
+    }
+
     // There are two events named `IMPRESSION` the first one refers to telemetry
     // while the other refers to ASRouter impressions used for the frequency cap
     this.sendUserEventTelemetry("IMPRESSION", message, dispatch);
@@ -53,24 +76,66 @@ const ToastNotification = {
     let alert = Cc["@mozilla.org/alert-notification;1"].createInstance(
       Ci.nsIAlertNotification
     );
+    let systemPrincipal = Services.scriptSecurityManager.getSystemPrincipal();
     alert.init(
-      null,
-      content.image_url,
+      tag,
+      content.image_url
+        ? Services.urlFormatter.formatURL(content.image_url)
+        : content.image_url,
       title,
       body,
       true /* aTextClickable */,
-      content.tag /* aCookie */,
+      content.data,
       null /* aDir */,
       null /* aLang */,
-      content.data,
-      null /* aPrincipal */,
+      null /* aData */,
+      systemPrincipal,
       null /* aInPrivateBrowsing */,
       content.requireInteraction
     );
 
-    alert.initActions(content.actions || []);
+    if (content.actions) {
+      let actions = Cu.cloneInto(content.actions, {});
+      for (let action of actions) {
+        if (action.title) {
+          action.title = await lazy.RemoteL10n.formatLocalizableText(
+            action.title
+          );
+        }
+        if (action.launch_action) {
+          action.opaqueRelaunchData = JSON.stringify(action.launch_action);
+          delete action.launch_action;
+        }
+      }
+      alert.actions = actions;
+    }
 
-    this.AlertsService.showAlert(alert);
+    // Populate `opaqueRelaunchData`, prefering `launch_action` if given,
+    // falling back to `launch_url` if given.
+    let relaunchAction = content.launch_action;
+    if (!relaunchAction && content.launch_url) {
+      relaunchAction = {
+        type: "OPEN_URL",
+        data: {
+          args: content.launch_url,
+          where: "tab",
+        },
+      };
+    }
+    if (relaunchAction) {
+      alert.opaqueRelaunchData = JSON.stringify(relaunchAction);
+    }
+
+    let shownPromise = lazy.PromiseUtils.defer();
+    let obs = (subject, topic, data) => {
+      if (topic === "alertshown") {
+        shownPromise.resolve();
+      }
+    };
+
+    this.AlertsService.showAlert(alert, obs);
+
+    await shownPromise;
 
     return true;
   },

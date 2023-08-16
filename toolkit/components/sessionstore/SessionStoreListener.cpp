@@ -37,8 +37,6 @@ static const char kTimeOutDisable[] =
 static const char kPrefInterval[] = "browser.sessionstore.interval";
 
 NS_IMPL_CYCLE_COLLECTION(ContentSessionStore, mDocShell)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(ContentSessionStore, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(ContentSessionStore, Release)
 
 ContentSessionStore::ContentSessionStore(nsIDocShell* aDocShell)
     : mDocShell(aDocShell),
@@ -439,8 +437,8 @@ void TabListener::UpdateSessionStore(bool aIsFlush) {
     data.mIsPrivate.Construct() = mSessionStore->GetPrivateModeEnabled();
   }
 
-  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportModule(
-      "resource://gre/modules/SessionStoreFunctions.jsm", fallible);
+  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportESModule(
+      "resource://gre/modules/SessionStoreFunctions.sys.mjs", fallible);
   nsCOMPtr<nsIXPConnectWrappedJS> wrapped = do_QueryInterface(funcs);
   if (!wrapped) {
     return;

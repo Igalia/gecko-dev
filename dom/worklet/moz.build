@@ -7,19 +7,21 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "DOM: Core & HTML")
 
+DIRS += ["loader"]
+
 EXPORTS.mozilla.dom += [
     "Worklet.h",
+    "WorkletFetchHandler.h",
     "WorkletGlobalScope.h",
     "WorkletImpl.h",
-    "WorkletPrincipals.h",
     "WorkletThread.h",
 ]
 
 UNIFIED_SOURCES += [
     "Worklet.cpp",
+    "WorkletFetchHandler.cpp",
     "WorkletGlobalScope.cpp",
     "WorkletImpl.cpp",
-    "WorkletPrincipals.cpp",
     "WorkletThread.cpp",
 ]
 

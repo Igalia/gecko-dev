@@ -60,8 +60,7 @@ const tests = [
     expected: "another description",
   },
   {
-    desc:
-      "No description change when @alt is dropped but @aria-describedby remains",
+    desc: "No description change when @alt is dropped but @aria-describedby remains",
     attrs: [
       {
         attr: "alt",
@@ -195,7 +194,7 @@ addAccessibleTask(
   <p id="description">aria description</p>
   <p id="description2">another description</p>
   <img id="image" src="http://example.com/a11y/accessible/tests/mochitest/moz.png" />`,
-  async function(browser, accDoc) {
+  async function (browser, accDoc) {
     let imgAcc = findAccessibleChildByID(accDoc, "image");
 
     for (let { desc, waitFor, attrs, expected } of tests) {
@@ -230,7 +229,7 @@ addAccessibleTask(
 <button id="button" aria-describedby="desc">
 <div id="desc" hidden>a</div>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const button = findAccessibleChildByID(docAcc, "button");
     testDescr(button, "a");
     info("Changing desc textContent");
@@ -249,6 +248,33 @@ addAccessibleTask(
     });
     await descChanged;
     testDescr(button, "bc");
+  },
+  { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
+);
+
+/**
+ * Test aria-description, including mutations.
+ */
+addAccessibleTask(
+  `<button id="button" aria-description="a">button</button>`,
+  async function (browser, docAcc) {
+    const button = findAccessibleChildByID(docAcc, "button");
+    testDescr(button, "a");
+    info("Changing aria-description");
+    let changed = waitForEvent(EVENT_DESCRIPTION_CHANGE, button);
+    await invokeSetAttribute(browser, "button", "aria-description", "b");
+    await changed;
+    testDescr(button, "b");
+    info("Removing aria-description");
+    changed = waitForEvent(EVENT_DESCRIPTION_CHANGE, button);
+    await invokeSetAttribute(browser, "button", "aria-description");
+    await changed;
+    testDescr(button, "");
+    info("Setting aria-description");
+    changed = waitForEvent(EVENT_DESCRIPTION_CHANGE, button);
+    await invokeSetAttribute(browser, "button", "aria-description", "c");
+    await changed;
+    testDescr(button, "c");
   },
   { chrome: true, topLevel: true, iframe: true, remoteIframe: true }
 );

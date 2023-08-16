@@ -105,8 +105,20 @@ enum StructuredCloneTags : uint32_t {
   // IDB.
   SCTAG_DOM_STRUCTUREDCLONETESTER,
 
+  // IMPORTANT: Don't change the order of these enum values. You could break
+  // IDB.
+  SCTAG_DOM_FILESYSTEMHANDLE,
+
+  // IMPORTANT: Don't change the order of these enum values. You could break
+  // IDB.
+  SCTAG_DOM_FILESYSTEMFILEHANDLE,
+
+  // IMPORTANT: Don't change the order of these enum values. You could break
+  // IDB.
+  SCTAG_DOM_FILESYSTEMDIRECTORYHANDLE,
+
   // If you are planning to add new tags which could be used by IndexedDB,
-  // consider to use empty slots. See EMPTY_SLOT_x
+  // consider to use an empty slot. See EMPTY_SLOT_x
 
   // Please update the static assertions in StructuredCloneHolder.cpp and in
   // IDBObjectStore.cpp, method CommonStructuredCloneReadCallback.
@@ -117,11 +129,6 @@ enum StructuredCloneTags : uint32_t {
   // IndexedDB directly or via
   // StructuredCloneHolder::{Read,Write}FullySerializableObjects. In theory they
   // can be 'less' stable.
-
-  // Principal written out by worker threads when serializing objects. When
-  // reading on the main thread this principal will be converted to a normal
-  // principal object using nsJSPrincipals::AutoSetActiveWorkerPrincipal.
-  SCTAG_DOM_WORKER_PRINCIPAL,
 
   SCTAG_DOM_IMAGEBITMAP,
   SCTAG_DOM_MAP_MESSAGEPORT,
@@ -145,6 +152,10 @@ enum StructuredCloneTags : uint32_t {
   SCTAG_DOM_WRITABLESTREAM,
 
   SCTAG_DOM_TRANSFORMSTREAM,
+
+  SCTAG_DOM_VIDEOFRAME,
+
+  SCTAG_DOM_ENCODEDVIDEOCHUNK,
 
   // IMPORTANT: If you plan to add an new IDB tag, it _must_ be add before the
   // "less stable" tags!

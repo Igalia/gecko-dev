@@ -87,7 +87,7 @@ input {
      must be the same here, for buttons, and for <select> (including its
      internal padding magic) */
   padding: 1px;
-  border: 2px inset ThreeDLightShadow;
+  border: 2px inset ButtonBorder;
   background-color: Field;
   color: FieldText;
   font: -moz-field;
@@ -107,7 +107,7 @@ textarea {
   appearance: auto;
   -moz-default-appearance: textarea;
   margin-block: 1px;
-  border: 2px inset ThreeDLightShadow;
+  border: 2px inset ButtonBorder;
   padding: 2px;
   background-color: Field;
   color: FieldText;
@@ -220,7 +220,7 @@ textarea:read-write {
 
 select {
   margin: 0;
-  border-color: ThreeDLightShadow;
+  border-color: ButtonBorder;
   font: -moz-list;
   white-space: nowrap !important;
   word-wrap: normal !important;
@@ -238,6 +238,7 @@ select {
 
   /* Set some styles for drop down selects. These are overridden below for
    * list box selects. */
+  padding-inline: 4px;
   background-color: -moz-Combobox;
   color: -moz-ComboboxText;
   vertical-align: baseline;
@@ -246,7 +247,9 @@ select {
 }
 
 select:-moz-select-list-box {
-  overflow: auto;
+  overflow-inline: hidden;
+  overflow-block: scroll;
+  padding-inline: 0;
   background-color: Field;
   color: FieldText;
   vertical-align: text-bottom;
@@ -282,7 +285,6 @@ select > button {
 *|*::-moz-display-comboboxcontrol-frame {
   content: inherit;
   overflow: clip;
-  padding-inline: 4px;
   color: unset;
   white-space: nowrap;
   text-align: unset;
@@ -299,6 +301,11 @@ option[label]::before {
   content: attr(label);
 }
 
+select:-moz-select-list-box option,
+select:-moz-select-list-box optgroup {
+  line-height: normal !important;
+}
+
 option {
   display: block;
   float: none !important;
@@ -308,18 +315,15 @@ option {
 
   min-block-size: 1em;
   padding-block: 2px;
+  user-select: none;
   /*
    * Note that the "UA !important" tests in
    * layout/style/test/test_animations.html depend on this rule, because
    * they need some UA !important rule to test.  If this changes, use a
    * different one there.
    */
-  line-height: normal !important;
-  user-select: none;
-  text-indent: 0;
   white-space: nowrap !important;
   word-wrap: normal !important;
-  text-align: match-parent;
 }
 
 select > option {
@@ -340,13 +344,10 @@ optgroup {
   display: block;
   float: none !important;
   position: static !important;
-  font: -moz-list;
-  line-height: normal !important;
   font-style: italic;
   font-weight: bold;
   font-size: unset;
   user-select: none;
-  text-indent: 0;
   white-space: nowrap !important;
   word-wrap: normal !important;
 }
@@ -359,7 +360,7 @@ optgroup > option {
 
 optgroup:before {
   display: block;
-  content: attr(label);
+  content: "\200b" attr(label);
 }
 
 @media (-moz-platform: android) {
@@ -502,7 +503,7 @@ input:is([type=color], [type=reset], [type=button], [type=submit]) {
      Note -moz-focus-inner padding does not affect button size. */
   padding-block: 1px;
   padding-inline: 8px;
-  border: 2px outset ThreeDLightShadow;
+  border: 2px outset ButtonBorder;
   background-color: ButtonFace;
   cursor: default;
   box-sizing: border-box;
@@ -523,7 +524,7 @@ input:is([type=reset], [type=button], [type=submit]) {
 
 input[type=color] {
   inline-size: 64px;
-  block-size: 23px;
+  block-size: 32px;
 }
 
 @media (-moz-non-native-content-theme) {
@@ -542,7 +543,6 @@ button,
 ::file-selector-button {
   /* Buttons should lay out like "normal" html, mostly */
   white-space: unset;
-  text-indent: 0;
   /* But no text-decoration reaching inside, by default */
   display: inline-block;
 }
@@ -689,12 +689,6 @@ optgroup:before {
   text-overflow: inherit;
 }
 
-@media print {
-  input, textarea, select, button {
-    -moz-user-input: none !important;
-  }
-}
-
 progress {
   appearance: auto;
   -moz-default-appearance: progress-bar;
@@ -707,6 +701,7 @@ progress {
   border-bottom-color: ThreeDHighlight;
   /* #e6e6e6 is a light gray. */
   background-color: #e6e6e6;
+  overflow: clip;
 }
 
 ::-moz-progress-bar {
@@ -732,6 +727,7 @@ meter {
   display: inline-block;
   vertical-align: -0.2em;
   background: linear-gradient(#e6e6e6, #e6e6e6, #eeeeee 20%, #cccccc 45%, #cccccc 55%);
+  overflow: clip;
 }
 
 ::-moz-meter-bar {
@@ -868,40 +864,18 @@ input[type=number]::-moz-number-spin-box {
   overflow: clip;
 }
 
-input[type=number]::-moz-number-spin-up {
+input[type=number]::-moz-number-spin-up,
+input[type=number]::-moz-number-spin-down {
   writing-mode: horizontal-tb;
   appearance: auto;
   -moz-default-appearance: spinner-upbutton;
   display: block; /* bug 926670 */
   flex-grow: 1;
   cursor: default;
-  /* Style for when native theming is off: */
-  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="6" height="5"><path d="M1,4 L3,0 5,4" fill="dimgrey"/></svg>');
-  background-repeat: no-repeat;
-  background-position: center bottom;
-  border: 1px solid darkgray;
-  border-bottom: none;
-  /* [JK] I think the border-*-*-radius properties here can remain physical,
-     as we probably don't want to turn the spinner sideways in vertical writing mode */
-  border-top-left-radius: 4px;
-  border-top-right-radius: 4px;
 }
 
 input[type=number]::-moz-number-spin-down {
-  writing-mode: horizontal-tb;
-  appearance: auto;
   -moz-default-appearance: spinner-downbutton;
-  display: block; /* bug 926670 */
-  flex-grow: 1;
-  cursor: default;
-  /* Style for when native theming is off: */
-  background-image: url('data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" width="6" height="5"><path d="M1,1 L3,5 5,1" fill="dimgrey"/></svg>');
-  background-repeat: no-repeat;
-  background-position: center top;
-  border: 1px solid darkgray;
-  border-top: none;
-  border-bottom-left-radius: 4px;
-  border-bottom-right-radius: 4px;
 }
 
 input[type=number] > div > div > div:hover {

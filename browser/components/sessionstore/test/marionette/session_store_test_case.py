@@ -2,11 +2,9 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
-
 from urllib.parse import quote
 
-from marionette_driver import errors, Wait
+from marionette_driver import Wait, errors
 from marionette_driver.keys import Keys
 from marionette_harness import MarionetteTestCase, WindowManagerMixin
 
@@ -15,13 +13,36 @@ def inline(doc):
     return "data:text/html;charset=utf-8,{}".format(quote(doc))
 
 
+# Each list element represents a window of tabs loaded at
+# some testing URL
+DEFAULT_WINDOWS = set(
+    [
+        # Window 1. Note the comma after the inline call -
+        # this is Python's way of declaring a 1 item tuple.
+        (inline("""<div">Lorem</div>"""),),
+        # Window 2
+        (
+            inline("""<div">ipsum</div>"""),
+            inline("""<div">dolor</div>"""),
+        ),
+        # Window 3
+        (
+            inline("""<div">sit</div>"""),
+            inline("""<div">amet</div>"""),
+        ),
+    ]
+)
+
+
 class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
     def setUp(
         self,
         startup_page=1,
         include_private=True,
+        restore_on_demand=False,
         no_auto_updates=True,
         win_register_restart=False,
+        test_windows=DEFAULT_WINDOWS,
     ):
         super(SessionStoreTestCase, self).setUp()
         self.marionette.set_context("chrome")
@@ -29,25 +50,7 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
         platform = self.marionette.session_capabilities["platformName"]
         self.accelKey = Keys.META if platform == "mac" else Keys.CONTROL
 
-        # Each list element represents a window of tabs loaded at
-        # some testing URL
-        self.test_windows = set(
-            [
-                # Window 1. Note the comma after the inline call -
-                # this is Python's way of declaring a 1 item tuple.
-                (inline("""<div">Lorem</div>"""),),
-                # Window 2
-                (
-                    inline("""<div">ipsum</div>"""),
-                    inline("""<div">dolor</div>"""),
-                ),
-                # Window 3
-                (
-                    inline("""<div">sit</div>"""),
-                    inline("""<div">amet</div>"""),
-                ),
-            ]
-        )
+        self.test_windows = test_windows
 
         self.private_windows = set(
             [
@@ -69,7 +72,7 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
                 "browser.startup.page": startup_page,
                 # Make the content load right away instead of waiting for
                 # the user to click on the background tabs
-                "browser.sessionstore.restore_on_demand": False,
+                "browser.sessionstore.restore_on_demand": restore_on_demand,
                 # Avoid race conditions by having the content process never
                 # send us session updates unless the parent has explicitly asked
                 # for them via the TabStateFlusher.
@@ -89,7 +92,7 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
     def tearDown(self):
         try:
             # Create a fresh profile for subsequent tests.
-            self.marionette.restart(clean=True)
+            self.marionette.restart(in_app=False, clean=True)
         finally:
             super(SessionStoreTestCase, self).tearDown()
 
@@ -213,7 +216,7 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
 
     def close_all_tabs_and_restart(self):
         self.close_all_tabs()
-        self.marionette.quit(in_app=True, callback=self._close_tab_shortcut)
+        self.marionette.quit(callback=self._close_tab_shortcut)
         self.marionette.start_session()
 
     def simulate_os_shutdown(self):
@@ -245,8 +248,8 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
         :raises: WindowsError: if a Windows API call fails
         """
         import ctypes
-        from ctypes import Structure, POINTER, WINFUNCTYPE, windll, pointer, WinError
-        from ctypes.wintypes import HANDLE, DWORD, BOOL, WCHAR, UINT, ULONG, LPCWSTR
+        from ctypes import POINTER, WINFUNCTYPE, Structure, WinError, pointer, windll
+        from ctypes.wintypes import BOOL, DWORD, HANDLE, LPCWSTR, UINT, ULONG, WCHAR
 
         # set up Windows SDK types
         OpenProcess = windll.kernel32.OpenProcess
@@ -399,7 +402,7 @@ class SessionStoreTestCase(WindowManagerMixin, MarionetteTestCase):
             ),
         )
 
-        self.marionette.quit(in_app=True, callback=lambda: self.simulate_os_shutdown())
+        self.marionette.quit(callback=lambda: self.simulate_os_shutdown())
 
         saved_args = self.marionette.instance.app_args
         try:

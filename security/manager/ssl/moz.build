@@ -13,6 +13,7 @@ if (CONFIG["OS_ARCH"] == "WINNT" and CONFIG["CPU_ARCH"] != "aarch64") or CONFIG[
     DIRS += ["osclientcerts"]
 
 DIRS += ["ipcclientcerts"]
+DIRS += ["builtins"]
 
 TEST_DIRS += ["tests"]
 
@@ -25,6 +26,7 @@ XPIDL_SOURCES += [
     "nsIClientAuthRememberService.idl",
     "nsIContentSignatureVerifier.idl",
     "nsICryptoHash.idl",
+    "nsIDataStorage.idl",
     "nsINSSComponent.idl",
     "nsINSSErrorsService.idl",
     "nsINSSVersion.idl",
@@ -35,13 +37,13 @@ XPIDL_SOURCES += [
     "nsIPKCS11Module.idl",
     "nsIPKCS11ModuleDB.idl",
     "nsIPKCS11Slot.idl",
-    "nsIProtectedAuthThread.idl",
     "nsIPublicKeyPinningService.idl",
     "nsISecretDecoderRing.idl",
     "nsISecurityUITelemetry.idl",
     "nsISiteSecurityService.idl",
-    "nsITokenDialogs.idl",
+    "nsITLSSocketControl.idl",
     "nsITokenPasswordDialogs.idl",
+    "nsITransportSecurityInfo.idl",
     "nsIX509Cert.idl",
     "nsIX509CertDB.idl",
     "nsIX509CertValidity.idl",
@@ -54,9 +56,9 @@ XPCOM_MANIFESTS += [
 ]
 
 EXTRA_JS_MODULES.psm += [
-    "DER.jsm",
-    "RemoteSecuritySettings.jsm",
-    "X509.jsm",
+    "DER.sys.mjs",
+    "RemoteSecuritySettings.sys.mjs",
+    "X509.sys.mjs",
 ]
 
 EXPORTS += [
@@ -82,8 +84,6 @@ EXPORTS += [
 ]
 
 EXPORTS.mozilla += [
-    "DataStorage.h",
-    "DataStorageList.h",
     "PublicSSL.h",
 ]
 
@@ -95,10 +95,6 @@ EXPORTS.mozilla.psm += [
     "TransportSecurityInfo.h",
     "VerifySSLServerCertChild.h",
     "VerifySSLServerCertParent.h",
-]
-
-EXPORTS.ipc += [
-    "DataStorageIPCUtils.h",
 ]
 
 UNIFIED_SOURCES += [
@@ -116,7 +112,6 @@ UNIFIED_SOURCES += [
     "nsCertOverrideService.cpp",
     "nsCertTree.cpp",
     "nsClientAuthRemember.cpp",
-    "nsCryptoHash.cpp",
     "nsNSSCallbacks.cpp",
     "nsNSSCertHelper.cpp",
     "nsNSSCertificate.cpp",
@@ -130,7 +125,6 @@ UNIFIED_SOURCES += [
     "nsPK11TokenDB.cpp",
     "nsPKCS11Slot.cpp",
     "nsPKCS12Blob.cpp",
-    "nsProtectedAuthThread.cpp",
     "nsRandomGenerator.cpp",
     "nsSecureBrowserUI.cpp",
     "nsSecurityHeaderParser.cpp",
@@ -138,6 +132,7 @@ UNIFIED_SOURCES += [
     "nsSiteSecurityService.cpp",
     "NSSKeyStore.cpp",
     "nsSSLSocketProvider.cpp",
+    "NSSSocketControl.cpp",
     "nsTLSSocketProvider.cpp",
     "OSKeyStore.cpp",
     "PKCS11ModuleDB.cpp",
@@ -217,11 +212,6 @@ GeneratedFile(
 DEFINES["SSL_DISABLE_DEPRECATED_CIPHER_SUITE_NAMES"] = "True"
 DEFINES["NSS_ENABLE_ECC"] = "True"
 
-if not CONFIG["MOZ_SYSTEM_NSS"]:
-    USE_LIBS += [
-        "crmf",
-    ]
-
 # mozpkix is linked statically from the in-tree sources independent of whether
 # system NSS is used or not.
 USE_LIBS += ["mozpkix"]
@@ -280,5 +270,3 @@ for header, array_name, cert in headers_arrays_certs:
     GeneratedFile(
         header, script="gen_cert_header.py", entry_point=array_name, inputs=[cert]
     )
-
-REQUIRES_UNIFIED_BUILD = True

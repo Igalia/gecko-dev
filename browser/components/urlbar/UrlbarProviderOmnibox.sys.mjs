@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a provider class that is used for providers created by
  * extensions using the `omnibox` API.
@@ -21,11 +19,9 @@ ChromeUtils.defineESModuleGetters(lazy, {
   ExtensionSearchHandler:
     "resource://gre/modules/ExtensionSearchHandler.sys.mjs",
 
+  UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarResult: "resource:///modules/UrlbarResult.sys.mjs",
 });
-
-// After this time, we'll give up waiting for the extension to return matches.
-const MAXIMUM_ALLOWED_EXTENSION_TIME_MS = 3000;
 
 /**
  * This provider handles results returned by extensions using the WebExtensions
@@ -39,6 +35,7 @@ class ProviderOmnibox extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -47,6 +44,7 @@ class ProviderOmnibox extends UrlbarProvider {
 
   /**
    * Returns the type of this provider.
+   *
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
@@ -107,7 +105,7 @@ class ProviderOmnibox extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} queryContext
    *   The query context object.
-   * @param {function} addCallback
+   * @param {Function} addCallback
    *   The callback invoked by this method to add each result.
    */
   async startQuery(queryContext, addCallback) {
@@ -118,7 +116,7 @@ class ProviderOmnibox extends UrlbarProvider {
     let description = lazy.ExtensionSearchHandler.getDescription(keyword);
     let heuristicResult = new lazy.UrlbarResult(
       UrlbarUtils.RESULT_TYPE.OMNIBOX,
-      UrlbarUtils.RESULT_SOURCE.OTHER_NETWORK,
+      UrlbarUtils.RESULT_SOURCE.ADDON,
       ...lazy.UrlbarResult.payloadAndSimpleHighlights(queryContext.tokens, {
         title: [description, UrlbarUtils.HIGHLIGHT.TYPED],
         content: [queryContext.searchString, UrlbarUtils.HIGHLIGHT.TYPED],
@@ -148,7 +146,7 @@ class ProviderOmnibox extends UrlbarProvider {
           }
           let result = new lazy.UrlbarResult(
             UrlbarUtils.RESULT_TYPE.OMNIBOX,
-            UrlbarUtils.RESULT_SOURCE.OTHER_NETWORK,
+            UrlbarUtils.RESULT_SOURCE.ADDON,
             ...lazy.UrlbarResult.payloadAndSimpleHighlights(
               queryContext.tokens,
               {
@@ -158,10 +156,13 @@ class ProviderOmnibox extends UrlbarProvider {
                   queryContext.tokens[0].value,
                   UrlbarUtils.HIGHLIGHT.TYPED,
                 ],
+                blockL10n: { id: "urlbar-result-menu-dismiss-firefox-suggest" },
+                isBlockable: suggestion.deletable,
                 icon: UrlbarUtils.ICON.EXTENSION,
               }
             )
           );
+
           addCallback(this, result);
         }
       }
@@ -171,12 +172,24 @@ class ProviderOmnibox extends UrlbarProvider {
     // we add a timer racing with the addition.
     let timeoutPromise = new SkippableTimer({
       name: "ProviderOmnibox",
-      time: MAXIMUM_ALLOWED_EXTENSION_TIME_MS,
+      time: lazy.UrlbarPrefs.get("extension.omnibox.timeout"),
       logger: this.logger,
     }).promise;
     await Promise.race([timeoutPromise, this._resultsPromise]).catch(ex =>
       this.logger.error(ex)
     );
+  }
+
+  onEngagement(state, queryContext, details, controller) {
+    let { result } = details;
+    if (result?.providerName != this.name) {
+      return;
+    }
+
+    if (details.selType == "dismiss" && result.payload.isBlockable) {
+      lazy.ExtensionSearchHandler.handleInputDeleted(result.payload.title);
+      controller.removeResult(result);
+    }
   }
 }
 

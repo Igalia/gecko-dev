@@ -32,6 +32,7 @@
 #include "jsapi/PacketDumper.h"
 #include "mozilla/dom/RTCPeerConnectionBinding.h"  // mozPacketDumpType, maybe move?
 #include "mozilla/dom/PeerConnectionImplBinding.h"  // ChainedOperation
+#include "mozilla/dom/RTCRtpCapabilitiesBinding.h"
 #include "mozilla/dom/RTCRtpTransceiverBinding.h"
 #include "mozilla/dom/RTCConfigurationBinding.h"
 #include "PrincipalChangeObserver.h"
@@ -39,7 +40,6 @@
 
 #include "mozilla/TimeStamp.h"
 #include "mozilla/net/DataChannel.h"
-#include "mozilla/TupleCycleCollection.h"
 #include "VideoUtils.h"
 #include "VideoSegment.h"
 #include "mozilla/dom/RTCStatsReportBinding.h"
@@ -69,6 +69,7 @@ class DtlsIdentity;
 class MediaPipeline;
 class MediaPipelineReceive;
 class MediaPipelineTransmit;
+enum class PrincipalPrivacy : uint8_t;
 class SharedWebrtcState;
 
 namespace dom {
@@ -177,7 +178,13 @@ class PeerConnectionImpl final
       const mozilla::dom::GlobalObject* aGlobal = nullptr);
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(PeerConnectionImpl)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(PeerConnectionImpl)
+
+  struct RtpExtensionHeader {
+    JsepMediaType mMediaType;
+    SdpDirectionAttribute::Direction direction;
+    std::string extensionname;
+  };
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -191,6 +198,14 @@ class PeerConnectionImpl final
       // PeerConnectionImpl only inherits from mozilla::DataChannelConnection
       // inside libxul.
       override;
+
+  void NotifyDataChannelOpen(DataChannel*) override;
+
+  void NotifyDataChannelClosed(DataChannel*) override;
+
+  void NotifySctpConnected() override;
+
+  void NotifySctpClosed() override;
 
   const RefPtr<MediaTransportHandler> GetTransportHandler() const;
 
@@ -281,7 +296,7 @@ class PeerConnectionImpl final
 
   already_AddRefed<dom::RTCRtpTransceiver> AddTransceiver(
       const dom::RTCRtpTransceiverInit& aInit, const nsAString& aKind,
-      dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv);
+      dom::MediaStreamTrack* aSendTrack, bool aAddTrackMagic, ErrorResult& aRv);
 
   bool CheckNegotiationNeeded();
   bool CreatedSender(const dom::RTCRtpSender& aSender) const;
@@ -323,11 +338,8 @@ class PeerConnectionImpl final
 
   // this method checks to see if we've made a promise to protect media.
   bool PrivacyRequested() const {
-    return mPrivacyRequested.isSome() && *mPrivacyRequested;
-  }
-
-  bool PrivacyNeeded() const {
-    return mPrivacyRequested.isSome() && *mPrivacyRequested;
+    return mRequestedPrivacy.valueOr(PrincipalPrivacy::NonPrivate) ==
+           PrincipalPrivacy::Private;
   }
 
   NS_IMETHODIMP GetFingerprint(char** fingerprint);
@@ -370,6 +382,14 @@ class PeerConnectionImpl final
     return mIceGatheringState;
   }
 
+  NS_IMETHODIMP ConnectionState(mozilla::dom::RTCPeerConnectionState* aState);
+
+  mozilla::dom::RTCPeerConnectionState ConnectionState() {
+    mozilla::dom::RTCPeerConnectionState state;
+    ConnectionState(&state);
+    return state;
+  }
+
   NS_IMETHODIMP Close();
 
   void Close(ErrorResult& rv) { rv = Close(); }
@@ -382,6 +402,8 @@ class PeerConnectionImpl final
                                const RTCConfiguration& aConfiguration) {
     rv = SetConfiguration(aConfiguration);
   }
+
+  dom::RTCSctpTransport* GetSctp() const;
 
   void RestartIce();
   void RestartIceNoRenegotiationNeeded();
@@ -464,9 +486,17 @@ class PeerConnectionImpl final
   already_AddRefed<dom::Promise> OnSetDescriptionSuccess(
       dom::RTCSdpType aSdpType, bool aRemote, ErrorResult& aError);
 
+  void OnSetDescriptionError();
+
   bool IsClosed() const;
+
   // called when DTLS connects; we only need this once
   nsresult OnAlpnNegotiated(bool aPrivacyRequested);
+
+  void OnDtlsStateChange(const std::string& aTransportId,
+                         TransportLayer::State aState);
+  void UpdateConnectionState();
+  dom::RTCPeerConnectionState GetNewConnectionState() const;
 
   // initialize telemetry for when calls start
   void StartCallTelem();
@@ -491,7 +521,7 @@ class PeerConnectionImpl final
   // Utility function, given a string pref and an URI, returns whether or not
   // the URI occurs in the pref. Wildcards are supported (e.g. *.example.com)
   // and multiple hostnames can be present, separated by commas.
-  static bool HostnameInPref(const char* aPrefList, nsIURI* aDocURI);
+  static bool HostnameInPref(const char* aPrefList, const nsCString& aHostName);
 
   void StampTimecard(const char* aEvent);
 
@@ -509,6 +539,48 @@ class PeerConnectionImpl final
     return mPacketDumper;
   }
 
+  nsString GenerateUUID() const {
+    std::string result;
+    if (!mUuidGen->Generate(&result)) {
+      MOZ_CRASH();
+    }
+    return NS_ConvertUTF8toUTF16(result.c_str());
+  }
+
+  bool ShouldAllowOldSetParameters() const { return mAllowOldSetParameters; }
+
+  nsCString GetHostname() const { return mHostname; }
+  nsCString GetEffectiveTLDPlus1() const { return mEffectiveTLDPlus1; }
+
+  void SendWarningToConsole(const nsCString& aWarning);
+
+  const UniquePtr<dom::RTCStatsReportInternal>& GetFinalStats() const {
+    return mFinalStats;
+  }
+
+  void DisableLongTermStats() { mDisableLongTermStats = true; }
+
+  bool LongTermStatsIsDisabled() const { return mDisableLongTermStats; }
+
+  static void GetDefaultVideoCodecs(
+      std::vector<UniquePtr<JsepCodecDescription>>& aSupportedCodecs,
+      bool aUseRtx);
+
+  static void GetDefaultAudioCodecs(
+      std::vector<UniquePtr<JsepCodecDescription>>& aSupportedCodecs);
+
+  static void GetDefaultRtpExtensions(
+      std::vector<RtpExtensionHeader>& aRtpExtensions);
+
+  static void GetCapabilities(const nsAString& aKind,
+                              dom::Nullable<dom::RTCRtpCapabilities>& aResult,
+                              sdp::Direction aDirection);
+  static void SetupPreferredCodecs(
+      std::vector<UniquePtr<JsepCodecDescription>>& aPreferredCodecs);
+
+  static void SetupPreferredRtpExtensions(
+      std::vector<RtpExtensionHeader>& aPreferredheaders);
+
  private:
   virtual ~PeerConnectionImpl();
   PeerConnectionImpl(const PeerConnectionImpl& rhs);
@@ -525,6 +597,7 @@ class PeerConnectionImpl final
                                      uint32_t aMaxMessageSize, bool aMMSSet);
 
   nsresult CheckApiState(bool assert_ice_ready) const;
+  void StoreFinalStats(UniquePtr<dom::RTCStatsReportInternal>&& report);
   void CheckThread() const { MOZ_ASSERT(NS_IsMainThread(), "Wrong thread"); }
 
   // test-only: called from AddRIDExtension and AddRIDFilter
@@ -544,7 +617,7 @@ class PeerConnectionImpl final
                                     std::string* transportId,
                                     bool* client) const;
 
-  nsresult AddRtpTransceiverToJsepSession(RefPtr<JsepTransceiver>& transceiver);
+  nsresult AddRtpTransceiverToJsepSession(JsepTransceiver& transceiver);
 
   void RecordIceRestartStatistics(JsepSdpType type);
 
@@ -576,6 +649,8 @@ class PeerConnectionImpl final
   // ICE State
   mozilla::dom::RTCIceConnectionState mIceConnectionState;
   mozilla::dom::RTCIceGatheringState mIceGatheringState;
+
+  mozilla::dom::RTCPeerConnectionState mConnectionState;
 
   RefPtr<PeerConnectionObserver> mPCObserver;
 
@@ -609,19 +684,23 @@ class PeerConnectionImpl final
   //
   // This can be false if mPeerIdentity is set, in the case where identity is
   // provided, but the media is not protected from the app on either side
-  Maybe<bool> mPrivacyRequested;
+  Maybe<PrincipalPrivacy> mRequestedPrivacy;
 
   // A handle to refer to this PC with
   std::string mHandle;
 
   // A name for this PC that we are willing to expose to content.
   std::string mName;
+  nsCString mHostname;
+  nsCString mEffectiveTLDPlus1;
 
   // The target to run stuff on
   nsCOMPtr<nsISerialEventTarget> mSTSThread;
 
   // DataConnection that's used to get all the DataChannels
   RefPtr<mozilla::DataChannelConnection> mDataConnection;
+  unsigned int mDataChannelsOpened = 0;
+  unsigned int mDataChannelsClosed = 0;
 
   bool mForceIceTcp;
   RefPtr<MediaTransportHandler> mTransportHandler;
@@ -641,6 +720,13 @@ class PeerConnectionImpl final
   // The following are used for Telemetry:
   bool mCallTelemStarted = false;
   bool mCallTelemEnded = false;
+
+  // We _could_ make mFinalStatsQuery be an RTCStatsReportPromise, but that
+  // would require RTCStatsReportPromise to no longer be exclusive, which is
+  // a bit of a hassle, and not very performant.
+  RefPtr<GenericNonExclusivePromise> mFinalStatsQuery;
+  UniquePtr<dom::RTCStatsReportInternal> mFinalStats;
+  bool mDisableLongTermStats = false;
 
   // Start time of ICE.
   mozilla::TimeStamp mIceStartTime;
@@ -744,7 +830,7 @@ class PeerConnectionImpl final
   already_AddRefed<dom::RTCRtpTransceiver> CreateTransceiver(
       const std::string& aId, bool aIsVideo,
       const dom::RTCRtpTransceiverInit& aInit,
-      dom::MediaStreamTrack* aSendTrack, ErrorResult& aRv);
+      dom::MediaStreamTrack* aSendTrack, bool aAddTrackMagic, ErrorResult& aRv);
 
   std::string GetTransportIdMatchingSendTrack(
       const dom::MediaStreamTrack& aTrack) const;
@@ -757,6 +843,9 @@ class PeerConnectionImpl final
   already_AddRefed<nsIHttpChannelInternal> GetChannel() const;
 
   void BreakCycles();
+
+  bool HasPendingSetParameters() const;
+  void InvalidateLastReturnedParameters();
 
   RefPtr<WebrtcCallWrapper> mCall;
 
@@ -772,6 +861,7 @@ class PeerConnectionImpl final
   nsTArray<RefPtr<dom::RTCRtpTransceiver>> mTransceivers;
   std::map<std::string, RefPtr<dom::RTCDtlsTransport>>
       mTransportIdToRTCDtlsTransport;
+  RefPtr<dom::RTCSctpTransport> mSctpTransport;
 
   // Used whenever we need to dispatch a runnable to STS to tweak something
   // on our ICE ctx, but are not ready to do so at the moment (eg; we are
@@ -808,6 +898,9 @@ class PeerConnectionImpl final
   // Used to store the mDNS hostnames that we have registered
   std::set<std::string> mRegisteredMDNSHostnames;
 
+  // web-compat stopgap
+  bool mAllowOldSetParameters = false;
+
   // Used to store the mDNS hostnames that we have queried
   struct PendingIceCandidate {
     std::vector<std::string> mTokenizedCandidate;
@@ -834,6 +927,8 @@ class PeerConnectionImpl final
     void OnCandidateFound_s(const std::string& aTransportId,
                             const CandidateInfo& aCandidateInfo);
     void AlpnNegotiated_s(const std::string& aAlpn, bool aPrivacyRequested);
+    void ConnectionStateChange_s(const std::string& aTransportId,
+                                 TransportLayer::State aState);
 
    private:
     const std::string mHandle;

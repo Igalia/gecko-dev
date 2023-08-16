@@ -4,12 +4,17 @@
 
 #include "MFMediaEngineAudioStream.h"
 
+#include <mferror.h>
+#include <mfapi.h>
+
 #include "MFMediaEngineUtils.h"
+#include "WMFUtils.h"
+#include "mozilla/StaticPrefs_media.h"
 
 namespace mozilla {
 
-#define LOGV(msg, ...)                          \
-  MOZ_LOG(gMFMediaEngineLog, LogLevel::Verbose, \
+#define LOG(msg, ...)                           \
+  MOZ_LOG(gMFMediaEngineLog, LogLevel::Debug,   \
           ("MFMediaStream=%p (%s), " msg, this, \
            this->GetDescriptionName().get(), ##__VA_ARGS__))
 
@@ -31,6 +36,7 @@ MFMediaEngineAudioStream* MFMediaEngineAudioStream::Create(
 HRESULT MFMediaEngineAudioStream::CreateMediaType(const TrackInfo& aInfo,
                                                   IMFMediaType** aMediaType) {
   const AudioInfo& info = *aInfo.GetAsAudioInfo();
+  mAudioInfo = info;
   GUID subType = AudioMimeTypeToMediaFoundationSubtype(info.mMimeType);
   NS_ENSURE_TRUE(subType != GUID_NULL, MF_E_TOPO_CODEC_NOT_FOUND);
 
@@ -47,33 +53,85 @@ HRESULT MFMediaEngineAudioStream::CreateMediaType(const TrackInfo& aInfo,
   RETURN_IF_FAILED(mediaType->SetUINT32(MF_MT_AUDIO_BITS_PER_SAMPLE, bitDepth));
   if (subType == MFAudioFormat_AAC) {
     if (mAACUserData.IsEmpty()) {
-      MOZ_ASSERT(info.mCodecSpecificConfig.is<AacCodecSpecificData>());
-      const auto& blob = info.mCodecSpecificConfig.as<AacCodecSpecificData>()
-                             .mDecoderConfigDescriptorBinaryBlob;
+      MOZ_ASSERT(info.mCodecSpecificConfig.is<AacCodecSpecificData>() ||
+                 info.mCodecSpecificConfig.is<AudioCodecSpecificBinaryBlob>());
+      RefPtr<MediaByteBuffer> blob;
+      if (info.mCodecSpecificConfig.is<AacCodecSpecificData>()) {
+        blob = info.mCodecSpecificConfig.as<AacCodecSpecificData>()
+                   .mDecoderConfigDescriptorBinaryBlob;
+      } else {
+        blob = info.mCodecSpecificConfig.as<AudioCodecSpecificBinaryBlob>()
+                   .mBinaryBlob;
+      }
       AACAudioSpecificConfigToUserData(info.mExtendedProfile, blob->Elements(),
                                        blob->Length(), mAACUserData);
-      LOGV("Generated AAC user data");
+      LOG("Generated AAC user data");
     }
     RETURN_IF_FAILED(
         mediaType->SetUINT32(MF_MT_AAC_PAYLOAD_TYPE, 0x0));  // Raw AAC packet
     RETURN_IF_FAILED(mediaType->SetBlob(
         MF_MT_USER_DATA, mAACUserData.Elements(), mAACUserData.Length()));
   }
-  LOGV("Created audio type, subtype=%s, channel=%" PRIu32 ", rate=%" PRIu32
-       ", bitDepth=%" PRIu64,
-       GUIDToStr(subType), info.mChannels, info.mRate, bitDepth);
+  LOG("Created audio type, subtype=%s, channel=%" PRIu32 ", rate=%" PRIu32
+      ", bitDepth=%" PRIu64 ", encrypted=%d",
+      GUIDToStr(subType), info.mChannels, info.mRate, bitDepth,
+      mAudioInfo.mCrypto.IsEncrypted());
 
-  *aMediaType = mediaType.Detach();
+  if (IsEncrypted()) {
+    ComPtr<IMFMediaType> protectedMediaType;
+    RETURN_IF_FAILED(wmf::MFWrapMediaType(mediaType.Get(),
+                                          MFMediaType_Protected, subType,
+                                          protectedMediaType.GetAddressOf()));
+    LOG("Wrap MFMediaType_Audio into MFMediaType_Protected");
+    *aMediaType = protectedMediaType.Detach();
+  } else {
+    *aMediaType = mediaType.Detach();
+  }
   return S_OK;
 }
 
 bool MFMediaEngineAudioStream::HasEnoughRawData() const {
   // If more than this much raw audio is queued, we'll hold off request more
   // audio.
-  static const int64_t AMPLE_AUDIO_USECS = 2000000;
-  return mRawDataQueue.Duration() >= AMPLE_AUDIO_USECS;
+  return mRawDataQueueForFeedingEngine.Duration() >=
+         StaticPrefs::media_wmf_media_engine_raw_data_threshold_audio();
 }
 
-#undef LOGV
+already_AddRefed<MediaData> MFMediaEngineAudioStream::OutputDataInternal() {
+  AssertOnTaskQueue();
+  if (mRawDataQueueForGeneratingOutput.GetSize() == 0) {
+    return nullptr;
+  }
+  // The media engine doesn't provide a way to allow us to access decoded audio
+  // frames, and the audio playback will be handled internally inside the media
+  // engine. So we simply return fake audio data.
+  RefPtr<MediaRawData> input = mRawDataQueueForGeneratingOutput.PopFront();
+  RefPtr<MediaData> output =
+      new AudioData(input->mOffset, input->mTime, AlignedAudioBuffer{},
+                    mAudioInfo.mChannels, mAudioInfo.mRate);
+  return output.forget();
+}
+
+nsCString MFMediaEngineAudioStream::GetCodecName() const {
+  WMFStreamType type = GetStreamTypeFromMimeType(mAudioInfo.mMimeType);
+  switch (type) {
+    case WMFStreamType::MP3:
+      return "mp3"_ns;
+    case WMFStreamType::AAC:
+      return "aac"_ns;
+    case WMFStreamType::OPUS:
+      return "opus"_ns;
+    case WMFStreamType::VORBIS:
+      return "vorbis"_ns;
+    default:
+      return "unknown"_ns;
+  }
+}
+
+bool MFMediaEngineAudioStream::IsEncrypted() const {
+  return mAudioInfo.mCrypto.IsEncrypted();
+}
+
+#undef LOG
 
 }  // namespace mozilla

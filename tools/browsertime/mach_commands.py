@@ -28,8 +28,6 @@ To invoke browsertime, run
 All arguments are passed through to browsertime.
 """
 
-from __future__ import absolute_import, print_function, unicode_literals
-
 import argparse
 import collections
 import contextlib
@@ -43,12 +41,11 @@ import subprocess
 import sys
 import time
 
-from six import StringIO
-from mach.decorators import CommandArgument, Command
-from mozbuild.base import MachCommandBase, BinaryNotFoundException
-from mozbuild.util import mkdir
 import mozpack.path as mozpath
-
+from mach.decorators import Command, CommandArgument
+from mozbuild.base import BinaryNotFoundException, MachCommandBase
+from mozbuild.util import mkdir
+from six import StringIO
 
 AUTOMATION = "MOZ_AUTOMATION" in os.environ
 BROWSERTIME_ROOT = os.path.dirname(__file__)
@@ -83,9 +80,10 @@ def silence():
 
 
 def node_path(command_context):
-    from mozbuild.nodeutil import find_node_executable
-    from distutils.version import StrictVersion
     import platform
+    from distutils.version import StrictVersion
+
+    from mozbuild.nodeutil import find_node_executable
 
     state_dir = command_context._mach_context.state_dir
     cache_path = os.path.join(state_dir, "browsertime", "node-16")
@@ -176,25 +174,25 @@ host_fetches = {
     "darwin": {
         "ffmpeg": {
             "type": "static-url",
-            "url": "https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.1-macos64-static.zip",  # noqa
+            "url": "https://github.com/mozilla/perf-automation/releases/download/FFMPEG-v4.4.1/ffmpeg-macos.zip",  # noqa
             # An extension to `fetch` syntax.
-            "path": "ffmpeg-4.1.1-macos64-static",
+            "path": "ffmpeg-macos",
         },
     },
     "linux64": {
         "ffmpeg": {
             "type": "static-url",
-            "url": "https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.4-i686-static.tar.xz",  # noqa
+            "url": "https://github.com/mozilla/perf-automation/releases/download/FFMPEG-v4.4.1/ffmpeg-4.4.1-i686-static.tar.xz",  # noqa
             # An extension to `fetch` syntax.
-            "path": "ffmpeg-4.1.4-i686-static",
+            "path": "ffmpeg-4.4.1-i686-static",
         },
     },
     "win64": {
         "ffmpeg": {
             "type": "static-url",
-            "url": "https://github.com/ncalexan/geckodriver/releases/download/v0.24.0-android/ffmpeg-4.1.1-win64-static.zip",  # noqa
+            "url": "https://github.com/mozilla/perf-automation/releases/download/FFMPEG-v4.4.1/ffmpeg-4.4.1-full_build.zip",  # noqa
             # An extension to `fetch` syntax.
-            "path": "ffmpeg-4.1.1-win64-static",
+            "path": "ffmpeg-4.4.1-full_build",
         },
     },
 }

@@ -4,7 +4,7 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 "use strict";
 
 // Test submitting display device changes on the device modal
-const { getDevices } = require("devtools/client/shared/devices");
+const { getDevices } = require("resource://devtools/client/shared/devices.js");
 
 const addedDevice = {
   name: "Fake Phone RDM Test",
@@ -22,7 +22,7 @@ const TEST_URL = "data:text/html;charset=utf-8,";
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { document, store } = toolWindow;
     const deviceSelector = document.getElementById("device-selector");
@@ -146,7 +146,7 @@ addRDMTask(
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { document } = toolWindow;
 

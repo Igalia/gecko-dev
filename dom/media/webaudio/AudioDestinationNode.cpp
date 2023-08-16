@@ -28,6 +28,7 @@
 #include "nsIInterfaceRequestorUtils.h"
 #include "nsIScriptObjectPrincipal.h"
 #include "nsServiceManagerUtils.h"
+#include "Tracing.h"
 
 extern mozilla::LazyLogModule gAudioChannelLog;
 
@@ -75,6 +76,7 @@ class OfflineDestinationNodeEngine final : public AudioNodeEngine {
   void ProcessBlock(AudioNodeTrack* aTrack, GraphTime aFrom,
                     const AudioBlock& aInput, AudioBlock* aOutput,
                     bool* aFinished) override {
+    TRACE("OfflineDestinationNodeEngine::ProcessBlock");
     // Do this just for the sake of political correctness; this output
     // will not go anywhere.
     *aOutput = aInput;
@@ -190,7 +192,8 @@ class DestinationNodeEngine final : public AudioNodeEngine {
  public:
   explicit DestinationNodeEngine(AudioDestinationNode* aNode)
       : AudioNodeEngine(aNode),
-        mSampleRate(CubebUtils::PreferredSampleRate()),
+        mSampleRate(CubebUtils::PreferredSampleRate(
+            aNode->Context()->ShouldResistFingerprinting())),
         mVolume(1.0f),
         mAudibilityMonitor(
             mSampleRate,
@@ -203,6 +206,7 @@ class DestinationNodeEngine final : public AudioNodeEngine {
   void ProcessBlock(AudioNodeTrack* aTrack, GraphTime aFrom,
                     const AudioBlock& aInput, AudioBlock* aOutput,
                     bool* aFinished) override {
+    TRACE("DestinationNodeEngine::ProcessBlock");
     *aOutput = aInput;
     aOutput->mVolume *= mVolume;
 

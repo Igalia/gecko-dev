@@ -3,6 +3,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 /* globals Assert */
+/* globals info */
 
 /**
  * This file contains utilities that can be shared between xpcshell tests and mochitests.
@@ -27,11 +28,28 @@ const defaultSettings = {
 // Effectively `async`: Start the profiler and return the `startProfiler`
 // promise that will get resolved when all child process have started their own
 // profiler.
-function startProfiler(callersSettings) {
+async function startProfiler(callersSettings) {
   if (Services.profiler.IsActive()) {
-    throw new Error(
-      "The profiler must not be active before starting it in a test."
+    Assert.ok(
+      Services.env.exists("MOZ_PROFILER_STARTUP"),
+      "The profiler is active at the begining of the test, " +
+        "the MOZ_PROFILER_STARTUP environment variable should be set."
     );
+    if (Services.env.exists("MOZ_PROFILER_STARTUP")) {
+      // If the startup profiling environment variable exists, it is likely
+      // that tests are being profiled.
+      // Stop the profiler before starting profiler tests.
+      info(
+        "This test starts and stops the profiler and is not compatible " +
+          "with the use of MOZ_PROFILER_STARTUP. " +
+          "Stopping the profiler before starting the test."
+      );
+      await Services.profiler.StopProfiler();
+    } else {
+      throw new Error(
+        "The profiler must not be active before starting it in a test."
+      );
+    }
   }
   const settings = Object.assign({}, defaultSettings, callersSettings);
   return Services.profiler.StartProfiler(
@@ -266,7 +284,8 @@ async function stopNowAndGetProfile() {
   // receives the following `getProfileDataAsArrayBuffer()`.
   Services.profiler.Pause();
 
-  const profileArrayBuffer = await Services.profiler.getProfileDataAsArrayBuffer();
+  const profileArrayBuffer =
+    await Services.profiler.getProfileDataAsArrayBuffer();
   await Services.profiler.StopProfiler();
 
   const profileUint8Array = new Uint8Array(profileArrayBuffer);
@@ -373,7 +392,7 @@ function escapeStringRegexp(string) {
 /** ------ Assertions helper ------ */
 /**
  * This assert helper function makes it easy to check a lot of properties in an
- * object. We augment Assert.jsm to make it easier to use.
+ * object. We augment Assert.sys.mjs to make it easier to use.
  */
 Object.assign(Assert, {
   /*
@@ -526,7 +545,9 @@ Object.assign(Assert, {
 });
 
 const Expect = {
-  any: () => actual => {} /* We don't check anything more than the presence of this property. */,
+  any:
+    () =>
+    actual => {} /* We don't check anything more than the presence of this property. */,
 };
 
 /* These functions are part of the Assert object, and we want to reuse them. */
@@ -537,8 +558,10 @@ const Expect = {
   "objectContainsOnly",
 ].forEach(
   assertChecker =>
-    (Expect[assertChecker] = expected => (actual, ...moreArgs) =>
-      Assert[assertChecker](actual, expected, ...moreArgs))
+    (Expect[assertChecker] =
+      expected =>
+      (actual, ...moreArgs) =>
+        Assert[assertChecker](actual, expected, ...moreArgs))
 );
 
 /* These functions will only check for the type. */

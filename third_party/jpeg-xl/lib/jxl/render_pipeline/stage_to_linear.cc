@@ -17,6 +17,10 @@
 HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
+namespace {
+
+// These templates are not found via ADL.
+using hwy::HWY_NAMESPACE::IfThenZeroElse;
 
 template <typename Op>
 struct PerChannelOp {
@@ -64,7 +68,7 @@ struct OpHlg {
   template <typename D, typename T>
   void Transform(D d, T* r, T* g, T* b) const {
     for (T* val : {r, g, b}) {
-      float vals[MaxLanes(d)];
+      HWY_ALIGN float vals[MaxLanes(d)];
       Store(*val, d, vals);
       for (size_t i = 0; i < Lanes(d); ++i) {
         vals[i] = TF_HLG().DisplayFromEncoded(vals[i]);
@@ -87,7 +91,7 @@ struct OpGamma {
   const float gamma;
   template <typename D, typename T>
   T Transform(D d, const T& encoded) const {
-    return IfThenZeroElse(encoded <= Set(d, 1e-5f),
+    return IfThenZeroElse(Le(encoded, Set(d, 1e-5f)),
                           FastPowf(d, encoded, Set(d, gamma)));
   }
 };
@@ -110,8 +114,6 @@ class ToLinearStage : public RenderPipelineStage {
   void ProcessRow(const RowInfo& input_rows, const RowInfo& output_rows,
                   size_t xextra, size_t xsize, size_t xpos, size_t ypos,
                   size_t thread_id) const final {
-    PROFILER_ZONE("ToLinear");
-
     const HWY_FULL(float) d;
     const size_t xsize_v = RoundUpTo(xsize, Lanes(d));
     float* JXL_RESTRICT row0 = GetInputRow(input_rows, 0, 0);
@@ -178,6 +180,7 @@ std::unique_ptr<RenderPipelineStage> GetToLinearStage(
   }
 }
 
+}  // namespace
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 }  // namespace HWY_NAMESPACE
 }  // namespace jxl

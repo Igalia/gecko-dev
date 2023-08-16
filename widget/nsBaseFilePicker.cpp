@@ -80,7 +80,7 @@ class nsBaseFilePicker::AsyncShowFilePicker : public mozilla::Runnable {
     // It's possible that some widget implementations require GUI operations
     // to be on the main thread, so that's why we're not dispatching to another
     // thread and calling back to the main after it's done.
-    int16_t result = nsIFilePicker::returnCancel;
+    nsIFilePicker::ResultCode result = nsIFilePicker::returnCancel;
     nsresult rv = mFilePicker->Show(&result);
     if (NS_FAILED(rv)) {
       NS_ERROR("FilePicker's Show() implementation failed!");
@@ -100,7 +100,8 @@ class nsBaseFilePicker::AsyncShowFilePicker : public mozilla::Runnable {
 class nsBaseFilePickerEnumerator : public nsSimpleEnumerator {
  public:
   nsBaseFilePickerEnumerator(nsPIDOMWindowOuter* aParent,
-                             nsISimpleEnumerator* iterator, int16_t aMode)
+                             nsISimpleEnumerator* iterator,
+                             nsIFilePicker::Mode aMode)
       : mIterator(iterator),
         mParent(aParent->GetCurrentInnerWindow()),
         mMode(aMode) {}
@@ -138,7 +139,7 @@ class nsBaseFilePickerEnumerator : public nsSimpleEnumerator {
  private:
   nsCOMPtr<nsISimpleEnumerator> mIterator;
   nsCOMPtr<nsPIDOMWindowInner> mParent;
-  int16_t mMode;
+  nsIFilePicker::Mode mMode;
 };
 
 nsBaseFilePicker::nsBaseFilePicker()
@@ -147,7 +148,8 @@ nsBaseFilePicker::nsBaseFilePicker()
 nsBaseFilePicker::~nsBaseFilePicker() = default;
 
 NS_IMETHODIMP nsBaseFilePicker::Init(mozIDOMWindowProxy* aParent,
-                                     const nsAString& aTitle, int16_t aMode) {
+                                     const nsAString& aTitle,
+                                     nsIFilePicker::Mode aMode) {
   MOZ_ASSERT(aParent,
              "Null parent passed to filepicker, no file "
              "picker for you!");
@@ -235,6 +237,11 @@ nsBaseFilePicker::AppendFilters(int32_t aFilterMask) {
     // should recognize and do the correct platform behavior for.
     AppendFilter(title, u"..apps"_ns);
   }
+  if (aFilterMask & filterPDF) {
+    titleBundle->GetStringFromName("pdfTitle", title);
+    filterBundle->GetStringFromName("pdfFilter", filter);
+    AppendFilter(title, filter);
+  }
   return NS_OK;
 }
 
@@ -243,12 +250,16 @@ NS_IMETHODIMP nsBaseFilePicker::AppendRawFilter(const nsAString& aFilter) {
   return NS_OK;
 }
 
-NS_IMETHODIMP nsBaseFilePicker::GetCapture(int16_t* aCapture) {
-  *aCapture = 0;
+NS_IMETHODIMP nsBaseFilePicker::GetCapture(
+    nsIFilePicker::CaptureTarget* aCapture) {
+  *aCapture = nsIFilePicker::CaptureTarget::captureNone;
   return NS_OK;
 }
 
-NS_IMETHODIMP nsBaseFilePicker::SetCapture(int16_t aCapture) { return NS_OK; }
+NS_IMETHODIMP nsBaseFilePicker::SetCapture(
+    nsIFilePicker::CaptureTarget aCapture) {
+  return NS_OK;
+}
 
 // Set the filter index
 NS_IMETHODIMP nsBaseFilePicker::GetFilterIndex(int32_t* aFilterIndex) {
@@ -330,9 +341,17 @@ NS_IMETHODIMP nsBaseFilePicker::SetDisplaySpecialDirectory(
     return NS_OK;
   }
 
-  return NS_GetSpecialDirectory(
-      NS_ConvertUTF16toUTF8(mDisplaySpecialDirectory).get(),
-      getter_AddRefs(mDisplayDirectory));
+  return ResolveSpecialDirectory(aDirectory);
+}
+
+nsresult nsBaseFilePicker::ResolveSpecialDirectory(
+    const nsAString& aSpecialDirectory) {
+  // Only perform special-directory name resolution in the parent process.
+  // (Subclasses of `nsBaseFilePicker` used in other processes must override
+  // this function.)
+  MOZ_ASSERT(XRE_IsParentProcess());
+  return NS_GetSpecialDirectory(NS_ConvertUTF16toUTF8(aSpecialDirectory).get(),
+                                getter_AddRefs(mDisplayDirectory));
 }
 
 // Get the display special directory
@@ -355,7 +374,7 @@ nsBaseFilePicker::SetAddToRecentDocs(bool aFlag) {
 }
 
 NS_IMETHODIMP
-nsBaseFilePicker::GetMode(int16_t* aMode) {
+nsBaseFilePicker::GetMode(nsIFilePicker::Mode* aMode) {
   *aMode = mMode;
   return NS_OK;
 }

@@ -7,7 +7,6 @@
 #ifndef mozilla_dom_CanonicalBrowsingContext_h
 #define mozilla_dom_CanonicalBrowsingContext_h
 
-#include "mozilla/net/EarlyHintsService.h"
 #include "mozilla/dom/BrowsingContext.h"
 #include "mozilla/dom/MediaControlKeySource.h"
 #include "mozilla/dom/BrowsingContextWebProgress.h"
@@ -38,6 +37,7 @@ class nsITimer;
 
 namespace mozilla {
 enum class CallState;
+class BounceTrackingState;
 
 namespace embedding {
 class PrintData;
@@ -129,14 +129,16 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   void SetActiveSessionHistoryEntry(SessionHistoryEntry* aEntry);
 
   UniquePtr<LoadingSessionHistoryInfo> CreateLoadingSessionHistoryEntryForLoad(
-      nsDocShellLoadState* aLoadState, nsIChannel* aChannel);
+      nsDocShellLoadState* aLoadState, SessionHistoryEntry* aExistingEntry,
+      nsIChannel* aChannel);
 
   UniquePtr<LoadingSessionHistoryInfo> ReplaceLoadingSessionHistoryEntryForLoad(
       LoadingSessionHistoryInfo* aInfo, nsIChannel* aNewChannel);
 
   using PrintPromise = MozPromise</* unused */ bool, nsresult, false>;
-  RefPtr<PrintPromise> Print(nsIPrintSettings*);
-  already_AddRefed<Promise> PrintJS(nsIPrintSettings*, ErrorResult&);
+  MOZ_CAN_RUN_SCRIPT RefPtr<PrintPromise> Print(nsIPrintSettings*);
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> PrintJS(nsIPrintSettings*,
+                                                       ErrorResult&);
 
   // Call the given callback on all top-level descendant BrowsingContexts.
   // Return Callstate::Stop from the callback to stop calling
@@ -156,9 +158,10 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   // aReloadActiveEntry will be true if we have an active entry. If aCanReload
   // is true and aLoadState and aReloadActiveEntry are not set then we should
   // attempt to reload based on the current document in the docshell.
-  void NotifyOnHistoryReload(bool aForceReload, bool& aCanReload,
-                             Maybe<RefPtr<nsDocShellLoadState>>& aLoadState,
-                             Maybe<bool>& aReloadActiveEntry);
+  void NotifyOnHistoryReload(
+      bool aForceReload, bool& aCanReload,
+      Maybe<NotNull<RefPtr<nsDocShellLoadState>>>& aLoadState,
+      Maybe<bool>& aReloadActiveEntry);
 
   // See BrowsingContext::SetActiveSessionHistoryEntry.
   void SetActiveSessionHistoryEntry(const Maybe<nsPoint>& aPreviousScrollPos,
@@ -173,10 +176,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void RemoveFromSessionHistory(const nsID& aChangeID);
 
-  void HistoryGo(int32_t aIndex, uint64_t aHistoryEpoch,
-                 bool aRequireUserInteraction, bool aUserActivation,
-                 Maybe<ContentParentId> aContentId,
-                 std::function<void(int32_t&&)>&& aResolver);
+  Maybe<int32_t> HistoryGo(int32_t aOffset, uint64_t aHistoryEpoch,
+                           bool aRequireUserInteraction, bool aUserActivation,
+                           Maybe<ContentParentId> aContentId);
 
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -201,13 +203,19 @@ class CanonicalBrowsingContext final : public BrowsingContext {
       GlobalObject& aGlobal,
       const Sequence<mozilla::OwningNonNull<BrowsingContext>>& aRoots);
 
+  // Return true if a private browsing session is active.
+  static bool IsPrivateBrowsingActive();
+
   // This function would propogate the action to its all child browsing contexts
   // in content processes.
   void UpdateMediaControlAction(const MediaControlAction& aAction);
 
   // Triggers a load in the process
   using BrowsingContext::LoadURI;
-  void LoadURI(const nsAString& aURI, const LoadURIOptions& aOptions,
+  void FixupAndLoadURIString(const nsAString& aURI,
+                             const LoadURIOptions& aOptions,
+                             ErrorResult& aError);
+  void LoadURI(nsIURI* aURI, const LoadURIOptions& aOptions,
                ErrorResult& aError);
 
   void GoBack(const Optional<int32_t>& aCancelContentJSEpoch,
@@ -275,6 +283,14 @@ class CanonicalBrowsingContext final : public BrowsingContext {
                   const NavigationIsolationOptions& aRemotenessOptions);
 
   bool HasHistoryEntry(nsISHEntry* aEntry);
+  bool HasLoadingHistoryEntry(nsISHEntry* aEntry) {
+    for (const LoadingSessionHistoryEntry& loading : mLoadingEntries) {
+      if (loading.mEntry == aEntry) {
+        return true;
+      }
+    }
+    return false;
+  }
 
   void SwapHistoryEntries(nsISHEntry* aOldEntry, nsISHEntry* aNewEntry);
 
@@ -363,7 +379,13 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   void AddFinalDiscardListener(std::function<void(uint64_t)>&& aListener);
 
-  net::EarlyHintsService* GetEarlyHintsService();
+  bool ForceAppWindowActive() const { return mForceAppWindowActive; }
+  void SetForceAppWindowActive(bool, ErrorResult&);
+  void RecomputeAppWindowVisibility();
+
+  already_AddRefed<nsISHEntry> GetMostRecentLoadingSessionHistoryEntry();
+
+  already_AddRefed<BounceTrackingState> GetBounceTrackingState();
 
  protected:
   // Called when the browsing context is being discarded.
@@ -487,6 +509,9 @@ class CanonicalBrowsingContext final : public BrowsingContext {
                                                      aHasPostData);
   }
 
+  already_AddRefed<nsDocShellLoadState> CreateLoadInfo(
+      SessionHistoryEntry* aEntry);
+
   // XXX(farre): Store a ContentParent pointer here rather than mProcessId?
   // Indicates which process owns the docshell.
   uint64_t mProcessId;
@@ -550,11 +575,14 @@ class CanonicalBrowsingContext final : public BrowsingContext {
 
   RefPtr<RestoreState> mRestoreState;
 
+  nsCOMPtr<nsITimer> mSessionStoreSessionStorageUpdateTimer;
+
   // If this is a top level context, this is true if our browser ID is marked as
   // active in the process priority manager.
   bool mPriorityActive = false;
 
-  nsCOMPtr<nsITimer> mSessionStoreSessionStorageUpdateTimer;
+  // See CanonicalBrowsingContext.forceAppWindowActive.
+  bool mForceAppWindowActive = false;
 
   bool mIsReplaced = false;
 
@@ -568,8 +596,6 @@ class CanonicalBrowsingContext final : public BrowsingContext {
   bool mFullyDiscarded = false;
 
   nsTArray<std::function<void(uint64_t)>> mFullyDiscardedListeners;
-
-  net::EarlyHintsService mEarlyHintsService;
 };
 
 }  // namespace dom

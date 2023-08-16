@@ -147,7 +147,9 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
 
   template <typename... Args>
   static intptr_t DoSyscall(long nr, Args... args) {
-    static_assert(tl::And<(sizeof(Args) <= sizeof(void*))...>::value,
+    static_assert(std::conjunction_v<
+                      std::conditional_t<(sizeof(Args) <= sizeof(void*)),
+                                         std::true_type, std::false_type>...>,
                   "each syscall arg is at most one word");
     return ConvertError(syscall(nr, args...));
   }
@@ -644,6 +646,40 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
                              static_cast<int>(innerArgs[0]),
                              reinterpret_cast<AddrPtr>(innerArgs[1]),
                              static_cast<socklen_t>(innerArgs[2]));
+  }
+
+  static intptr_t StatFsTrap(ArgsRef aArgs, void* aux) {
+    // Warning: the kernel interface is not the C interface.  The
+    // structs are different (<asm/statfs.h> vs. <sys/statfs.h>), and
+    // the statfs64 version takes an additional size parameter.
+    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
+    int fd = open(path, O_RDONLY | O_LARGEFILE);
+    if (fd < 0) {
+      return -errno;
+    }
+
+    intptr_t rv;
+    switch (aArgs.nr) {
+      case __NR_statfs: {
+        auto buf = reinterpret_cast<void*>(aArgs.args[1]);
+        rv = DoSyscall(__NR_fstatfs, fd, buf);
+        break;
+      }
+#ifdef __NR_statfs64
+      case __NR_statfs64: {
+        auto sz = static_cast<size_t>(aArgs.args[1]);
+        auto buf = reinterpret_cast<void*>(aArgs.args[2]);
+        rv = DoSyscall(__NR_fstatfs64, fd, sz, buf);
+        break;
+      }
+#endif
+      default:
+        MOZ_ASSERT(false);
+        rv = -ENOSYS;
+    }
+
+    close(fd);
+    return rv;
   }
 
  public:
@@ -1175,6 +1211,12 @@ class SandboxPolicyCommon : public SandboxPolicyBase {
         return Error(ENOENT);
 #endif  // MOZ_ASAN
 
+        // Replace statfs with open (which may be brokered) and
+        // fstatfs (which is not allowed in this policy, but may be
+        // allowed by subclasses if they wish to enable statfs).
+      CASES_FOR_statfs:
+        return Trap(StatFsTrap, nullptr);
+
       default:
         return SandboxPolicyBase::EvaluateSyscall(sysno);
     }
@@ -1207,40 +1249,6 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
     // of the real parent pid to see what breaks when we introduce the
     // pid namespace (Bug 1151624).
     return 0;
-  }
-
-  static intptr_t StatFsTrap(ArgsRef aArgs, void* aux) {
-    // Warning: the kernel interface is not the C interface.  The
-    // structs are different (<asm/statfs.h> vs. <sys/statfs.h>), and
-    // the statfs64 version takes an additional size parameter.
-    auto path = reinterpret_cast<const char*>(aArgs.args[0]);
-    int fd = open(path, O_RDONLY | O_LARGEFILE);
-    if (fd < 0) {
-      return -errno;
-    }
-
-    intptr_t rv;
-    switch (aArgs.nr) {
-      case __NR_statfs: {
-        auto buf = reinterpret_cast<void*>(aArgs.args[1]);
-        rv = DoSyscall(__NR_fstatfs, fd, buf);
-        break;
-      }
-#ifdef __NR_statfs64
-      case __NR_statfs64: {
-        auto sz = static_cast<size_t>(aArgs.args[1]);
-        auto buf = reinterpret_cast<void*>(aArgs.args[2]);
-        rv = DoSyscall(__NR_fstatfs64, fd, sz, buf);
-        break;
-      }
-#endif
-      default:
-        MOZ_ASSERT(false);
-        rv = -ENOSYS;
-    }
-
-    close(fd);
-    return rv;
   }
 
  public:
@@ -1346,48 +1354,15 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
       return Allow();
     }
 
-    // Level 1 allows direct filesystem access; higher levels use
-    // brokering (by falling through to the main policy and delegating
-    // to SandboxPolicyCommon).
-    if (BelowLevel(2)) {
-      MOZ_ASSERT(mBroker == nullptr);
-      switch (sysno) {
-#ifdef __NR_open
-        case __NR_open:
-        case __NR_access:
-        CASES_FOR_stat:
-        CASES_FOR_lstat:
-        case __NR_chmod:
-        case __NR_link:
-        case __NR_mkdir:
-        case __NR_symlink:
-        case __NR_rename:
-        case __NR_rmdir:
-        case __NR_unlink:
-        case __NR_readlink:
-#endif
-        case __NR_openat:
-        case __NR_faccessat:
-        case __NR_faccessat2:
-        CASES_FOR_fstatat:
-        case __NR_fchmodat:
-        case __NR_linkat:
-        case __NR_mkdirat:
-        case __NR_symlinkat:
-        case __NR_renameat:
-        case __NR_unlinkat:
-        case __NR_readlinkat:
-          return Allow();
-      }
-    }
+    // Level 1 has been removed.  If seccomp-bpf is used, then we're
+    // necessarily at level >= 2 and filesystem access is brokered.
+    MOZ_ASSERT(!BelowLevel(2));
+    MOZ_ASSERT(mBroker);
 
     switch (sysno) {
 #ifdef DESKTOP
       case __NR_getppid:
         return Trap(GetPPidTrap, nullptr);
-
-      CASES_FOR_statfs:
-        return Trap(StatFsTrap, nullptr);
 
         // GTK's theme parsing tries to getcwd() while sandboxed, but
         // only during Talos runs.
@@ -1519,8 +1494,17 @@ class ContentSandboxPolicy : public SandboxPolicyCommon {
 #endif
 
 #ifdef DESKTOP
-      case __NR_pipe2:
-        return Allow();
+      case __NR_pipe2: {
+        // Restrict the flags; O_NOTIFICATION_PIPE in particular
+        // exposes enough attack surface to be a cause for concern
+        // (bug 1808320).  O_DIRECT isn't known to be used currently
+        // (Try passes with it blocked), but should be low-risk, and
+        // Chromium allows it.
+        static constexpr int allowed_flags = O_CLOEXEC | O_NONBLOCK | O_DIRECT;
+        Arg<int> flags(1);
+        return If((flags & ~allowed_flags) == 0, Allow())
+            .Else(InvalidSyscall());
+      }
 
       CASES_FOR_getrlimit:
       CASES_FOR_getresuid:
@@ -1841,6 +1825,16 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
       case SYS_SHUTDOWN:
         return Some(Allow());
 
+#ifdef MOZ_ENABLE_V4L2
+      case SYS_SOCKET:
+        // Hardware-accelerated decode uses EGL to manage hardware surfaces.
+        // When initialised it tries to connect to the Wayland server over a
+        // UNIX socket. It still works fine if it can't connect to Wayland, so
+        // don't let it create the socket (but don't kill the process for
+        // trying).
+        return Some(Error(EACCES));
+#endif
+
       default:
         return SandboxPolicyCommon::EvaluateSocketCall(aCall, aHasArgs);
     }
@@ -1859,15 +1853,23 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
         // Note: 'b' is also the Binder device on Android.
         static constexpr unsigned long kDmaBufType =
             static_cast<unsigned long>('b') << _IOC_TYPESHIFT;
+#ifdef MOZ_ENABLE_V4L2
+        // Type 'V' for V4L2, used for hw accelerated decode
+        static constexpr unsigned long kVideoType =
+            static_cast<unsigned long>('V') << _IOC_TYPESHIFT;
+#endif
         // nvidia uses some ioctls from this range (but not actual
         // fbdev ioctls; nvidia uses values >= 200 for the NR field
         // (low 8 bits))
         static constexpr unsigned long kFbDevType =
             static_cast<unsigned long>('F') << _IOC_TYPESHIFT;
 
-        // Allow DRI and DMA-Buf for VA-API
+        // Allow DRI and DMA-Buf for VA-API. Also allow V4L2 if enabled
         return If(shifted_type == kDrmType, Allow())
             .ElseIf(shifted_type == kDmaBufType, Allow())
+#ifdef MOZ_ENABLE_V4L2
+            .ElseIf(shifted_type == kVideoType, Allow())
+#endif
             // Hack for nvidia, which isn't supported yet:
             .ElseIf(shifted_type == kFbDevType, Error(ENOTTY))
             .Else(SandboxPolicyCommon::EvaluateSyscall(sysno));
@@ -1897,6 +1899,11 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
         return If(pid == 0, Allow()).Else(Trap(SchedTrap, nullptr));
       }
 
+        // The priority bounds are also used, sometimes (bug 1838675):
+      case __NR_sched_get_priority_min:
+      case __NR_sched_get_priority_max:
+        return Allow();
+
         // Mesa sometimes wants to know the OS version.
       case __NR_uname:
         return Allow();
@@ -1908,6 +1915,13 @@ class RDDSandboxPolicy final : public SandboxPolicyCommon {
 #endif
       case __NR_mknodat:
         return Error(EPERM);
+
+        // Used by the nvidia GPU driver, including in multi-GPU
+        // systems when we intend to use a non-nvidia GPU.  (Also used
+        // by Mesa for its shader cache, but we disable that in this
+        // process.)
+      CASES_FOR_fstatfs:
+        return Allow();
 
         // Pass through the common policy.
       default:
@@ -2080,26 +2094,6 @@ class UtilitySandboxPolicy : public SandboxPolicyCommon {
       case __NR_getrusage:
         return Allow();
 
-      // Pass through the common policy.
-      default:
-        return SandboxPolicyCommon::EvaluateSyscall(sysno);
-    }
-  }
-};
-
-UniquePtr<sandbox::bpf_dsl::Policy> GetUtilitySandboxPolicy(
-    SandboxBrokerClient* aMaybeBroker) {
-  return UniquePtr<sandbox::bpf_dsl::Policy>(
-      new UtilitySandboxPolicy(aMaybeBroker));
-}
-
-class UtilityAudioDecoderSandboxPolicy final : public UtilitySandboxPolicy {
- public:
-  explicit UtilityAudioDecoderSandboxPolicy(SandboxBrokerClient* aBroker)
-      : UtilitySandboxPolicy(aBroker) {}
-
-  ResultExpr EvaluateSyscall(int sysno) const override {
-    switch (sysno) {
       // Required by FFmpeg
       case __NR_get_mempolicy:
         return Allow();
@@ -2116,15 +2110,15 @@ class UtilityAudioDecoderSandboxPolicy final : public UtilitySandboxPolicy {
 
       // Pass through the common policy.
       default:
-        return UtilitySandboxPolicy::EvaluateSyscall(sysno);
+        return SandboxPolicyCommon::EvaluateSyscall(sysno);
     }
   }
 };
 
-UniquePtr<sandbox::bpf_dsl::Policy> GetUtilityAudioDecoderSandboxPolicy(
+UniquePtr<sandbox::bpf_dsl::Policy> GetUtilitySandboxPolicy(
     SandboxBrokerClient* aMaybeBroker) {
   return UniquePtr<sandbox::bpf_dsl::Policy>(
-      new UtilityAudioDecoderSandboxPolicy(aMaybeBroker));
+      new UtilitySandboxPolicy(aMaybeBroker));
 }
 
 }  // namespace mozilla

@@ -14,39 +14,32 @@
 
 "use strict";
 
-const tokenizeNumbersRx = /(^([+\-]?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?(?=\D|\s|$))|^0x[\da-fA-F]+$|\d+)/g;
-const dateRx = /(^([\w ]+,?[\w ]+)?[\w ]+,?[\w ]+\d+:\d+(:\d+)?[\w ]?|^\d{1,4}[\/\-]\d{1,4}[\/\-]\d{1,4}|^\w+, \w+ \d+, \d{4})/;
+const tokenizeNumbersRx =
+  /(^([+\-]?\d+(?:\.\d*)?(?:[eE][+\-]?\d+)?(?=\D|\s|$))|^0x[\da-fA-F]+$|\d+)/g;
 const hexRx = /^0x[0-9a-f]+$/i;
 const startsWithNullRx = /^\0/;
 const endsWithNullRx = /\0$/;
 const whitespaceRx = /\s+/g;
 const startsWithZeroRx = /^0/;
 
-loader.lazyGetter(this, "standardSessionString", () => {
-  const l10n = new Localization(["devtools/client/storage.ftl"], true);
-  return l10n.formatValueSync("storage-expires-session");
-});
-
 /**
  * Sort numbers, strings, IP Addresses, Dates, Filenames, version numbers etc.
  * "the way humans do."
- *
- * This function should only be called via naturalSortCaseSensitive or
- * naturalSortCaseInsensitive.
- *
- * e.g. [3, 2, 1, 10].sort(naturalSortCaseSensitive)
  *
  * @param  {Object} a
  *         Passed in by Array.sort(a, b)
  * @param  {Object} b
  *         Passed in by Array.sort(a, b)
+ * @param  {String} sessionString
+ *         Client-side value of storage-expires-session l10n string.
+ *         Since this function can be called from both the client and the server,
+ *         and given that client and server might have different locale, we can't compute
+ *         the localized string directly from here.
  * @param  {Boolean} insensitive
  *         Should the search be case insensitive?
  */
 // eslint-disable-next-line complexity
-function naturalSort(a = "", b = "", insensitive = false) {
-  let sessionString = standardSessionString;
-
+function naturalSort(a = "", b = "", sessionString, insensitive = false) {
   // Ensure we are working with trimmed strings
   a = (a + "").trim();
   b = (b + "").trim();
@@ -54,7 +47,7 @@ function naturalSort(a = "", b = "", insensitive = false) {
   if (insensitive) {
     a = a.toLowerCase();
     b = b.toLowerCase();
-    sessionString = standardSessionString.toLowerCase();
+    sessionString = sessionString.toLowerCase();
   }
 
   // Chunk/tokenize - Here we split the strings into arrays or strings and
@@ -74,9 +67,7 @@ function naturalSort(a = "", b = "", insensitive = false) {
   const aHexOrDate =
     parseInt(a.match(hexRx), 16) || (aChunks.length !== 1 && Date.parse(a));
   const bHexOrDate =
-    parseInt(b.match(hexRx), 16) ||
-    (aHexOrDate && b.match(dateRx) && Date.parse(b)) ||
-    null;
+    parseInt(b.match(hexRx), 16) || (bChunks.length !== 1 && Date.parse(b));
 
   if (
     (aHexOrDate || bHexOrDate) &&
@@ -92,12 +83,13 @@ function naturalSort(a = "", b = "", insensitive = false) {
   }
 
   // Try and sort Hex codes or Dates.
-  if (bHexOrDate) {
+  if (aHexOrDate && bHexOrDate) {
     if (aHexOrDate < bHexOrDate) {
       return -1;
     } else if (aHexOrDate > bHexOrDate) {
       return 1;
     }
+    return 0;
   }
 
   // Natural sorting through split numeric strings and default strings
@@ -131,7 +123,7 @@ function naturalSort(a = "", b = "", insensitive = false) {
 
 // Normalize spaces; find floats not starting with '0', string or 0 if not
 // defined
-const normalizeChunk = function(str, length) {
+const normalizeChunk = function (str, length) {
   return (
     ((!str.match(startsWithZeroRx) || length == 1) && parseFloat(str)) ||
     str.replace(whitespaceRx, " ").trim() ||
@@ -139,10 +131,18 @@ const normalizeChunk = function(str, length) {
   );
 };
 
-exports.naturalSortCaseSensitive = function naturalSortCaseSensitive(a, b) {
-  return naturalSort(a, b, false);
+exports.naturalSortCaseSensitive = function naturalSortCaseSensitive(
+  a,
+  b,
+  sessionString
+) {
+  return naturalSort(a, b, sessionString, false);
 };
 
-exports.naturalSortCaseInsensitive = function naturalSortCaseInsensitive(a, b) {
-  return naturalSort(a, b, true);
+exports.naturalSortCaseInsensitive = function naturalSortCaseInsensitive(
+  a,
+  b,
+  sessionString
+) {
+  return naturalSort(a, b, sessionString, true);
 };

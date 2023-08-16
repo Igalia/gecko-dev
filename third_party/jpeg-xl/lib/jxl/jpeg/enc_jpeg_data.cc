@@ -8,7 +8,10 @@
 #include <brotli/encode.h>
 #include <stdio.h>
 
+#include "lib/jxl/enc_fields.h"
+#include "lib/jxl/image_bundle.h"
 #include "lib/jxl/jpeg/enc_jpeg_data_reader.h"
+#include "lib/jxl/luminance.h"
 #include "lib/jxl/sanitizers.h"
 
 namespace jxl {
@@ -227,7 +230,7 @@ Status SetColorEncodingFromJpegData(const jpeg::JPEGData& jpg,
     return true;
   }
 
-  return color_encoding->SetICC(std::move(icc_profile));
+  return color_encoding->SetICC(std::move(icc_profile), /*cms=*/nullptr);
 }
 
 Status EncodeJPEGData(JPEGData& jpeg_data, PaddedBytes* bytes,
@@ -373,7 +376,7 @@ Status DecodeImageJPG(const Span<const uint8_t> bytes, CodecInOut* io) {
   io->metadata.m.SetUintSamples(BITS_IN_JSAMPLE);
   io->SetFromImage(Image3F(jpeg_data->width, jpeg_data->height),
                    io->metadata.m.color_encoding);
-  SetIntensityTarget(io);
+  SetIntensityTarget(&io->metadata.m);
   return true;
 }
 

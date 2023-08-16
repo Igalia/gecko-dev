@@ -5,11 +5,13 @@
 
 #include "nsTableRowFrame.h"
 
+#include "mozilla/Baseline.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/PresShell.h"
 #include "nsTableRowGroupFrame.h"
 #include "nsPresContext.h"
 #include "mozilla/ComputedStyle.h"
+#include "mozilla/StaticPrefs_layout.h"
 #include "nsStyleConsts.h"
 #include "nsGkAtoms.h"
 #include "nsIContent.h"
@@ -124,17 +126,7 @@ NS_QUERYFRAME_TAIL_INHERITING(nsContainerFrame)
 
 nsTableRowFrame::nsTableRowFrame(ComputedStyle* aStyle,
                                  nsPresContext* aPresContext, ClassID aID)
-    : nsContainerFrame(aStyle, aPresContext, aID),
-      mContentBSize(0),
-      mStylePctBSize(0),
-      mStyleFixedBSize(0),
-      mMaxCellAscent(0),
-      mMaxCellDescent(0),
-      mBStartBorderWidth(0),
-      mBEndBorderWidth(0),
-      mIEndContBorderWidth(0),
-      mBStartContBorderWidth(0),
-      mIStartContBorderWidth(0) {
+    : nsContainerFrame(aStyle, aPresContext, aID) {
   mBits.mRowIndex = 0;
   mBits.mHasFixedBSize = 0;
   mBits.mHasPctBSize = 0;
@@ -164,19 +156,18 @@ void nsTableRowFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
 
 void nsTableRowFrame::DestroyFrom(nsIFrame* aDestructRoot,
                                   PostDestroyData& aPostDestroyData) {
-  if (HasAnyStateBits(NS_FRAME_CAN_HAVE_ABSPOS_CHILDREN)) {
-    nsTableFrame::UnregisterPositionedTablePart(this, aDestructRoot);
-  }
-
+  nsTableFrame::MaybeUnregisterPositionedTablePart(this, aDestructRoot);
   nsContainerFrame::DestroyFrom(aDestructRoot, aPostDestroyData);
 }
 
 /* virtual */
 void nsTableRowFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
   nsContainerFrame::DidSetComputedStyle(aOldComputedStyle);
+  nsTableFrame::PositionedTablePartMaybeChanged(this, aOldComputedStyle);
 
-  if (!aOldComputedStyle)  // avoid this on init
-    return;
+  if (!aOldComputedStyle) {
+    return;  // avoid the following on init
+  }
 
 #ifdef ACCESSIBILITY
   if (nsAccessibilityService* accService = GetAccService()) {
@@ -205,53 +196,51 @@ void nsTableRowFrame::DidSetComputedStyle(ComputedStyle* aOldComputedStyle) {
 }
 
 void nsTableRowFrame::AppendFrames(ChildListID aListID,
-                                   nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                   nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   DrainSelfOverflowList();  // ensure the last frame is in mFrames
   const nsFrameList::Slice& newCells =
-      mFrames.AppendFrames(nullptr, aFrameList);
+      mFrames.AppendFrames(nullptr, std::move(aFrameList));
 
   // Add the new cell frames to the table
   nsTableFrame* tableFrame = GetTableFrame();
-  for (nsFrameList::Enumerator e(newCells); !e.AtEnd(); e.Next()) {
-    nsIFrame* childFrame = e.get();
+  for (nsIFrame* childFrame : newCells) {
     NS_ASSERTION(childFrame->IsTableCellFrame(),
                  "Not a table cell frame/pseudo frame construction failure");
     tableFrame->AppendCell(static_cast<nsTableCellFrame&>(*childFrame),
                            GetRowIndex());
   }
 
-  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                 NS_FRAME_HAS_DIRTY_CHILDREN);
   tableFrame->SetGeometryDirty();
 }
 
 void nsTableRowFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
                                    const nsLineList::iterator* aPrevFrameLine,
-                                   nsFrameList& aFrameList) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+                                   nsFrameList&& aFrameList) {
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
   NS_ASSERTION(!aPrevFrame || aPrevFrame->GetParent() == this,
                "inserting after sibling frame with different parent");
   if (mFrames.IsEmpty() || (aPrevFrame && !aPrevFrame->GetNextSibling())) {
     // This is actually an append (though our caller didn't figure that out),
     // and our append codepath is both simpler/faster _and_ less buggy.
     // https://bugzilla.mozilla.org/show_bug.cgi?id=1388898 tracks the bugginess
-    AppendFrames(aListID, aFrameList);
+    AppendFrames(aListID, std::move(aFrameList));
     return;
   }
 
   DrainSelfOverflowList();  // ensure aPrevFrame is in mFrames
   // Insert Frames in the frame list
   const nsFrameList::Slice& newCells =
-      mFrames.InsertFrames(nullptr, aPrevFrame, aFrameList);
+      mFrames.InsertFrames(nullptr, aPrevFrame, std::move(aFrameList));
 
   nsTableCellFrame* prevCellFrame =
       static_cast<nsTableCellFrame*>(nsTableFrame::GetFrameAtOrBefore(
           this, aPrevFrame, LayoutFrameType::TableCell));
   nsTArray<nsTableCellFrame*> cellChildren;
-  for (nsFrameList::Enumerator e(newCells); !e.AtEnd(); e.Next()) {
-    nsIFrame* childFrame = e.get();
+  for (nsIFrame* childFrame : newCells) {
     NS_ASSERTION(childFrame->IsTableCellFrame(),
                  "Not a table cell frame/pseudo frame construction failure");
     cellChildren.AppendElement(static_cast<nsTableCellFrame*>(childFrame));
@@ -264,13 +253,13 @@ void nsTableRowFrame::InsertFrames(ChildListID aListID, nsIFrame* aPrevFrame,
   nsTableFrame* tableFrame = GetTableFrame();
   tableFrame->InsertCells(cellChildren, GetRowIndex(), colIndex);
 
-  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                 NS_FRAME_HAS_DIRTY_CHILDREN);
   tableFrame->SetGeometryDirty();
 }
 
 void nsTableRowFrame::RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) {
-  NS_ASSERTION(aListID == kPrincipalList, "unexpected child list");
+  NS_ASSERTION(aListID == FrameChildListID::Principal, "unexpected child list");
 
   MOZ_ASSERT((nsTableCellFrame*)do_QueryFrame(aOldFrame));
   nsTableCellFrame* cellFrame = static_cast<nsTableCellFrame*>(aOldFrame);
@@ -281,7 +270,7 @@ void nsTableRowFrame::RemoveFrame(ChildListID aListID, nsIFrame* aOldFrame) {
   // Remove the frame and destroy it
   mFrames.DestroyFrame(aOldFrame);
 
-  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+  PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                 NS_FRAME_HAS_DIRTY_CHILDREN);
 
   tableFrame->SetGeometryDirty();
@@ -409,21 +398,23 @@ void nsTableRowFrame::DidResize() {
 // *including* cells with rowspans
 nscoord nsTableRowFrame::GetMaxCellAscent() const { return mMaxCellAscent; }
 
-nscoord nsTableRowFrame::GetRowBaseline(WritingMode aWM) {
+Maybe<nscoord> nsTableRowFrame::GetRowBaseline(WritingMode aWM) {
   if (mMaxCellAscent) {
-    return mMaxCellAscent;
+    return Some(mMaxCellAscent);
   }
 
   // If we get here, we don't have a baseline on any of the cells in this row.
-
+  if (aWM.IsCentralBaseline()) {
+    return Nothing{};
+  }
   nscoord ascent = 0;
   for (nsIFrame* childFrame : mFrames) {
     MOZ_ASSERT(childFrame->IsTableCellFrame());
-    nscoord s = childFrame->SynthesizeBaselineBOffsetFromContentBox(
-        aWM, BaselineSharingGroup::First);
+    nscoord s = Baseline::SynthesizeBOffsetFromContentBox(
+        childFrame, aWM, BaselineSharingGroup::First);
     ascent = std::max(ascent, s);
   }
-  return ascent;
+  return Some(ascent);
 }
 
 nscoord nsTableRowFrame::GetInitialBSize(nscoord aPctBasis) const {
@@ -783,13 +774,6 @@ void nsTableRowFrame::ReflowChildren(nsPresContext* aPresContext,
     nsRect kidRect = kidFrame->GetRect();
     LogicalPoint origKidNormalPosition =
         kidFrame->GetLogicalNormalPosition(wm, containerSize);
-    // All cells' no-relative-positioning position should be snapped to the
-    // row's bstart edge.
-    // This doesn't hold in vertical-rl mode, where we don't yet know the
-    // correct containerSize for the row frame. In that case, we'll have to
-    // fix up child positions later, after determining our desiredSize.
-    NS_ASSERTION(origKidNormalPosition.B(wm) == 0 || wm.IsVerticalRL(),
-                 "unexpected kid position");
 
     nsRect kidInkOverflow = kidFrame->InkOverflowRect();
     LogicalPoint kidPosition(wm, iCoord, 0);

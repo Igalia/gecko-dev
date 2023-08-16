@@ -25,6 +25,7 @@ extern crate tempfile;
 extern crate wr_malloc_size_of;
 use wr_malloc_size_of as malloc_size_of;
 
+use base64::prelude::*;
 use byteorder::{LittleEndian, NetworkEndian, ReadBytesExt, WriteBytesExt};
 use crossbeam_utils::atomic::AtomicCell;
 use malloc_size_of::{MallocSizeOf, MallocSizeOfOps};
@@ -53,7 +54,7 @@ use thin_vec::ThinVec;
 use xpcom::interfaces::{
     nsICRLiteCoverage, nsICRLiteTimestamp, nsICertInfo, nsICertStorage, nsICertStorageCallback,
     nsIFile, nsIHandleReportCallback, nsIIssuerAndSerialRevocationState, nsIMemoryReporter,
-    nsIMemoryReporterManager, nsIRevocationState, nsISerialEventTarget,
+    nsIMemoryReporterManager, nsIProperties, nsIRevocationState, nsISerialEventTarget,
     nsISubjectAndPubKeyRevocationState, nsISupports,
 };
 use xpcom::{nsIID, GetterAddrefs, RefPtr, ThreadBoundRefPtr, XpCom};
@@ -228,12 +229,12 @@ impl SecurityState {
             // errors and attempt to continue.
             // Check if we have a new DN
             if leading_char != '\t' && leading_char != ' ' {
-                if let Ok(decoded_dn) = base64::decode(&l) {
+                if let Ok(decoded_dn) = BASE64_STANDARD.decode(&l) {
                     dn = Some(decoded_dn);
                 }
                 continue;
             }
-            let l_sans_prefix = match base64::decode(&l[1..]) {
+            let l_sans_prefix = match BASE64_STANDARD.decode(&l[1..]) {
                 Ok(decoded) => decoded,
                 Err(_) => continue,
             };
@@ -484,7 +485,7 @@ impl SecurityState {
             Vec::with_capacity(size_of::<u8>() + coverage_entries.len() * COVERAGE_V1_ENTRY_BYTES);
         coverage_bytes.push(COVERAGE_SERIALIZATION_VERSION);
         for (b64_log_id, min_t, max_t) in coverage_entries {
-            let log_id = match base64::decode(&b64_log_id) {
+            let log_id = match BASE64_STANDARD.decode(&b64_log_id) {
                 Ok(log_id) if log_id.len() == 32 => log_id,
                 _ => {
                     warn!("malformed log ID - skipping: {}", b64_log_id);
@@ -510,7 +511,7 @@ impl SecurityState {
         );
         enrollment_bytes.push(ENROLLMENT_SERIALIZATION_VERSION);
         for b64_issuer_id in enrolled_issuers {
-            let issuer_id = match base64::decode(&b64_issuer_id) {
+            let issuer_id = match BASE64_STANDARD.decode(&b64_issuer_id) {
                 Ok(issuer_id) if issuer_id.len() == 32 => issuer_id,
                 _ => {
                     warn!("malformed issuer ID - skipping: {}", b64_issuer_id);
@@ -727,14 +728,14 @@ impl SecurityState {
         )?;
 
         for (cert_der_base64, subject_base64, trust) in certs {
-            let cert_der = match base64::decode(&cert_der_base64) {
+            let cert_der = match BASE64_STANDARD.decode(&cert_der_base64) {
                 Ok(cert_der) => cert_der,
                 Err(e) => {
                     warn!("error base64-decoding cert - skipping: {}", e);
                     continue;
                 }
             };
-            let subject = match base64::decode(&subject_base64) {
+            let subject = match BASE64_STANDARD.decode(&subject_base64) {
                 Ok(subject) => subject,
                 Err(e) => {
                     warn!("error base64-decoding subject - skipping: {}", e);
@@ -786,7 +787,7 @@ impl SecurityState {
         let reader = env_and_store.env.read()?;
 
         for hash in hashes_base64 {
-            let hash = match base64::decode(&hash) {
+            let hash = match BASE64_STANDARD.decode(&hash) {
                 Ok(hash) => hash,
                 Err(e) => {
                     warn!("error decoding hash - ignoring: {}", e);
@@ -1072,8 +1073,8 @@ impl EncodedSecurityState {
     }
 
     fn key(&self) -> Result<Vec<u8>, SecurityStateError> {
-        let key_part_1 = base64::decode(&self.key_part_1_base64)?;
-        let key_part_2 = base64::decode(&self.key_part_2_base64)?;
+        let key_part_1 = BASE64_STANDARD.decode(&self.key_part_1_base64)?;
+        let key_part_2 = BASE64_STANDARD.decode(&self.key_part_2_base64)?;
         Ok(make_key!(self.prefix, &key_part_1, &key_part_2))
     }
 
@@ -1083,7 +1084,8 @@ impl EncodedSecurityState {
 }
 
 fn get_path_from_directory_service(key: &str) -> Result<PathBuf, nserror::nsresult> {
-    let directory_service = xpcom::services::get_DirectoryService().ok_or(NS_ERROR_FAILURE)?;
+    let directory_service: RefPtr<nsIProperties> =
+        xpcom::components::Directory::service().map_err(|_| NS_ERROR_FAILURE)?;
     let cs_key = CString::new(key).map_err(|_| NS_ERROR_FAILURE)?;
 
     let mut requested_dir = GetterAddrefs::<nsIFile>::new();
@@ -1432,10 +1434,8 @@ macro_rules! get_security_state {
     }};
 }
 
-#[derive(xpcom)]
-#[xpimplements(nsICertStorage)]
-#[refcnt = "atomic"]
-struct InitCertStorage {
+#[xpcom(implement(nsICertStorage), atomic)]
+struct CertStorage {
     security_state: Arc<RwLock<SecurityState>>,
     queue: RefPtr<nsISerialEventTarget>,
 }
@@ -1484,7 +1484,7 @@ impl CertStorage {
 
     unsafe fn SetRevocations(
         &self,
-        revocations: *const ThinVec<RefPtr<nsIRevocationState>>,
+        revocations: *const ThinVec<Option<RefPtr<nsIRevocationState>>>,
         callback: *const nsICertStorageCallback,
     ) -> nserror::nsresult {
         if !is_main_thread() {
@@ -1502,7 +1502,7 @@ impl CertStorage {
         // causing sync to fail. We will accumulate telemetry on these failures
         // in bug 1254099.
 
-        for revocation in revocations {
+        for revocation in revocations.iter().flatten() {
             let mut state: i16 = 0;
             try_ns!(revocation.GetState(&mut state).to_result(), or continue);
 
@@ -1557,8 +1557,8 @@ impl CertStorage {
         pub_key: *const ThinVec<u8>,
         state: *mut i16,
     ) -> nserror::nsresult {
-        // TODO (bug 1541212): We really want to restrict this to non-main-threads only, but we
-        // can't do so until bug 1406854 is fixed.
+        // TODO (bug 1541212): We really want to restrict this to non-main-threads only in non-test
+        // contexts, but we can't do so until bug 1406854 is fixed.
         if issuer.is_null() || serial.is_null() || subject.is_null() || pub_key.is_null() {
             return NS_ERROR_NULL_POINTER;
         }
@@ -1577,7 +1577,7 @@ impl CertStorage {
         &self,
         filter: *const ThinVec<u8>,
         enrolled_issuers: *const ThinVec<nsCString>,
-        coverage: *const ThinVec<RefPtr<nsICRLiteCoverage>>,
+        coverage: *const ThinVec<Option<RefPtr<nsICRLiteCoverage>>>,
         callback: *const nsICertStorageCallback,
     ) -> nserror::nsresult {
         if !is_main_thread() {
@@ -1596,7 +1596,7 @@ impl CertStorage {
 
         let coverage = &*coverage;
         let mut coverage_entries = Vec::with_capacity(coverage.len());
-        for entry in coverage {
+        for entry in coverage.iter().flatten() {
             let mut b64_log_id = nsCString::new();
             try_ns!((*entry).GetB64LogID(&mut *b64_log_id).to_result(), or continue);
             let mut min_timestamp: u64 = 0;
@@ -1664,7 +1664,7 @@ impl CertStorage {
         issuer: *const ThinVec<u8>,
         issuerSPKI: *const ThinVec<u8>,
         serialNumber: *const ThinVec<u8>,
-        timestamps: *const ThinVec<RefPtr<nsICRLiteTimestamp>>,
+        timestamps: *const ThinVec<Option<RefPtr<nsICRLiteTimestamp>>>,
         state: *mut i16,
     ) -> nserror::nsresult {
         // TODO (bug 1541212): We really want to restrict this to non-main-threads only, but we
@@ -1679,7 +1679,7 @@ impl CertStorage {
         }
         let timestamps = &*timestamps;
         let mut timestamp_entries = Vec::with_capacity(timestamps.len());
-        for timestamp_entry in timestamps {
+        for timestamp_entry in timestamps.iter().flatten() {
             let mut log_id = ThinVec::with_capacity(32);
             try_ns!(timestamp_entry.GetLogID(&mut log_id).to_result(), or continue);
             let mut timestamp: u64 = 0;
@@ -1698,7 +1698,7 @@ impl CertStorage {
 
     unsafe fn AddCerts(
         &self,
-        certs: *const ThinVec<RefPtr<nsICertInfo>>,
+        certs: *const ThinVec<Option<RefPtr<nsICertInfo>>>,
         callback: *const nsICertStorageCallback,
     ) -> nserror::nsresult {
         if !is_main_thread() {
@@ -1709,7 +1709,7 @@ impl CertStorage {
         }
         let certs = &*certs;
         let mut cert_entries = Vec::with_capacity(certs.len());
-        for cert in certs {
+        for cert in certs.iter().flatten() {
             let mut der = nsCString::new();
             try_ns!((*cert).GetCert(&mut *der).to_result(), or continue);
             let mut subject = nsCString::new();
@@ -1772,10 +1772,8 @@ extern "C" {
     fn cert_storage_malloc_size_of(ptr: *const xpcom::reexports::libc::c_void) -> usize;
 }
 
-#[derive(xpcom)]
-#[xpimplements(nsIMemoryReporter)]
-#[refcnt = "atomic"]
-struct InitMemoryReporter {
+#[xpcom(implement(nsIMemoryReporter), atomic)]
+struct MemoryReporter {
     security_state: Arc<RwLock<SecurityState>>,
 }
 

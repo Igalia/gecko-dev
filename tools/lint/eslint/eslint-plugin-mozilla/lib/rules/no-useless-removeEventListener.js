@@ -12,9 +12,13 @@
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-useless-removeEventListener.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-useless-removeEventListener.html",
     },
+    messages: {
+      useOnce:
+        "use {once: true} instead of removeEventListener as the first instruction of the listener",
+    },
+    schema: [],
     type: "suggestion",
   },
 
@@ -54,11 +58,10 @@ module.exports = {
             (call.arguments[0].type == "Identifier" &&
               call.arguments[0].name == node.arguments[0].name))
         ) {
-          context.report(
-            call,
-            "use {once: true} instead of removeEventListener as " +
-              "the first instruction of the listener"
-          );
+          context.report({
+            node: call,
+            messageId: "useOnce",
+          });
         }
       },
     };

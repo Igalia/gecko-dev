@@ -15,6 +15,7 @@
 #include "mozilla/dom/InternalRequest.h"
 #include "mozilla/dom/Request.h"
 #include "mozilla/dom/Response.h"
+#include "mozilla/dom/RootedDictionary.h"
 #include "mozilla/dom/cache/CacheTypes.h"
 #include "mozilla/dom/cache/ReadStream.h"
 #include "mozilla/ipc/BackgroundChild.h"
@@ -189,7 +190,7 @@ void TypeUtils::ToCacheResponseWithoutBody(CacheResponse& aOut,
   }
   aOut.headers() = ToHeadersEntryList(headers);
   aOut.headersGuard() = headers->Guard();
-  aOut.channelInfo() = aIn.GetChannelInfo().AsIPCChannelInfo();
+  aOut.securityInfo() = aIn.GetChannelInfo().SecurityInfo();
   if (aIn.GetPrincipalInfo()) {
     aOut.principalInfo() = Some(*aIn.GetPrincipalInfo());
   } else {
@@ -202,11 +203,7 @@ void TypeUtils::ToCacheResponseWithoutBody(CacheResponse& aOut,
 
 void TypeUtils::ToCacheResponse(JSContext* aCx, CacheResponse& aOut,
                                 Response& aIn, ErrorResult& aRv) {
-  bool bodyUsed = aIn.GetBodyUsed(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return;
-  }
-  if (bodyUsed) {
+  if (aIn.BodyUsed()) {
     aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
     return;
   }
@@ -276,7 +273,7 @@ already_AddRefed<Response> TypeUtils::ToResponse(const CacheResponse& aIn) {
   ir->Headers()->SetGuard(aIn.headersGuard(), result);
   MOZ_DIAGNOSTIC_ASSERT(!result.Failed());
 
-  ir->InitChannelInfo(aIn.channelInfo());
+  ir->InitChannelInfo(aIn.securityInfo());
   if (aIn.principalInfo().isSome()) {
     UniquePtr<mozilla::ipc::PrincipalInfo> info(
         new mozilla::ipc::PrincipalInfo(aIn.principalInfo().ref()));
@@ -435,11 +432,7 @@ void TypeUtils::CheckAndSetBodyUsed(JSContext* aCx, Request& aRequest,
     return;
   }
 
-  bool bodyUsed = aRequest.GetBodyUsed(aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
-    return;
-  }
-  if (bodyUsed) {
+  if (aRequest.BodyUsed()) {
     aRv.ThrowTypeError<MSG_FETCH_BODY_CONSUMED_ERROR>();
     return;
   }
@@ -496,8 +489,7 @@ void TypeUtils::SerializeCacheStream(nsIInputStream* aStream,
   aStreamOut->emplace(CacheReadStream());
   CacheReadStream& cacheStream = aStreamOut->ref();
 
-  cacheStream.controlChild() = nullptr;
-  cacheStream.controlParent() = nullptr;
+  cacheStream.control() = nullptr;
 
   MOZ_ALWAYS_TRUE(mozilla::ipc::SerializeIPCStream(do_AddRef(aStream),
                                                    cacheStream.stream(),

@@ -12,12 +12,12 @@
 
 #include "jsapi.h"
 
-#include "gc/Zone.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "vm/GlobalObject.h"
-#include "vm/PlainObject.h"    // js::PlainObject
+#include "vm/Interpreter.h"
 #include "vm/WellKnownAtom.h"  // js_*_str
 
+#include "gc/GCContext-inl.h"
 #include "vm/JSObject-inl.h"
 #include "vm/NativeObject-inl.h"
 
@@ -240,15 +240,15 @@ bool FinalizationRegistryObject::construct(JSContext* cx, unsigned argc,
     return false;
   }
 
-  RootedObject proto(cx);
-  if (!GetPrototypeFromBuiltinConstructor(
-          cx, args, JSProto_FinalizationRegistry, &proto)) {
-    return false;
-  }
-
   RootedObject cleanupCallback(
       cx, ValueToCallable(cx, args.get(0), 1, NO_CONSTRUCT));
   if (!cleanupCallback) {
+    return false;
+  }
+
+  RootedObject proto(cx);
+  if (!GetPrototypeFromBuiltinConstructor(
+          cx, args, JSProto_FinalizationRegistry, &proto)) {
     return false;
   }
 

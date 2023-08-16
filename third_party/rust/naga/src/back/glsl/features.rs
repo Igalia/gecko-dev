@@ -1,12 +1,13 @@
 use super::{BackendResult, Error, Version, Writer};
 use crate::{
     AddressSpace, Binding, Bytes, Expression, Handle, ImageClass, ImageDimension, Interpolation,
-    MathFunction, Sampling, ScalarKind, ShaderStage, StorageFormat, Type, TypeInner,
+    Sampling, ScalarKind, ShaderStage, StorageFormat, Type, TypeInner,
 };
 use std::fmt::Write;
 
 bitflags::bitflags! {
     /// Structure used to encode additions to GLSL that aren't supported by all versions.
+    #[derive(Clone, Copy, Debug, Eq, PartialEq)]
     pub struct Features: u32 {
         /// Buffer address space support.
         const BUFFER_STORAGE = 1;
@@ -34,14 +35,12 @@ bitflags::bitflags! {
         /// Arrays with a dynamic length.
         const DYNAMIC_ARRAY_SIZE = 1 << 16;
         const MULTI_VIEW = 1 << 17;
-        /// Fused multiply-add.
-        const FMA = 1 << 18;
         /// Texture samples query
-        const TEXTURE_SAMPLES = 1 << 19;
+        const TEXTURE_SAMPLES = 1 << 18;
         /// Texture levels query
-        const TEXTURE_LEVELS = 1 << 20;
+        const TEXTURE_LEVELS = 1 << 19;
         /// Image size query
-        const IMAGE_SIZE = 1 << 21;
+        const IMAGE_SIZE = 1 << 20;
     }
 }
 
@@ -82,7 +81,7 @@ impl FeaturesManager {
             // Used when both core and es support the feature
             ($feature:ident, $core:literal, $es:literal) => {
                 if self.0.contains(Features::$feature)
-                    && (version < Version::Desktop($core) || version < Version::Embedded($es))
+                    && (version < Version::Desktop($core) || version < Version::new_gles($es))
                 {
                     missing |= Features::$feature;
                 }
@@ -101,12 +100,14 @@ impl FeaturesManager {
         check_feature!(CONSERVATIVE_DEPTH, 130, 300);
         check_feature!(NOPERSPECTIVE_QUALIFIER, 130);
         check_feature!(SAMPLE_QUALIFIER, 400, 320);
-        // gl_ClipDistance is supported by core versions > 1.3 and aren't supported by an es versions without extensions
-        check_feature!(CLIP_DISTANCE, 130, 300);
-        check_feature!(CULL_DISTANCE, 450, 300);
+        check_feature!(CLIP_DISTANCE, 130, 300 /* with extension */);
+        check_feature!(CULL_DISTANCE, 450, 300 /* with extension */);
         check_feature!(SAMPLE_VARIABLES, 400, 300);
         check_feature!(DYNAMIC_ARRAY_SIZE, 430, 310);
-        check_feature!(MULTI_VIEW, 140, 310);
+        match version {
+            Version::Embedded { is_webgl: true, .. } => check_feature!(MULTI_VIEW, 140, 300),
+            _ => check_feature!(MULTI_VIEW, 140, 310),
+        };
         // Only available on glsl core, this means that opengl es can't query the number
         // of samples nor levels in a image and neither do bound checks on the sample nor
         // the level argument of texelFecth
@@ -196,9 +197,8 @@ impl FeaturesManager {
         if (self.0.contains(Features::CLIP_DISTANCE) || self.0.contains(Features::CULL_DISTANCE))
             && version.is_es()
         {
-            // TODO: handle gl_ClipDistance and gl_CullDistance usage in better way
             // https://www.khronos.org/registry/OpenGL/extensions/EXT/EXT_clip_cull_distance.txt
-            // writeln!(out, "#extension GL_EXT_clip_cull_distance : require")?;
+            writeln!(out, "#extension GL_EXT_clip_cull_distance : require")?;
         }
 
         if self.0.contains(Features::SAMPLE_VARIABLES) && version.is_es() {
@@ -212,13 +212,13 @@ impl FeaturesManager {
         }
 
         if self.0.contains(Features::MULTI_VIEW) {
-            // https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_multiview.txt
-            writeln!(out, "#extension GL_EXT_multiview : require")?;
-        }
-
-        if self.0.contains(Features::FMA) && version >= Version::Embedded(310) {
-            // https://www.khronos.org/registry/OpenGL/extensions/EXT/EXT_gpu_shader5.txt
-            writeln!(out, "#extension GL_EXT_gpu_shader5 : require")?;
+            if let Version::Embedded { is_webgl: true, .. } = version {
+                // https://www.khronos.org/registry/OpenGL/extensions/OVR/OVR_multiview2.txt
+                writeln!(out, "#extension GL_OVR_multiview2 : require")?;
+            } else {
+                // https://github.com/KhronosGroup/GLSL/blob/master/extensions/ext/GL_EXT_multiview.txt
+                writeln!(out, "#extension GL_EXT_multiview : require")?;
+            }
         }
 
         if self.0.contains(Features::TEXTURE_SAMPLES) {
@@ -267,6 +267,10 @@ impl<'a, W> Writer<'a, W> {
 
         if let ShaderStage::Compute = self.entry_point.stage {
             self.features.request(Features::COMPUTE_SHADER)
+        }
+
+        if self.multiview.is_some() {
+            self.features.request(Features::MULTI_VIEW);
         }
 
         for (ty_handle, ty) in self.module.types.iter() {
@@ -413,10 +417,6 @@ impl<'a, W> Writer<'a, W> {
         {
             for (_, expr) in expressions.iter() {
                 match *expr {
-                // Check for fused multiply add use
-                Expression::Math { fun, .. } if fun == MathFunction::Fma => {
-                    features.request(Features::FMA)
-                }
                 // Check for queries that neeed aditonal features
                 Expression::ImageQuery {
                     image,
@@ -443,7 +443,7 @@ impl<'a, W> Writer<'a, W> {
                 Expression::ImageLoad {
                     sample, level, ..
                 } => {
-                    if policies.image != crate::proc::BoundsCheckPolicy::Unchecked {
+                    if policies.image_load != crate::proc::BoundsCheckPolicy::Unchecked {
                         if sample.is_some() {
                             features.request(Features::TEXTURE_SAMPLES)
                         }

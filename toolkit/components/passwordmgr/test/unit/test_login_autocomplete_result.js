@@ -1,5 +1,5 @@
-const { LoginAutoCompleteResult } = ChromeUtils.import(
-  "resource://gre/modules/LoginAutoComplete.jsm"
+const { LoginAutoCompleteResult } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginAutoComplete.sys.mjs"
 );
 let nsLoginInfo = Components.Constructor(
   "@mozilla.org/login-manager/loginInfo;1",
@@ -657,7 +657,6 @@ add_task(async function test_all_patterns() {
 
   LoginHelper.createLogger("LoginAutoCompleteResult");
   Services.prefs.setBoolPref("signon.showAutoCompleteFooter", true);
-  Services.prefs.setBoolPref("signon.showAutoCompleteOrigins", true);
 
   expectedResults.forEach((pattern, testIndex) => {
     info(`expectedResults[${testIndex}]`);
@@ -669,6 +668,7 @@ add_task(async function test_all_patterns() {
     let actual = new LoginAutoCompleteResult(
       pattern.searchString || "",
       pattern.matchingLogins,
+      [],
       pattern.formOrigin || "https://mochi.test:8888",
       {
         hostname: "mochi.test",

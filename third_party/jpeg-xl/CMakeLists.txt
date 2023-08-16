@@ -34,16 +34,6 @@ check_cxx_source_compiles(
   JPEGXL_EMSCRIPTEN
 )
 
-check_cxx_source_compiles(
-   "int main() {
-      #if !defined(HWY_DISABLED_TARGETS)
-      static_assert(false, \"HWY_DISABLED_TARGETS is not defined\");
-      #endif
-      return 0;
-    }"
-  JXL_HWY_DISABLED_TARGETS_FORCED
-)
-
 message(STATUS "CMAKE_SYSTEM_PROCESSOR is ${CMAKE_SYSTEM_PROCESSOR}")
 include(CheckCXXCompilerFlag)
 check_cxx_compiler_flag("-fsanitize=fuzzer-no-link" CXX_FUZZERS_SUPPORTED)
@@ -57,6 +47,19 @@ if(CHECK_PIE_SUPPORTED)
   check_pie_supported(LANGUAGES CXX)
   if(CMAKE_CXX_LINK_PIE_SUPPORTED)
     set(CMAKE_POSITION_INDEPENDENT_CODE TRUE)
+  endif()
+endif()
+
+if(PROVISION_DEPENDENCIES)
+  # Run script to provision dependencies.
+  find_program (BASH_PROGRAM bash)
+  if(BASH_PROGRAM)
+    execute_process(
+      COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/deps.sh
+      RESULT_VARIABLE PROVISION_DEPENDENCIES_RESULT)
+  endif()
+  if(NOT PROVISION_DEPENDENCIES_RESULT EQUAL "0")
+    message(FATAL_ERROR "${CMAKE_CURRENT_SOURCE_DIR}/deps.sh failed with ${PROVISION_DEPENDENCIES_RESULT}")
   endif()
 endif()
 
@@ -82,6 +85,16 @@ if(NOT APPLE AND NOT WIN32 AND NOT HAIKU AND CMAKE_SYSTEM_PROCESSOR MATCHES "x86
   endif()
 endif()
 
+check_cxx_source_compiles(
+   "int main() {
+      #if !defined(HWY_DISABLED_TARGETS)
+      static_assert(false, \"HWY_DISABLED_TARGETS is not defined\");
+      #endif
+      return 0;
+    }"
+  JXL_HWY_DISABLED_TARGETS_FORCED
+)
+
 set(WARNINGS_AS_ERRORS_DEFAULT false)
 
 if((SANITIZER STREQUAL "msan") OR JPEGXL_EMSCRIPTEN)
@@ -100,6 +113,16 @@ set(JPEGXL_ENABLE_DEVTOOLS false CACHE BOOL
     "Build JPEGXL developer tools.")
 set(JPEGXL_ENABLE_TOOLS true CACHE BOOL
     "Build JPEGXL user tools: cjxl and djxl.")
+set(JPEGXL_ENABLE_JPEGLI true CACHE BOOL
+    "Build jpegli library.")
+set(JPEGXL_ENABLE_JPEGLI_LIBJPEG true CACHE BOOL
+    "Build libjpeg.so shared library based on jpegli.")
+set(JPEGXL_INSTALL_JPEGLI_LIBJPEG false CACHE BOOL
+    "Install jpegli version of libjpeg.so system-wide.")
+set(JPEGLI_LIBJPEG_LIBRARY_VERSION "62.3.0" CACHE STRING
+    "Library version of the libjpeg.so shared library that we build.")
+set(JPEGLI_LIBJPEG_LIBRARY_SOVERSION "62" CACHE STRING
+    "Library so-version of the libjpeg.so shared library that we build.")
 set(JPEGXL_ENABLE_DOXYGEN true CACHE BOOL
     "Generate C API documentation using Doxygen.")
 set(JPEGXL_ENABLE_MANPAGES true CACHE BOOL
@@ -128,11 +151,15 @@ set(JPEGXL_ENABLE_PLUGINS false CACHE BOOL
     "Build third-party plugins to support JPEG XL in other applications.")
 set(JPEGXL_ENABLE_COVERAGE false CACHE BOOL
     "Enable code coverage tracking for libjxl. This also enables debug and disables optimizations.")
-set(JPEGXL_ENABLE_PROFILER false CACHE BOOL
-    "Builds in support for profiling (printed by tools if extra flags given")
+set(JPEGXL_ENABLE_SIZELESS_VECTORS false CACHE BOOL
+    "Builds in support for SVE/RVV vectorization")
 set(JPEGXL_ENABLE_TRANSCODE_JPEG true CACHE BOOL
     "Builds in support for decoding transcoded JXL files back to JPEG,\
  disabling it makes the decoder reject JXL_DEC_JPEG_RECONSTRUCTION events,\
+ (default enabled)")
+set(JPEGXL_ENABLE_BOXES true CACHE BOOL
+    "Builds in support for decoding boxes in JXL files,\
+ disabling it makes the decoder reject JXL_DEC_BOX events,\
  (default enabled)")
 set(JPEGXL_STATIC false CACHE BOOL
     "Build tools as static binaries.")
@@ -142,7 +169,12 @@ set(JPEGXL_DEP_LICENSE_DIR "" CACHE STRING
     "Directory where to search for system dependencies \"copyright\" files.")
 set(JPEGXL_FORCE_NEON false CACHE BOOL
     "Set flags to enable NEON in arm if not enabled by your toolchain.")
-
+set(JPEGXL_TEST_TOOLS false CACHE BOOL
+    "Run scripts that test the encoding / decoding tools.")
+set(JPEGXL_ENABLE_AVX512 false CACHE BOOL
+    "Build with AVX512 support (faster on CPUs that support it, but larger binary size).")
+set(JPEGXL_ENABLE_AVX512_ZEN4 false CACHE BOOL
+    "Build with Zen4-optimized AVX512 support (faster on CPUs that support it, but larger binary size).")
 
 # Force system dependencies.
 set(JPEGXL_FORCE_SYSTEM_BROTLI false CACHE BOOL
@@ -177,6 +209,20 @@ endif()
 
 message(STATUS
     "Compiled IDs C:${CMAKE_C_COMPILER_ID}, C++:${CMAKE_CXX_COMPILER_ID}")
+
+# Always disable SSSE3 since it is rare to have SSSE3 but not SSE4
+set(HWY_DISABLED_TARGETS "HWY_SSSE3")
+if (NOT JPEGXL_ENABLE_AVX512)
+  message(STATUS "Disabled AVX512 (set JPEGXL_ENABLE_AVX512 to enable it)")
+  set(HWY_DISABLED_TARGETS "${HWY_DISABLED_TARGETS}|HWY_AVX3")
+  add_definitions(-DFJXL_ENABLE_AVX512=0)
+endif()
+if (NOT JPEGXL_ENABLE_AVX512_ZEN4)
+  message(STATUS "Disabled AVX512_ZEN4 (set JPEGXL_ENABLE_AVX512_ZEN4 to enable it)")
+  set(HWY_DISABLED_TARGETS "${HWY_DISABLED_TARGETS}|HWY_AVX3_ZEN4")
+endif()
+
+
 
 # CMAKE_EXPORT_COMPILE_COMMANDS is used to generate the compilation database
 # used by clang-tidy.
@@ -255,73 +301,84 @@ if (CXX_NO_RTTI_SUPPORTED)
   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-rtti")
 endif()
 
+# Internal flags for coverage builds:
+set(JPEGXL_COVERAGE_FLAGS)
+set(JPEGXL_COVERAGE_LINK_FLAGS)
+
 if (MSVC)
-# TODO(janwas): add flags
-else ()
-
-# Global compiler flags for all targets here and in subdirectories.
-add_definitions(
-  # Avoid changing the binary based on the current time and date.
-  -D__DATE__="redacted"
-  -D__TIMESTAMP__="redacted"
-  -D__TIME__="redacted"
-)
-
-# TODO(eustas): see https://github.com/google/highway/issues/836
-if (CMAKE_CXX_COMPILER_ID MATCHES "GNU" AND NOT JXL_HWY_DISABLED_TARGETS_FORCED)
-  add_definitions(-DHWY_DISABLED_TARGETS=\(HWY_SVE|HWY_SVE2|HWY_SVE_256|HWY_SVE2_128|HWY_RVV\))
-  message("Warning: HWY_SVE, HWY_SVE2, HWY_SVE_256, HWY_SVE2_128 and HWY_RVV CPU targets are disabled")
-endif()
-
-# Avoid log spam from fopen etc.
-if(MSVC)
+  # TODO(janwas): add flags
   add_definitions(-D_CRT_SECURE_NO_WARNINGS)
-endif()
+else ()
+  # Global compiler flags for all targets here and in subdirectories.
+  add_definitions(
+    # Avoid changing the binary based on the current time and date.
+    -D__DATE__="redacted"
+    -D__TIMESTAMP__="redacted"
+    -D__TIME__="redacted"
+  )
 
-# In CMake before 3.12 it is problematic to pass repeated flags like -Xclang.
-# For this reason we place them in CMAKE_CXX_FLAGS instead.
-# See https://gitlab.kitware.com/cmake/cmake/issues/15826
+  # TODO(eustas): JXL currently compiles, but does not pass tests...
+  if (NOT JXL_HWY_DISABLED_TARGETS_FORCED)
+    if (NOT JPEGXL_ENABLE_SIZELESS_VECTORS)
+      set(HWY_DISABLED_TARGETS "${HWY_DISABLED_TARGETS}|HWY_SVE|HWY_SVE2|HWY_SVE_256|HWY_SVE2_128|HWY_RVV")
+    endif()
+    add_definitions(-DHWY_DISABLED_TARGETS=\(${HWY_DISABLED_TARGETS}\))
+  endif()
 
-# Machine flags.
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -funwind-tables")
-if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xclang -mrelax-all")
-endif()
-if (CXX_CONSTRUCTOR_ALIASES_SUPPORTED)
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xclang -mconstructor-aliases")
-endif()
+  # In CMake before 3.12 it is problematic to pass repeated flags like -Xclang.
+  # For this reason we place them in CMAKE_CXX_FLAGS instead.
+  # See https://gitlab.kitware.com/cmake/cmake/issues/15826
 
-if(WIN32)
-# Not supported by clang-cl, but frame pointers are default on Windows
-else()
-  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
-endif()
+  # Machine flags.
+  set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -funwind-tables")
+  if (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xclang -mrelax-all")
+  endif()
+  if (CXX_CONSTRUCTOR_ALIASES_SUPPORTED)
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -Xclang -mconstructor-aliases")
+  endif()
 
-# CPU flags - remove once we have NEON dynamic dispatch
+  if(WIN32)
+    # Not supported by clang-cl, but frame pointers are default on Windows
+  else()
+    set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fno-omit-frame-pointer")
+  endif()
 
-# TODO(janwas): this also matches M1, but only ARMv7 is intended/needed.
-if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
-if(JPEGXL_FORCE_NEON)
-# GCC requires these flags, otherwise __ARM_NEON is undefined.
-set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
-   -mfpu=neon-vfpv4 -mfloat-abi=hard")
-endif()
-endif()
+  # CPU flags - remove once we have NEON dynamic dispatch
 
-# Force build with optimizations in release mode.
-set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
+  # TODO(janwas): this also matches M1, but only ARMv7 is intended/needed.
+  if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm")
+    if(JPEGXL_FORCE_NEON)
+      # GCC requires these flags, otherwise __ARM_NEON is undefined.
+      set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} \
+        -mfpu=neon-vfpv4 -mfloat-abi=hard")
+    endif()
+  endif()
 
-add_compile_options(
-  # Ignore this to allow redefining __DATE__ and others.
-  -Wno-builtin-macro-redefined
+  # Force build with optimizations in release mode.
+  set(CMAKE_CXX_FLAGS_RELEASE "${CMAKE_CXX_FLAGS_RELEASE} -O2")
 
-  # Global warning settings.
-  -Wall
-)
+  add_compile_options(
+    # Ignore this to allow redefining __DATE__ and others.
+    -Wno-builtin-macro-redefined
 
-if (JPEGXL_WARNINGS_AS_ERRORS)
-add_compile_options(-Werror)
-endif ()
+    # Global warning settings.
+    -Wall
+  )
+
+  if (JPEGXL_WARNINGS_AS_ERRORS)
+    add_compile_options(-Werror)
+  endif ()
+
+  if(JPEGXL_ENABLE_COVERAGE)
+    set(JPEGXL_COVERAGE_FLAGS
+        -g -O0 -fprofile-arcs -ftest-coverage
+        -DJXL_ENABLE_ASSERT=0 -DJXL_ENABLE_CHECK=0
+    )
+    set(JPEGXL_COVERAGE_LINK_FLAGS
+        --coverage
+    )
+  endif()  # JPEGXL_ENABLE_COVERAGE
 endif ()  # !MSVC
 
 include(GNUInstallDirs)
@@ -346,124 +403,124 @@ endif()
 add_subdirectory(lib)
 
 if(BUILD_TESTING)
-# Script to run tests over the source code in bash.
-find_program (BASH_PROGRAM bash)
-if(BASH_PROGRAM)
-  add_test(
-    NAME bash_test
-    COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/bash_test.sh)
-endif()
+  # Script to run tests over the source code in bash.
+  find_program (BASH_PROGRAM bash)
+  if(BASH_PROGRAM)
+    add_test(
+      NAME bash_test
+      COMMAND ${BASH_PROGRAM} ${CMAKE_CURRENT_SOURCE_DIR}/bash_test.sh)
+  endif()
 endif() # BUILD_TESTING
 
 # Documentation generated by Doxygen
 if(JPEGXL_ENABLE_DOXYGEN)
-find_package(Doxygen)
-if(DOXYGEN_FOUND)
-set(DOXYGEN_GENERATE_HTML "YES")
-set(DOXYGEN_GENERATE_XML "YES")
-set(DOXYGEN_STRIP_FROM_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/include")
-set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "README.md")
-if(JPEGXL_WARNINGS_AS_ERRORS)
-set(DOXYGEN_WARN_AS_ERROR "YES")
-endif()
-set(DOXYGEN_QUIET "YES")
-doxygen_add_docs(doc
-  "${CMAKE_CURRENT_SOURCE_DIR}/lib/include"
-  "${CMAKE_CURRENT_SOURCE_DIR}/doc/api.txt"
-  WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
-  COMMENT "Generating C API documentation")
+  find_package(Doxygen)
+  if(DOXYGEN_FOUND)
+    set(DOXYGEN_GENERATE_HTML "YES")
+    set(DOXYGEN_GENERATE_XML "YES")
+    set(DOXYGEN_STRIP_FROM_PATH "${CMAKE_CURRENT_SOURCE_DIR}/lib/include")
+    set(DOXYGEN_USE_MDFILE_AS_MAINPAGE "README.md")
+    if(JPEGXL_WARNINGS_AS_ERRORS)
+      set(DOXYGEN_WARN_AS_ERROR "YES")
+    endif()
+    set(DOXYGEN_QUIET "YES")
+    doxygen_add_docs(doc
+      "${CMAKE_CURRENT_SOURCE_DIR}/lib/include"
+      "${CMAKE_CURRENT_SOURCE_DIR}/doc/api.txt"
+      WORKING_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}"
+      COMMENT "Generating C API documentation")
 
-# Add sphinx doc build step for readthedocs.io (requires doxygen too).
-find_program(SPHINX_BUILD_PROGRAM sphinx-build)
-if(SPHINX_BUILD_PROGRAM)
-  add_custom_command(
-    OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rtd/nonexistent"
-    COMMENT "Generating readthedocs.io output on ${CMAKE_CURRENT_BINARY_DIR}/rtd"
-    COMMAND ${SPHINX_BUILD_PROGRAM} -q -W -b html -j auto
-      ${CMAKE_SOURCE_DIR}/doc/sphinx
-      ${CMAKE_CURRENT_BINARY_DIR}/rtd
-    DEPENDS doc
-  )
-  # This command runs the documentation generation every time since the output
-  # target file doesn't exist.
-  add_custom_target(rtd-html
-    DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/rtd/nonexistent
-  )
-else() # SPHINX_BUILD_PROGRAM\
-  message(WARNING "sphinx-build not found, skipping rtd documentation")
-endif() # SPHINX_BUILD_PROGRAM
+    # Add sphinx doc build step for readthedocs.io (requires doxygen too).
+    find_program(SPHINX_BUILD_PROGRAM sphinx-build)
+    if(SPHINX_BUILD_PROGRAM)
+      add_custom_command(
+        OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/rtd/nonexistent"
+        COMMENT "Generating readthedocs.io output on ${CMAKE_CURRENT_BINARY_DIR}/rtd"
+        COMMAND ${SPHINX_BUILD_PROGRAM} -q -W -b html -j auto
+          ${CMAKE_SOURCE_DIR}/doc/sphinx
+          ${CMAKE_CURRENT_BINARY_DIR}/rtd
+        DEPENDS doc
+      )
+      # This command runs the documentation generation every time since the output
+      # target file doesn't exist.
+      add_custom_target(rtd-html
+        DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/rtd/nonexistent
+      )
+    else() # SPHINX_BUILD_PROGRAM\
+      message(WARNING "sphinx-build not found, skipping rtd documentation")
+    endif() # SPHINX_BUILD_PROGRAM
 
-else()
-# Create a "doc" target for compatibility since "doc" is not otherwise added to
-# the build when doxygen is not installed.
-add_custom_target(doc false
-  COMMENT "Error: Can't generate doc since Doxygen not installed.")
-endif() # DOXYGEN_FOUND
+  else()
+    # Create a "doc" target for compatibility since "doc" is not otherwise added to
+    # the build when doxygen is not installed.
+    add_custom_target(doc false
+      COMMENT "Error: Can't generate doc since Doxygen not installed.")
+  endif() # DOXYGEN_FOUND
 endif() # JPEGXL_ENABLE_DOXYGEN
 
 if(JPEGXL_ENABLE_MANPAGES)
-find_program(ASCIIDOC a2x)
-if(ASCIIDOC)
-file(STRINGS "${ASCIIDOC}" ASCIIDOC_SHEBANG LIMIT_COUNT 1)
-if(ASCIIDOC_SHEBANG MATCHES "/sh|/bash")
-  set(ASCIIDOC_PY_FOUND ON)
-  # Run the program directly and set ASCIIDOC as empty.
-  set(ASCIIDOC_PY "${ASCIIDOC}")
-  set(ASCIIDOC "")
-elseif(ASCIIDOC_SHEBANG MATCHES "python2")
-  find_package(Python2 COMPONENTS Interpreter)
-  set(ASCIIDOC_PY_FOUND "${Python2_Interpreter_FOUND}")
-  set(ASCIIDOC_PY Python2::Interpreter)
-elseif(ASCIIDOC_SHEBANG MATCHES "python3")
-  find_package(Python3 COMPONENTS Interpreter)
-  set(ASCIIDOC_PY_FOUND "${Python3_Interpreter_FOUND}")
-  set(ASCIIDOC_PY Python3::Interpreter)
-else()
-  find_package(Python COMPONENTS Interpreter QUIET)
-  if(NOT Python_Interpreter_FOUND)
-    find_program(ASCIIDOC_PY python)
-    if(ASCIIDOC_PY)
+  find_program(ASCIIDOC a2x)
+  if(ASCIIDOC)
+    file(STRINGS "${ASCIIDOC}" ASCIIDOC_SHEBANG LIMIT_COUNT 1)
+    if(ASCIIDOC_SHEBANG MATCHES "/sh|/bash" OR MINGW)
       set(ASCIIDOC_PY_FOUND ON)
+      # Run the program directly and set ASCIIDOC as empty.
+      set(ASCIIDOC_PY "${ASCIIDOC}")
+      set(ASCIIDOC "")
+    elseif(ASCIIDOC_SHEBANG MATCHES "python2")
+      find_package(Python2 COMPONENTS Interpreter)
+      set(ASCIIDOC_PY_FOUND "${Python2_Interpreter_FOUND}")
+      set(ASCIIDOC_PY Python2::Interpreter)
+    elseif(ASCIIDOC_SHEBANG MATCHES "python3")
+      find_package(Python3 COMPONENTS Interpreter)
+      set(ASCIIDOC_PY_FOUND "${Python3_Interpreter_FOUND}")
+      set(ASCIIDOC_PY Python3::Interpreter)
+    else()
+      find_package(Python COMPONENTS Interpreter QUIET)
+      if(NOT Python_Interpreter_FOUND)
+        find_program(ASCIIDOC_PY python)
+        if(ASCIIDOC_PY)
+          set(ASCIIDOC_PY_FOUND ON)
+        endif()
+      else()
+        set(ASCIIDOC_PY_FOUND "${Python_Interpreter_FOUND}")
+        set(ASCIIDOC_PY Python::Interpreter)
+      endif()
     endif()
-  else()
-    set(ASCIIDOC_PY_FOUND "${Python_Interpreter_FOUND}")
-    set(ASCIIDOC_PY Python::Interpreter)
-  endif()
-endif()
 
-if (ASCIIDOC_PY_FOUND)
-  set(MANPAGE_FILES "")
-  set(MANPAGES "")
-  foreach(PAGE IN ITEMS cjxl djxl)
-    # Invoking the Python interpreter ourselves instead of running the a2x binary
-    # directly is necessary on MSYS2, otherwise it is run through cmd.exe which
-    # does not recognize it.
-    add_custom_command(
-      OUTPUT "${PAGE}.1"
-      COMMAND "${ASCIIDOC_PY}"
-      ARGS ${ASCIIDOC}
-        --format manpage --destination-dir="${CMAKE_CURRENT_BINARY_DIR}"
-        "${CMAKE_CURRENT_SOURCE_DIR}/doc/man/${PAGE}.txt"
-      MAIN_DEPENDENCY "${CMAKE_CURRENT_SOURCE_DIR}/doc/man/${PAGE}.txt")
-    list(APPEND MANPAGE_FILES "${CMAKE_CURRENT_BINARY_DIR}/${PAGE}.1")
-    list(APPEND MANPAGES "${PAGE}.1")
-  endforeach()
-  add_custom_target(manpages ALL DEPENDS ${MANPAGES})
-  install(FILES ${MANPAGE_FILES} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
-endif()  # ASCIIDOC_PY_FOUND
-else()
-  message(WARNING "asciidoc was not found, the man pages will not be installed.")
-endif()  # ASCIIDOC
+    if (ASCIIDOC_PY_FOUND)
+      set(MANPAGE_FILES "")
+      set(MANPAGES "")
+      foreach(PAGE IN ITEMS cjxl djxl)
+        # Invoking the Python interpreter ourselves instead of running the a2x binary
+        # directly is necessary on MSYS2, otherwise it is run through cmd.exe which
+        # does not recognize it.
+        add_custom_command(
+          OUTPUT "${PAGE}.1"
+          COMMAND "${ASCIIDOC_PY}"
+          ARGS ${ASCIIDOC}
+            --format manpage --destination-dir="${CMAKE_CURRENT_BINARY_DIR}"
+            "${CMAKE_CURRENT_SOURCE_DIR}/doc/man/${PAGE}.txt"
+          MAIN_DEPENDENCY "${CMAKE_CURRENT_SOURCE_DIR}/doc/man/${PAGE}.txt")
+        list(APPEND MANPAGE_FILES "${CMAKE_CURRENT_BINARY_DIR}/${PAGE}.1")
+        list(APPEND MANPAGES "${PAGE}.1")
+      endforeach()
+      add_custom_target(manpages ALL DEPENDS ${MANPAGES})
+      install(FILES ${MANPAGE_FILES} DESTINATION ${CMAKE_INSTALL_MANDIR}/man1)
+    endif()  # ASCIIDOC_PY_FOUND
+  else()
+    message(WARNING "asciidoc was not found, the man pages will not be installed.")
+  endif()  # ASCIIDOC
 endif()  # JPEGXL_ENABLE_MANPAGES
 
 # Example usage code.
 if (JPEGXL_ENABLE_EXAMPLES)
-include(examples/examples.cmake)
+  include(examples/examples.cmake)
 endif ()
 
 # Plugins for third-party software
 if (JPEGXL_ENABLE_PLUGINS)
-add_subdirectory(plugins)
+  add_subdirectory(plugins)
 endif ()
 
 # Binary tools

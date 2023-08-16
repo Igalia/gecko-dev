@@ -2,27 +2,20 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
   InteractionsBlocklist: "resource:///modules/InteractionsBlocklist.sys.mjs",
-  PageDataService: "resource:///modules/pagedata/PageDataService.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
-  Snapshots: "resource:///modules/Snapshots.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeout: "resource://gre/modules/Timer.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.jsm",
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  setTimeout: "resource://gre/modules/Timer.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", function() {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", function () {
   return console.createInstance({
     prefix: "InteractionsManager",
     maxLogLevel: Services.prefs.getBoolPref(
@@ -43,13 +36,6 @@ XPCOMUtils.defineLazyPreferenceGetter(
   "pageViewIdleTime",
   "browser.places.interactions.pageViewIdleTime",
   60
-);
-
-XPCOMUtils.defineLazyPreferenceGetter(
-  lazy,
-  "snapshotIdleTime",
-  "browser.places.interactions.snapshotIdleTime",
-  2
 );
 
 XPCOMUtils.defineLazyPreferenceGetter(
@@ -158,8 +144,10 @@ class _Interactions {
   _pageViewStartTime = Cu.now();
 
   /**
-   * Stores interactions in the database, see the InteractionsStore class.
-   * This is created lazily, see the `store` getter.
+   * Stores interactions in the database, see the {@link InteractionsStore}
+   * class. This is created lazily, see the `store` getter.
+   *
+   * @type {InteractionsStore | undefined}
    */
   #store = undefined;
 
@@ -200,7 +188,6 @@ class _Interactions {
       }
     }
     Services.obs.addObserver(this, DOMWINDOW_OPENED_TOPIC, true);
-    Services.obs.addObserver(this, "places-snapshots-added", true);
     lazy.idleService.addIdleObserver(this, lazy.pageViewIdleTime);
     this.#initialized = true;
   }
@@ -232,6 +219,8 @@ class _Interactions {
    * Retrieve the underlying InteractionsStore object. This exists for testing
    * purposes and should not be abused by production code (for example it'd be
    * a bad idea to force flushes).
+   *
+   * @returns {InteractionsStore}
    */
   get store() {
     if (!this.#store) {
@@ -249,6 +238,10 @@ class _Interactions {
    *   The document information of the page associated with the interaction.
    */
   registerNewInteraction(browser, docInfo) {
+    if (!browser) {
+      // The browser may have already gone away.
+      return;
+    }
     let interaction = this.#interactions.get(browser);
     if (interaction && interaction.url != docInfo.url) {
       this.registerEndOfInteraction(browser);
@@ -276,10 +269,6 @@ class _Interactions {
       updated_at: now,
     };
     this.#interactions.set(browser, interaction);
-
-    // Lock any potential page data in memory until we've decided if this page
-    // needs to become a snapshot or not.
-    lazy.PageDataService.lockEntry(this, docInfo.url);
 
     // Only reset the time if this is being loaded in the active tab of the
     // active window.
@@ -338,6 +327,8 @@ class _Interactions {
 
   /**
    * Returns the interactions update promise to be used when sychronization is needed from tests.
+   *
+   * @returns {Promise<void>}
    */
   get interactionUpdatePromise() {
     return _Interactions.interactionUpdatePromise;
@@ -346,12 +337,18 @@ class _Interactions {
   /**
    * Updates the current interaction on fulfillment of the asynchronous collection of scrolling interactions.
    *
-   *  @param {Browser} browser
-   *  @param {DOMWindow} activeWindow
-   *  @param {boolean} userIsIdle
-   *  @param {WeakMap<browser, InteractionInfo>} interactions
-   *  @param {number} pageViewStartTime
-   *  @param {InteractionsStore} store
+   * @param {Browser} browser
+   *   The browser object that has triggered the update, if known.
+   * @param {DOMWindow} activeWindow
+   *   The active window.
+   * @param {boolean} userIsIdle
+   *   Whether the user is idle.
+   * @param {WeakMap<Browser, InteractionInfo>} interactions
+   *   A map of interactions for each browser instance
+   * @param {number} pageViewStartTime
+   *   The time the page was loaded.
+   * @param {InteractionsStore} store
+   *   The interactions store.
    */
   static async #updateInteraction_async(
     browser,
@@ -398,29 +395,31 @@ class _Interactions {
     }
 
     // Collect the scrolling data and add the interaction to the store on completion
-    _Interactions.interactionUpdatePromise = _Interactions.interactionUpdatePromise
-      .then(async () => ChromeUtils.collectScrollingData())
-      .then(
-        result => {
-          interaction.scrollingTime += result.interactionTimeInMilliseconds;
-          interaction.scrollingDistance += result.scrollingDistanceInPixels;
-        },
-        reason => {
-          Cu.reportError(reason);
-        }
-      )
-      .then(() => {
-        interaction.updated_at = monotonicNow();
+    _Interactions.interactionUpdatePromise =
+      _Interactions.interactionUpdatePromise
+        .then(async () => ChromeUtils.collectScrollingData())
+        .then(
+          result => {
+            interaction.scrollingTime += result.interactionTimeInMilliseconds;
+            interaction.scrollingDistance += result.scrollingDistanceInPixels;
+          },
+          reason => {
+            console.error(reason);
+          }
+        )
+        .then(() => {
+          interaction.updated_at = monotonicNow();
 
-        lazy.logConsole.debug("Add to store: ", interaction);
-        store.add(interaction);
-      });
+          lazy.logConsole.debug("Add to store: ", interaction);
+          store.add(interaction);
+        });
   }
 
   /**
    * Handles a window becoming active.
    *
    * @param {DOMWindow} win
+   *   The window that has become active.
    */
   #onActivateWindow(win) {
     lazy.logConsole.debug("Window activated");
@@ -437,6 +436,7 @@ class _Interactions {
    * Handles a window going inactive.
    *
    * @param {DOMWindow} win
+   *   The window that is going inactive.
    */
   #onDeactivateWindow(win) {
     lazy.logConsole.debug("Window deactivate");
@@ -464,6 +464,7 @@ class _Interactions {
    * Handles various events and forwards them to appropriate functions.
    *
    * @param {DOMEvent} event
+   *   The event that will be handled
    */
   handleEvent(event) {
     switch (event.type) {
@@ -486,24 +487,16 @@ class _Interactions {
    * Handles notifications from the observer service.
    *
    * @param {nsISupports} subject
+   *   The subject of the notification.
    * @param {string} topic
+   *   The topic of the notification.
    * @param {string} data
+   *   The data attached to the notification.
    */
   observe(subject, topic, data) {
     switch (topic) {
       case DOMWINDOW_OPENED_TOPIC:
         this.#onWindowOpen(subject);
-        break;
-      case "places-snapshots-added":
-        // For manually created snapshots we want to flush interactions to disk
-        // asap, so that heuristics can use them.
-        data = JSON.parse(data);
-        if (
-          data.some(d => d.userPersisted != lazy.Snapshots.USER_PERSISTED.NO)
-        ) {
-          lazy.logConsole.debug("User added some snapshots");
-          this.#updateInteraction();
-        }
         break;
       case "idle":
         lazy.logConsole.debug("User went idle");
@@ -597,6 +590,7 @@ class InteractionsStore {
   /**
    * Tracks interactions replicating the unique index in the underlying schema.
    * Interactions are keyed by url and then created_at.
+   *
    * @type {Map<string, Map<number, InteractionInfo>>}
    */
   #interactions = new Map();
@@ -604,17 +598,6 @@ class InteractionsStore {
    * Used to unblock the queue of promises when the timer is cleared.
    */
   #timerResolve = undefined;
-  /*
-   * A list of URLs that have had interactions updated since we last checked for
-   * new snapshots.
-   * @type {Set<string>}
-   */
-  #potentialSnapshots = new Set();
-  /*
-   * Whether the user has been idle for more than the value of
-   * `browser.places.interactions.snapshotIdleTime`.
-   */
-  #userIsIdle = false;
 
   constructor() {
     // Block async shutdown to ensure the last write goes through.
@@ -627,27 +610,11 @@ class InteractionsStore {
 
     // Can be used to wait for the last pending write to have happened.
     this.pendingPromise = Promise.resolve();
-
-    lazy.idleService.addIdleObserver(this, lazy.snapshotIdleTime);
-  }
-
-  /**
-   * Tells the snapshot service to check all of the potential snapshots.
-   *
-   * @returns {Promise}
-   */
-  async updateSnapshots() {
-    let urls = [...this.#potentialSnapshots];
-    this.#potentialSnapshots.clear();
-    await lazy.Snapshots.updateSnapshots(urls);
-
-    for (let url of urls) {
-      lazy.PageDataService.unlockEntry(Interactions, url);
-    }
   }
 
   /**
    * Synchronizes the pending interactions with the storage device.
+   *
    * @returns {Promise} resolved when the pending data is on disk.
    */
   async flush() {
@@ -655,7 +622,6 @@ class InteractionsStore {
       lazy.clearTimeout(this.#timer);
       this.#timerResolve();
       await this.#updateDatabase();
-      await this.updateSnapshots();
     }
   }
 
@@ -700,30 +666,10 @@ class InteractionsStore {
       let promise = new Promise(resolve => {
         this.#timerResolve = resolve;
         this.#timer = lazy.setTimeout(() => {
-          this.#updateDatabase()
-            .catch(Cu.reportError)
-            .then(resolve);
+          this.#updateDatabase().catch(console.error).then(resolve);
         }, lazy.saveInterval);
       });
       this.pendingPromise = this.pendingPromise.then(() => promise);
-    }
-  }
-
-  /**
-   * Handles notifications from the observer service.
-   *
-   * @param {nsISupports} subject
-   * @param {string} topic
-   * @param {string} data
-   */
-  observe(subject, topic, data) {
-    switch (topic) {
-      case "idle":
-        this.#userIsIdle = true;
-        this.updateSnapshots();
-        break;
-      case "active":
-        this.#userIsIdle = false;
     }
   }
 
@@ -741,9 +687,7 @@ class InteractionsStore {
     let params = {};
     let SQLInsertFragments = [];
     let i = 0;
-    for (let [url, interactionsForUrl] of interactions) {
-      this.#potentialSnapshots.add(url);
-
+    for (let interactionsForUrl of interactions.values()) {
       for (let interaction of interactionsForUrl.values()) {
         params[`url${i}`] = interaction.url;
         params[`referrer${i}`] = interaction.referrer;
@@ -800,9 +744,5 @@ class InteractionsStore {
     this.progress.pendingUpdates = 0;
 
     Services.obs.notifyObservers(null, "places-metadata-updated");
-
-    if (this.#userIsIdle) {
-      this.updateSnapshots();
-    }
   }
 }

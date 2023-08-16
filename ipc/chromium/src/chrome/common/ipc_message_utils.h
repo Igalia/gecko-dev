@@ -8,20 +8,24 @@
 #define CHROME_COMMON_IPC_MESSAGE_UTILS_H_
 
 #include <cstdint>
+#include <iterator>
 #include <map>
+#include <unordered_map>
 #include <string>
 #include <type_traits>
 #include <utility>
+#include <vector>
 #include "ErrorList.h"
 #include "base/basictypes.h"
 #include "base/compiler_specific.h"
 #include "base/logging.h"
 #include "base/pickle.h"
 #include "base/string_util.h"
-#include "build/build_config.h"
 #include "chrome/common/ipc_message.h"
+#include "mozilla/CheckedInt.h"
+#include "mozilla/IntegerRange.h"
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 #  include <windows.h>
 #endif
 
@@ -34,6 +38,7 @@ namespace mozilla::ipc {
 class IProtocol;
 template <typename P>
 struct IPDLParamTraits;
+class SharedMemory;
 
 // Implemented in ProtocolUtils.cpp
 MOZ_NEVER_INLINE void PickleFatalError(const char* aMsg, IProtocol* aActor);
@@ -81,9 +86,8 @@ class MOZ_STACK_CLASS MessageWriter final {
     return message_.WriteData(data, length);
   }
 
-  bool WriteBytes(const void* data, uint32_t data_len,
-                  uint32_t alignment = sizeof(uint32_t)) {
-    return message_.WriteBytes(data, data_len, alignment);
+  bool WriteBytes(const void* data, uint32_t data_len) {
+    return message_.WriteBytes(data, data_len);
   }
 
   bool WriteBytesZeroCopy(void* data, uint32_t data_len, uint32_t capacity) {
@@ -102,7 +106,7 @@ class MOZ_STACK_CLASS MessageWriter final {
     message_.WritePort(std::move(port));
   }
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   bool WriteMachSendRight(mozilla::UniqueMachSendRight port) {
     return message_.WriteMachSendRight(std::move(port));
   }
@@ -163,12 +167,6 @@ class MOZ_STACK_CLASS MessageReader final {
     return message_.ReadBytesInto(&iter_, data, length);
   }
 
-  [[nodiscard]] bool ExtractBuffers(
-      size_t length, mozilla::BufferList<InfallibleAllocPolicy>* buffers,
-      uint32_t alignment = sizeof(uint32_t)) {
-    return message_.ExtractBuffers(&iter_, length, buffers, alignment);
-  }
-
   [[nodiscard]] bool IgnoreBytes(uint32_t length) {
     return message_.IgnoreBytes(&iter_, length);
   }
@@ -193,7 +191,7 @@ class MOZ_STACK_CLASS MessageReader final {
     return message_.ConsumePort(&iter_, port);
   }
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
   [[nodiscard]] bool ConsumeMachSendRight(mozilla::UniqueMachSendRight* port) {
     return message_.ConsumeMachSendRight(&iter_, port);
   }
@@ -207,6 +205,156 @@ class MOZ_STACK_CLASS MessageReader final {
   const Message& message_;
   PickleIterator iter_;
   mozilla::ipc::IProtocol* actor_;
+};
+
+namespace detail {
+
+// Helper for checking `T::kHasDeprecatedReadParamPrivateConstructor` using a
+// fallback when the member isn't defined.
+template <typename T>
+inline constexpr auto HasDeprecatedReadParamPrivateConstructor(int)
+    -> decltype(T::kHasDeprecatedReadParamPrivateConstructor) {
+  return T::kHasDeprecatedReadParamPrivateConstructor;
+}
+
+template <typename T>
+inline constexpr bool HasDeprecatedReadParamPrivateConstructor(...) {
+  return false;
+}
+
+}  // namespace detail
+
+/**
+ * Result type returned from some `ParamTraits<T>::Read` implementations, and
+ * from `IPC::ReadParam<T>(MessageReader*)`. Either contains the value or
+ * indicates a failure to deserialize.
+ *
+ * This type can be thought of as a variant on `Maybe<T>`, except that it
+ * unconditionally constructs the underlying value if it is default
+ * constructible. This helps keep code size down, especially when calling
+ * outparameter-based ReadParam implementations (bug 1815177).
+ */
+template <typename T,
+          bool = std::is_default_constructible_v<T> ||
+                 detail::HasDeprecatedReadParamPrivateConstructor<T>(0)>
+class ReadResult {
+ public:
+  ReadResult() = default;
+
+  template <typename U, std::enable_if_t<std::is_convertible_v<U, T>, int> = 0>
+  MOZ_IMPLICIT ReadResult(U&& aData)
+      : mIsOk(true), mData(std::forward<U>(aData)) {}
+
+  template <typename... Args>
+  explicit ReadResult(std::in_place_t, Args&&... aArgs)
+      : mIsOk(true), mData(std::forward<Args>(aArgs)...) {}
+
+  ReadResult(const ReadResult&) = default;
+  ReadResult(ReadResult&&) = default;
+
+  template <typename U, std::enable_if_t<std::is_convertible_v<U, T>, int> = 0>
+  MOZ_IMPLICIT ReadResult& operator=(U&& aData) {
+    mIsOk = true;
+    mData = std::forward<U>(aData);
+    return *this;
+  }
+
+  ReadResult& operator=(const ReadResult&) = default;
+  ReadResult& operator=(ReadResult&&) noexcept = default;
+
+  // Check if the ReadResult contains a valid value.
+  explicit operator bool() const { return isOk(); }
+  bool isOk() const { return mIsOk; }
+
+  // Get the data from this ReadResult.
+  T& get() {
+    MOZ_ASSERT(mIsOk);
+    return mData;
+  }
+  const T& get() const {
+    MOZ_ASSERT(mIsOk);
+    return mData;
+  }
+
+  T& operator*() { return get(); }
+  const T& operator*() const { return get(); }
+
+  T* operator->() { return &get(); }
+  const T* operator->() const { return &get(); }
+
+  // Try to extract a `Maybe<T>` from this ReadResult.
+  mozilla::Maybe<T> TakeMaybe() {
+    if (mIsOk) {
+      mIsOk = false;
+      return mozilla::Some(std::move(mData));
+    }
+    return mozilla::Nothing();
+  }
+
+  // Get the underlying data from this ReadResult, even if not OK.
+  //
+  // This is only available for types which are default constructible, and is
+  // used to optimize old-style `ReadParam` calls.
+  T& GetStorage() { return mData; }
+
+  // Compliment to `GetStorage` used to set the ReadResult into an OK state
+  // without constructing the underlying value.
+  void SetOk(bool aIsOk) { mIsOk = aIsOk; }
+
+ private:
+  bool mIsOk = false;
+  T mData{};
+};
+
+template <typename T>
+class ReadResult<T, false> {
+ public:
+  ReadResult() = default;
+
+  template <typename U, std::enable_if_t<std::is_convertible_v<U, T>, int> = 0>
+  MOZ_IMPLICIT ReadResult(U&& aData)
+      : mData(std::in_place, std::forward<U>(aData)) {}
+
+  template <typename... Args>
+  explicit ReadResult(std::in_place_t, Args&&... aArgs)
+      : mData(std::in_place, std::forward<Args>(aArgs)...) {}
+
+  ReadResult(const ReadResult&) = default;
+  ReadResult(ReadResult&&) = default;
+
+  template <typename U, std::enable_if_t<std::is_convertible_v<U, T>, int> = 0>
+  MOZ_IMPLICIT ReadResult& operator=(U&& aData) {
+    mData.reset();
+    mData.emplace(std::forward<U>(aData));
+    return *this;
+  }
+
+  ReadResult& operator=(const ReadResult&) = default;
+  ReadResult& operator=(ReadResult&&) noexcept = default;
+
+  // Check if the ReadResult contains a valid value.
+  explicit operator bool() const { return isOk(); }
+  bool isOk() const { return mData.isSome(); }
+
+  // Get the data from this ReadResult.
+  T& get() { return mData.ref(); }
+  const T& get() const { return mData.ref(); }
+
+  T& operator*() { return get(); }
+  const T& operator*() const { return get(); }
+
+  T* operator->() { return &get(); }
+  const T* operator->() const { return &get(); }
+
+  // Try to extract a `Maybe<T>` from this ReadResult.
+  mozilla::Maybe<T> TakeMaybe() { return std::move(mData); }
+
+  // These methods are only available if the type is default constructible.
+  T& GetStorage() = delete;
+  void SetOk(bool aIsOk) = delete;
+
+ private:
+  mozilla::Maybe<T> mData;
 };
 
 //-----------------------------------------------------------------------------
@@ -289,18 +437,243 @@ template <class P>
 struct ParamTraits;
 
 template <typename P>
-static inline void WriteParam(MessageWriter* writer, P&& p) {
+inline void WriteParam(MessageWriter* writer, P&& p) {
   ParamTraits<std::decay_t<P>>::Write(writer, std::forward<P>(p));
 }
 
+namespace detail {
+
 template <typename P>
-static inline bool WARN_UNUSED_RESULT ReadParam(MessageReader* reader, P* p) {
-  return ParamTraits<P>::Read(reader, p);
+inline constexpr auto ParamTraitsReadUsesOutParam()
+    -> decltype(ParamTraits<P>::Read(std::declval<MessageReader*>(),
+                                     std::declval<P*>())) {
+  return true;
 }
 
 template <typename P>
-static inline void LogParam(const P& p, std::wstring* l) {
-  ParamTraits<P>::Log(p, l);
+inline constexpr auto ParamTraitsReadUsesOutParam()
+    -> decltype(ParamTraits<P>::Read(std::declval<MessageReader*>()), bool{}) {
+  return false;
+}
+
+}  // namespace detail
+
+template <typename P>
+inline bool WARN_UNUSED_RESULT ReadParam(MessageReader* reader, P* p) {
+  if constexpr (!detail::ParamTraitsReadUsesOutParam<P>()) {
+    auto maybe = ParamTraits<P>::Read(reader);
+    if (maybe) {
+      *p = std::move(*maybe);
+      return true;
+    }
+    return false;
+  } else {
+    return ParamTraits<P>::Read(reader, p);
+  }
+}
+
+template <typename P>
+inline ReadResult<P> WARN_UNUSED_RESULT ReadParam(MessageReader* reader) {
+  if constexpr (!detail::ParamTraitsReadUsesOutParam<P>()) {
+    return ParamTraits<P>::Read(reader);
+  } else {
+    ReadResult<P> p;
+    p.SetOk(ParamTraits<P>::Read(reader, &p.GetStorage()));
+    return p;
+  }
+}
+
+class MOZ_STACK_CLASS MessageBufferWriter {
+ public:
+  // Create a MessageBufferWriter to write `full_len` bytes into `writer`.
+  // If the length exceeds a threshold, a shared memory region may be used
+  // instead of including the data inline.
+  //
+  // NOTE: This does _NOT_ write out the length of the buffer.
+  // NOTE: Data written this way _MUST_ be read using `MessageBufferReader`.
+  MessageBufferWriter(MessageWriter* writer, uint32_t full_len);
+  ~MessageBufferWriter();
+
+  MessageBufferWriter(const MessageBufferWriter&) = delete;
+  MessageBufferWriter& operator=(const MessageBufferWriter&) = delete;
+
+  // Write `len` bytes from `data` into the message.
+  //
+  // Exactly `full_len` bytes should be written across multiple calls before the
+  // `MessageBufferWriter` is destroyed.
+  //
+  // WARNING: all writes (other than the last write) must be multiples of 4
+  // bytes in length. Not doing this will lead to padding being introduced into
+  // the payload and break things. This can probably be improved in the future
+  // with deeper integration between `MessageBufferWriter` and `Pickle`.
+  bool WriteBytes(const void* data, uint32_t len);
+
+ private:
+  MessageWriter* writer_;
+  RefPtr<mozilla::ipc::SharedMemory> shmem_;
+  char* buffer_ = nullptr;
+  uint32_t remaining_ = 0;
+};
+
+class MOZ_STACK_CLASS MessageBufferReader {
+ public:
+  // Create a MessageBufferReader to read `full_len` bytes from `reader` which
+  // were written using `MessageBufferWriter`.
+  //
+  // NOTE: This may consume a shared memory region from the message, meaning
+  // that the same data cannot be read multiple times.
+  // NOTE: Data read this way _MUST_ be written using `MessageBufferWriter`.
+  MessageBufferReader(MessageReader* reader, uint32_t full_len);
+  ~MessageBufferReader();
+
+  MessageBufferReader(const MessageBufferReader&) = delete;
+  MessageBufferReader& operator=(const MessageBufferReader&) = delete;
+
+  // Read `count` bytes from the message into `data`.
+  //
+  // Exactly `full_len` bytes should be read across multiple calls before the
+  // `MessageBufferReader` is destroyed.
+  //
+  // WARNING: all reads (other than the last read) must be multiples of 4 bytes
+  // in length. Not doing this will lead to bytes being skipped in the payload
+  // and break things. This can probably be improved in the future with deeper
+  // integration between `MessageBufferReader` and `Pickle`.
+  [[nodiscard]] bool ReadBytesInto(void* data, uint32_t len);
+
+ private:
+  MessageReader* reader_;
+  RefPtr<mozilla::ipc::SharedMemory> shmem_;
+  const char* buffer_ = nullptr;
+  uint32_t remaining_ = 0;
+};
+
+// Whether or not it is safe to serialize the given type using
+// `WriteBytesOrShmem`.
+template <typename P>
+constexpr bool kUseWriteBytes =
+    !std::is_same_v<std::remove_const_t<std::remove_reference_t<P>>, bool> &&
+    (std::is_integral_v<std::remove_const_t<std::remove_reference_t<P>>> ||
+     std::is_floating_point_v<std::remove_const_t<std::remove_reference_t<P>>>);
+
+/**
+ * Helper for writing a contiguous sequence (such as for a string or array) into
+ * a message, with optimizations for basic integral and floating point types.
+ *
+ * Integral types will be copied into shared memory if the sequence exceeds 64k
+ * bytes in size.
+ *
+ * Values written with this method must be read with `ReadSequenceParam`.
+ *
+ * The type parameter specifies the semantics to use, and should generally
+ * either be `P&&` or `const P&`. The constness of the `data` argument should
+ * match this parameter.
+ */
+template <typename P>
+void WriteSequenceParam(MessageWriter* writer, std::remove_reference_t<P>* data,
+                        size_t length) {
+  mozilla::CheckedUint32 ipc_length(length);
+  if (!ipc_length.isValid()) {
+    writer->FatalError("invalid length passed to WriteSequenceParam");
+    return;
+  }
+  writer->WriteUInt32(ipc_length.value());
+
+  if constexpr (kUseWriteBytes<P>) {
+    mozilla::CheckedUint32 byte_length =
+        ipc_length * sizeof(std::remove_reference_t<P>);
+    if (!byte_length.isValid()) {
+      writer->FatalError("invalid byte length in WriteSequenceParam");
+      return;
+    }
+    MessageBufferWriter buf_writer(writer, byte_length.value());
+    buf_writer.WriteBytes(data, byte_length.value());
+  } else {
+    auto* end = data + length;
+    for (auto* it = data; it != end; ++it) {
+      WriteParam(writer, std::forward<P>(*it));
+    }
+  }
+}
+
+template <typename P>
+bool ReadSequenceParamImpl(MessageReader* reader, P* data, uint32_t length) {
+  if (length == 0) {
+    return true;
+  }
+  if (!data) {
+    reader->FatalError("allocation failed in ReadSequenceParam");
+    return false;
+  }
+
+  if constexpr (kUseWriteBytes<P>) {
+    mozilla::CheckedUint32 byte_length(length);
+    byte_length *= sizeof(P);
+    if (!byte_length.isValid()) {
+      reader->FatalError("invalid byte length in ReadSequenceParam");
+      return false;
+    }
+    MessageBufferReader buf_reader(reader, byte_length.value());
+    return buf_reader.ReadBytesInto(data, byte_length.value());
+  } else {
+    P* end = data + length;
+    for (auto* it = data; it != end; ++it) {
+      if (!ReadParam(reader, it)) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+template <typename P, typename I>
+bool ReadSequenceParamImpl(MessageReader* reader, mozilla::Maybe<I>&& data,
+                           uint32_t length) {
+  static_assert(!kUseWriteBytes<P>,
+                "Cannot return an output iterator if !kUseWriteBytes<P>");
+  static_assert(
+      std::is_base_of_v<std::output_iterator_tag,
+                        typename std::iterator_traits<I>::iterator_category>,
+      "must be Maybe<output iterator>");
+  if (length == 0) {
+    return true;
+  }
+  if (!data) {
+    reader->FatalError("allocation failed in ReadSequenceParam");
+    return false;
+  }
+
+  for (uint32_t i = 0; i < length; ++i) {
+    auto elt = ReadParam<P>(reader);
+    if (!elt) {
+      return false;
+    }
+    *data.ref() = std::move(*elt);
+    ++data.ref();
+  }
+  return true;
+}
+
+/**
+ * Helper for reading a contiguous sequence (such as a string or array) into a
+ * message which was previously written using `WriteSequenceParam`.
+ *
+ * The function argument `allocator` will be called with the length of the
+ * sequence, and must return either a pointer to the memory region which the
+ * sequence should be read into, or a Maybe of a C++ output iterator which will
+ * infallibly accept length elements, and append them to the output sequence.
+ *
+ * If the type satisfies kUseWriteBytes, output iterators are not supported.
+ */
+template <typename P, typename F>
+bool WARN_UNUSED_RESULT ReadSequenceParam(MessageReader* reader,
+                                          F&& allocator) {
+  uint32_t length = 0;
+  if (!reader->ReadUInt32(&length)) {
+    reader->FatalError("failed to read byte length in ReadSequenceParam");
+    return false;
+  }
+
+  return ReadSequenceParamImpl<P>(reader, allocator(length), length);
 }
 
 // Temporary fallback class to allow types to declare serialization using the
@@ -341,9 +714,6 @@ struct ParamTraitsFundamental<bool> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadBool(r);
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(p ? L"true" : L"false");
-  }
 };
 
 template <>
@@ -354,9 +724,6 @@ struct ParamTraitsFundamental<int> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadInt(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%d", p));
   }
 };
 
@@ -369,9 +736,6 @@ struct ParamTraitsFundamental<long> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadLong(r);
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%l", p));
-  }
 };
 
 template <>
@@ -382,9 +746,6 @@ struct ParamTraitsFundamental<unsigned long> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadULong(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%ul", p));
   }
 };
 
@@ -397,9 +758,6 @@ struct ParamTraitsFundamental<long long> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadBytesInto(r, sizeof(*r));
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%ll", p));
-  }
 };
 
 template <>
@@ -411,9 +769,6 @@ struct ParamTraitsFundamental<unsigned long long> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadBytesInto(r, sizeof(*r));
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%ull", p));
-  }
 };
 
 template <>
@@ -424,9 +779,6 @@ struct ParamTraitsFundamental<double> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadDouble(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"e", p));
   }
 };
 
@@ -444,9 +796,6 @@ struct ParamTraitsFixed<int16_t> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadInt16(r);
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%hd", p));
-  }
 };
 
 template <>
@@ -457,9 +806,6 @@ struct ParamTraitsFixed<uint16_t> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadUInt16(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%hu", p));
   }
 };
 
@@ -472,9 +818,6 @@ struct ParamTraitsFixed<uint32_t> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadUInt32(r);
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%u", p));
-  }
 };
 
 template <>
@@ -485,9 +828,6 @@ struct ParamTraitsFixed<int64_t> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadInt64(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%" PRId64L, p));
   }
 };
 
@@ -500,9 +840,6 @@ struct ParamTraitsFixed<uint64_t> {
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadInt64(reinterpret_cast<int64_t*>(r));
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%" PRIu64L, p));
-  }
 };
 
 // std::* types.
@@ -510,30 +847,18 @@ struct ParamTraitsFixed<uint64_t> {
 template <class P>
 struct ParamTraitsStd : ParamTraitsFixed<P> {};
 
-template <>
-struct ParamTraitsStd<std::string> {
-  typedef std::string param_type;
+template <class T>
+struct ParamTraitsStd<std::basic_string<T>> {
+  typedef std::basic_string<T> param_type;
   static void Write(MessageWriter* writer, const param_type& p) {
-    writer->WriteString(p);
+    WriteSequenceParam<const T&>(writer, p.data(), p.size());
   }
   static bool Read(MessageReader* reader, param_type* r) {
-    return reader->ReadString(r);
+    return ReadSequenceParam<T>(reader, [&](uint32_t length) -> T* {
+      r->resize(length);
+      return r->data();
+    });
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(UTF8ToWide(p));
-  }
-};
-
-template <>
-struct ParamTraitsStd<std::wstring> {
-  typedef std::wstring param_type;
-  static void Write(MessageWriter* writer, const param_type& p) {
-    writer->WriteWString(p);
-  }
-  static bool Read(MessageReader* reader, param_type* r) {
-    return reader->ReadWString(r);
-  }
-  static void Log(const param_type& p, std::wstring* l) { l->append(p); }
 };
 
 template <class K, class V>
@@ -558,9 +883,6 @@ struct ParamTraitsStd<std::map<K, V>> {
     }
     return true;
   }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(L"<std::map>");
-  }
 };
 
 // Windows-specific types.
@@ -568,7 +890,7 @@ struct ParamTraitsStd<std::map<K, V>> {
 template <class P>
 struct ParamTraitsWindows : ParamTraitsStd<P> {};
 
-#if defined(OS_WIN)
+#if defined(XP_WIN)
 template <>
 struct ParamTraitsWindows<HANDLE> {
   static_assert(sizeof(HANDLE) == sizeof(intptr_t), "Wrong size for HANDLE?");
@@ -578,9 +900,6 @@ struct ParamTraitsWindows<HANDLE> {
   }
   static bool Read(MessageReader* reader, HANDLE* r) {
     return reader->ReadIntPtr(reinterpret_cast<intptr_t*>(r));
-  }
-  static void Log(const HANDLE& p, std::wstring* l) {
-    l->append(StringPrintf(L"0x%X", p));
   }
 };
 
@@ -594,11 +913,8 @@ struct ParamTraitsWindows<HWND> {
   static bool Read(MessageReader* reader, HWND* r) {
     return reader->ReadIntPtr(reinterpret_cast<intptr_t*>(r));
   }
-  static void Log(const HWND& p, std::wstring* l) {
-    l->append(StringPrintf(L"0x%X", p));
-  }
 };
-#endif  // defined(OS_WIN)
+#endif  // defined(XP_WIN)
 
 // Various ipc/chromium types.
 
@@ -648,7 +964,7 @@ struct ParamTraitsIPC<mozilla::UniqueFileHandle> {
   }
 };
 
-#if defined(OS_MACOSX)
+#if defined(XP_DARWIN)
 // `UniqueMachSendRight` may be serialized over IPC channels. On the receiving
 // side, the UniqueMachSendRight is the local name of the right which was
 // transmitted.
@@ -698,6 +1014,15 @@ struct ParamTraitsIPC<mozilla::UniqueMachSendRight> {
 template <class P>
 struct ParamTraitsMozilla : ParamTraitsIPC<P> {};
 
+// Sending-only specialization for mozilla::Span<T const>. Uses an identical
+// serialization format as `const nsTArray<T>&`.
+template <class T>
+struct ParamTraitsMozilla<mozilla::Span<const T>> {
+  static void Write(MessageWriter* writer, mozilla::Span<const T> p) {
+    WriteSequenceParam<const T>(writer, p.Elements(), p.Length());
+  }
+};
+
 template <>
 struct ParamTraitsMozilla<nsresult> {
   typedef nsresult param_type;
@@ -706,9 +1031,6 @@ struct ParamTraitsMozilla<nsresult> {
   }
   static bool Read(MessageReader* reader, param_type* r) {
     return reader->ReadUInt32(reinterpret_cast<uint32_t*>(r));
-  }
-  static void Log(const param_type& p, std::wstring* l) {
-    l->append(StringPrintf(L"%u", static_cast<uint32_t>(p)));
   }
 };
 
@@ -738,6 +1060,25 @@ struct ParamTraitsMozilla<nsCOMPtr<T>> {
     }
     *r = std::move(refptr);
     return true;
+  }
+};
+
+template <class T>
+struct ParamTraitsMozilla<mozilla::NotNull<T>> {
+  static void Write(MessageWriter* writer, const mozilla::NotNull<T>& p) {
+    ParamTraits<T>::Write(writer, p.get());
+  }
+
+  static ReadResult<mozilla::NotNull<T>> Read(MessageReader* reader) {
+    auto ptr = ReadParam<T>(reader);
+    if (!ptr) {
+      return {};
+    }
+    if (!*ptr) {
+      reader->FatalError("unexpected null value");
+      return {};
+    }
+    return mozilla::WrapNotNull(std::move(*ptr));
   }
 };
 

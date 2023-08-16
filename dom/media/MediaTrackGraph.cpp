@@ -825,6 +825,7 @@ void MediaTrackGraphImpl::CloseAudioInputImpl(DeviceInputTrack* aTrack) {
 
 void MediaTrackGraphImpl::RegisterAudioOutput(MediaTrack* aTrack, void* aKey) {
   MOZ_ASSERT(OnGraphThread());
+  MOZ_ASSERT(!mAudioOutputs.Contains(TrackAndKey{aTrack, aKey}));
 
   TrackKeyAndVolume* tkv = mAudioOutputs.AppendElement();
   tkv->mTrack = aTrack;
@@ -861,10 +862,9 @@ void MediaTrackGraphImpl::UnregisterAudioOutput(MediaTrack* aTrack,
                                                 void* aKey) {
   MOZ_ASSERT(OnGraphThreadOrNotRunning());
 
-  mAudioOutputs.RemoveElementsBy(
-      [&aKey, &aTrack](const TrackKeyAndVolume& aTkv) {
-        return aTkv.mKey == aKey && aTkv.mTrack == aTrack;
-      });
+  DebugOnly<bool> removed =
+      mAudioOutputs.RemoveElement(TrackAndKey{aTrack, aKey});
+  MOZ_ASSERT(removed, "Audio output not found");
 }
 
 void MediaTrackGraphImpl::CloseAudioInput(DeviceInputTrack* aTrack) {
@@ -1737,8 +1737,6 @@ class MediaTrackGraphShutDownRunnable : public Runnable {
       RefPtr<GraphRunner>(mGraph->mGraphRunner)->Shutdown();
     }
 
-    // This will wait until it's shutdown since
-    // we'll start tearing down the graph after this
     RefPtr<GraphDriver>(mGraph->mDriver)->Shutdown();
 
     // Release the driver now so that an AudioCallbackDriver will release its
@@ -3333,12 +3331,14 @@ void MediaTrackGraphImpl::Destroy() {
 // GTests can create a graph without a window.
 /* static */
 MediaTrackGraphImpl* MediaTrackGraphImpl::GetInstanceIfExists(
-    uint64_t aWindowID, TrackRate aSampleRate,
+    uint64_t aWindowID, bool aShouldResistFingerprinting, TrackRate aSampleRate,
     CubebUtils::AudioDeviceID aOutputDeviceID) {
   MOZ_ASSERT(NS_IsMainThread(), "Main thread only");
 
   TrackRate sampleRate =
-      aSampleRate ? aSampleRate : CubebUtils::PreferredSampleRate();
+      aSampleRate
+          ? aSampleRate
+          : CubebUtils::PreferredSampleRate(aShouldResistFingerprinting);
   GraphKey key(aWindowID, sampleRate, aOutputDeviceID);
 
   return gGraphs.Get(key);
@@ -3350,27 +3350,32 @@ MediaTrackGraphImpl* MediaTrackGraphImpl::GetInstanceIfExists(
 MediaTrackGraph* MediaTrackGraph::GetInstanceIfExists(
     nsPIDOMWindowInner* aWindow, TrackRate aSampleRate,
     CubebUtils::AudioDeviceID aOutputDeviceID) {
-  return MediaTrackGraphImpl::GetInstanceIfExists(aWindow->WindowID(),
-                                                  aSampleRate, aOutputDeviceID);
+  return MediaTrackGraphImpl::GetInstanceIfExists(
+      aWindow->WindowID(),
+      aWindow->AsGlobal()->ShouldResistFingerprinting(
+          RFPTarget::AudioSampleRate),
+      aSampleRate, aOutputDeviceID);
 }
 
 /* static */
 MediaTrackGraphImpl* MediaTrackGraphImpl::GetInstance(
     GraphDriverType aGraphDriverRequested, uint64_t aWindowID,
-    TrackRate aSampleRate, CubebUtils::AudioDeviceID aOutputDeviceID,
+    bool aShouldResistFingerprinting, TrackRate aSampleRate,
+    CubebUtils::AudioDeviceID aOutputDeviceID,
     nsISerialEventTarget* aMainThread) {
   MOZ_ASSERT(NS_IsMainThread(), "Main thread only");
 
   TrackRate sampleRate =
-      aSampleRate ? aSampleRate : CubebUtils::PreferredSampleRate();
-  MediaTrackGraphImpl* graph =
-      GetInstanceIfExists(aWindowID, sampleRate, aOutputDeviceID);
+      aSampleRate
+          ? aSampleRate
+          : CubebUtils::PreferredSampleRate(aShouldResistFingerprinting);
+  MediaTrackGraphImpl* graph = GetInstanceIfExists(
+      aWindowID, aShouldResistFingerprinting, sampleRate, aOutputDeviceID);
 
   if (!graph) {
     GraphRunType runType = DIRECT_DRIVER;
     if (aGraphDriverRequested != OFFLINE_THREAD_DRIVER &&
-        (StaticPrefs::dom_audioworklet_enabled() ||
-         Preferences::GetBool("media.audiograph.single_thread.enabled",
+        (Preferences::GetBool("media.audiograph.single_thread.enabled",
                               false))) {
       runType = SINGLE_THREAD;
     }
@@ -3398,7 +3403,10 @@ MediaTrackGraph* MediaTrackGraph::GetInstance(
     GraphDriverType aGraphDriverRequested, nsPIDOMWindowInner* aWindow,
     TrackRate aSampleRate, CubebUtils::AudioDeviceID aOutputDeviceID) {
   return MediaTrackGraphImpl::GetInstance(
-      aGraphDriverRequested, aWindow->WindowID(), aSampleRate, aOutputDeviceID,
+      aGraphDriverRequested, aWindow->WindowID(),
+      aWindow->AsGlobal()->ShouldResistFingerprinting(
+          RFPTarget::AudioSampleRate),
+      aSampleRate, aOutputDeviceID,
       aWindow->EventTargetFor(TaskCategory::Other));
 }
 
@@ -3736,7 +3744,10 @@ class AudioContextOperationControlMessage : public ControlMessage {
 void MediaTrackGraphImpl::ApplyAudioContextOperationImpl(
     AudioContextOperationControlMessage* aMessage) {
   MOZ_ASSERT(OnGraphThread());
-  AudioContextState state;
+  // Initialize state to zero. This silences a GCC warning about uninitialized
+  // values, because although the switch below initializes state for all valid
+  // enum values, the actual value could be any integer that fits in the enum.
+  AudioContextState state{0};
   switch (aMessage->mAudioContextOperation) {
     // Suspend and Close operations may be performed immediately because no
     // specific kind of GraphDriver is required.  CheckDriver() will schedule

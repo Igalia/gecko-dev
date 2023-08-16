@@ -9,11 +9,14 @@
 #include "inLayoutUtils.h"
 
 #include "gfxTextRun.h"
+#include "mozilla/dom/HTMLSlotElement.h"
 #include "nsArray.h"
+#include "nsContentList.h"
 #include "nsString.h"
 #include "nsIContentInlines.h"
 #include "nsIScrollableFrame.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/HTMLTemplateElement.h"
 #include "ChildIterator.h"
 #include "nsComputedDOMStyle.h"
 #include "mozilla/EventStateManager.h"
@@ -141,47 +144,89 @@ bool InspectorUtils::IsIgnorableWhitespace(CharacterData& aDataNode) {
 /* static */
 nsINode* InspectorUtils::GetParentForNode(nsINode& aNode,
                                           bool aShowingAnonymousContent) {
-  // First do the special cases -- document nodes and anonymous content
-  nsINode* parent = nullptr;
-
+  if (nsINode* parent = aNode.GetParentNode()) {
+    return parent;
+  }
   if (aNode.IsDocument()) {
-    parent = inLayoutUtils::GetContainerFor(*aNode.AsDocument());
-  } else if (aShowingAnonymousContent) {
-    if (aNode.IsContent()) {
-      parent = aNode.AsContent()->GetFlattenedTreeParent();
-    }
+    return inLayoutUtils::GetContainerFor(*aNode.AsDocument());
   }
-
-  if (!parent) {
-    // Ok, just get the normal DOM parent node
-    return aNode.GetParentNode();
-  }
-
-  return parent;
-}
-
-/* static */
-already_AddRefed<nsINodeList> InspectorUtils::GetChildrenForNode(
-    nsINode& aNode, bool aShowingAnonymousContent) {
-  nsCOMPtr<nsINodeList> kids;
-
   if (aShowingAnonymousContent) {
-    if (aNode.IsContent()) {
-      kids = aNode.AsContent()->GetChildren(nsIContent::eAllChildren);
+    if (auto* frag = DocumentFragment::FromNode(aNode)) {
+      // This deals with shadow roots and HTMLTemplateElement.content.
+      return frag->GetHost();
     }
   }
-
-  if (!kids) {
-    kids = aNode.ChildNodes();
-  }
-
-  return kids.forget();
+  return nullptr;
 }
 
 /* static */
-void InspectorUtils::GetCSSStyleRules(
-    GlobalObject& aGlobalObject, Element& aElement, const nsAString& aPseudo,
-    bool aIncludeVisitedStyle, nsTArray<RefPtr<BindingStyleRule>>& aResult) {
+void InspectorUtils::GetChildrenForNode(nsINode& aNode,
+                                        bool aShowingAnonymousContent,
+                                        bool aIncludeAssignedNodes,
+                                        bool aIncludeSubdocuments,
+                                        nsTArray<RefPtr<nsINode>>& aResult) {
+  if (aIncludeSubdocuments) {
+    if (auto* doc = inLayoutUtils::GetSubDocumentFor(&aNode)) {
+      aResult.AppendElement(doc);
+      // XXX Do we really want to early-return?
+      return;
+    }
+  }
+
+  if (!aShowingAnonymousContent || !aNode.IsContent()) {
+    for (nsINode* child = aNode.GetFirstChild(); child;
+         child = child->GetNextSibling()) {
+      aResult.AppendElement(child);
+    }
+    return;
+  }
+
+  if (auto* tmpl = HTMLTemplateElement::FromNode(aNode)) {
+    aResult.AppendElement(tmpl->Content());
+    // XXX Do we really want to early-return?
+    return;
+  }
+
+  if (auto* element = Element::FromNode(aNode)) {
+    if (auto* shadow = element->GetShadowRoot()) {
+      aResult.AppendElement(shadow);
+    }
+  }
+  nsIContent* parent = aNode.AsContent();
+  if (auto* node = nsLayoutUtils::GetMarkerPseudo(parent)) {
+    aResult.AppendElement(node);
+  }
+  if (auto* node = nsLayoutUtils::GetBeforePseudo(parent)) {
+    aResult.AppendElement(node);
+  }
+  if (aIncludeAssignedNodes) {
+    if (auto* slot = HTMLSlotElement::FromNode(aNode)) {
+      for (nsINode* node : slot->AssignedNodes()) {
+        aResult.AppendElement(node);
+      }
+    }
+  }
+  for (nsIContent* node = parent->GetFirstChild(); node;
+       node = node->GetNextSibling()) {
+    aResult.AppendElement(node);
+  }
+  AutoTArray<nsIContent*, 4> anonKids;
+  nsContentUtils::AppendNativeAnonymousChildren(parent, anonKids,
+                                                nsIContent::eAllChildren);
+  for (nsIContent* node : anonKids) {
+    aResult.AppendElement(node);
+  }
+  if (auto* node = nsLayoutUtils::GetAfterPseudo(parent)) {
+    aResult.AppendElement(node);
+  }
+}
+
+/* static */
+void InspectorUtils::GetCSSStyleRules(GlobalObject& aGlobalObject,
+                                      Element& aElement,
+                                      const nsAString& aPseudo,
+                                      bool aIncludeVisitedStyle,
+                                      nsTArray<RefPtr<CSSStyleRule>>& aResult) {
   Maybe<PseudoStyleType> type = nsCSSPseudoElements::GetPseudoType(
       aPseudo, CSSEnabledState::ForAllContent);
   if (!type) {
@@ -197,7 +242,7 @@ void InspectorUtils::GetCSSStyleRules(
   }
 
   if (aIncludeVisitedStyle) {
-    if (ComputedStyle* styleIfVisited = computedStyle->GetStyleIfVisited()) {
+    if (auto* styleIfVisited = computedStyle->GetStyleIfVisited()) {
       computedStyle = styleIfVisited;
     }
   }
@@ -208,7 +253,7 @@ void InspectorUtils::GetCSSStyleRules(
     return;
   }
 
-  nsTArray<const RawServoStyleRule*> rawRuleList;
+  nsTArray<const StyleLockedStyleRule*> rawRuleList;
   Servo_ComputedValues_GetStyleRuleList(computedStyle, &rawRuleList);
 
   AutoTArray<ServoStyleRuleMap*, 1> maps;
@@ -237,7 +282,7 @@ void InspectorUtils::GetCSSStyleRules(
   }
 
   // Find matching rules in the table.
-  for (const RawServoStyleRule* rawRule : Reversed(rawRuleList)) {
+  for (const StyleLockedStyleRule* rawRule : Reversed(rawRuleList)) {
     CSSStyleRule* rule = nullptr;
     for (ServoStyleRuleMap* map : maps) {
       rule = map->Lookup(rawRule);
@@ -319,39 +364,21 @@ bool InspectorUtils::HasRulesModifiedByCSSOM(GlobalObject& aGlobal,
   return aSheet.HasModifiedRulesForDevtools();
 }
 
-/* static */
-uint32_t InspectorUtils::GetSelectorCount(GlobalObject& aGlobal,
-                                          BindingStyleRule& aRule) {
-  return aRule.GetSelectorCount();
+static void CollectRules(ServoCSSRuleList& aRuleList,
+                         nsTArray<RefPtr<css::Rule>>& aResult) {
+  for (uint32_t i = 0, len = aRuleList.Length(); i < len; ++i) {
+    css::Rule* rule = aRuleList.GetRule(i);
+    aResult.AppendElement(rule);
+    if (rule->IsGroupRule()) {
+      CollectRules(*static_cast<css::GroupRule*>(rule)->CssRules(), aResult);
+    }
+  }
 }
 
-/* static */
-void InspectorUtils::GetSelectorText(GlobalObject& aGlobal,
-                                     BindingStyleRule& aRule,
-                                     uint32_t aSelectorIndex, nsACString& aText,
-                                     ErrorResult& aRv) {
-  aRv = aRule.GetSelectorText(aSelectorIndex, aText);
-}
-
-/* static */
-uint64_t InspectorUtils::GetSpecificity(GlobalObject& aGlobal,
-                                        BindingStyleRule& aRule,
-                                        uint32_t aSelectorIndex,
-                                        ErrorResult& aRv) {
-  uint64_t s;
-  aRv = aRule.GetSpecificity(aSelectorIndex, &s);
-  return s;
-}
-
-/* static */
-bool InspectorUtils::SelectorMatchesElement(
-    GlobalObject& aGlobalObject, Element& aElement, BindingStyleRule& aRule,
-    uint32_t aSelectorIndex, const nsAString& aPseudo,
-    bool aRelevantLinkVisited, ErrorResult& aRv) {
-  bool result = false;
-  aRv = aRule.SelectorMatchesElement(&aElement, aSelectorIndex, aPseudo,
-                                     aRelevantLinkVisited, &result);
-  return result;
+void InspectorUtils::GetAllStyleSheetCSSStyleRules(
+    GlobalObject& aGlobal, StyleSheet& aSheet,
+    nsTArray<RefPtr<css::Rule>>& aResult) {
+  CollectRules(*aSheet.GetCssRulesInternal(), aResult);
 }
 
 /* static */
@@ -506,15 +533,13 @@ void InspectorUtils::GetCSSValuesForProperty(GlobalObject& aGlobalObject,
 /* static */
 void InspectorUtils::RgbToColorName(GlobalObject& aGlobalObject, uint8_t aR,
                                     uint8_t aG, uint8_t aB,
-                                    nsAString& aColorName, ErrorResult& aRv) {
+                                    nsAString& aColorName) {
   const char* color = NS_RGBToColorName(NS_RGB(aR, aG, aB));
   if (!color) {
     aColorName.Truncate();
-    aRv.Throw(NS_ERROR_INVALID_ARG);
-    return;
+  } else {
+    aColorName.AssignASCII(color);
   }
-
-  aColorName.AssignASCII(color);
 }
 
 /* static */

@@ -268,6 +268,22 @@ class IMContextWrapper final : public TextEventDispatcherListener {
     }
 
     /**
+     * Return corresponding GDK_KEY_PRESS event for aEvent.  aEvent must be a
+     * GDK_KEY_RELEASE event.
+     */
+    const GdkEventKey* GetCorrespondingKeyPressEvent(
+        const GdkEventKey* aEvent) const {
+      MOZ_ASSERT(aEvent->type == GDK_KEY_RELEASE);
+      for (const GUniquePtr<GdkEventKey>& pendingKeyEvent : mEvents) {
+        if (pendingKeyEvent->type == GDK_KEY_PRESS &&
+            aEvent->hardware_keycode == pendingKeyEvent->hardware_keycode) {
+          return pendingKeyEvent.get();
+        }
+      }
+      return nullptr;
+    }
+
+    /**
      * FirstEvent() returns oldest event in the queue.
      */
     GdkEventKey* GetFirstEvent() const {
@@ -598,9 +614,6 @@ class IMContextWrapper final : public TextEventDispatcherListener {
    */
   nsresult DeleteText(GtkIMContext* aContext, int32_t aOffset,
                       uint32_t aNChars);
-
-  // Initializes the GUI event.
-  void InitEvent(WidgetGUIEvent& aEvent);
 
   // Called before destroying the context to work around some platform bugs.
   void PrepareToDestroyContext(GtkIMContext* aContext);

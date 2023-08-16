@@ -17,6 +17,7 @@ XPIDL_SOURCES += [
 XPIDL_MODULE = "gfx"
 
 EXPORTS += [
+    "COLRFonts.h",
     "DrawMode.h",
     "gfx2DGlue.h",
     "gfxAlphaRecovery.h",
@@ -66,9 +67,11 @@ EXPORTS += [
 ]
 
 EXPORTS.mozilla.gfx += [
+    "AllOfDcomp.h",
     "D3D11Checks.h",
     "DeviceManagerDx.h",
     "DisplayConfigWindows.h",
+    "PrintPromise.h",
     "PrintTarget.h",
     "PrintTargetThebes.h",
     "ThebesRLBox.h",
@@ -141,7 +144,6 @@ elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
         ]
 
 elif CONFIG["MOZ_WIDGET_TOOLKIT"] == "windows":
-    REQUIRES_UNIFIED_BUILD = True
     EXPORTS += [
         "gfxDWriteCommon.h",
         "gfxDWriteFonts.h",
@@ -195,6 +197,7 @@ SOURCES += [
 
 UNIFIED_SOURCES += [
     "CJKCompatSVS.cpp",
+    "COLRFonts.cpp",
     "gfxAlphaRecovery.cpp",
     "gfxBaseSharedMemorySurface.cpp",
     "gfxBlur.cpp",
@@ -291,8 +294,6 @@ LOCAL_INCLUDES += CONFIG["SKIA_INCLUDES"]
 
 DEFINES["GRAPHITE2_STATIC"] = True
 
-if CONFIG["CC_TYPE"] in ("clang", "clang-cl"):
-    # Suppress warnings from Skia header files.
-    SOURCES["gfxPlatform.cpp"].flags += ["-Wno-implicit-fallthrough"]
-
 CXXFLAGS += ["-Werror=switch"]
+
+include("/tools/fuzzing/libfuzzer-config.mozbuild")

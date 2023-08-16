@@ -22,7 +22,6 @@
 
 class nsAtom;
 class nsIContent;
-class nsXBLPrototypeBinding;
 
 namespace mozilla {
 
@@ -67,9 +66,6 @@ class ShadowRoot final : public DocumentFragment,
   // Called when a direct child of our host is removed. Tries to un-slot the
   // child from the currently-assigned slot, if any.
   void MaybeUnslotHostChild(nsIContent&);
-
-  // Find the first focusable element in this tree.
-  Element* GetFirstFocusable(bool aWithMouse) const;
 
   // Shadow DOM v1
   Element* Host() const {
@@ -159,6 +155,21 @@ class ShadowRoot final : public DocumentFragment,
    */
   SlotInsertionPoint SlotInsertionPointFor(nsIContent&);
 
+  /**
+   * Returns the effective slot name for a given slottable. In most cases, this
+   * is just the value of the slot attribute, if any, or the empty string, but
+   * this also deals with the <details> shadow tree specially.
+   */
+  void GetSlotNameFor(const nsIContent&, nsAString&) const;
+
+  /**
+   * Re-assign the current main summary if it has changed.
+   *
+   * Must be called only if mIsDetailsShadowTree is true.
+   */
+  enum class SummaryChangeReason { Deletion, Insertion };
+  void MaybeReassignMainSummary(SummaryChangeReason);
+
  public:
   void AddSlot(HTMLSlotElement* aSlot);
   void RemoveSlot(HTMLSlotElement* aSlot);
@@ -175,11 +186,9 @@ class ShadowRoot final : public DocumentFragment,
 
   const nsTArray<const Element*>& Parts() const { return mParts; }
 
-  const RawServoAuthorStyles* GetServoStyles() const {
-    return mServoStyles.get();
-  }
+  const StyleAuthorStyles* GetServoStyles() const { return mServoStyles.get(); }
 
-  RawServoAuthorStyles* GetServoStyles() { return mServoStyles.get(); }
+  StyleAuthorStyles* GetServoStyles() { return mServoStyles.get(); }
 
   mozilla::ServoStyleRuleMap& ServoStyleRuleMap();
 
@@ -207,12 +216,12 @@ class ShadowRoot final : public DocumentFragment,
                                          const nsAString& aTagName,
                                          mozilla::ErrorResult& rv);
 
-  bool IsUAWidget() const { return mIsUAWidget; }
+  bool IsUAWidget() const { return HasBeenInUAWidget(); }
 
   void SetIsUAWidget() {
     MOZ_ASSERT(!HasChildren());
+    SetIsNativeAnonymousRoot();
     SetFlags(NODE_HAS_BEEN_IN_UA_WIDGET);
-    mIsUAWidget = true;
   }
 
   bool IsAvailableToElementInternals() const {
@@ -230,12 +239,11 @@ class ShadowRoot final : public DocumentFragment,
                             nsIRadioVisitor* aVisitor) override {
     return DocumentOrShadowRoot::WalkRadioGroup(aName, aVisitor);
   }
-  virtual void SetCurrentRadioButton(const nsAString& aName,
-                                     HTMLInputElement* aRadio) override {
+  void SetCurrentRadioButton(const nsAString& aName,
+                             HTMLInputElement* aRadio) override {
     DocumentOrShadowRoot::SetCurrentRadioButton(aName, aRadio);
   }
-  virtual HTMLInputElement* GetCurrentRadioButton(
-      const nsAString& aName) override {
+  HTMLInputElement* GetCurrentRadioButton(const nsAString& aName) override {
     return DocumentOrShadowRoot::GetCurrentRadioButton(aName);
   }
   NS_IMETHOD
@@ -245,27 +253,25 @@ class ShadowRoot final : public DocumentFragment,
     return DocumentOrShadowRoot::GetNextRadioButton(aName, aPrevious,
                                                     aFocusedRadio, aRadioOut);
   }
-  virtual void AddToRadioGroup(const nsAString& aName,
-                               HTMLInputElement* aRadio) override {
+  void AddToRadioGroup(const nsAString& aName,
+                       HTMLInputElement* aRadio) override {
     DocumentOrShadowRoot::AddToRadioGroup(aName, aRadio);
   }
-  virtual void RemoveFromRadioGroup(const nsAString& aName,
-                                    HTMLInputElement* aRadio) override {
+  void RemoveFromRadioGroup(const nsAString& aName,
+                            HTMLInputElement* aRadio) override {
     DocumentOrShadowRoot::RemoveFromRadioGroup(aName, aRadio);
   }
-  virtual uint32_t GetRequiredRadioCount(
-      const nsAString& aName) const override {
+  uint32_t GetRequiredRadioCount(const nsAString& aName) const override {
     return DocumentOrShadowRoot::GetRequiredRadioCount(aName);
   }
-  virtual void RadioRequiredWillChange(const nsAString& aName,
-                                       bool aRequiredAdded) override {
+  void RadioRequiredWillChange(const nsAString& aName,
+                               bool aRequiredAdded) override {
     DocumentOrShadowRoot::RadioRequiredWillChange(aName, aRequiredAdded);
   }
-  virtual bool GetValueMissingState(const nsAString& aName) const override {
+  bool GetValueMissingState(const nsAString& aName) const override {
     return DocumentOrShadowRoot::GetValueMissingState(aName);
   }
-  virtual void SetValueMissingState(const nsAString& aName,
-                                    bool aValue) override {
+  void SetValueMissingState(const nsAString& aName, bool aValue) override {
     return DocumentOrShadowRoot::SetValueMissingState(aName, aValue);
   }
 
@@ -282,7 +288,7 @@ class ShadowRoot final : public DocumentFragment,
   const SlotAssignmentMode mSlotAssignment;
 
   // The computed data from the style sheets.
-  UniquePtr<RawServoAuthorStyles> mServoStyles;
+  UniquePtr<StyleAuthorStyles> mServoStyles;
   UniquePtr<mozilla::ServoStyleRuleMap> mStyleRuleMap;
 
   using SlotArray = TreeOrderedArray<HTMLSlotElement>;
@@ -295,7 +301,8 @@ class ShadowRoot final : public DocumentFragment,
   // tree.
   nsTArray<const Element*> mParts;
 
-  bool mIsUAWidget : 1;
+  // Whether this is the <details> internal shadow tree.
+  bool mIsDetailsShadowTree : 1;
 
   // https://dom.spec.whatwg.org/#shadowroot-available-to-element-internals
   bool mIsAvailableToElementInternals : 1;

@@ -8,13 +8,6 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 "use strict";
 
-let FormAutofillHandler;
-add_task(async function() {
-  ({ FormAutofillHandler } = ChromeUtils.import(
-    "resource://autofill/FormAutofillHandler.jsm"
-  ));
-});
-
 const DEFAULT_CREDITCARD_RECORD = {
   guid: "123",
   "cc-exp-month": 1,
@@ -235,7 +228,7 @@ const TESTCASES = [FR_TESTCASES, DE_TESTCASES];
 
 for (let localeTests of TESTCASES) {
   for (let testcase of localeTests) {
-    add_task(async function() {
+    add_task(async function () {
       info("Starting testcase: " + testcase.description);
 
       let doc = MockDocument.createTestDocument(
@@ -263,10 +256,11 @@ for (let localeTests of TESTCASES) {
             Assert.notEqual(expectedOption, null);
 
             let value = testcase.profileData[i][field];
-            let cache = handler.activeSection._cacheValue.matchingSelectOption.get(
-              select
-            );
-            let targetOption = cache[value] && cache[value].get();
+            let cache =
+              handler.activeSection._cacheValue.matchingSelectOption.get(
+                select
+              );
+            let targetOption = cache[value] && cache[value].deref();
             Assert.notEqual(targetOption, null);
 
             Assert.equal(targetOption, expectedOption);

@@ -241,9 +241,9 @@ class AlignedBuffer {
     return true;
   }
   Type* mData;
-  size_t mLength;  // number of elements
+  size_t mLength{};  // number of elements
   UniquePtr<uint8_t[]> mBuffer;
-  size_t mCapacity;  // in bytes
+  size_t mCapacity{};  // in bytes
 };
 
 typedef AlignedBuffer<uint8_t> AlignedByteBuffer;
@@ -256,7 +256,7 @@ class MediaData {
  public:
   NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaData)
 
-  enum class Type { AUDIO_DATA = 0, VIDEO_DATA, RAW_DATA, NULL_DATA };
+  enum class Type : uint8_t { AUDIO_DATA = 0, VIDEO_DATA, RAW_DATA, NULL_DATA };
   static const char* TypeToStr(Type aType) {
     switch (aType) {
       case Type::AUDIO_DATA:
@@ -421,6 +421,7 @@ class VideoData : public MediaData {
   typedef gfx::ColorDepth ColorDepth;
   typedef gfx::ColorRange ColorRange;
   typedef gfx::YUVColorSpace YUVColorSpace;
+  typedef gfx::ColorSpace2 ColorSpace2;
   typedef gfx::ChromaSubsampling ChromaSubsampling;
   typedef layers::ImageContainer ImageContainer;
   typedef layers::Image Image;
@@ -444,6 +445,7 @@ class VideoData : public MediaData {
 
     Plane mPlanes[3];
     YUVColorSpace mYUVColorSpace = YUVColorSpace::Identity;
+    ColorSpace2 mColorPrimaries = ColorSpace2::UNKNOWN;
     ColorDepth mColorDepth = ColorDepth::COLOR_8;
     ColorRange mColorRange = ColorRange::LIMITED;
     ChromaSubsampling mChromaSubsampling = ChromaSubsampling::FULL;
@@ -457,6 +459,9 @@ class VideoData : public MediaData {
   // Returns nsnull if an error occurs. This may indicate that memory couldn't
   // be allocated to create the VideoData object, or it may indicate some
   // problem with the input data (e.g. negative stride).
+
+  static bool UseUseNV12ForSoftwareDecodedVideoIfPossible(
+      layers::KnowsCompositor* aAllocator);
 
   // Creates a new VideoData containing a deep copy of aBuffer. May use
   // aContainer to allocate an Image to hold the copied data.
@@ -495,6 +500,8 @@ class VideoData : public MediaData {
 
   // This frame's image.
   RefPtr<Image> mImage;
+
+  ColorDepth GetColorDepth() const;
 
   uint32_t mFrameID;
 
@@ -664,6 +671,13 @@ class MediaRawData final : public MediaData {
   // the decoder should crop the content accordingly.
   Maybe<media::TimeInterval> mOriginalPresentationWindow;
 
+  // If it's true, the `mCrypto` should be copied into the remote data as well.
+  // Currently this is only used for the media engine DRM playback.
+  bool mShouldCopyCryptoToRemoteRawData = false;
+
+  // It's only used when the remote decoder reconstructs the media raw data.
+  CryptoSample& GetWritableCrypto() { return mCryptoInternal; }
+
   // Return a deep copy or nullptr if out of memory.
   already_AddRefed<MediaRawData> Clone() const;
   // Create a MediaRawDataWriter for this MediaRawData. The writer is not
@@ -691,6 +705,18 @@ class MediaByteBuffer : public nsTArray<uint8_t> {
 
  private:
   ~MediaByteBuffer() = default;
+};
+
+// MediaAlignedByteBuffer is a ref counted AlignedByteBuffer whose memory
+// allocations are fallible.
+class MediaAlignedByteBuffer final : public AlignedByteBuffer {
+  NS_INLINE_DECL_THREADSAFE_REFCOUNTING(MediaAlignedByteBuffer);
+  MediaAlignedByteBuffer() = default;
+  MediaAlignedByteBuffer(const uint8_t* aData, size_t aLength)
+      : AlignedByteBuffer(aData, aLength) {}
+
+ private:
+  ~MediaAlignedByteBuffer() = default;
 };
 
 }  // namespace mozilla

@@ -15,7 +15,6 @@
 #include <tuple>
 #include <vector>
 
-#include "lib/jxl/aux_out_fwd.h"
 #include "lib/jxl/base/data_parallel.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/chroma_from_luma.h"
@@ -29,6 +28,8 @@
 #include "lib/jxl/opsin_params.h"
 
 namespace jxl {
+
+struct AuxOut;
 
 constexpr size_t kMaxPatchSize = 32;
 
@@ -87,7 +88,7 @@ class PatchDictionaryEncoder {
     pdic->positions_ = std::move(positions);
     pdic->ref_positions_ = std::move(ref_positions);
     pdic->blendings_ = std::move(blendings);
-    pdic->ComputePatchCache();
+    pdic->ComputePatchTree();
   }
 
   static void SubtractFrom(const PatchDictionary& pdic, Image3F* opsin);

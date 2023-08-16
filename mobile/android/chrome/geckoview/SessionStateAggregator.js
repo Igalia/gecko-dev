@@ -7,17 +7,17 @@
 
 "use strict";
 
-const { GeckoViewChildModule } = ChromeUtils.import(
-  "resource://gre/modules/GeckoViewChildModule.jsm"
+const { GeckoViewChildModule } = ChromeUtils.importESModule(
+  "resource://gre/modules/GeckoViewChildModule.sys.mjs"
 );
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  clearTimeout: "resource://gre/modules/Timer.jsm",
-  setTimeoutWithTarget: "resource://gre/modules/Timer.jsm",
-  SessionHistory: "resource://gre/modules/sessionstore/SessionHistory.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  SessionHistory: "resource://gre/modules/sessionstore/SessionHistory.sys.mjs",
+  clearTimeout: "resource://gre/modules/Timer.sys.mjs",
+  setTimeoutWithTarget: "resource://gre/modules/Timer.sys.mjs",
 });
 
 const NO_INDEX = Number.MAX_SAFE_INTEGER;
@@ -159,8 +159,9 @@ class SessionHistoryListener extends Handler {
   }
 
   uninit() {
-    const sessionHistory = this.mm.docShell.QueryInterface(Ci.nsIWebNavigation)
-      .sessionHistory;
+    const sessionHistory = this.mm.docShell.QueryInterface(
+      Ci.nsIWebNavigation
+    ).sessionHistory;
     if (sessionHistory) {
       sessionHistory.legacySHistory.removeSHistoryListener(this);
     }

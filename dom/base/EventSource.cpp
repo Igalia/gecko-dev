@@ -76,7 +76,7 @@ class EventSourceImpl final : public nsIObserver,
                               public nsIChannelEventSink,
                               public nsIInterfaceRequestor,
                               public nsSupportsWeakReference,
-                              public nsIEventTarget,
+                              public nsISerialEventTarget,
                               public nsITimerCallback,
                               public nsINamed,
                               public nsIThreadRetargetableStreamListener {
@@ -364,8 +364,9 @@ class EventSourceImpl final : public nsIObserver,
 NS_IMPL_ISUPPORTS(EventSourceImpl, nsIObserver, nsIStreamListener,
                   nsIRequestObserver, nsIChannelEventSink,
                   nsIInterfaceRequestor, nsISupportsWeakReference,
-                  nsIEventTarget, nsIThreadRetargetableStreamListener,
-                  nsITimerCallback, nsINamed)
+                  nsISerialEventTarget, nsIEventTarget,
+                  nsIThreadRetargetableStreamListener, nsITimerCallback,
+                  nsINamed)
 
 EventSourceImpl::EventSourceImpl(EventSource* aEventSource,
                                  nsICookieJarSettings* aCookieJarSettings)
@@ -571,7 +572,7 @@ nsresult EventSourceImpl::ParseURL(const nsAString& aURL) {
   NS_ENSURE_SUCCESS(rv, NS_ERROR_DOM_SYNTAX_ERR);
 
   nsAutoString origin;
-  rv = nsContentUtils::GetUTFOrigin(srcURI, origin);
+  rv = nsContentUtils::GetWebExposedOriginSerialization(srcURI, origin);
   NS_ENSURE_SUCCESS(rv, rv);
 
   nsAutoCString spec;
@@ -838,11 +839,15 @@ EventSourceImpl::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
   //  (...) the cancelation of the fetch algorithm by the user agent (e.g. in
   //  response to window.stop() or the user canceling the network connection
   //  manually) must cause the user agent to fail the connection.
-
+  // There could be additional network errors that are not covered in the above
+  // checks
+  //  See Bug 1808511
   if (NS_FAILED(aStatusCode) && aStatusCode != NS_ERROR_CONNECTION_REFUSED &&
       aStatusCode != NS_ERROR_NET_TIMEOUT &&
       aStatusCode != NS_ERROR_NET_RESET &&
       aStatusCode != NS_ERROR_NET_INTERRUPT &&
+      aStatusCode != NS_ERROR_NET_PARTIAL_TRANSFER &&
+      aStatusCode != NS_ERROR_NET_TIMEOUT_EXTERNAL &&
       aStatusCode != NS_ERROR_PROXY_CONNECTION_REFUSED &&
       aStatusCode != NS_ERROR_DNS_LOOKUP_QUEUE_FULL) {
     DispatchFailConnection();
@@ -1052,16 +1057,15 @@ nsresult EventSourceImpl::InitChannelAndRequestEventSource(
 
   MOZ_ASSERT_IF(mIsMainThread, aEventTargetAccessAllowed);
 
-  nsresult rv = aEventTargetAccessAllowed
-                    ? [this]() {
-                        // We can't call GetEventSource() because we're not
-                        // allowed to touch the refcount off the worker thread
-                        // due to an assertion, event if it would have otherwise
-                        // been safe.
-                        auto lock = mSharedData.Lock();
-                        return lock->mEventSource->CheckCurrentGlobalCorrectness();
-                      }()
-                    : NS_OK;
+  nsresult rv = aEventTargetAccessAllowed ? [this]() {
+    // We can't call GetEventSource() because we're not
+    // allowed to touch the refcount off the worker thread
+    // due to an assertion, event if it would have otherwise
+    // been safe.
+    auto lock = mSharedData.Lock();
+    return lock->mEventSource->CheckCurrentGlobalCorrectness();
+  }()
+                                          : NS_OK;
   if (NS_FAILED(rv) || !isValidScheme) {
     DispatchFailConnection();
     return NS_ERROR_DOM_SECURITY_ERR;

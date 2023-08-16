@@ -65,6 +65,7 @@
   outline-offset: inherit;
   column-span: inherit; /* needed if <table> has "column-span:all" */
   contain: inherit; /* needed if table has 'contain:layout' or 'paint' */
+  container: inherit; /* Bug 1805588 */
   scroll-margin: inherit;  /* Bug 1633192 */
 }
 
@@ -192,7 +193,6 @@
   mask: inherit;
   opacity: inherit;
   text-decoration: inherit;
-  -moz-box-ordinal-group: inherit;
   overflow-clip-box: inherit;
   unicode-bidi: inherit;
   user-select: inherit;
@@ -205,13 +205,6 @@
   bottom: inherit;
   right: inherit;
   z-index: inherit;
-}
-
-*|*::-moz-xul-anonymous-block {
-  display: block;
-  -moz-box-ordinal-group: inherit;
-  text-overflow: inherit;
-  overflow-clip-box: inherit;
 }
 
 *|*::-moz-scrolled-content, *|*::-moz-scrolled-canvas {
@@ -298,10 +291,9 @@
   column-span: all;
 }
 
-*|*::-moz-anonymous-flex-item,
-*|*::-moz-anonymous-grid-item {
+*|*::-moz-anonymous-item {
   /* Anonymous blocks that wrap contiguous runs of text
-   * inside of a flex or grid container. */
+   * inside of a flex / grid / -moz-box container. */
   display: block;
 }
 
@@ -309,7 +301,8 @@
   /* Collection of pages in print/print preview. Visual styles may only appear
    * in print preview. */
   display: block;
-  background: linear-gradient(#606060, #8a8a8a) fixed;
+  background: #606060 linear-gradient(#606060, #8a8a8a) fixed;
+  print-color-adjust: exact;
   /* We always fill the available space in both directions */
   height: 100%;
   width: 100%;
@@ -320,6 +313,7 @@
    * appear in print preview. */
   display: block;
   background: white;
+  print-color-adjust: exact;
   box-shadow: 5px 5px 8px #202020;
   box-decoration-break: clone;
   /* TODO: Remove margin if viewport is small or something? */
@@ -449,108 +443,9 @@ parsererror|sourcetext {
   font-size: 12pt;
 }
 
-div:-moz-native-anonymous.moz-accessiblecaret {
-  /* Add transition effect to make caret size changing smoother. */
-  transition-property: width, height, margin-left;
-
-  position: absolute;
-  z-index: 2147483647;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret > :is(#text-overlay, #image) {
-  width: 100%;
-
-  /* Override this property in moz-custom-content-container to make dummy touch
-   * listener work. */
-  pointer-events: auto;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret > #image {
-  background-position: center top;
-  background-size: 100%;
-  background-repeat: no-repeat;
-  background-origin: content-box;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.normal > #image {
-  background-image: image-set(
-    url("resource://gre-resources/accessiblecaret-normal@1x.png"),
-    url("resource://gre-resources/accessiblecaret-normal@1.5x.png") 1.5x,
-    url("resource://gre-resources/accessiblecaret-normal@2x.png") 2x,
-    url("resource://gre-resources/accessiblecaret-normal@2.25x.png") 2.25x
-  );
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.left > :is(#text-overlay, #image) {
-  margin-left: -39%;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.left > #image {
-  background-image: image-set(
-    url("resource://gre-resources/accessiblecaret-tilt-left@1x.png"),
-    url("resource://gre-resources/accessiblecaret-tilt-left@1.5x.png") 1.5x,
-    url("resource://gre-resources/accessiblecaret-tilt-left@2x.png") 2x,
-    url("resource://gre-resources/accessiblecaret-tilt-left@2.25x.png") 2.25x
-  );
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.right > :is(#text-overlay, #image) {
-  margin-left: 41%;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.right > #image {
-  background-image: image-set(
-    url("resource://gre-resources/accessiblecaret-tilt-right@1x.png"),
-    url("resource://gre-resources/accessiblecaret-tilt-right@1.5x.png") 1.5x,
-    url("resource://gre-resources/accessiblecaret-tilt-right@2x.png") 2x,
-    url("resource://gre-resources/accessiblecaret-tilt-right@2.25x.png") 2.25x
-  );
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.none {
-  display: none;
-}
-
-div:-moz-native-anonymous.moz-accessiblecaret.hidden {
-  visibility: hidden;
-}
-
-@media (-moz-platform: android) {
-  div:-moz-native-anonymous.moz-accessiblecaret > :is(#text-overlay, #image) {
-    /* border: 0.1px solid red; */ /* Uncomment border to see the touch target. */
-    padding-left: 59%; /* Enlarge the touch area. ((48-22)/2)px / 22px ~= 59% */
-    padding-right: 59%; /* Enlarge the touch area. */
-    margin-left: -59%;
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret > #image {
-    padding-bottom: 59%; /* Enlarge the touch area. */
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret.normal > #image {
-    background-image: url("chrome://geckoview/skin/images/accessiblecaret-normal.svg");
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret.left > :is(#text-overlay, #image) {
-    margin-left: -109%;
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret.left > #image {
-    background-image: url("chrome://geckoview/skin/images/accessiblecaret-tilt-left.svg");
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret.right > :is(#text-overlay, #image) {
-    margin-left: -12%;
-  }
-
-  div:-moz-native-anonymous.moz-accessiblecaret.right > #image {
-    background-image: url("chrome://geckoview/skin/images/accessiblecaret-tilt-right.svg");
-  }
-}
-
 /* Custom content container in the CanvasFrame, positioned on top of everything
    everything else, not reacting to pointer events. */
-div:-moz-native-anonymous.moz-custom-content-container {
+.moz-custom-content-container:-moz-native-anonymous {
   pointer-events: none;
   user-select: none;
   -moz-top-layer: top;
@@ -559,4 +454,6 @@ div:-moz-native-anonymous.moz-custom-content-container {
   left: 0;
   width: 100%;
   height: 100%;
+  /* Initial direction depends on the document, make sure to reset it */
+  direction: ltr;
 }

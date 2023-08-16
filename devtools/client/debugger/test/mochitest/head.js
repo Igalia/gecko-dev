@@ -20,19 +20,16 @@ const EXAMPLE_REMOTE_URL =
   "https://example.org/browser/devtools/client/debugger/test/mochitest/examples/";
 
 // shared-head.js handles imports, constants, and utility functions
-/* import-globals-from ../../../shared/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this
 );
 
-/* import-globals-from ./shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/debugger/test/mochitest/shared-head.js",
   this
 );
 
-/* import-globals-from ../../../webconsole/test/browser/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/webconsole/test/browser/shared-head.js",
   this
@@ -119,10 +116,13 @@ const INTEGRATION_TEST_PAGE_SOURCES = [
   "replaced-bundle.js",
   "removed-original.js",
   "named-eval.js",
+  "react-component-module.js",
+  // This is the JS file with encoded characters and custom protocol
+  "文字コード.js",
   // Webpack generated some extra sources:
   "bootstrap 3b1a221408fdde86aa49",
   "bootstrap a1ecee2f86e1d0ea3fb5",
-  "bootstrap 6fda1f7ea9ecbc1a2d5b",
+  "bootstrap d343aa81956b90d9f67e",
   // There is 3 occurences, one per target (main thread, worker and iframe).
   // But there is even more source actors (named evals and duplicated script tags).
   "same-url.sjs",
@@ -200,4 +200,56 @@ async function assertSourceTreeNode(dbg, text) {
     return !!node;
   });
   ok(!!node, `Source tree node with text "${text}" exists`);
+}
+
+/**
+ * Assert precisely the list of all breakable line for a given source
+ *
+ * @param {Object} dbg
+ * @param {Object|String} file
+ *        The source name or source object to review
+ * @param {Number} numberOfLines
+ *        The expected number of lines for this source.
+ * @param {Array<Number>} breakableLines
+ *        This list of all breakable line numbers
+ */
+async function assertBreakableLines(
+  dbg,
+  source,
+  numberOfLines,
+  breakableLines
+) {
+  await selectSource(dbg, source);
+  is(
+    getCM(dbg).lineCount(),
+    numberOfLines,
+    `We show the expected number of lines in CodeMirror for ${source}`
+  );
+  for (let line = 1; line <= numberOfLines; line++) {
+    assertLineIsBreakable(dbg, source, line, breakableLines.includes(line));
+  }
+}
+
+/**
+ * Helper alongside assertBreakable lines to ease defining list of breakable lines.
+ *
+ * @param {Number} start
+ * @param {Number} end
+ * @return {Array<Number>}
+ *         Returns an array of decimal numbers starting from `start` and ending with `end`.
+ */
+function getRange(start, end) {
+  const range = [];
+  for (let i = start; i <= end; i++) {
+    range.push(i);
+  }
+  return range;
+}
+
+/**
+ * Wait for CodeMirror to start searching
+ */
+function waitForSearchState(dbg) {
+  const cm = getCM(dbg);
+  return waitFor(() => cm.state.search);
 }

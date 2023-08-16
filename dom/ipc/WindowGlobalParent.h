@@ -162,8 +162,6 @@ class WindowGlobalParent final : public WindowContext,
       const DOMRect* aRect, double aScale, const nsACString& aBackgroundColor,
       bool aResetScrollPosition, mozilla::ErrorResult& aRv);
 
-  already_AddRefed<Promise> GetSecurityInfo(ErrorResult& aRv);
-
   static already_AddRefed<WindowGlobalParent> CreateDisconnected(
       const WindowGlobalInit& aInit);
 
@@ -221,6 +219,14 @@ class WindowGlobalParent final : public WindowContext,
   uint32_t GetBFCacheStatus() { return mBFCacheStatus; }
 
   bool HasActivePeerConnections();
+
+  bool Fullscreen() { return mFullscreen; }
+  void SetFullscreen(bool aFullscreen) { mFullscreen = aFullscreen; }
+
+  void ExitTopChromeDocumentFullscreen();
+
+  void SetShouldReportHasBlockedOpaqueResponse(
+      nsContentPolicyType aContentPolicy);
 
  protected:
   already_AddRefed<JSActor> InitJSActor(JS::Handle<JSObject*> aMaybeActor,
@@ -299,6 +305,13 @@ class WindowGlobalParent final : public WindowContext,
   mozilla::ipc::IPCResult RecvSetDocumentDomain(nsIURI* aDomain);
 
   mozilla::ipc::IPCResult RecvReloadWithHttpsOnlyException();
+
+  mozilla::ipc::IPCResult RecvDiscoverIdentityCredentialFromExternalSource(
+      const IdentityCredentialRequestOptions& aOptions,
+      const DiscoverIdentityCredentialFromExternalSourceResolver& aResolver);
+
+  mozilla::ipc::IPCResult RecvHasStorageAccessPermission(
+      HasStorageAccessPermissionResolver&& aResolve);
 
  private:
   WindowGlobalParent(CanonicalBrowsingContext* aBrowsingContext,
@@ -397,6 +410,11 @@ class WindowGlobalParent final : public WindowContext,
   // Note: We ignore favicon loads when considering the requests in the
   // loadgroup.
   Maybe<uint64_t> mSingleChannelId;
+
+  // True if the current loaded document is in fullscreen.
+  bool mFullscreen = false;
+
+  bool mShouldReportHasBlockedOpaqueResponse = false;
 };
 
 }  // namespace dom

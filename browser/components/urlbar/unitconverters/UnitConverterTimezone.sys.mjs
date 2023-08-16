@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 const TIMEZONES = {
   IDLW: -12,
   NT: -11,
@@ -72,6 +70,7 @@ export class UnitConverterTimezone {
    * Convert the given search string.
    *
    * @param {string} searchString
+   *   The string to be converted
    * @returns {string} conversion result.
    */
   convert(searchString) {

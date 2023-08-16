@@ -6,44 +6,171 @@
 
 #include "UtilityAudioDecoderChild.h"
 
+#include "base/basictypes.h"
 #include "mozilla/AppShutdown.h"
 #include "mozilla/dom/ContentParent.h"
 
+#ifdef MOZ_WMF_MEDIA_ENGINE
+#  include "mozilla/StaticPrefs_media.h"
+#  include "mozilla/gfx/GPUProcessManager.h"
+#  include "mozilla/gfx/gfxVars.h"
+#  include "mozilla/ipc/UtilityProcessManager.h"
+#  include "mozilla/layers/PVideoBridge.h"
+#  include "mozilla/layers/VideoBridgeUtils.h"
+#endif
+
 namespace mozilla::ipc {
 
-static StaticRefPtr<UtilityAudioDecoderChild> sAudioDecoderChild;
+NS_IMETHODIMP UtilityAudioDecoderChildShutdownObserver::Observe(
+    nsISupports* aSubject, const char* aTopic, const char16_t* aData) {
+  MOZ_ASSERT(strcmp(aTopic, "ipc:utility-shutdown") == 0);
 
-UtilityAudioDecoderChild::UtilityAudioDecoderChild() {
+  nsCOMPtr<nsIObserverService> observerService = services::GetObserverService();
+  if (observerService) {
+    observerService->RemoveObserver(this, "ipc:utility-shutdown");
+  }
+
+  UtilityAudioDecoderChild::Shutdown(mSandbox);
+  return NS_OK;
+}
+
+NS_IMPL_ISUPPORTS(UtilityAudioDecoderChildShutdownObserver, nsIObserver);
+
+static EnumeratedArray<SandboxingKind, SandboxingKind::COUNT,
+                       StaticRefPtr<UtilityAudioDecoderChild>>
+    sAudioDecoderChilds;
+
+UtilityAudioDecoderChild::UtilityAudioDecoderChild(SandboxingKind aKind)
+    : mSandbox(aKind), mAudioDecoderChildStart(TimeStamp::Now()) {
   MOZ_ASSERT(NS_IsMainThread());
+  nsCOMPtr<nsIObserverService> observerService = services::GetObserverService();
+  if (observerService) {
+    auto* obs = new UtilityAudioDecoderChildShutdownObserver(aKind);
+    observerService->AddObserver(obs, "ipc:utility-shutdown", false);
+  }
 }
 
 void UtilityAudioDecoderChild::ActorDestroy(ActorDestroyReason aReason) {
   MOZ_ASSERT(NS_IsMainThread());
-  sAudioDecoderChild = nullptr;
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM) {
+    gfx::gfxVars::RemoveReceiver(this);
+  }
+#endif
+  Shutdown(mSandbox);
 }
 
 void UtilityAudioDecoderChild::Bind(
     Endpoint<PUtilityAudioDecoderChild>&& aEndpoint) {
-  DebugOnly<bool> ok = aEndpoint.Bind(this);
-  MOZ_ASSERT(ok);
+  MOZ_ASSERT(NS_IsMainThread());
+  if (NS_WARN_IF(!aEndpoint.Bind(this))) {
+    MOZ_ASSERT_UNREACHABLE("Failed to bind UtilityAudioDecoderChild!");
+    return;
+  }
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  if (mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM) {
+    gfx::gfxVars::AddReceiver(this);
+  }
+#endif
 }
 
 /* static */
-RefPtr<UtilityAudioDecoderChild> UtilityAudioDecoderChild::GetSingleton() {
+void UtilityAudioDecoderChild::Shutdown(SandboxingKind aKind) {
+  sAudioDecoderChilds[aKind] = nullptr;
+}
+
+/* static */
+RefPtr<UtilityAudioDecoderChild> UtilityAudioDecoderChild::GetSingleton(
+    SandboxingKind aKind) {
   MOZ_ASSERT(NS_IsMainThread());
   bool shutdown = AppShutdown::IsInOrBeyond(ShutdownPhase::XPCOMWillShutdown);
-  if (!sAudioDecoderChild && !shutdown) {
-    sAudioDecoderChild = new UtilityAudioDecoderChild();
+  if (!sAudioDecoderChilds[aKind] && !shutdown) {
+    sAudioDecoderChilds[aKind] = new UtilityAudioDecoderChild(aKind);
   }
-  return sAudioDecoderChild;
+  return sAudioDecoderChilds[aKind];
 }
 
 mozilla::ipc::IPCResult
 UtilityAudioDecoderChild::RecvUpdateMediaCodecsSupported(
+    const RemoteDecodeIn& aLocation,
     const media::MediaCodecsSupported& aSupported) {
-  dom::ContentParent::BroadcastMediaCodecsSupportedUpdate(
-      RemoteDecodeIn::UtilityProcess, aSupported);
+  dom::ContentParent::BroadcastMediaCodecsSupportedUpdate(aLocation,
+                                                          aSupported);
   return IPC_OK();
 }
+
+#ifdef MOZ_WMF_MEDIA_ENGINE
+mozilla::ipc::IPCResult
+UtilityAudioDecoderChild::RecvCompleteCreatedVideoBridge() {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+  mHasCreatedVideoBridge = true;
+  return IPC_OK();
+}
+
+bool UtilityAudioDecoderChild::HasCreatedVideoBridge() const {
+  MOZ_ASSERT(NS_IsMainThread());
+  return mHasCreatedVideoBridge;
+}
+
+void UtilityAudioDecoderChild::OnVarChanged(const gfx::GfxVarUpdate& aVar) {
+  MOZ_ASSERT(mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+  SendUpdateVar(aVar);
+}
+
+void UtilityAudioDecoderChild::OnCompositorUnexpectedShutdown() {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+  mHasCreatedVideoBridge = false;
+  CreateVideoBridge();
+}
+
+bool UtilityAudioDecoderChild::CreateVideoBridge() {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(mSandbox == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+
+  if (HasCreatedVideoBridge()) {
+    return true;
+  }
+
+  // Build content device data first; this ensure that the GPU process is fully
+  // ready.
+  gfx::ContentDeviceData contentDeviceData;
+  gfxPlatform::GetPlatform()->BuildContentDeviceData(&contentDeviceData);
+
+  gfx::GPUProcessManager* gpuManager = gfx::GPUProcessManager::Get();
+  if (!gpuManager) {
+    NS_WARNING("Failed to get a gpu mananger!");
+    return false;
+  }
+
+  // The child end is the producer of video frames; the parent end is the
+  // consumer.
+  base::ProcessId childPid = UtilityProcessManager::GetSingleton()
+                                 ->GetProcessParent(mSandbox)
+                                 ->OtherPid();
+  base::ProcessId parentPid = gpuManager->GPUProcessPid();
+  if (parentPid == base::kInvalidProcessId) {
+    NS_WARNING("GPU process Id is invald!");
+    return false;
+  }
+
+  ipc::Endpoint<layers::PVideoBridgeParent> parentPipe;
+  ipc::Endpoint<layers::PVideoBridgeChild> childPipe;
+  nsresult rv = layers::PVideoBridge::CreateEndpoints(parentPid, childPid,
+                                                      &parentPipe, &childPipe);
+  if (NS_FAILED(rv)) {
+    NS_WARNING("Failed to create endpoints for video bridge!");
+    return false;
+  }
+
+  nsTArray<gfx::GfxVarUpdate> updates = gfx::gfxVars::FetchNonDefaultVars();
+  gpuManager->InitVideoBridge(
+      std::move(parentPipe),
+      layers::VideoBridgeSource::MFMediaEngineCDMProcess);
+  SendInitVideoBridge(std::move(childPipe), updates, contentDeviceData);
+  return true;
+}
+#endif
 
 }  // namespace mozilla::ipc

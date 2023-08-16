@@ -10,7 +10,6 @@
 
 requestLongerTimeout(2);
 
-/* import-globals-from ../../../framework/browser-toolbox/test/helpers-browser-toolbox.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/framework/browser-toolbox/test/helpers-browser-toolbox.js",
   this
@@ -21,7 +20,6 @@ Services.scriptloader.loadSubScript(
 // browser toolbox.
 add_task(async function testSourceTreeNamesForWebExtensions() {
   await pushPref("devtools.chrome.enabled", true);
-  await pushPref("devtools.browsertoolbox.fission", true);
   await pushPref("devtools.browsertoolbox.scope", "everything");
   const extension = await installAndStartContentScriptExtension();
 
@@ -80,6 +78,40 @@ add_task(async function testSourceTreeNamesForWebExtensions() {
       // with their extension name.
       await assertSourceTreeNode(dbgx, "Picture-In-Picture");
       await assertSourceTreeNode(dbgx, "Form Autofill");
+
+      const threadLabels = [...findAllElements(dbgx, "sourceTreeThreads")].map(
+        el => {
+          return el.textContent;
+        }
+      );
+      is(
+        threadLabels[0],
+        "Main Thread",
+        "The first thread is always the main thread"
+      );
+      let lastPID = -1,
+        lastThreadLabel = "";
+      for (let i = 1; i < threadLabels.length; i++) {
+        const label = threadLabels[i];
+        if (label.startsWith("(pid ")) {
+          ok(
+            !lastThreadLabel,
+            "We should only have content process threads first after the main thread"
+          );
+          const pid = parseInt(label.match(/pid (\d+)\)/)[1], 10);
+          ok(
+            pid >= lastPID,
+            `The content process threads are sorted by incremental PID ${pid} > ${lastPID}`
+          );
+          lastPID = pid;
+        } else {
+          ok(
+            label.localeCompare(lastThreadLabel) >= 0,
+            `Worker thread labels are sorted alphabeticaly: ${label} vs ${lastThreadLabel}`
+          );
+          lastThreadLabel = label;
+        }
+      }
     } catch (e) {
       console.log("Caught exception in spawn", e);
       throw e;

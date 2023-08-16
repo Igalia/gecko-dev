@@ -18,6 +18,7 @@
 #include "mozilla/ClearOnShutdown.h"
 #include "nsGlobalWindowInner.h"
 #include "nsIScriptError.h"
+#include "nsIWebProgressListener.h"
 #include "nsIXULRuntime.h"
 #include "nsRefPtrHashtable.h"
 #include "nsContentUtils.h"
@@ -122,6 +123,10 @@ void WindowContext::AppendChildBrowsingContext(
   MOZ_DIAGNOSTIC_ASSERT(!mChildren.Contains(aBrowsingContext));
 
   mChildren.AppendElement(aBrowsingContext);
+  if (!nsContentUtils::ShouldHideObjectOrEmbedImageDocument() ||
+      !aBrowsingContext->IsEmbedderTypeObjectOrEmbed()) {
+    mNonSyntheticChildren.AppendElement(aBrowsingContext);
+  }
 
   // If we're the current WindowContext in our BrowsingContext, make sure to
   // clear any cached `children` value.
@@ -136,11 +141,26 @@ void WindowContext::RemoveChildBrowsingContext(
                         "Mismatched groups?");
 
   mChildren.RemoveElement(aBrowsingContext);
+  mNonSyntheticChildren.RemoveElement(aBrowsingContext);
 
   // If we're the current WindowContext in our BrowsingContext, make sure to
   // clear any cached `children` value.
   if (IsCurrent()) {
     BrowsingContext_Binding::ClearCachedChildrenValue(mBrowsingContext);
+  }
+}
+
+void WindowContext::UpdateChildSynthetic(BrowsingContext* aBrowsingContext,
+                                         bool aIsSynthetic) {
+  MOZ_ASSERT(nsContentUtils::ShouldHideObjectOrEmbedImageDocument());
+  if (aIsSynthetic) {
+    mNonSyntheticChildren.RemoveElement(aBrowsingContext);
+  } else {
+    // The same BrowsingContext will be reused for error pages, so it can be in
+    // the list already.
+    if (!mNonSyntheticChildren.Contains(aBrowsingContext)) {
+      mNonSyntheticChildren.AppendElement(aBrowsingContext);
+    }
   }
 }
 
@@ -208,6 +228,12 @@ bool WindowContext::CanSet(FieldIndex<IDX_IsThirdPartyTrackingResourceWindow>,
   return CheckOnlyOwningProcessCanSet(aSource);
 }
 
+bool WindowContext::CanSet(FieldIndex<IDX_ShouldResistFingerprinting>,
+                           const bool& aShouldResistFingerprinting,
+                           ContentParent* aSource) {
+  return CheckOnlyOwningProcessCanSet(aSource);
+}
+
 bool WindowContext::CanSet(FieldIndex<IDX_IsSecureContext>,
                            const bool& aIsSecureContext,
                            ContentParent* aSource) {
@@ -263,11 +289,6 @@ bool WindowContext::CanSet(
 bool WindowContext::CanSet(FieldIndex<IDX_IsLocalIP>, const bool& aValue,
                            ContentParent* aSource) {
   return CheckOnlyOwningProcessCanSet(aSource);
-}
-
-bool WindowContext::CanSet(FieldIndex<IDX_HadLazyLoadImage>, const bool& aValue,
-                           ContentParent* aSource) {
-  return IsTop();
 }
 
 bool WindowContext::CanSet(FieldIndex<IDX_AllowJavascript>, bool aValue,
@@ -436,7 +457,8 @@ void WindowContext::AddSecurityState(uint32_t aStateFlags) {
                nsIWebProgressListener::STATE_BLOCKED_MIXED_DISPLAY_CONTENT |
                nsIWebProgressListener::STATE_BLOCKED_MIXED_ACTIVE_CONTENT |
                nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED |
-               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED)) ==
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADE_FAILED |
+               nsIWebProgressListener::STATE_HTTPS_ONLY_MODE_UPGRADED_FIRST)) ==
                  aStateFlags,
              "Invalid flags specified!");
 
@@ -519,6 +541,14 @@ bool WindowContext::CanShowPopup() {
   return !StaticPrefs::dom_disable_open_during_load();
 }
 
+void WindowContext::TransientSetHasActivePeerConnections() {
+  if (!IsTop()) {
+    return;
+  }
+
+  mFields.SetWithoutSyncing<IDX_HasActivePeerConnections>(true);
+}
+
 WindowContext::IPCInitializer WindowContext::GetIPCInitializer() {
   IPCInitializer init;
   init.mInnerWindowId = mInnerWindowId;
@@ -560,7 +590,7 @@ NS_INTERFACE_MAP_END
 NS_IMPL_CYCLE_COLLECTING_ADDREF(WindowContext)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(WindowContext)
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(WindowContext)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WindowContext)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(WindowContext)
   if (gWindowContexts) {
@@ -569,15 +599,15 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(WindowContext)
 
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mBrowsingContext)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mChildren)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mNonSyntheticChildren)
   NS_IMPL_CYCLE_COLLECTION_UNLINK_PRESERVED_WRAPPER
 NS_IMPL_CYCLE_COLLECTION_UNLINK_END
 
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(WindowContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mBrowsingContext)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mChildren)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mNonSyntheticChildren)
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(WindowContext)
 
 }  // namespace dom
 

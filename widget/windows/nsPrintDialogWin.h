@@ -11,6 +11,8 @@
 #include "nsCOMPtr.h"
 #include "nsIWindowWatcher.h"
 
+#include <windef.h>
+
 class nsIPrintSettings;
 class nsIDialogParamBlock;
 
@@ -27,8 +29,6 @@ class nsPrintDialogServiceWin final : public nsIPrintDialogService {
   nsresult DoDialog(mozIDOMWindowProxy* aParent,
                     nsIDialogParamBlock* aParamBlock, nsIPrintSettings* aPS,
                     const char* aChromeURL);
-
-  HWND GetHWNDForDOMWindow(mozIDOMWindowProxy* aWindow);
 
   nsCOMPtr<nsIWindowWatcher> mWatcher;
 };

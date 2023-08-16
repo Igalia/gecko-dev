@@ -6,20 +6,24 @@
 
 #include "mozilla/dom/ElementInternals.h"
 
+#include "mozAutoDocUpdate.h"
 #include "mozilla/dom/CustomElementRegistry.h"
 #include "mozilla/dom/CustomEvent.h"
 #include "mozilla/dom/ElementInternalsBinding.h"
 #include "mozilla/dom/FormData.h"
 #include "mozilla/dom/HTMLElement.h"
 #include "mozilla/dom/HTMLFieldSetElement.h"
+#include "mozilla/dom/MutationEventBinding.h"
+#include "mozilla/dom/MutationObservers.h"
 #include "mozilla/dom/ShadowRoot.h"
 #include "mozilla/dom/ValidityState.h"
 #include "nsContentUtils.h"
+#include "nsDebug.h"
 #include "nsGenericHTMLElement.h"
 
 namespace mozilla::dom {
 
-NS_IMPL_CYCLE_COLLECTION_CLASS(ElementInternals)
+NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(ElementInternals)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(ElementInternals)
   tmp->Unlink();
@@ -33,8 +37,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN(ElementInternals)
                                     mValidity, mValidationAnchor);
 NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
 
-NS_IMPL_CYCLE_COLLECTION_TRACE_WRAPPERCACHE(ElementInternals)
-
 NS_IMPL_CYCLE_COLLECTING_ADDREF(ElementInternals)
 NS_IMPL_CYCLE_COLLECTING_RELEASE(ElementInternals)
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ElementInternals)
@@ -47,7 +49,8 @@ ElementInternals::ElementInternals(HTMLElement* aTarget)
     : nsIFormControl(FormControlType::FormAssociatedCustomElement),
       mTarget(aTarget),
       mForm(nullptr),
-      mFieldSet(nullptr) {}
+      mFieldSet(nullptr),
+      mControlNumber(-1) {}
 
 nsISupports* ElementInternals::GetParentObject() { return ToSupports(mTarget); }
 
@@ -409,10 +412,70 @@ void ElementInternals::Unlink() {
   if (mForm) {
     // Don't notify, since we're being destroyed in any case.
     ClearForm(true, true);
+    MOZ_DIAGNOSTIC_ASSERT(!mForm);
   }
   if (mFieldSet) {
     mFieldSet->RemoveElement(mTarget);
+    mFieldSet = nullptr;
   }
+}
+
+void ElementInternals::GetAttr(const nsAtom* aName, nsAString& aResult) const {
+  MOZ_ASSERT(aResult.IsEmpty(), "Should have empty string coming in");
+
+  const nsAttrValue* val = mAttrs.GetAttr(aName);
+  if (val) {
+    val->ToString(aResult);
+    return;
+  }
+  SetDOMStringToNull(aResult);
+}
+
+nsresult ElementInternals::SetAttr(nsAtom* aName, const nsAString& aValue) {
+  Document* document = mTarget->GetComposedDoc();
+  mozAutoDocUpdate updateBatch(document, true);
+
+  uint8_t modType = mAttrs.HasAttr(aName) ? MutationEvent_Binding::MODIFICATION
+                                          : MutationEvent_Binding::ADDITION;
+
+  MutationObservers::NotifyARIAAttributeDefaultWillChange(mTarget, aName,
+                                                          modType);
+
+  bool attrHadValue;
+  nsAttrValue attrValue(aValue);
+  nsresult rs = mAttrs.SetAndSwapAttr(aName, attrValue, &attrHadValue);
+  nsMutationGuard::DidMutate();
+
+  MutationObservers::NotifyARIAAttributeDefaultChanged(mTarget, aName, modType);
+
+  mTarget->UpdateState(true);
+
+  return rs;
+}
+
+DocGroup* ElementInternals::GetDocGroup() {
+  return mTarget->OwnerDoc()->GetDocGroup();
+}
+
+void ElementInternals::RestoreFormValue(
+    Nullable<OwningFileOrUSVStringOrFormData>&& aValue,
+    Nullable<OwningFileOrUSVStringOrFormData>&& aState) {
+  mSubmissionValue = aValue;
+  mState = aState;
+
+  if (!mState.IsNull()) {
+    LifecycleCallbackArgs args;
+    args.mState = mState;
+    args.mReason = RestoreReason::Restore;
+    nsContentUtils::EnqueueLifecycleCallback(
+        ElementCallbackType::eFormStateRestore, mTarget, args);
+  }
+}
+
+void ElementInternals::InitializeControlNumber() {
+  MOZ_ASSERT(mControlNumber == -1,
+             "FACE control number should only be initialized once!");
+  mControlNumber = mTarget->OwnerDoc()->GetNextControlNumber();
 }
 
 }  // namespace mozilla::dom

@@ -6,34 +6,33 @@
 
 // Globals
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { LoginRecipesContent, LoginRecipesParent } = ChromeUtils.import(
-  "resource://gre/modules/LoginRecipes.jsm"
+const { LoginRecipesContent, LoginRecipesParent } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginRecipes.sys.mjs"
 );
-const { LoginHelper } = ChromeUtils.import(
-  "resource://gre/modules/LoginHelper.jsm"
+const { LoginHelper } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginHelper.sys.mjs"
 );
-const { FileTestUtils } = ChromeUtils.import(
-  "resource://testing-common/FileTestUtils.jsm"
+const { FileTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/FileTestUtils.sys.mjs"
 );
-const { LoginTestUtils } = ChromeUtils.import(
-  "resource://testing-common/LoginTestUtils.jsm"
+const { LoginTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/LoginTestUtils.sys.mjs"
 );
-const { MockDocument } = ChromeUtils.import(
-  "resource://testing-common/MockDocument.jsm"
+const { MockDocument } = ChromeUtils.importESModule(
+  "resource://testing-common/MockDocument.sys.mjs"
 );
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  DownloadPaths: "resource://gre/modules/DownloadPaths.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  DownloadPaths: "resource://gre/modules/DownloadPaths.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
 });
 
 const LoginInfo = Components.Constructor(
@@ -80,9 +79,9 @@ add_setup(async function test_common_initialize() {
   // file required to decrypt the logins contained in the SQLite databases used
   // by migration tests.  This file is not required for the other tests.
   const keyDBName = "key4.db";
-  await OS.File.copy(
+  await IOUtils.copy(
     do_get_file(`data/${keyDBName}`).path,
-    OS.Path.join(OS.Constants.Path.profileDir, keyDBName)
+    PathUtils.join(PathUtils.profileDir, keyDBName)
   );
 
   // Ensure that the service and the storage module are initialized.

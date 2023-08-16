@@ -10,7 +10,9 @@ function getExtension(background, useAddonManager) {
   return ExtensionTestUtils.loadExtension({
     useAddonManager,
     manifest: {
-      browser_action: {},
+      browser_action: {
+        default_area: "navbar",
+      },
       permissions: ["menus"],
       background: { persistent: false },
     },
@@ -24,7 +26,8 @@ add_task(async function test_menu_create_id() {
     SimpleTest.monitorConsole(resolve, [
       // Callback exists, lastError is checked, so we should not see this logged.
       {
-        message: /Unchecked lastError value: Error: menus.create requires an id for non-persistent background scripts./,
+        message:
+          /Unchecked lastError value: Error: menus.create requires an id for non-persistent background scripts./,
         forbid: true,
       },
     ]);
@@ -169,6 +172,7 @@ add_task(async function test_actions_context_menu() {
       browser_action: {
         default_title: "Test BrowserAction",
         default_popup: "test.html",
+        default_area: "navbar",
         browser_style: true,
       },
       background: { persistent: false },
@@ -215,7 +219,8 @@ add_task(async function test_menu_create_id_reuse() {
     SimpleTest.monitorConsole(resolve, [
       // Callback exists, lastError is checked, so we should not see this logged.
       {
-        message: /Unchecked lastError value: Error: menus.create requires an id for non-persistent background scripts./,
+        message:
+          /Unchecked lastError value: Error: menus.create requires an id for non-persistent background scripts./,
         forbid: true,
       },
     ]);

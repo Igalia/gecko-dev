@@ -3,13 +3,11 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { Cu } = require("chrome");
-
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 loader.lazyRequireGetter(
   this,
   "openContentLink",
-  "devtools/client/shared/link",
+  "resource://devtools/client/shared/link.js",
   true
 );
 
@@ -220,7 +218,10 @@ DomPanel.prototype = {
 
   async getRootGrip() {
     const { result } = await this._toolbox.commands.scriptCommand.execute(
-      "window"
+      "window",
+      {
+        disableBreaks: true,
+      }
     );
     return result;
   },

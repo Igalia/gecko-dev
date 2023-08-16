@@ -3151,11 +3151,26 @@ nsresult IMEInputHandler::NotifyIME(TextEventDispatcher* aTextEventDispatcher,
     case NOTIFY_IME_OF_FOCUS:
       if (IsFocused()) {
         nsIWidget* widget = aTextEventDispatcher->GetWidget();
+        MOZ_LOG(
+            gIMELog, LogLevel::Debug,
+            ("%p IMEInputHandler::NotifyIME(), IsFocused()=true, widget=%p, IsPasswordEditor()=%s",
+             this, widget, TrueOrFalse(widget && widget->GetInputContext().IsPasswordEditor())));
         if (widget && widget->GetInputContext().IsPasswordEditor()) {
           EnableSecureEventInput();
         } else {
           EnsureSecureEventInputDisabled();
         }
+      } else if (MOZ_LOG_TEST(gIMELog, LogLevel::Debug)) {
+        NS_OBJC_BEGIN_TRY_BLOCK_RETURN
+        NSWindow* window = mView ? [mView window] : nil;
+        MOZ_LOG(
+            gIMELog, LogLevel::Debug,
+            ("%p IMEInputHandler::NotifyIME(), IsFocused()=false, Destroyed()=%s, mView=%p, "
+             "[mView window]=%p, firstResponder=%p, isKeyWindow=%s, isActive=%s",
+             this, TrueOrFalse(Destroyed()), mView, window, window ? [window firstResponder] : nil,
+             TrueOrFalse(window && [window isKeyWindow]),
+             TrueOrFalse([[NSApplication sharedApplication] isActive])));
+        NS_OBJC_END_TRY_BLOCK_RETURN(NS_ERROR_FAILURE)
       }
       OnFocusChangeInGecko(true);
       return NS_OK;
@@ -4282,9 +4297,9 @@ NSUInteger IMEInputHandler::CharacterIndexForPoint(NSPoint& aPoint) {
   NSPoint ptInWindow = nsCocoaUtils::ConvertPointFromScreen(mainWindow, aPoint);
   NSPoint ptInView = [mView convertPoint:ptInWindow fromView:nil];
   queryCharAtPointEvent.mRefPoint.x =
-      static_cast<int32_t>(ptInView.x) * mWidget->BackingScaleFactor();
+      static_cast<int32_t>(ptInView.x * mWidget->BackingScaleFactor());
   queryCharAtPointEvent.mRefPoint.y =
-      static_cast<int32_t>(ptInView.y) * mWidget->BackingScaleFactor();
+      static_cast<int32_t>(ptInView.y * mWidget->BackingScaleFactor());
   mWidget->DispatchWindowEvent(queryCharAtPointEvent);
   if (queryCharAtPointEvent.Failed() || queryCharAtPointEvent.DidNotFindChar() ||
       queryCharAtPointEvent.mReply->StartOffset() >= static_cast<uint32_t>(NSNotFound)) {
@@ -4954,6 +4969,8 @@ bool TextInputHandlerBase::SetSelection(NSRange& aRange) {
 /* static */ void TextInputHandlerBase::EnableSecureEventInput() {
   sSecureEventInputCount++;
   ::EnableSecureEventInput();
+  MOZ_LOG(gIMELog, LogLevel::Debug,
+          ("EnableSecureEventInput() called (%d)", sSecureEventInputCount));
 }
 
 /* static */ void TextInputHandlerBase::DisableSecureEventInput() {
@@ -4962,6 +4979,8 @@ bool TextInputHandlerBase::SetSelection(NSRange& aRange) {
   }
   sSecureEventInputCount--;
   ::DisableSecureEventInput();
+  MOZ_LOG(gIMELog, LogLevel::Debug,
+          ("DisableSecureEventInput() called (%d)", sSecureEventInputCount));
 }
 
 /* static */ bool TextInputHandlerBase::IsSecureEventInputEnabled() {

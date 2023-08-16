@@ -5,6 +5,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "mozilla/dom/ReadableStreamDefaultReader.h"
+
+#include "mozilla/dom/AutoEntryScript.h"
 #include "mozilla/dom/ReadableStream.h"
 #include "mozilla/dom/RootedDictionary.h"
 #include "js/PropertyAndElement.h"
@@ -19,6 +21,8 @@
 #include "nsWrapperCache.h"
 
 namespace mozilla::dom {
+
+using namespace streams_abstract;
 
 NS_IMPL_CYCLE_COLLECTION(ReadableStreamGenericReader, mClosedPromise, mStream,
                          mGlobal)
@@ -56,20 +60,18 @@ JSObject* ReadableStreamDefaultReader::WrapObject(
   return ReadableStreamDefaultReader_Binding::Wrap(aCx, this, aGivenProto);
 }
 
+namespace streams_abstract {
 // https://streams.spec.whatwg.org/#readable-stream-reader-generic-initialize
 bool ReadableStreamReaderGenericInitialize(ReadableStreamGenericReader* aReader,
-                                           ReadableStream* aStream,
-                                           ErrorResult& aRv) {
+                                           ReadableStream* aStream) {
   // Step 1.
   aReader->SetStream(aStream);
 
   // Step 2.
   aStream->SetReader(aReader);
 
-  aReader->SetClosedPromise(Promise::Create(aReader->GetParentObject(), aRv));
-  if (aRv.Failed()) {
-    return false;
-  }
+  aReader->SetClosedPromise(
+      Promise::CreateInfallible(aReader->GetParentObject()));
 
   switch (aStream->State()) {
       // Step 3.
@@ -100,6 +102,7 @@ bool ReadableStreamReaderGenericInitialize(ReadableStreamGenericReader* aReader,
       return false;
   }
 }
+}  // namespace streams_abstract
 
 // https://streams.spec.whatwg.org/#default-reader-constructor &&
 // https://streams.spec.whatwg.org/#set-up-readable-stream-default-reader
@@ -122,7 +125,7 @@ ReadableStreamDefaultReader::Constructor(const GlobalObject& aGlobal,
 
   // Step 2.
   RefPtr<ReadableStream> streamPtr = &aStream;
-  if (!ReadableStreamReaderGenericInitialize(reader, streamPtr, aRv)) {
+  if (!ReadableStreamReaderGenericInitialize(reader, streamPtr)) {
     return nullptr;
   }
 
@@ -200,6 +203,7 @@ NS_INTERFACE_MAP_END
 NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(Read_ReadRequest)
 NS_INTERFACE_MAP_END_INHERITING(ReadRequest)
 
+namespace streams_abstract {
 // https://streams.spec.whatwg.org/#readable-stream-default-reader-read
 void ReadableStreamDefaultReaderRead(JSContext* aCx,
                                      ReadableStreamGenericReader* aReader,
@@ -234,12 +238,12 @@ void ReadableStreamDefaultReaderRead(JSContext* aCx,
     }
   }
 }
+}  // namespace streams_abstract
 
 // Return a raw pointer here to avoid refcounting, but make sure it's safe
 // (the object should be kept alive by the callee).
 // https://streams.spec.whatwg.org/#default-reader-read
-already_AddRefed<Promise> ReadableStreamDefaultReader::Read(JSContext* aCx,
-                                                            ErrorResult& aRv) {
+already_AddRefed<Promise> ReadableStreamDefaultReader::Read(ErrorResult& aRv) {
   // Step 1.
   if (!mStream) {
     aRv.ThrowTypeError("Reading is not possible after calling releaseLock.");
@@ -247,13 +251,16 @@ already_AddRefed<Promise> ReadableStreamDefaultReader::Read(JSContext* aCx,
   }
 
   // Step 2.
-  RefPtr<Promise> promise = Promise::Create(GetParentObject(), aRv);
+  RefPtr<Promise> promise = Promise::CreateInfallible(GetParentObject());
 
   // Step 3.
   RefPtr<ReadRequest> request = new Read_ReadRequest(promise);
 
   // Step 4.
-  ReadableStreamDefaultReaderRead(aCx, this, request, aRv);
+  AutoEntryScript aes(mGlobal, "ReadableStreamDefaultReader::Read");
+  JSContext* cx = aes.cx();
+
+  ReadableStreamDefaultReaderRead(cx, this, request, aRv);
   if (aRv.Failed()) {
     return nullptr;
   }
@@ -261,6 +268,8 @@ already_AddRefed<Promise> ReadableStreamDefaultReader::Read(JSContext* aCx,
   // Step 5.
   return promise.forget();
 }
+
+namespace streams_abstract {
 
 // https://streams.spec.whatwg.org/#readable-stream-reader-generic-release
 void ReadableStreamReaderGenericRelease(ReadableStreamGenericReader* aReader,
@@ -276,7 +285,7 @@ void ReadableStreamReaderGenericRelease(ReadableStreamGenericReader* aReader,
 
   // Step 4. If stream.[[state]] is "readable", reject reader.[[closedPromise]]
   // with a TypeError exception.
-  if (aReader->GetStream()->State() == ReadableStream::ReaderState::Readable) {
+  if (stream->State() == ReadableStream::ReaderState::Readable) {
     aReader->ClosedPromise()->MaybeRejectWithTypeError(
         "Releasing lock on readable stream");
   } else {
@@ -342,6 +351,8 @@ void ReadableStreamDefaultReaderRelease(JSContext* aCx,
   ReadableStreamDefaultReaderErrorReadRequests(aCx, aReader, error, aRv);
 }
 
+}  // namespace streams_abstract
+
 // https://streams.spec.whatwg.org/#default-reader-release-lock
 void ReadableStreamDefaultReader::ReleaseLock(ErrorResult& aRv) {
   // Step 1. If this.[[stream]] is undefined, return.
@@ -394,6 +405,7 @@ already_AddRefed<Promise> ReadableStreamGenericReader::Cancel(
   return ReadableStreamGenericReaderCancel(aCx, this, aReason, aRv);
 }
 
+namespace streams_abstract {
 // https://streams.spec.whatwg.org/#set-up-readable-stream-default-reader
 void SetUpReadableStreamDefaultReader(ReadableStreamDefaultReader* aReader,
                                       ReadableStream* aStream,
@@ -406,12 +418,23 @@ void SetUpReadableStreamDefaultReader(ReadableStreamDefaultReader* aReader,
   }
 
   // Step 2.
-  if (!ReadableStreamReaderGenericInitialize(aReader, aStream, aRv)) {
+  if (!ReadableStreamReaderGenericInitialize(aReader, aStream)) {
     return;
   }
 
   // Step 3.
   aReader->ReadRequests().clear();
+}
+}  // namespace streams_abstract
+
+// https://streams.spec.whatwg.org/#readablestreamdefaultreader-read-a-chunk
+// To read a chunk from a ReadableStreamDefaultReader reader, given a read
+// request readRequest, perform ! ReadableStreamDefaultReaderRead(reader,
+// readRequest).
+void ReadableStreamDefaultReader::ReadChunk(JSContext* aCx,
+                                            ReadRequest& aRequest,
+                                            ErrorResult& aRv) {
+  ReadableStreamDefaultReaderRead(aCx, this, &aRequest, aRv);
 }
 
 }  // namespace mozilla::dom

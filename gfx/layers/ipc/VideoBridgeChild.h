@@ -36,7 +36,6 @@ class VideoBridgeChild final : public PVideoBridgeChild,
   bool DeallocPTextureChild(PTextureChild* actor);
 
   void ActorDestroy(ActorDestroyReason aWhy) override;
-  void ActorDealloc() override;
 
   // ISurfaceAllocator
   bool AllocUnsafeShmem(size_t aSize, mozilla::ipc::Shmem* aShmem) override;
@@ -64,7 +63,7 @@ class VideoBridgeChild final : public PVideoBridgeChild,
   static void Open(Endpoint<PVideoBridgeChild>&& aEndpoint);
 
  protected:
-  void HandleFatalError(const char* aMsg) const override;
+  void HandleFatalError(const char* aMsg) override;
   bool DispatchAllocShmemInternal(size_t aSize, mozilla::ipc::Shmem* aShmem,
                                   bool aUnsafe);
   void ProxyAllocShmemNow(SynchronousTask* aTask, size_t aSize,
@@ -77,7 +76,6 @@ class VideoBridgeChild final : public PVideoBridgeChild,
   VideoBridgeChild();
   virtual ~VideoBridgeChild();
 
-  RefPtr<VideoBridgeChild> mIPDLSelfRef;
   nsCOMPtr<nsISerialEventTarget> mThread;
   bool mCanSend;
 };

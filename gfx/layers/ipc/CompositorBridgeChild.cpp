@@ -48,10 +48,6 @@
 #endif
 #include "VsyncSource.h"
 
-#ifdef MOZ_WIDGET_ANDROID
-#  include "mozilla/layers/AndroidHardwareBuffer.h"
-#endif
-
 using mozilla::Unused;
 using mozilla::gfx::GPUProcessManager;
 
@@ -82,6 +78,7 @@ CompositorBridgeChild::CompositorBridgeChild(CompositorManagerChild* aManager)
       mResourceId(0),
       mCanSend(false),
       mActorDestroyed(false),
+      mPaused(false),
       mFwdTransactionId(0),
       mThread(NS_GetCurrentThread()),
       mProcessToken(0),
@@ -279,18 +276,6 @@ bool CompositorBridgeChild::CompositorIsInGPUProcess() {
   return bridge->OtherPid() != dom::ContentChild::GetSingleton()->OtherPid();
 }
 
-mozilla::ipc::IPCResult CompositorBridgeChild::RecvInvalidateLayers(
-    const LayersId& aLayersId) {
-  if (mLayerManager) {
-    MOZ_ASSERT(!aLayersId.IsValid());
-  } else if (aLayersId.IsValid()) {
-    if (dom::BrowserChild* child = dom::BrowserChild::GetFrom(aLayersId)) {
-      child->InvalidateLayers();
-    }
-  }
-  return IPC_OK();
-}
-
 mozilla::ipc::IPCResult CompositorBridgeChild::RecvDidComposite(
     const LayersId& aId, const nsTArray<TransactionId>& aTransactionIds,
     const TimeStamp& aCompositeStart, const TimeStamp& aCompositeEnd) {
@@ -330,7 +315,8 @@ void CompositorBridgeChild::ActorDestroy(ActorDestroyReason aWhy) {
     // If the parent side runs into a problem then the actor will be destroyed.
     // There is nothing we can do in the child side, here sets mCanSend as
     // false.
-    gfxCriticalNote << "Receive IPC close with reason=AbnormalShutdown";
+    gfxCriticalNote << "CompositorBridgeChild receives IPC close with "
+                       "reason=AbnormalShutdown";
   }
 
   mCanSend = false;
@@ -350,6 +336,7 @@ bool CompositorBridgeChild::SendPause() {
   if (!mCanSend) {
     return false;
   }
+  mPaused = true;
   return PCompositorBridgeChild::SendPause();
 }
 
@@ -357,6 +344,7 @@ bool CompositorBridgeChild::SendResume() {
   if (!mCanSend) {
     return false;
   }
+  mPaused = false;
   return PCompositorBridgeChild::SendResume();
 }
 
@@ -364,6 +352,7 @@ bool CompositorBridgeChild::SendResumeAsync() {
   if (!mCanSend) {
     return false;
   }
+  mPaused = false;
   return PCompositorBridgeChild::SendResumeAsync();
 }
 
@@ -422,12 +411,6 @@ mozilla::ipc::IPCResult CompositorBridgeChild::RecvParentAsyncMessages(
         NotifyNotUsed(op.TextureId(), op.fwdTransactionId());
         break;
       }
-      case AsyncParentMessageData::TOpDeliverReleaseFence: {
-        // Release fences are delivered via ImageBridge.
-        // Since some TextureClients are recycled without recycle callback.
-        MOZ_ASSERT_UNREACHABLE("unexpected to be called");
-        break;
-      }
       default:
         NS_ERROR("unknown AsyncParentMessageData type");
         return IPC_FAIL_NO_REASON(this);
@@ -483,15 +466,6 @@ void CompositorBridgeChild::HoldUntilCompositableRefReleasedIfNecessary(
   if (!aClient) {
     return;
   }
-
-#ifdef MOZ_WIDGET_ANDROID
-  auto bufferId = aClient->GetInternalData()->GetBufferId();
-  if (bufferId.isSome()) {
-    MOZ_ASSERT(aClient->GetFlags() & TextureFlags::WAIT_HOST_USAGE_END);
-    AndroidHardwareBufferManager::Get()->HoldUntilNotifyNotUsed(
-        bufferId.ref(), GetFwdTransactionId(), /* aUsesImageBridge */ false);
-  }
-#endif
 
   bool waitNotifyNotUsed =
       aClient->GetFlags() & TextureFlags::RECYCLE ||

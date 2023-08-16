@@ -1,6 +1,8 @@
+'use strict';
+
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'empty_blob', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write(new Blob([]));
   await stream.close();
@@ -11,7 +13,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'valid_blob', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write(new Blob(['1234567890']));
   await stream.close();
@@ -22,7 +24,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'write_param_empty', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write({type: 'write', data: '1234567890'});
   await stream.close();
@@ -33,7 +35,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'string_zero_offset', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write({type: 'write', position: 0, data: '1234567890'});
   await stream.close();
@@ -44,7 +46,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'blob_zero_offset', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write({type: 'write', position: 0, data: new Blob(['1234567890'])});
   await stream.close();
@@ -55,7 +57,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'write_appends', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('12345');
   await stream.write('67890');
@@ -67,7 +69,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'write_appends_object_string', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('12345');
   await stream.write({type: 'write', data: '67890'});
@@ -79,7 +81,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'write_appends_object_blob', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('12345');
   await stream.write({type: 'write', data: new Blob(['67890'])});
@@ -91,7 +93,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'string_with_offset', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('1234567890');
   await stream.write({type: 'write', position: 4, data: 'abc'});
@@ -102,8 +104,21 @@ directory_test(async (t, root) => {
 }, 'write() called with a string and a valid offset');
 
 directory_test(async (t, root) => {
+  const handle = await createEmptyFile(t, 'write_string_with_offset_after_seek', root);
+  const stream = await handle.createWritable();
+
+  await stream.write('1234567890');
+  await stream.write({type: 'seek', position: 0});
+  await stream.write({type: 'write', position: 4, data: 'abc'});
+  await stream.close();
+
+  assert_equals(await getFileContents(handle), '1234abc890');
+  assert_equals(await getFileSize(handle), 10);
+}, 'write() called with a string and a valid offset after seek');
+
+directory_test(async (t, root) => {
 const handle = await createEmptyFile(t, 'blob_with_offset', root);
-const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
 await stream.write('1234567890');
 await stream.write({type: 'write', position: 4, data: new Blob(['abc'])});
@@ -115,7 +130,7 @@ assert_equals(await getFileSize(handle), 10);
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'bad_offset', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write({type: 'write', position: 4, data: new Blob(['abc'])});
   await stream.close();
@@ -126,7 +141,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'empty_string', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('');
   await stream.close();
@@ -136,7 +151,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'valid_utf8_string', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('foo🤘');
   await stream.close();
@@ -146,7 +161,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'string_with_unix_line_ending', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('foo\n');
   await stream.close();
@@ -157,7 +172,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle =
       await createEmptyFile(t, 'string_with_windows_line_ending', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await stream.write('foo\r\n');
   await stream.close();
@@ -167,7 +182,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'empty_array_buffer', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   const buf = new ArrayBuffer(0);
   await stream.write(buf);
@@ -179,7 +194,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle =
       await createEmptyFile(t, 'valid_string_typed_byte_array', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   const buf = new ArrayBuffer(3);
   const intView = new Uint8Array(buf);
@@ -193,22 +208,11 @@ directory_test(async (t, root) => {
 }, 'write() with a valid typed array buffer');
 
 directory_test(async (t, root) => {
-  const dir = await createDirectory(t, 'parent_dir', root);
-  const file_name = 'close_fails_when_dir_removed.txt';
-  const handle = await createEmptyFile(t, file_name, dir);
-  const stream = await handle.createWritable();
-  await stream.write('foo');
-
-  await root.removeEntry('parent_dir', {recursive: true});
-  await promise_rejects_dom(t, 'NotFoundError', stream.close());
-}, 'atomic writes: close() fails when parent directory is removed');
-
-directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'atomic_writes.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await stream.write('foox');
 
-  const stream2 = await handle.createWritable();
+  const stream2 = await cleanup_writable(t, await handle.createWritable());
   await stream2.write('bar');
 
   assert_equals(await getFileSize(handle), 0);
@@ -224,7 +228,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'atomic_write_after_close.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await stream.write('foo');
 
   await stream.close();
@@ -238,7 +242,7 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle =
       await createEmptyFile(t, 'atomic_truncate_after_close.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await stream.write('foo');
 
   await stream.close();
@@ -250,7 +254,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'atomic_close_after_close.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await stream.write('foo');
 
   await stream.close();
@@ -262,7 +266,7 @@ directory_test(async (t, root) => {
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'there_can_be_only_one.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await stream.write('foo');
 
   // This test might be flaky if there is a race condition allowing
@@ -275,24 +279,8 @@ directory_test(async (t, root) => {
 }, 'atomic writes: only one close() operation may succeed');
 
 directory_test(async (t, root) => {
-  const dir = await createDirectory(t, 'parent_dir', root);
-  const file_name = 'atomic_writable_file_stream_persists_removed.txt';
-  const handle = await createFileWithContents(t, file_name, 'foo', dir);
-
-  const stream = await handle.createWritable();
-  await stream.write('bar');
-
-  await dir.removeEntry(file_name);
-  await promise_rejects_dom(t, 'NotFoundError', getFileContents(handle));
-
-  await stream.close();
-  assert_equals(await getFileContents(handle), 'bar');
-  assert_equals(await getFileSize(handle), 3);
-}, 'atomic writes: writable file stream persists file on close, even if file is removed');
-
-directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'writer_written', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   assert_false(stream.locked);
   const writer = stream.getWriter();
   assert_true(stream.locked);
@@ -310,39 +298,37 @@ directory_test(async (t, root) => {
 directory_test(async (t, root) => {
   const handle = await createFileWithContents(
       t, 'content.txt', 'very long string', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await promise_rejects_dom(
-      t, "SyntaxError", stream.write({type: 'truncate'}), 'truncate without size');
-
+      t, 'SyntaxError', stream.write({type: 'truncate'}),
+      'truncate without size');
 }, 'WriteParams: truncate missing size param');
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'content.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await promise_rejects_dom(
-      t, "SyntaxError", stream.write({type: 'write'}), 'write without data');
-
+      t, 'SyntaxError', stream.write({type: 'write'}), 'write without data');
 }, 'WriteParams: write missing data param');
 
 directory_test(async (t, root) => {
   const handle = await createEmptyFile(t, 'content.txt', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await promise_rejects_js(
-      t, TypeError, stream.write({type: 'write', data: null}), 'write with null data');
-
+      t, TypeError, stream.write({type: 'write', data: null}),
+      'write with null data');
 }, 'WriteParams: write null data param');
 
 directory_test(async (t, root) => {
-  const handle = await createFileWithContents(
-      t, 'content.txt', 'seekable', root);
-  const stream = await handle.createWritable();
+  const handle =
+      await createFileWithContents(t, 'content.txt', 'seekable', root);
+  const stream = await cleanup_writable(t, await handle.createWritable());
 
   await promise_rejects_dom(
-      t, "SyntaxError", stream.write({type: 'seek'}), 'seek without position');
-
+      t, 'SyntaxError', stream.write({type: 'seek'}), 'seek without position');
 }, 'WriteParams: seek missing position param');
 
 directory_test(async (t, root) => {
@@ -352,7 +338,7 @@ directory_test(async (t, root) => {
   await root.removeEntry(source_file.name);
 
   const handle = await createEmptyFile(t, 'invalid_blob_test', root);
-  const stream = await handle.createWritable();
+  const stream = await cleanup_writable(t, await handle.createWritable());
   await promise_rejects_dom(t, "NotFoundError", stream.write(source_blob));
   await promise_rejects_js(t, TypeError, stream.close());
 

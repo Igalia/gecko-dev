@@ -7,22 +7,15 @@
 #ifndef vm_JSObject_h
 #define vm_JSObject_h
 
-#include "mozilla/Maybe.h"
 #include "mozilla/MemoryReporting.h"
 
 #include "jsfriendapi.h"
 
-#include "gc/Barrier.h"
-#include "js/Conversions.h"
 #include "js/friend/ErrorMessages.h"  // JSErrNum
 #include "js/GCVector.h"
-#include "js/HeapAPI.h"
 #include "js/shadow/Zone.h"  // JS::shadow::Zone
 #include "js/Wrapper.h"
-#include "vm/Printer.h"
-#include "vm/PropertyResult.h"
 #include "vm/Shape.h"
-#include "vm/StringType.h"
 
 namespace JS {
 struct ClassInfo;
@@ -43,7 +36,6 @@ class RelocationOverlay;
 
 class GlobalObject;
 class NativeObject;
-class NewObjectCache;
 
 enum class IntegrityLevel { Sealed, Frozen };
 
@@ -98,6 +90,9 @@ class JSObject
   // The Shape is stored in the cell header.
   js::Shape* shape() const { return headerPtr(); }
 
+  // Like shape(), but uses getAtomic to read the header word.
+  js::Shape* shapeMaybeForwarded() const { return headerPtrAtomic(); }
+
 #ifndef JS_64BIT
   // Ensure fixed slots have 8-byte alignment on 32-bit platforms.
   uint32_t padding_;
@@ -106,7 +101,6 @@ class JSObject
  private:
   friend class js::GCMarker;
   friend class js::GlobalObject;
-  friend class js::NewObjectCache;
   friend class js::Nursery;
   friend class js::gc::RelocationOverlay;
   friend bool js::PreventExtensions(JSContext* cx, JS::HandleObject obj,
@@ -160,10 +154,6 @@ class JSObject
     setHeaderPtr(shape);
   }
 
-  static JSObject* fromShapeFieldPointer(uintptr_t p) {
-    return reinterpret_cast<JSObject*>(p - JSObject::offsetOfShape());
-  }
-
   static bool setFlag(JSContext* cx, JS::HandleObject obj, js::ObjectFlag flag);
 
   bool hasFlag(js::ObjectFlag flag) const {
@@ -199,15 +189,19 @@ class JSObject
     return setFlag(cx, obj, js::ObjectFlag::IsUsedAsPrototype);
   }
 
-  bool useWatchtowerTestingCallback() const {
-    return hasFlag(js::ObjectFlag::UseWatchtowerTestingCallback);
+  bool useWatchtowerTestingLog() const {
+    return hasFlag(js::ObjectFlag::UseWatchtowerTestingLog);
   }
-  static bool setUseWatchtowerTestingCallback(JSContext* cx,
-                                              JS::HandleObject obj) {
-    return setFlag(cx, obj, js::ObjectFlag::UseWatchtowerTestingCallback);
+  static bool setUseWatchtowerTestingLog(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::UseWatchtowerTestingLog);
   }
 
-  inline bool isBoundFunction() const;
+  bool isGenerationCountedGlobal() const {
+    return hasFlag(js::ObjectFlag::GenerationCountedGlobal);
+  }
+  static bool setGenerationCountedGlobal(JSContext* cx, JS::HandleObject obj) {
+    return setFlag(cx, obj, js::ObjectFlag::GenerationCountedGlobal);
+  }
 
   // A "qualified" varobj is the object on which "qualified" variable
   // declarations (i.e., those defined with "var") are kept.
@@ -280,6 +274,8 @@ class JSObject
 
   static const JS::TraceKind TraceKind = JS::TraceKind::Object;
 
+  static constexpr size_t thingSize(js::gc::AllocKind kind);
+
   MOZ_ALWAYS_INLINE JS::Zone* zone() const {
     MOZ_ASSERT_IF(!isTenured(), nurseryZone() == shape()->zone());
     return shape()->zone();
@@ -322,10 +318,10 @@ class JSObject
 
 #ifdef DEBUG
   static void debugCheckNewObject(js::Shape* shape, js::gc::AllocKind allocKind,
-                                  js::gc::InitialHeap heap);
+                                  js::gc::Heap heap);
 #else
   static void debugCheckNewObject(js::Shape* shape, js::gc::AllocKind allocKind,
-                                  js::gc::InitialHeap heap) {}
+                                  js::gc::Heap heap) {}
 #endif
 
   /*
@@ -439,6 +435,8 @@ class JSObject
   MOZ_ALWAYS_INLINE bool isConstructor() const;
   MOZ_ALWAYS_INLINE JSNative callHook() const;
   MOZ_ALWAYS_INLINE JSNative constructHook() const;
+
+  bool isBackgroundFinalized() const;
 
   MOZ_ALWAYS_INLINE void finalize(JS::GCContext* gcx);
 
@@ -564,9 +562,13 @@ class JSObject
   static constexpr size_t offsetOfShape() { return offsetOfHeaderPtr(); }
 
  private:
-  JSObject() = delete;
   JSObject(const JSObject& other) = delete;
   void operator=(const JSObject& other) = delete;
+
+ protected:
+  // For the allocator only, to be used with placement new.
+  friend class js::gc::GCRuntime;
+  JSObject() = default;
 };
 
 template <>
@@ -702,11 +704,11 @@ struct JSObject_Slots4 : JSObject {
   void* data[2];
   js::Value fslots[4];
 };
-struct JSObject_Slots6 : JSObject {
-  // Only used for extended functions which are required to have exactly six
+struct JSObject_Slots7 : JSObject {
+  // Only used for extended functions which are required to have exactly seven
   // fixed slots due to JIT assumptions.
   void* data[2];
-  js::Value fslots[6];
+  js::Value fslots[7];
 };
 struct JSObject_Slots8 : JSObject {
   void* data[2];
@@ -720,6 +722,15 @@ struct JSObject_Slots16 : JSObject {
   void* data[2];
   js::Value fslots[16];
 };
+
+/* static */
+constexpr size_t JSObject::thingSize(js::gc::AllocKind kind) {
+  MOZ_ASSERT(IsObjectAllocKind(kind));
+  constexpr uint8_t objectSizes[] = {
+#define EXPAND_OJBECT_SIZE(_1, _2, _3, sizedType, _4, _5, _6) sizeof(sizedType),
+      FOR_EACH_OBJECT_ALLOCKIND(EXPAND_OJBECT_SIZE)};
+  return objectSizes[size_t(kind)];
+}
 
 namespace js {
 
@@ -819,10 +830,6 @@ MOZ_ALWAYS_INLINE bool GetPrototypeFromBuiltinConstructor(
                                      proto);
 }
 
-// Generic call for constructing |this|.
-extern JSObject* CreateThis(JSContext* cx, const JSClass* clasp,
-                            js::HandleObject callee);
-
 /* ES6 draft rev 32 (2015 Feb 2) 6.2.4.5 ToPropertyDescriptor(Obj) */
 bool ToPropertyDescriptor(JSContext* cx, HandleValue descval,
                           bool checkAccessors,
@@ -882,6 +889,14 @@ extern bool LookupNameUnqualified(JSContext* cx, Handle<PropertyName*> name,
 }  // namespace js
 
 namespace js {
+
+/*
+ * Family of Pure property lookup functions. The bool return does NOT have the
+ * standard SpiderMonkey semantics. The return value means "can this operation
+ * be performed and produce a valid result without any side effects?". If any of
+ * these return true, then the outparam can be inspected to determine the
+ * result.
+ */
 
 bool LookupPropertyPure(JSContext* cx, JSObject* obj, jsid id,
                         NativeObject** objp, PropertyResult* propp);

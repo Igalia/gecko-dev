@@ -3,8 +3,6 @@
 
 "use strict";
 
-/* import-globals-from ../../../../shared/test/shared-head.js */
-
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/shared/test/shared-head.js",
   this
@@ -109,7 +107,7 @@ const EXPRESSIONS_BY_FILE = {
   // "failure.js",
   // "function.js",
   // "grip-array.js",
-  // "grip-map-entry.js",
+  // "grip-entry.js",
   // "grip-map.js",
   // "grip.js",
   // "long-string.js",
@@ -119,8 +117,8 @@ const EXPRESSIONS_BY_FILE = {
   // "regexp.js",
 };
 
-add_task(async function() {
-  const isStubsUpdate = env.get(STUBS_UPDATE_ENV) == "true";
+add_task(async function () {
+  const isStubsUpdate = Services.env.get(STUBS_UPDATE_ENV) == "true";
 
   const tab = await addTab(TEST_URI);
   const {
@@ -135,7 +133,7 @@ add_task(async function() {
 
     const generatedStubs = await generateStubs(commands, stubFile);
     if (isStubsUpdate) {
-      await writeStubsToFile(env, stubFile, generatedStubs);
+      await writeStubsToFile(stubFile, generatedStubs);
       ok(true, `${stubFile} was updated`);
       continue;
     }
@@ -248,12 +246,11 @@ const STUBS_UPDATE_ENV = "STUBS_UPDATE";
 /**
  * Write stubs to a given file
  *
- * @param {Object} env
  * @param {String} fileName: The file to write the stubs in.
  * @param {Map} packets: A Map of the packets.
  */
-async function writeStubsToFile(env, fileName, packets) {
-  const mozRepo = env.get("MOZ_DEVELOPER_REPO_DIR");
+async function writeStubsToFile(fileName, packets) {
+  const mozRepo = Services.env.get("MOZ_DEVELOPER_REPO_DIR");
   const filePath = `${mozRepo}/${STUBS_FOLDER + fileName}`;
 
   const stubs = Array.from(packets.entries()).map(([key, packet]) => {
@@ -326,7 +323,7 @@ function getSerializedPacket(
 
   return JSON.stringify(
     packet,
-    function(key, value) {
+    function (key, value) {
       // The message can have fronts that we need to serialize
       if (value && value._grip) {
         return {

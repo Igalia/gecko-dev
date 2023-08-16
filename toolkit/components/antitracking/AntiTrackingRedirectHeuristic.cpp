@@ -24,6 +24,7 @@
 #include "nsIRedirectHistoryEntry.h"
 #include "nsIScriptError.h"
 #include "nsIURI.h"
+#include "nsNetUtil.h"
 #include "nsPIDOMWindow.h"
 #include "nsScriptSecurityManager.h"
 
@@ -61,7 +62,7 @@ bool ShouldCheckRedirectHeuristicETP(nsIChannel* aOldChannel, nsIURI* aOldURI,
   // We will skip this check if we have granted storage access before so that we
   // can grant the storage access to the rest of the chain.
   if (!net::UrlClassifierCommon::IsTrackingClassificationFlag(
-          oldClassificationFlags) &&
+          oldClassificationFlags, NS_UsePrivateBrowsing(aOldChannel)) &&
       !allowedByPreviousRedirect) {
     // This is not a tracking -> non-tracking redirect.
     LOG_SPEC(("Ignoring the redirect from %s because it's not tracking to "
@@ -102,7 +103,7 @@ bool ShouldRedirectHeuristicApplyETP(nsIChannel* aNewChannel, nsIURI* aNewURI) {
       newClassifiedChannel->GetFirstPartyClassificationFlags();
 
   if (net::UrlClassifierCommon::IsTrackingClassificationFlag(
-          newClassificationFlags)) {
+          newClassificationFlags, NS_UsePrivateBrowsing(aNewChannel))) {
     // This is not a tracking -> non-tracking redirect.
     LOG_SPEC(("Ignoring the redirect to %s because it's not tracking to "
               "non-tracking.",
@@ -380,16 +381,16 @@ void FinishAntiTrackingRedirectHeuristic(nsIChannel* aNewChannel,
   }
 
   nsAutoCString oldOrigin;
-  rv = oldPrincipal->GetOrigin(oldOrigin);
+  rv = oldPrincipal->GetOriginNoSuffix(oldOrigin);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    LOG(("Can't get the origin from the Principal"));
+    LOG(("Can't get the origin from the old Principal"));
     return;
   }
 
   nsAutoCString newOrigin;
-  rv = nsContentUtils::GetASCIIOrigin(aNewURI, newOrigin);
+  rv = newPrincipal->GetOriginNoSuffix(newOrigin);
   if (NS_WARN_IF(NS_FAILED(rv))) {
-    LOG(("Can't get the origin from the URI"));
+    LOG(("Can't get the origin from the new Principal"));
     return;
   }
 
@@ -425,7 +426,7 @@ void FinishAntiTrackingRedirectHeuristic(nsIChannel* aNewChannel,
   RefPtr<StorageAccessAPIHelper::ParentAccessGrantPromise> promise =
       StorageAccessAPIHelper::SaveAccessForOriginOnParentProcess(
           newPrincipal, oldPrincipal,
-          StorageAccessAPIHelper::StorageAccessPromptChoices::eAllow,
+          StorageAccessAPIHelper::StorageAccessPromptChoices::eAllow, false,
           StaticPrefs::privacy_restrict3rdpartystorage_expiration_redirect());
   Unused << promise;
 }

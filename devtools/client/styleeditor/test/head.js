@@ -6,7 +6,6 @@
 
 "use strict";
 
-/* import-globals-from ../../inspector/shared/test/head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/shared/test/head.js",
   this
@@ -26,7 +25,7 @@ const TEST_HOST = "mochi.test:8888";
  * @param {Window} win The window to add the tab to (default: current window).
  * @return a promise that resolves to the tab object when the url is loaded
  */
-var addTab = function(url, win) {
+var addTab = function (url, win) {
   info("Adding a new tab with URL: '" + url + "'");
 
   return new Promise(resolve => {
@@ -38,7 +37,7 @@ var addTab = function(url, win) {
       url
     ));
     BrowserTestUtils.browserLoaded(targetBrowser.selectedBrowser).then(
-      function() {
+      function () {
         info("URL '" + url + "' loading complete");
         resolve(tab);
       }
@@ -46,14 +45,14 @@ var addTab = function(url, win) {
   });
 };
 
-var navigateToAndWaitForStyleSheets = async function(url, ui, editorCount) {
+var navigateToAndWaitForStyleSheets = async function (url, ui, editorCount) {
   const onClear = ui.once("stylesheets-clear");
   await navigateTo(url);
   await onClear;
   await waitUntil(() => ui.editors.length === editorCount);
 };
 
-var reloadPageAndWaitForStyleSheets = async function(ui, editorCount) {
+var reloadPageAndWaitForStyleSheets = async function (ui, editorCount) {
   info("Reloading the page.");
 
   const onClear = ui.once("stylesheets-clear");
@@ -79,7 +78,7 @@ var reloadPageAndWaitForStyleSheets = async function(ui, editorCount) {
 /**
  * Open the style editor for the current tab.
  */
-var openStyleEditor = async function(tab) {
+var openStyleEditor = async function (tab) {
   if (!tab) {
     tab = gBrowser.selectedTab;
   }
@@ -96,7 +95,7 @@ var openStyleEditor = async function(tab) {
  * Creates a new tab in specified window navigates it to the given URL and
  * opens style editor in it.
  */
-var openStyleEditorForURL = async function(url, win) {
+var openStyleEditorForURL = async function (url, win) {
   const tab = await addTab(url, win);
   const result = await openStyleEditor(tab);
   result.tab = tab;
@@ -114,24 +113,24 @@ var openStyleEditorForURL = async function(url, win) {
  * @param {String} name
  *        name of the property.
  */
-var getComputedStyleProperty = async function(args) {
-  return SpecialPowers.spawn(gBrowser.selectedBrowser, [args], function({
-    selector,
-    pseudo,
-    name,
-  }) {
-    const element = content.document.querySelector(selector);
-    const style = content.getComputedStyle(element, pseudo);
-    return style.getPropertyValue(name);
-  });
+var getComputedStyleProperty = async function (args) {
+  return SpecialPowers.spawn(
+    gBrowser.selectedBrowser,
+    [args],
+    function ({ selector, pseudo, name }) {
+      const element = content.document.querySelector(selector);
+      const style = content.getComputedStyle(element, pseudo);
+      return style.getPropertyValue(name);
+    }
+  );
 };
 
 /**
- * Wait for "media-list-changed" events to settle on StyleEditorUI.
+ * Wait for "at-rules-list-changed" events to settle on StyleEditorUI.
  * Returns a promise that resolves the number of events caught while waiting.
  *
  * @param {StyleEditorUI} ui
- *        Current StyleEditorUI on which media-list-changed events should be fired.
+ *        Current StyleEditorUI on which at-rules-list-changed events should be fired.
  * @param {Number} delay
  */
 function waitForManyEvents(ui, delay) {
@@ -145,11 +144,11 @@ function waitForManyEvents(ui, delay) {
       // Wait for some time to catch subsequent events.
       timer = setTimeout(() => {
         // Remove the listener and resolve.
-        ui.off("media-list-changed", onEvent);
+        ui.off("at-rules-list-changed", onEvent);
         resolve(count);
       }, delay);
     };
-    ui.on("media-list-changed", onEvent);
+    ui.on("at-rules-list-changed", onEvent);
   });
 }
 
@@ -169,7 +168,7 @@ function createNewStyleSheet(ui, panelWindow) {
       editor.getSourceEditor().then(resolve);
     });
 
-    waitForFocus(function() {
+    waitForFocus(function () {
       // create a new style sheet
       const newButton = panelWindow.document.querySelector(
         ".style-editor-newButton"

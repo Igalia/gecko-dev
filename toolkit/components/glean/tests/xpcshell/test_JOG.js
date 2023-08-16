@@ -3,10 +3,12 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 
 function sleep(ms) {
   /* eslint-disable mozilla/no-arbitrary-setTimeout */
@@ -151,89 +153,85 @@ add_task(function test_jog_boolean_works() {
   Assert.equal(false, Glean.jogCat.jogBool.testGetValue());
 });
 
-add_task(
-  { skip_if: () => true /* bug XXX */ },
-  async function test_jog_event_works() {
-    Services.fog.testRegisterRuntimeMetric(
-      "event",
-      "jog_cat",
-      "jog_event_no_extra",
-      ["test-only"],
-      `"ping"`,
-      false
-    );
-    Glean.jogCat.jogEventNoExtra.record();
-    var events = Glean.testOnlyIpc.noExtraEvent.testGetValue();
-    Assert.equal(1, events.length);
-    Assert.equal("jog_cat", events[0].category);
-    Assert.equal("jog_event_no_extra", events[0].name);
+add_task(async function test_jog_event_works() {
+  Services.fog.testRegisterRuntimeMetric(
+    "event",
+    "jog_cat",
+    "jog_event_no_extra",
+    ["test-only"],
+    `"ping"`,
+    false
+  );
+  Glean.jogCat.jogEventNoExtra.record();
+  var events = Glean.jogCat.jogEventNoExtra.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("jog_cat", events[0].category);
+  Assert.equal("jog_event_no_extra", events[0].name);
 
-    Services.fog.testRegisterRuntimeMetric(
-      "event",
-      "jog_cat",
-      "jog_event",
-      ["test-only"],
-      `"ping"`,
-      false,
-      JSON.stringify({ extras: { extra1: "string", extra2: "string" } })
-    );
-    let extra = { extra1: "can set extras", extra2: "passing more data" };
-    Glean.jogCat.jogEvent.record(extra);
-    events = Glean.jogCat.jogEvent.testGetValue();
-    Assert.equal(1, events.length);
-    Assert.equal("jog_cat", events[0].category);
-    Assert.equal("jog_event", events[0].name);
-    Assert.deepEqual(extra, events[0].extra);
+  Services.fog.testRegisterRuntimeMetric(
+    "event",
+    "jog_cat",
+    "jog_event",
+    ["test-only"],
+    `"ping"`,
+    false,
+    JSON.stringify({ allowed_extra_keys: ["extra1", "extra2"] })
+  );
+  let extra = { extra1: "can set extras", extra2: "passing more data" };
+  Glean.jogCat.jogEvent.record(extra);
+  events = Glean.jogCat.jogEvent.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("jog_cat", events[0].category);
+  Assert.equal("jog_event", events[0].name);
+  Assert.deepEqual(extra, events[0].extra);
 
-    Services.fog.testRegisterRuntimeMetric(
-      "event",
-      "jog_cat",
-      "jog_event_with_extra",
-      ["test-only"],
-      `"ping"`,
-      false,
-      JSON.stringify({
-        extras: {
-          extra1: "string",
-          extra2: "quantity",
-          extra3_longer_name: "boolean",
-        },
-      })
-    );
-    let extra2 = {
-      extra1: "can set extras",
-      extra2: 37,
-      extra3_longer_name: false,
-    };
-    Glean.jogCat.jogEventWithExtra.record(extra2);
-    events = Glean.jogCat.jogEventWithExtra.testGetValue();
-    Assert.equal(1, events.length);
-    Assert.equal("jog_cat", events[0].category);
-    Assert.equal("jog_event_with_extra", events[0].name);
-    let expectedExtra = {
-      extra1: "can set extras",
-      extra2: "37",
-      extra3_longer_name: "false",
-    };
-    Assert.deepEqual(expectedExtra, events[0].extra);
+  Services.fog.testRegisterRuntimeMetric(
+    "event",
+    "jog_cat",
+    "jog_event_with_extra",
+    ["test-only"],
+    `"ping"`,
+    false,
+    JSON.stringify({
+      allowed_extra_keys: ["extra1", "extra2", "extra3_longer_name"],
+    })
+  );
+  let extra2 = {
+    extra1: "can set extras",
+    extra2: 37,
+    extra3_longer_name: false,
+  };
+  Glean.jogCat.jogEventWithExtra.record(extra2);
+  events = Glean.jogCat.jogEventWithExtra.testGetValue();
+  Assert.equal(1, events.length);
+  Assert.equal("jog_cat", events[0].category);
+  Assert.equal("jog_event_with_extra", events[0].name);
+  let expectedExtra = {
+    extra1: "can set extras",
+    extra2: "37",
+    extra3_longer_name: "false",
+  };
+  Assert.deepEqual(expectedExtra, events[0].extra);
 
-    // Invalid extra keys don't crash, the event is not recorded.
-    let extra3 = {
-      extra1_nonexistent_extra: "this does not crash",
-    };
-    Glean.jogCat.jogEventWithExtra.record(extra3);
-    events = Glean.jogCat.jogEventWithExtra.testGetValue();
-    Assert.equal(1, events.length, "Recorded one event too many.");
+  // Quantities need to be non-negative.
+  let extra4 = {
+    extra2: -1,
+  };
+  Glean.jogCat.jogEventWithExtra.record(extra4);
+  events = Glean.jogCat.jogEventWithExtra.testGetValue();
+  Assert.equal(1, events.length, "Recorded one event too many.");
 
-    // Quantities need to be non-negative.
-    let extra4 = {
-      extra2: -1,
-    };
-    Glean.jogCat.jogEventWithExtra.record(extra4);
-    events = Glean.jogCat.jogEventWithExtra.testGetValue();
-    Assert.equal(1, events.length, "Recorded one event too many.");
-  }
-);
+  // Invalid extra keys don't crash, the event is not recorded.
+  let extra3 = {
+    extra1_nonexistent_extra: "this does not crash",
+  };
+  Glean.jogCat.jogEventWithExtra.record(extra3);
+  // And test methods throw appropriately
+  Assert.throws(
+    () => Glean.jogCat.jogEventWithExtra.testGetValue(),
+    /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/
+  );
+});
 
 add_task(async function test_jog_memory_distribution_works() {
   Services.fog.testRegisterRuntimeMetric(
@@ -293,32 +291,28 @@ add_task(async function test_jog_custom_distribution_works() {
   );
 });
 
-add_task(
-  /* TODO(bug 1737520 and XXX): Enable custom ping support in JOG and on Android */
-  { skip_if: () => true /*|| AppConstants.platform == "android"*/ },
-  function test_jog_custom_pings() {
-    Services.fog.testRegisterRuntimeMetric(
-      "boolean",
-      "jog_cat",
-      "jog_ping_bool",
-      ["jog-ping"],
-      `"ping"`,
-      false
-    );
-    //Services.fog.testRegisterRuntimePing("jog-ping");
-    Assert.ok("jogPing" in GleanPings);
-    let submitted = false;
-    Glean.jogCat.jogPingBool.set(false);
-    GleanPings.onePingOnly.testBeforeNextSubmit(reason => {
-      submitted = true;
-      Assert.equal(false, Glean.jogCat.jogPingBool.testGetValue());
-    });
-    GleanPings.onePingOnly.submit();
-    Assert.ok(submitted, "Ping was submitted, callback was called.");
-    // ping-lifetime value was cleared.
-    Assert.equal(undefined, Glean.jogCat.jogPingBool.testGetValue());
-  }
-);
+add_task(async function test_jog_custom_pings() {
+  Services.fog.testRegisterRuntimeMetric(
+    "boolean",
+    "jog_cat",
+    "jog_ping_bool",
+    ["jog-ping"],
+    `"ping"`,
+    false
+  );
+  Services.fog.testRegisterRuntimePing("jog-ping", true, true, []);
+  Assert.ok("jogPing" in GleanPings);
+  let submitted = false;
+  Glean.jogCat.jogPingBool.set(false);
+  GleanPings.jogPing.testBeforeNextSubmit(reason => {
+    submitted = true;
+    Assert.equal(false, Glean.jogCat.jogPingBool.testGetValue());
+  });
+  GleanPings.jogPing.submit();
+  Assert.ok(submitted, "Ping was submitted, callback was called.");
+  // ping-lifetime value was cleared.
+  Assert.equal(undefined, Glean.jogCat.jogPingBool.testGetValue());
+});
 
 add_task(async function test_jog_timing_distribution_works() {
   Services.fog.testRegisterRuntimeMetric(
@@ -383,7 +377,9 @@ add_task(async function test_jog_labeled_boolean_works() {
   Assert.equal(false, Glean.jogCat.jogLabeledBool.label_2.testGetValue());
   // What about invalid/__other__?
   Assert.equal(undefined, Glean.jogCat.jogLabeledBool.__other__.testGetValue());
-  Glean.jogCat.jogLabeledBool.InvalidLabel.set(true);
+  Glean.jogCat.jogLabeledBool.NowValidLabel.set(true);
+  Assert.ok(Glean.jogCat.jogLabeledBool.NowValidLabel.testGetValue());
+  Glean.jogCat.jogLabeledBool["1".repeat(72)].set(true);
   Assert.throws(
     () => Glean.jogCat.jogLabeledBool.__other__.testGetValue(),
     /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/,
@@ -399,7 +395,7 @@ add_task(async function test_jog_labeled_boolean_with_static_labels_works() {
     ["test-only"],
     `"ping"`,
     false,
-    JSON.stringify({ labels: ["label_1", "label_2"] })
+    JSON.stringify({ ordered_labels: ["label_1", "label_2"] })
   );
   Assert.equal(
     undefined,
@@ -452,7 +448,7 @@ add_task(async function test_jog_labeled_counter_works() {
     undefined,
     Glean.jogCat.jogLabeledCounter.__other__.testGetValue()
   );
-  Glean.jogCat.jogLabeledCounter.InvalidLabel.add(1);
+  Glean.jogCat.jogLabeledCounter["1".repeat(72)].add(1);
   Assert.throws(
     () => Glean.jogCat.jogLabeledCounter.__other__.testGetValue(),
     /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/,
@@ -468,7 +464,7 @@ add_task(async function test_jog_labeled_counter_with_static_labels_works() {
     ["test-only"],
     `"ping"`,
     false,
-    JSON.stringify({ labels: ["label_1", "label_2"] })
+    JSON.stringify({ ordered_labels: ["label_1", "label_2"] })
   );
   Assert.equal(
     undefined,
@@ -490,7 +486,7 @@ add_task(async function test_jog_labeled_counter_with_static_labels_works() {
     undefined,
     Glean.jogCat.jogLabeledCounterWithLabels.__other__.testGetValue()
   );
-  Glean.jogCat.jogLabeledCounterWithLabels.InvalidLabel.add(1);
+  Glean.jogCat.jogLabeledCounterWithLabels["1".repeat(72)].add(1);
   // TODO:(bug 1766515) - This should throw.
   /*Assert.throws(
     () => Glean.jogCat.jogLabeledCounterWithLabels.__other__.testGetValue(),
@@ -526,7 +522,7 @@ add_task(async function test_jog_labeled_string_works() {
     undefined,
     Glean.jogCat.jogLabeledString.__other__.testGetValue()
   );
-  Glean.jogCat.jogLabeledString.InvalidLabel.set("valid");
+  Glean.jogCat.jogLabeledString["1".repeat(72)].set("valid");
   Assert.throws(
     () => Glean.jogCat.jogLabeledString.__other__.testGetValue(),
     /NS_ERROR_LOSS_OF_SIGNIFICANT_DATA/
@@ -541,7 +537,7 @@ add_task(async function test_jog_labeled_string_with_labels_works() {
     ["test-only"],
     `"ping"`,
     false,
-    JSON.stringify({ labels: ["label_1", "label_2"] })
+    JSON.stringify({ ordered_labels: ["label_1", "label_2"] })
   );
   Assert.equal(
     undefined,
@@ -563,7 +559,7 @@ add_task(async function test_jog_labeled_string_with_labels_works() {
     undefined,
     Glean.jogCat.jogLabeledStringWithLabels.__other__.testGetValue()
   );
-  Glean.jogCat.jogLabeledStringWithLabels.InvalidLabel.set("valid");
+  Glean.jogCat.jogLabeledStringWithLabels["1".repeat(72)].set("valid");
   // TODO:(bug 1766515) - This should throw.
   /*Assert.throws(
     () => Glean.jogCat.jogLabeledStringWithLabels.__other__.testGetValue(),
@@ -653,4 +649,91 @@ add_task(function test_jog_dotted_categories_work() {
   );
   Glean.jogCatDotted.jogCounter.add(314);
   Assert.equal(314, Glean.jogCatDotted.jogCounter.testGetValue());
+});
+
+add_task(async function test_jog_ping_works() {
+  const kReason = "reason-1";
+  Services.fog.testRegisterRuntimePing("my-ping", true, true, [kReason]);
+  let submitted = false;
+  GleanPings.myPing.testBeforeNextSubmit(reason => {
+    submitted = true;
+    Assert.equal(kReason, reason);
+  });
+  GleanPings.myPing.submit("reason-1");
+  Assert.ok(submitted, "Ping must have been submitted");
+});
+
+add_task(function test_jog_name_collision() {
+  Assert.ok("aCounter" in Glean.testOnlyJog);
+  Assert.equal(undefined, Glean.testOnlyJog.aCounter.testGetValue());
+  const kValue = 42;
+  Glean.testOnlyJog.aCounter.add(kValue);
+  Assert.equal(kValue, Glean.testOnlyJog.aCounter.testGetValue());
+
+  // Let's overwrite the test_only.jog.a_counter counter.
+  Services.fog.testRegisterRuntimeMetric(
+    "counter",
+    "test_only.jog",
+    "a_counter",
+    ["store1"],
+    `"ping"`,
+    true // changing the metric to disabled.
+  );
+
+  Assert.ok("aCounter" in Glean.testOnlyJog);
+  Assert.equal(kValue, Glean.testOnlyJog.aCounter.testGetValue());
+  Glean.testOnlyJog.aCounter.add(kValue);
+  Assert.equal(
+    kValue,
+    Glean.testOnlyJog.aCounter.testGetValue(),
+    "value of now-disabled metric remains unchanged."
+  );
+
+  // Now let's mess with events:
+  Assert.ok("anEvent" in Glean.testOnlyJog);
+  Assert.equal(undefined, Glean.testOnlyJog.anEvent.testGetValue());
+  const extra12 = {
+    extra1: "a value",
+    extra2: "another value",
+  };
+  Glean.testOnlyJog.anEvent.record(extra12);
+  Assert.deepEqual(extra12, Glean.testOnlyJog.anEvent.testGetValue()[0].extra);
+  Services.fog.testRegisterRuntimeMetric(
+    "event",
+    "test_only.jog",
+    "an_event",
+    ["store1"],
+    `"ping"`,
+    false,
+    JSON.stringify({ allowed_extra_keys: ["extra1", "extra2", "extra3"] }) // New extra key just dropped
+  );
+  const extra123 = {
+    extra1: "different value",
+    extra2: "another different value",
+    extra3: 42,
+  };
+  Glean.testOnlyJog.anEvent.record(extra123);
+  Assert.deepEqual(extra123, Glean.testOnlyJog.anEvent.testGetValue()[1].extra);
+});
+
+add_task(function test_enumerable_names() {
+  Assert.ok(Object.keys(Glean).includes("testOnlyJog"));
+  Assert.ok(Object.keys(Glean.testOnlyJog).includes("aCounter"));
+  Assert.ok(Object.keys(GleanPings).includes("testPing"));
+});
+
+add_task(async function test_jog_text_works() {
+  const kValue =
+    "In the heart of the Opéra district in Paris, the Cédric Grolet Opéra bakery-pastry shop is a veritable temple of gourmet delights.";
+  Services.fog.testRegisterRuntimeMetric(
+    "text",
+    "test_only.jog",
+    "a_text",
+    ["test-only"],
+    `"ping"`,
+    false
+  );
+  Glean.testOnlyJog.aText.set(kValue);
+
+  Assert.equal(kValue, Glean.testOnlyJog.aText.testGetValue());
 });

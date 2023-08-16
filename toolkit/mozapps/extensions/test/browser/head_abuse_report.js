@@ -12,14 +12,14 @@
 
 /* global MockProvider, loadInitialView, closeView */
 
-const { AbuseReporter } = ChromeUtils.import(
-  "resource://gre/modules/AbuseReporter.jsm"
+const { AbuseReporter } = ChromeUtils.importESModule(
+  "resource://gre/modules/AbuseReporter.sys.mjs"
 );
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
-const { ExtensionCommon } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionCommon.jsm"
+const { ExtensionCommon } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionCommon.sys.mjs"
 );
 
 const { makeWidgetId } = ExtensionCommon;
@@ -103,7 +103,10 @@ async function installTestExtension(
         },
       };
       break;
-    case "sitepermission":
+
+    // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based
+    // implementation is also removed.
+    case "sitepermission-deprecated":
       additionalProps = {
         name: "WebMIDI test addon for https://mochi.test",
         install_origins: ["https://mochi.test"],
@@ -126,7 +129,9 @@ async function installTestExtension(
     useAddonManager: "temporary",
   };
 
-  if (type === "sitepermission") {
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based
+  // implementation is also removed.
+  if (type === "sitepermission-deprecated") {
     const xpi = AddonTestUtils.createTempWebExtensionFile(extensionOpts);
     const addon = await AddonManager.installTemporaryAddon(xpi);
     // The extension object that ExtensionTestUtils.loadExtension returns for
@@ -183,7 +188,7 @@ const AbuseReportTestUtils = {
 
   // Returns the currently open abuse report dialog window (if any).
   getReportDialog() {
-    return Services.ww.getWindowByName("addons-abuse-report-dialog", null);
+    return Services.ww.getWindowByName("addons-abuse-report-dialog");
   },
 
   // Returns the parameters related to the report dialog (if any).
@@ -410,9 +415,8 @@ const AbuseReportTestUtils = {
   },
 
   triggerSubmit(reason, message) {
-    const reportEl = this.getReportDialog().document.querySelector(
-      "addon-abuse-report"
-    );
+    const reportEl =
+      this.getReportDialog().document.querySelector("addon-abuse-report");
     reportEl._form.elements.message.value = message;
     reportEl._form.elements.reason.value = reason;
     reportEl.submit();

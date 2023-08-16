@@ -1,6 +1,8 @@
-var { FileUtils } = ChromeUtils.import("resource://gre/modules/FileUtils.jsm");
-var { HandlerServiceTestUtils } = ChromeUtils.import(
-  "resource://testing-common/HandlerServiceTestUtils.jsm"
+var { FileUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
+);
+var { HandlerServiceTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/HandlerServiceTestUtils.sys.mjs"
 );
 
 var gMimeSvc = Cc["@mozilla.org/mime;1"].getService(Ci.nsIMIMEService);
@@ -10,7 +12,9 @@ var gHandlerSvc = Cc["@mozilla.org/uriloader/handler-service;1"].getService(
 
 function createMockedHandlerApp() {
   // Mock the executable
-  let mockedExecutable = FileUtils.getFile("TmpD", ["mockedExecutable"]);
+  let mockedExecutable = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, "mockedExecutable")
+  );
   if (!mockedExecutable.exists()) {
     mockedExecutable.create(Ci.nsIFile.NORMAL_FILE_TYPE, 0o755);
   }
@@ -22,7 +26,7 @@ function createMockedHandlerApp() {
   mockedHandlerApp.executable = mockedExecutable;
   mockedHandlerApp.detailedDescription = "Mocked handler app";
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     // remove the mocked executable from disk.
     if (mockedExecutable.exists()) {
       mockedExecutable.remove(true);
@@ -85,7 +89,7 @@ function createMockedObjects(createHandlerApp) {
     ]),
   };
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     // remove the mocked mime info from database.
     let mockHandlerInfo = gMimeSvc.getFromTypeAndExtension(
       "text/x-test-handler",
@@ -121,7 +125,7 @@ async function openHelperAppDialog(launcher) {
       false,
       "Trying to show unknownContentType.xhtml failed with exception: " + ex
     );
-    Cu.reportError(ex);
+    console.error(ex);
   }
   let dlg = await helperAppDialogShownPromise;
 
@@ -285,13 +289,13 @@ async function setDownloadDir() {
   );
   // Create this dir if it doesn't exist (ignores existing dirs)
   await IOUtils.makeDirectory(tmpDir);
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     Services.prefs.clearUserPref("browser.download.folderList");
     Services.prefs.clearUserPref("browser.download.dir");
     try {
       await IOUtils.remove(tmpDir, { recursive: true });
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
     }
   });
   Services.prefs.setIntPref("browser.download.folderList", 2);
@@ -302,7 +306,7 @@ async function setDownloadDir() {
 add_setup(async function test_common_initialize() {
   gDownloadDir = await setDownloadDir();
   Services.prefs.setCharPref("browser.download.loglevel", "Debug");
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     Services.prefs.clearUserPref("browser.download.loglevel");
   });
 });

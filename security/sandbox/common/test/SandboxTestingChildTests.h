@@ -7,6 +7,7 @@
 #include "SandboxTestingChild.h"
 
 #include "mozilla/StaticPrefs_security.h"
+#include "mozilla/ipc/UtilityProcessSandboxing.h"
 #ifdef XP_MACOSX
 #  include "nsCocoaFeatures.h"
 #endif
@@ -22,6 +23,7 @@
 #    include <sys/prctl.h>
 #    include <sys/resource.h>
 #    include <sys/socket.h>
+#    include <sys/statfs.h>
 #    include <sys/syscall.h>
 #    include <sys/sysmacros.h>
 #    include <sys/time.h>
@@ -63,6 +65,13 @@ namespace ApplicationServices {
 #  include "mozilla/DynamicallyLinkedFunctionPtr.h"
 #  include "nsAppDirectoryServiceDefs.h"
 #  include "mozilla/WindowsProcessMitigations.h"
+#endif
+
+#ifdef XP_LINUX
+// Defined in <linux/watch_queue.h> which was added in 5.8
+#  ifndef O_NOTIFICATION_PIPE
+#    define O_NOTIFICATION_PIPE O_EXCL
+#  endif
 #endif
 
 constexpr bool kIsDebug =
@@ -462,6 +471,30 @@ void RunTestsContent(SandboxTestingChild* child) {
                      });
   }
 
+  child->ErrnoTest("statfs"_ns, true, [] {
+    struct statfs sf;
+    return statfs("/usr/share", &sf);
+  });
+
+  child->ErrnoTest("pipe2"_ns, true, [] {
+    int fds[2];
+    int rv = pipe2(fds, O_CLOEXEC);
+    int savedErrno = errno;
+    if (rv == 0) {
+      close(fds[0]);
+      close(fds[1]);
+    }
+    errno = savedErrno;
+    return rv;
+  });
+
+  child->ErrnoValueTest("chroot"_ns, ENOSYS, [] { return chroot("/"); });
+
+  child->ErrnoValueTest("pipe2_notif"_ns, ENOSYS, [] {
+    int fds[2];
+    return pipe2(fds, O_NOTIFICATION_PIPE);
+  });
+
 #    ifdef MOZ_X11
   // Check that X11 access is blocked (bug 1129492).
   // This will fail if security.sandbox.content.headless is turned off.
@@ -636,6 +669,11 @@ void RunTestsRDD(SandboxTestingChild* child) {
   child->ErrnoValueTest("ioctl_nvidia"_ns, ENOTTY,
                         [] { return ioctl(0, 0x46c8, nullptr); });
 
+  child->ErrnoTest("statfs"_ns, true, [] {
+    struct statfs sf;
+    return statfs("/usr/share", &sf);
+  });
+
 #  elif XP_MACOSX
   RunMacTestLaunchProcess(child);
   RunMacTestWindowServer(child);
@@ -764,7 +802,8 @@ void RunTestsGenericUtility(SandboxTestingChild* child) {
 #endif             // XP_MACOSX
 }
 
-void RunTestsUtilityAudioDecoder(SandboxTestingChild* child) {
+void RunTestsUtilityAudioDecoder(SandboxTestingChild* child,
+                                 ipc::SandboxingKind aSandbox) {
   MOZ_ASSERT(child, "No SandboxTestingChild*?");
 
   RunGenericTests(child);
@@ -796,7 +835,9 @@ void RunTestsUtilityAudioDecoder(SandboxTestingChild* child) {
 #  elif XP_MACOSX  // XP_LINUX
   RunMacTestLaunchProcess(child);
   RunMacTestWindowServer(child);
-  RunMacTestAudioAPI(child, true);
+  RunMacTestAudioAPI(
+      child,
+      aSandbox == ipc::SandboxingKind::UTILITY_AUDIO_DECODING_APPLE_MEDIA);
 #  endif           // XP_MACOSX
 #else              // XP_UNIX
 #  ifdef XP_WIN
@@ -804,6 +845,26 @@ void RunTestsUtilityAudioDecoder(SandboxTestingChild* child) {
 #  endif  // XP_WIN
   child->ReportNoTests();
 #endif    // XP_UNIX
+}
+
+void RunTestsGPU(SandboxTestingChild* child) {
+  MOZ_ASSERT(child, "No SandboxTestingChild*?");
+
+  RunGenericTests(child);
+
+#if defined(XP_WIN)
+
+  FileTest("R/W access to shader-cache dir"_ns, NS_APP_USER_PROFILE_50_DIR,
+           u"shader-cache\\"_ns, FILE_GENERIC_READ | FILE_GENERIC_WRITE, true,
+           child);
+
+  FileTest("R/W access to shader-cache files"_ns, NS_APP_USER_PROFILE_50_DIR,
+           u"shader-cache\\sandboxTest.txt"_ns,
+           FILE_GENERIC_READ | FILE_GENERIC_WRITE, true, child);
+
+#else   // defined(XP_WIN)
+  child->ReportNoTests();
+#endif  // defined(XP_WIN)
 }
 
 }  // namespace mozilla

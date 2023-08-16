@@ -7,9 +7,57 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## Unreleased
 
+### Added
+ - encoder API: add `JxlEncoderSetExtraChannelDistance` to adjust the quality
+   of extra channels (like alpha) separately.
+ - encoder API: new api functions for streaming encoding:
+  - `JxlEncoderSetOutputCallback`,
+  - `JxlEncoderChunkedImageFrameStart`,
+  - `JxlEncoderChunkedImageFrameAddPart` and new
+  - `JXL_ENC_FRAME_SETTING_BUFFERING` enum value.
+### Removed
+ - API: the Butteraugli API (`jxl/butteraugli.h`) was removed.
+ - encoder and decoder API: all deprecated functions were removed:
+   `JxlDecoderDefaultPixelFormat`, `JxlEncoderOptionsSetLossless`,
+   `JxlEncoderOptionsSetEffort`, `JxlEncoderOptionsSetDecodingSpeed`,
+   `JxlEncoderOptionsSetDistance`, `JxlEncoderOptionsCreate`, as well as
+   the deprecated enumerator values `JXL_DEC_EXTENSIONS`, `JXL_ENC_NOT_SUPPORTED`,
+   `JXL_TYPE_BOOLEAN`, `JXL_TYPE_UINT32`, and deprecated type `JxlEncoderOptions`.
+ - decoder API: the signature of `JxlDecoderGetColorAsEncodedProfile`,
+   `JxlDecoderGetICCProfileSize`, and `JxlDecoderGetColorAsICCProfile`
+   changed: a deprecated unused argument was removed.
+
+### Changed
+ - changed the name of the cjxl flag `photon_noise` to `photon_noise_iso`
+
+## [0.8.0] - 2023-01-18
+
+### Added
+ - decoder API: new function `JxlDecoderSetImageBitDepth` to set the bit depth
+   of the output buffer.
+ - decoder API proposal: add `JxlDecoderSetOutputColorProfile` and
+   `JxlDecoderSetCms` to enable decoding to desired colorspace; NB: not
+   implemented yet.
+ - encoder API: new function `JxlEncoderSetFrameBitDepth` to set the bit depth
+   of the input buffer.
+ - encoder API: add an effort 10 option for lossless compression; using this
+   setting requires calling `JxlEncoderAllowExpertOptions`.
+ - encoder API: new `JXL_ENC_FRAME_SETTING_JPEG_COMPRESS_BOXES` enum value to
+   allow explicit control of metadata compression
+
+### Removed
+ - common API: removed `JxlIntrinsicSizeHeader`
+ - decoder API: removed deprecated `JXL_DEC_NEED_DC_OUT_BUFFER` and
+   `JXL_DEC_DC_IMAGE` events, `JxlDecoderDCOutBufferSize` and
+   `JxlDecoderSetDCOutBuffer` functions
+
+### Changed / clarified
+ - encoder API: `JxlEncoderProcessOutput` requires at least 32 bytes of output
+   space to proceed and guarantees that at least one byte will be written
 ## [0.7] - 2022-07-21
 
 ### Added
+ - Export version information in headers.
  - decoder API: Ability to decode the content of metadata boxes:
    `JXL_DEC_BOX`, `JXL_DEC_BOX_NEED_MORE_OUTPUT`, `JxlDecoderSetBoxBuffer`,
    `JxlDecoderGetBoxType`, `JxlDecoderGetBoxSizeRaw` and

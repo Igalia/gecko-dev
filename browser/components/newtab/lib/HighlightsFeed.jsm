@@ -3,8 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { actionTypes: at } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 
 const { shortURL } = ChromeUtils.import(
@@ -13,12 +13,12 @@ const { shortURL } = ChromeUtils.import(
 const { SectionsManager } = ChromeUtils.import(
   "resource://activity-stream/lib/SectionsManager.jsm"
 );
-const {
-  TOP_SITES_DEFAULT_ROWS,
-  TOP_SITES_MAX_SITES_PER_ROW,
-} = ChromeUtils.import("resource://activity-stream/common/Reducers.jsm");
-const { Dedupe } = ChromeUtils.import(
-  "resource://activity-stream/common/Dedupe.jsm"
+const { TOP_SITES_DEFAULT_ROWS, TOP_SITES_MAX_SITES_PER_ROW } =
+  ChromeUtils.importESModule(
+    "resource://activity-stream/common/Reducers.sys.mjs"
+  );
+const { Dedupe } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Dedupe.sys.mjs"
 );
 
 const lazy = {};
@@ -28,25 +28,15 @@ ChromeUtils.defineModuleGetter(
   "FilterAdult",
   "resource://activity-stream/lib/FilterAdult.jsm"
 );
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "LinksCache",
-  "resource://activity-stream/lib/LinksCache.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  LinksCache: "resource://activity-stream/lib/LinksCache.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  PageThumbs: "resource://gre/modules/PageThumbs.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   lazy,
   "Screenshots",
   "resource://activity-stream/lib/Screenshots.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PageThumbs",
-  "resource://gre/modules/PageThumbs.jsm"
 );
 ChromeUtils.defineModuleGetter(
   lazy,
@@ -186,15 +176,16 @@ class HighlightsFeed {
     // deduping against Top Sites or multiple history from the same domain, etc.
     const manyPages = await this.linksCache.request({
       numItems: MANY_EXTRA_LENGTH,
-      excludeBookmarks: !this.store.getState().Prefs.values[
-        "section.highlights.includeBookmarks"
-      ],
-      excludeHistory: !this.store.getState().Prefs.values[
-        "section.highlights.includeVisited"
-      ],
-      excludePocket: !this.store.getState().Prefs.values[
-        "section.highlights.includePocket"
-      ],
+      excludeBookmarks:
+        !this.store.getState().Prefs.values[
+          "section.highlights.includeBookmarks"
+        ],
+      excludeHistory:
+        !this.store.getState().Prefs.values[
+          "section.highlights.includeVisited"
+        ],
+      excludePocket:
+        !this.store.getState().Prefs.values["section.highlights.includePocket"],
     });
 
     if (

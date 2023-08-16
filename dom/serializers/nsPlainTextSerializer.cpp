@@ -24,7 +24,7 @@
 #include "nsUnicharUtils.h"
 #include "nsCRT.h"
 #include "mozilla/Casting.h"
-#include "mozilla/EditorUtils.h"
+#include "mozilla/TextEditor.h"
 #include "mozilla/dom/CharacterData.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/HTMLBRElement.h"
@@ -430,7 +430,7 @@ nsPlainTextSerializer::AppendText(nsIContent* aText, int32_t aStartOffset,
 
   // Mask the text if the text node is in a password field.
   if (content->HasFlag(NS_MAYBE_MASKED)) {
-    EditorUtils::MaskString(textstr, *content->AsText(), 0, aStartOffset);
+    TextEditor::MaskString(textstr, *content->AsText(), 0, aStartOffset);
   }
 
   // We have to split the string across newlines
@@ -1655,7 +1655,7 @@ void nsPlainTextSerializer::Write(const nsAString& aStr) {
 nsresult nsPlainTextSerializer::GetAttributeValue(const nsAtom* aName,
                                                   nsString& aValueRet) const {
   if (mElement) {
-    if (mElement->GetAttr(kNameSpaceID_None, aName, aValueRet)) {
+    if (mElement->GetAttr(aName, aValueRet)) {
       return NS_OK;
     }
   }

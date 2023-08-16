@@ -10,7 +10,6 @@
 #include "mozilla/DebugOnly.h"
 
 #include <algorithm>
-#include <math.h>
 #include <utility>
 
 #include "jsapi.h"
@@ -19,8 +18,6 @@
 
 #include "gc/GCContext.h"
 #include "gc/HashUtil.h"
-#include "gc/Marking.h"
-#include "gc/Policy.h"
 #include "js/CharacterEncoding.h"
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
 #include "js/PropertyAndElement.h"    // JS_DefineProperty, JS_GetProperty
@@ -30,18 +27,18 @@
 #include "js/Vector.h"
 #include "util/DifferentialTesting.h"
 #include "util/StringBuffer.h"
+#include "vm/Compartment.h"
+#include "vm/FrameIter.h"
 #include "vm/GeckoProfiler.h"
 #include "vm/JSScript.h"
 #include "vm/Realm.h"
 #include "vm/SavedFrame.h"
-#include "vm/Time.h"
 #include "vm/WrapperObject.h"
 
 #include "debugger/DebugAPI-inl.h"
+#include "gc/StableCellHasher-inl.h"
 #include "vm/GeckoProfiler-inl.h"
 #include "vm/JSContext-inl.h"
-#include "vm/NativeObject-inl.h"
-#include "vm/Stack-inl.h"
 
 using mozilla::AddToHash;
 using mozilla::DebugOnly;
@@ -277,24 +274,41 @@ class MutableWrappedPtrOperations<SavedFrame::Lookup, Wrapper>
 };
 
 /* static */
-bool SavedFrame::HashPolicy::hasHash(const Lookup& l) {
-  return SavedFramePtrHasher::hasHash(l.parent);
+bool SavedFrame::HashPolicy::maybeGetHash(const Lookup& l,
+                                          HashNumber* hashOut) {
+  HashNumber parentHash;
+  if (!SavedFramePtrHasher::maybeGetHash(l.parent, &parentHash)) {
+    return false;
+  }
+  *hashOut = calculateHash(l, parentHash);
+  return true;
 }
 
 /* static */
-bool SavedFrame::HashPolicy::ensureHash(const Lookup& l) {
-  return SavedFramePtrHasher::ensureHash(l.parent);
+bool SavedFrame::HashPolicy::ensureHash(const Lookup& l, HashNumber* hashOut) {
+  HashNumber parentHash;
+  if (!SavedFramePtrHasher::ensureHash(l.parent, &parentHash)) {
+    return false;
+  }
+  *hashOut = calculateHash(l, parentHash);
+  return true;
 }
 
 /* static */
 HashNumber SavedFrame::HashPolicy::hash(const Lookup& lookup) {
+  return calculateHash(lookup, SavedFramePtrHasher::hash(lookup.parent));
+}
+
+/* static */
+HashNumber SavedFrame::HashPolicy::calculateHash(const Lookup& lookup,
+                                                 HashNumber parentHash) {
   JS::AutoCheckCannotGC nogc;
   // Assume that we can take line mod 2^32 without losing anything of
   // interest.  If that assumption changes, we'll just need to start with 0
   // and add another overload of AddToHash with more arguments.
   return AddToHash(lookup.line, lookup.column, lookup.source,
                    lookup.functionDisplayName, lookup.asyncCause,
-                   lookup.mutedErrors, SavedFramePtrHasher::hash(lookup.parent),
+                   lookup.mutedErrors, parentHash,
                    JSPrincipalsPtrHasher::hash(lookup.principals));
 }
 
@@ -1446,10 +1460,24 @@ bool SavedStacks::insertFrames(JSContext* cx, MutableHandle<SavedFrame*> frame,
     }
 
     if (framePtr) {
-      // See the comment in Stack.h for why RematerializedFrames
-      // are a special case here.
-      MOZ_ASSERT_IF(seenCached, framePtr->hasCachedSavedFrame() ||
-                                    framePtr->isRematerializedFrame());
+      // In general, when we reach a frame with its hasCachedSavedFrame bit set,
+      // all its parents will have the bit set as well. See the
+      // LiveSavedFrameCache comment in Activation.h for more details. There are
+      // a few exceptions:
+      // - Rematerialized frames are always created with the bit clear.
+      // - Captures using FirstSubsumedFrame ignore async parents and walk the
+      //   real stack. Because we're using different rules for walking the
+      //   stack, we can reach frames that weren't cached in a previous
+      //   AllFrames traversal.
+      // - Similarly, if we've seen an evalInFrame frame but haven't reached
+      //   its target yet, we don't stop when we reach an async parent, so we
+      //   can reach frames that weren't cached in a previous traversal that
+      //   didn't include the evalInFrame.
+      DebugOnly<bool> hasGoodExcuse = framePtr->isRematerializedFrame() ||
+                                      capture.is<JS::FirstSubsumedFrame>() ||
+                                      !unreachedEvalTargets.empty();
+      MOZ_ASSERT_IF(seenCached,
+                    framePtr->hasCachedSavedFrame() || hasGoodExcuse);
       seenCached |= framePtr->hasCachedSavedFrame();
 
       if (capture.is<JS::AllFrames>() && framePtr->isInterpreterFrame() &&
@@ -1814,7 +1842,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
       locationp.setSource(AtomizeChars(cx, displayURL, js_strlen(displayURL)));
     } else {
       const char* filename = iter.filename() ? iter.filename() : "";
-      locationp.setSource(Atomize(cx, filename, strlen(filename)));
+      locationp.setSource(AtomizeUTF8Chars(cx, filename, strlen(filename)));
     }
     if (!locationp.source()) {
       return false;
@@ -1830,8 +1858,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
   RootedScript script(cx, iter.script());
   jsbytecode* pc = iter.pc();
 
-  PCKey key(script, pc);
-  PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(key);
+  PCLocationMap::AddPtr p = pcLocationMap.lookupForAdd(PCKey(script, pc));
 
   if (!p) {
     Rooted<JSAtom*> source(cx);
@@ -1839,7 +1866,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
       source = AtomizeChars(cx, displayURL, js_strlen(displayURL));
     } else {
       const char* filename = script->filename() ? script->filename() : "";
-      source = Atomize(cx, filename, strlen(filename));
+      source = AtomizeUTF8Chars(cx, filename, strlen(filename));
     }
     if (!source) {
       return false;
@@ -1850,6 +1877,7 @@ bool SavedStacks::getLocation(JSContext* cx, const FrameIter& iter,
     uint32_t line = PCToLineNumber(script, pc, &column);
 
     // Make the column 1-based. See comment above.
+    PCKey key(script, pc);
     LocationValue value(source, sourceId, line, column + 1);
     if (!pcLocationMap.add(p, key, value)) {
       ReportOutOfMemory(cx);

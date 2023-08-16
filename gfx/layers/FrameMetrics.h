@@ -205,22 +205,21 @@ struct FrameMetrics {
 
   /*
    * Calculate the composition bounds of this frame in the CSS pixels of
-   * the content surrounding the scroll frame. (This can be thought of as
-   * "parent CSS" pixels).
+   * the content surrounding the scroll frame (OuterCSS pixels).
    * Note that it does not make sense to ask for the composition bounds in the
    * CSS pixels of the scrolled content (that is, regular CSS pixels),
    * because the origin of the composition bounds is not meaningful in that
    * coordinate space. (The size is, use CalculateCompositedSizeInCssPixels()
    * for that.)
    */
-  CSSRect CalculateCompositionBoundsInCssPixelsOfSurroundingContent() const {
+  OuterCSSRect CalculateCompositionBoundsInOuterCssPixels() const {
     if (GetZoom() == CSSToParentLayerScale(0)) {
-      return CSSRect();  // avoid division by zero
+      return OuterCSSRect();  // avoid division by zero
     }
     // The CSS pixels of the scrolled content and the CSS pixels of the
     // surrounding content only differ if the scrolled content is rendered
     // at a higher resolution, and the difference is the resolution.
-    return mCompositionBounds / GetZoom() * CSSToCSSScale{mPresShellResolution};
+    return mCompositionBounds / GetZoom() * GetCSSToOuterCSSScale();
   }
 
   CSSSize CalculateBoundedCompositedSizeInCssPixels() const {
@@ -316,6 +315,13 @@ struct FrameMetrics {
 
   const CSSToLayoutDeviceScale& GetDevPixelsPerCSSPixel() const {
     return mDevPixelsPerCSSPixel;
+  }
+
+  CSSToOuterCSSScale GetCSSToOuterCSSScale() const {
+    // The scale difference between CSS and OuterCSS pixels is the
+    // part of the zoom that's not subject to all enclosing content,
+    // i.e. the pres shell resolution.
+    return CSSToOuterCSSScale(mPresShellResolution);
   }
 
   void SetIsRootContent(bool aIsRootContent) {
@@ -843,7 +849,6 @@ struct ScrollMetadata {
       : mMetrics(),
         mSnapInfo(),
         mScrollParentId(ScrollableLayerGuid::NULL_SCROLL_ID),
-        mBackgroundColor(),
         mContentDescription(),
         mLineScrollAmount(0, 0),
         mPageScrollAmount(0, 0),
@@ -854,7 +859,6 @@ struct ScrollMetadata {
         mResolutionUpdated(false),
         mIsRDMTouchSimulationActive(false),
         mDidContentGetPainted(true),
-        mPrefersReducedMotion(false),
         mForceMousewheelAutodir(false),
         mForceMousewheelAutodirHonourRoot(false),
         mIsPaginatedPresentation(false),
@@ -863,7 +867,6 @@ struct ScrollMetadata {
   bool operator==(const ScrollMetadata& aOther) const {
     return mMetrics == aOther.mMetrics && mSnapInfo == aOther.mSnapInfo &&
            mScrollParentId == aOther.mScrollParentId &&
-           mBackgroundColor == aOther.mBackgroundColor &&
            // don't compare mContentDescription
            mLineScrollAmount == aOther.mLineScrollAmount &&
            mPageScrollAmount == aOther.mPageScrollAmount &&
@@ -874,7 +877,6 @@ struct ScrollMetadata {
            mResolutionUpdated == aOther.mResolutionUpdated &&
            mIsRDMTouchSimulationActive == aOther.mIsRDMTouchSimulationActive &&
            mDidContentGetPainted == aOther.mDidContentGetPainted &&
-           mPrefersReducedMotion == aOther.mPrefersReducedMotion &&
            mForceMousewheelAutodir == aOther.mForceMousewheelAutodir &&
            mForceMousewheelAutodirHonourRoot ==
                aOther.mForceMousewheelAutodirHonourRoot &&
@@ -906,10 +908,6 @@ struct ScrollMetadata {
   ViewID GetScrollParentId() const { return mScrollParentId; }
 
   void SetScrollParentId(ViewID aParentId) { mScrollParentId = aParentId; }
-  const gfx::DeviceColor& GetBackgroundColor() const {
-    return mBackgroundColor;
-  }
-  void SetBackgroundColor(const gfx::sRGBColor& aBackgroundColor);
   const nsCString& GetContentDescription() const { return mContentDescription; }
   void SetContentDescription(const nsCString& aContentDescription) {
     mContentDescription = aContentDescription;
@@ -949,9 +947,6 @@ struct ScrollMetadata {
   bool GetIsRDMTouchSimulationActive() const {
     return mIsRDMTouchSimulationActive;
   }
-
-  void SetPrefersReducedMotion(bool aValue) { mPrefersReducedMotion = aValue; }
-  bool PrefersReducedMotion() const { return mPrefersReducedMotion; }
 
   void SetForceMousewheelAutodir(bool aValue) {
     mForceMousewheelAutodir = aValue;
@@ -1021,9 +1016,6 @@ struct ScrollMetadata {
   // off.
   ViewID mScrollParentId;
 
-  // The background color to use when overscrolling.
-  gfx::DeviceColor mBackgroundColor;
-
   // A description of the content element corresponding to this frame.
   // This is empty unless this is a scrollable layer and the
   // apz.printtree pref is turned on.
@@ -1074,11 +1066,6 @@ struct ScrollMetadata {
   // needs to be able to distinguish these paint-skip transactions so that it
   // can use the correct transforms.
   bool mDidContentGetPainted : 1;
-
-  // Whether the user has requested the system minimze the amount of
-  // non-essential motion it uses (see the prefers-reduced-motion
-  // media query).
-  bool mPrefersReducedMotion : 1;
 
   // Whether privileged code has requested that autodir behaviour be
   // enabled for the scroll frame.

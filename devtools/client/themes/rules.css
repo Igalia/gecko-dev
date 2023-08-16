@@ -63,6 +63,7 @@
   display: flex;
   overflow: hidden;
   flex-wrap: wrap;
+  margin: 2px;
 }
 
 .ruleview-reveal-panel[hidden] {
@@ -76,7 +77,6 @@
 
 .ruleview-reveal-panel label {
   user-select: none;
-  flex-grow: 1;
   display: flex;
   align-items: center;
 }
@@ -84,6 +84,16 @@
 #pseudo-class-panel,
 #ruleview-class-panel .classes {
   padding: 0 3px;
+}
+
+/* Pseudo Class toggle panel */
+
+#pseudo-class-panel {
+  grid-template-columns: repeat(auto-fit, minmax(100px, max-content));
+}
+
+#pseudo-class-panel:not([hidden]) {
+  display: grid;
 }
 
 /* Class toggle panel */
@@ -104,6 +114,7 @@
 #ruleview-class-panel .classes label {
   flex: 0 0;
   max-width: 50%;
+  min-width: 100px;
 }
 
 #ruleview-class-panel .classes label span {
@@ -224,9 +235,9 @@
   cursor: default;
 }
 
-.ruleview-rule-source:not(.unselectable):hover,
-.ruleview-rule-source:not([unselectable]):hover {
+.ruleview-rule-source:not([unselectable]) {
   text-decoration: underline;
+  text-decoration-skip-ink: none;
 }
 
 .ruleview-header {
@@ -348,6 +359,34 @@
   clear: both;
   cursor: text;
   padding-right: 20px;
+}
+
+.ruleview-ancestor-ruleopen,
+.ruleview-ancestor-ruleclose {
+  color: var(--theme-comment);
+}
+
+.ruleview-rule-indent, .ruleview-ancestor-ruleclose {
+  white-space: pre;
+  /*
+  * We do want to keep the underlying chars for the indent for user to copy/paste,
+  * but we can reduce the inline space it takes.
+  * Tweaking word-spacing instead of using font-size as the latter could be odd when
+  * the text is selected.
+  * Avoid using letter-spacing as this can cause visual glitches on low-dpi screen (see Bug 1845517).
+  */
+  word-spacing: -0.5ch;
+}
+
+.ruleview-rule-indent.clipboard-only {
+  position: absolute;
+  left: -9999px;
+  overflow: hidden;
+  width: 0;
+  height: 0;
+  padding: 0;
+  border: 0;
+  margin: 0;
 }
 
 .ruleview-propertylist {
@@ -484,6 +523,7 @@
 
 .ruleview-overridden-items {
   margin-inline-start: -25px;
+  margin-block: 0;
   list-style: none;
   line-height: 1.5em;
 }
@@ -625,6 +665,10 @@
   background-image: url("chrome://devtools/skin/images/angle-swatch.svg");
 }
 
+.ruleview-lineareasingswatch {
+  background-image: url("chrome://devtools/skin/images/linear-easing-swatch.svg");
+}
+
 .ruleview-overridden {
   text-decoration: line-through solid var(--theme-text-color-alt);
 }
@@ -680,7 +724,7 @@
 .ruleview-highlight > .ruleview-propertyvaluecontainer,
 .ruleview-highlight > .ruleview-rule-source-label,
 .ruleview-highlight > .ruleview-selector,
-.ruleview-rule-ancestor-data li.ruleview-highlight {
+.ruleview-rule-ancestor-data .ruleview-highlight {
   background-color: var(--rule-highlight-background-color);
 }
 
@@ -694,8 +738,8 @@
   border-bottom-color: hsl(0,0%,50%);
 }
 
-/* @media and @layer rule info element */
-ul.ruleview-rule-ancestor-data {
+/* ancestor rules info element (parent at-rules, parent of nested rules, …) */
+.ruleview-rule-ancestor-data {
   max-width: 100%;
   display: inline-block;
   list-style: none;
@@ -703,13 +747,24 @@ ul.ruleview-rule-ancestor-data {
   margin: 0;
 }
 
-.ruleview-rule-ancestor-data li {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.ruleview-rule-ancestor-data [role="listitem"] {
   /* When there's a search and this element is highlighted, this prevents the background
      color to be applied to the whole width of the parent ul block */
   max-width: max-content;
+}
+
+.ruleview-rule-ancestor-data  [role="listitem"].has-tooltip:hover .container-query-declaration {
+  text-decoration: underline;
+  text-decoration-color: var(--theme-highlight-blue);
+  text-decoration-style: dotted;
+  text-decoration-skip-ink: none;
+  text-decoration-thickness: 2px;
+  text-underline-offset: 2px;
+}
+
+.ruleview-rule-ancestor-data  [role="listitem"] :is(button,[role="button"]).open-inspector {
+  /* There's a space character after the button, so add a 1ch margin-inline-start to be consistent */
+  margin-inline: 1ch 0;
 }
 
 .ruleview-selectorcontainer {
@@ -741,7 +796,7 @@ ul.ruleview-rule-ancestor-data {
   width: 15px;
   height: 15px;
   margin-left: 5px;
-  background: url("chrome://devtools/skin/images/open-inspector.svg") no-repeat 0 0;
+  background: url("chrome://devtools/skin/images/highlight-selector.svg") no-repeat 0 0;
   background-size: contain;
   cursor: pointer;
   -moz-context-properties: fill;
@@ -755,6 +810,9 @@ ul.ruleview-rule-ancestor-data {
 .ruleview-selectorhighlighter:active,
 .ruleview-selectorhighlighter.highlighted {
   fill: var(--theme-icon-checked-color);
+  /* Since the icon is quite thin, it can be hard to differentiate it
+     from its regular state. Adding some background helps make it pop a bit */
+  background-color: var(--dimmed-highlighter-box-content-color);
 }
 
 #ruleview-add-rule-button::before {
@@ -803,4 +861,8 @@ ul.ruleview-rule-ancestor-data {
 
 .ruleview-propertyvalue-dragging {
   user-select: none;
+}
+
+.ruleview-propertyvalue-break-spaces {
+  white-space: break-spaces;
 }

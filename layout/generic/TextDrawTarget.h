@@ -187,9 +187,9 @@ class TextDrawTarget : public DrawTarget {
     static_assert(
         std::is_same<decltype(aBuffer.mGlyphs[0].mIndex),
                      decltype(glyphs[0].index)>() &&
-            std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.x),
+            std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.x.value),
                          decltype(glyphs[0].point.x)>() &&
-            std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.y),
+            std::is_same<decltype(aBuffer.mGlyphs[0].mPosition.y.value),
                          decltype(glyphs[0].point.y)>() &&
             offsetof(GlyphType, mIndex) == offsetof(wr::GlyphInstance, index) &&
             offsetof(GlyphType, mPosition) ==
@@ -261,16 +261,19 @@ class TextDrawTarget : public DrawTarget {
   // as the top-left corner of the rect.
   void AppendDecoration(const Point& aStart, const Point& aEnd,
                         const float aThickness, const bool aVertical,
-                        const DeviceColor& aColor, const uint8_t aStyle) {
+                        const DeviceColor& aColor,
+                        const StyleTextDecorationStyle aStyle) {
     auto pos = LayoutDevicePoint::FromUnknownPoint(aStart);
     LayoutDeviceSize size;
 
     if (aVertical) {
       pos.x -= aThickness / 2;  // adjust from center to corner
-      size = LayoutDeviceSize(aThickness, aEnd.y - aStart.y);
+      size = LayoutDeviceSize(aThickness,
+                              ViewAs<LayoutDevicePixel>(aEnd.y - aStart.y));
     } else {
       pos.y -= aThickness / 2;  // adjust from center to corner
-      size = LayoutDeviceSize(aEnd.x - aStart.x, aThickness);
+      size = LayoutDeviceSize(ViewAs<LayoutDevicePixel>(aEnd.x - aStart.x),
+                              aThickness);
     }
 
     wr::Line decoration;
@@ -281,19 +284,19 @@ class TextDrawTarget : public DrawTarget {
                                        : wr::LineOrientation::Horizontal;
 
     switch (aStyle) {
-      case NS_STYLE_TEXT_DECORATION_STYLE_SOLID:
+      case StyleTextDecorationStyle::Solid:
         decoration.style = wr::LineStyle::Solid;
         break;
-      case NS_STYLE_TEXT_DECORATION_STYLE_DOTTED:
+      case StyleTextDecorationStyle::Dotted:
         decoration.style = wr::LineStyle::Dotted;
         break;
-      case NS_STYLE_TEXT_DECORATION_STYLE_DASHED:
+      case StyleTextDecorationStyle::Dashed:
         decoration.style = wr::LineStyle::Dashed;
         break;
       // Wavy lines should go through AppendWavyDecoration
-      case NS_STYLE_TEXT_DECORATION_STYLE_WAVY:
+      case StyleTextDecorationStyle::Wavy:
       // Double lines should be lowered to two solid lines
-      case NS_STYLE_TEXT_DECORATION_STYLE_DOUBLE:
+      case StyleTextDecorationStyle::Double:
       default:
         MOZ_CRASH("TextDrawTarget received unsupported line style");
     }
@@ -344,11 +347,12 @@ class TextDrawTarget : public DrawTarget {
                        false, aFilter, aKey, true, aColor);
   }
 
+  LayoutDeviceRect GeckoClipRect() { return mClipStack.LastElement(); }
+
  private:
   wr::LayoutRect ClipRect() {
     return wr::ToLayoutRect(mClipStack.LastElement());
   }
-  LayoutDeviceRect GeckoClipRect() { return mClipStack.LastElement(); }
   // Whether anything unsupported was encountered. This will result in this
   // text being emitted as a blob, which means subpixel-AA can't be used and
   // that performance will probably be a bit worse. At this point, we've

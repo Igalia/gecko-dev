@@ -15,7 +15,6 @@
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/WinTokenUtils.h"
-#include "mozilla/WindowsVersion.h"
 #include "mozilla/XREAppData.h"
 #include "mozilla/glue/WindowsDllServices.h"
 #include "mozilla/mscom/ProcessRuntime.h"
@@ -152,7 +151,7 @@ class TempFileWriter final : public mozilla::JSONWriteFunc {
 
   explicit operator bool() const { return !mFailed; }
 
-  void Write(const mozilla::Span<const char>& aStr) override {
+  void Write(const mozilla::Span<const char>& aStr) final {
     if (mFailed) {
       return;
     }
@@ -291,12 +290,6 @@ static const ProviderKey gProvKeys[] = {
     {WSC_SECURITY_PROVIDER_FIREWALL, "firewall"}};
 
 static bool AddWscInfo(mozilla::JSONWriter& aJson) {
-  if (!mozilla::IsWin8OrLater()) {
-    // We haven't written anything yet, so we can return true here and continue
-    // capturing data.
-    return true;
-  }
-
   // We need COM for this. Using ProcessRuntime so that process-global COM
   // configuration is done correctly
   mozilla::mscom::ProcessRuntime mscom(
@@ -623,12 +616,8 @@ static bool PrepPing(const PingThreadContext& aContext, const std::wstring& aId,
 }
 
 static bool DoSendPing(const PingThreadContext& aContext) {
-  auto writeFunc = mozilla::MakeUnique<TempFileWriter>();
-  if (!(*writeFunc)) {
-    return false;
-  }
-
-  mozilla::JSONWriter json(std::move(writeFunc));
+  TempFileWriter tempFile;
+  mozilla::JSONWriter json(tempFile);
 
   UUID uuid;
   if (::UuidCreate(&uuid) != RPC_S_OK) {
@@ -650,11 +639,6 @@ static bool DoSendPing(const PingThreadContext& aContext) {
   }
 
   // Obtain the name of the temp file that we have written
-  TempFileWriter& tempFile = *static_cast<TempFileWriter*>(json.WriteFunc());
-  if (!tempFile) {
-    return false;
-  }
-
   const std::wstring& fileName = tempFile.GetFileName();
 
   // Using the path to our executable binary, construct the path to

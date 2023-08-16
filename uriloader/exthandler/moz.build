@@ -6,6 +6,9 @@
 
 SPHINX_TREES["/uriloader/exthandler"] = "docs"
 
+with Files("**"):
+    BUG_COMPONENT = ("Firefox", "File Handling")
+
 TEST_DIRS += ["tests"]
 
 XPIDL_SOURCES += [
@@ -104,12 +107,12 @@ if CONFIG["MOZ_ENABLE_DBUS"]:
     ]
 
 EXTRA_JS_MODULES += [
-    "ExtHandlerService.jsm",
-    "WebHandlerApp.jsm",
+    "ExtHandlerService.sys.mjs",
+    "WebHandlerApp.sys.mjs",
 ]
 
 EXTRA_JS_MODULES.handlers += [
-    "HandlerList.jsm",
+    "HandlerList.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [
@@ -139,5 +142,3 @@ if CONFIG["MOZ_ENABLE_DBUS"]:
 if CONFIG["MOZ_WIDGET_TOOLKIT"] == "gtk":
     CXXFLAGS += CONFIG["MOZ_GTK3_CFLAGS"]
     CXXFLAGS += CONFIG["MOZ_DBUS_GLIB_CFLAGS"]
-
-REQUIRES_UNIFIED_BUILD = True

@@ -52,6 +52,42 @@ you're going to want to write some automated tests.
       that means your instrumentation did something wrong.
       Check your test logs for details about what went awry.
 
+### Tests and Artifact Builds
+
+Artifact build support is provided by [the JOG subsystem](../dev/jog).
+It is able to register the latest versions of all metrics and pings at runtime.
+However, the compiled code is still running against the
+version of those metrics and pings that was current at the time the artifacts were compiled.
+
+This isn't a problem unless:
+* You are changing a metric or ping that is used in instrumentation in the compiled code, or
+* You are using `testBeforeNextSubmit` in JavaScript for a ping submitted in the compiled code.
+
+When in doubt, simply test your new test in artifact mode
+(by e.g. passing `--enable-artifact-builds` to `mach try`)
+before submitting it.
+If it doesn't pass in artifact mode because of one of these two cases,
+you may need to skip your test whenever FOG's artifact build support is enabled:
+* xpcshell:
+```js
+add_task(
+  { skip_if: () => Services.prefs.getBoolPref("telemetry.fog.artifact_build", false) },
+  function () {
+    // ... your test ...
+  }
+);
+```
+* mochitest:
+```js
+add_task(function () {
+  if (Services.prefs.getBoolPref("telemetry.fog.artifact_build", false)) {
+    Assert.ok(true, "Test skipped in artifact mode.");
+    return;
+  }
+  // ... your test ...
+});
+```
+
 ## The Usual Test Format
 
 Instrumentation tests tend to follow the same three-part format:
@@ -142,10 +178,15 @@ for updates on a better design and implementation for ping tests. ))
 
 ## mochitest
 
-`browser-chrome`-flavoured mochitests can be tested very similarly to `xpcshell`.
+`browser-chrome`-flavoured mochitests can be tested very similarly to `xpcshell`,
+though you do not need to request a profile or initialize FOG.
+`plain`-flavoured mochitests aren't yet supported (follow
+[bug 1799977](https://bugzilla.mozilla.org/show_bug.cgi?id=1799977)
+for updates and a workaround).
 
-Prefer `xpcshell` and only use mochitests if you cannot express the behaviour in `xpcshell`.
-This can happen, for example, if the behaviour happens on a non-main process.
+If you're testing in `mochitest`, your instrumentation (or your test)
+might not be running in the parent process.
+This means you get to learn the IPC test APIs.
 
 ### IPC
 
@@ -156,8 +197,15 @@ But your instrumentation might be on any process, so how do you test it?
 In this case there's a slight addition to the Usual Test Format:
 1) Assert no value in the metric
 2) Express behaviour
-3) _Flush all pending FOG IPC operations with `Services.fog.testFlushAllChildren()`_
+3) _Flush all pending FOG IPC operations with `await Services.fog.testFlushAllChildren()`_
 4) Assert correct value in the metric.
+
+**NOTE:** We learned in
+[bug 1843178](https://bugzilla.mozilla.org/show_bug.cgi?id=1843178)
+that the list of all content processes that `Services.fog.testFlushAllChildren()`
+uses is very quickly updated after the end of a call to `BrowserUtils.withNewTab(...)`.
+If you are using `withNewTab`, you should consider calling `testFlushAllChildren()`
+_within_ the callback.
 
 ## GTests/Google Tests
 
@@ -189,7 +237,7 @@ is a good thing to review first.
 Unfortunately, FOG requires gecko
 (to tell it where the profile dir is, and other things),
 which means we need to use the
-[GTest + FFI approach](/testing-rust-code/index.html#gtests)
+[GTest + FFI approach](/testing-rust-code/index.md#gtests)
 where GTest is the runner and Rust is just the language the test is written in.
 
 This means your test will look like a GTest like this:

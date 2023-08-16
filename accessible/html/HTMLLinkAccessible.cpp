@@ -7,11 +7,11 @@
 
 #include "CacheConstants.h"
 #include "nsCoreUtils.h"
-#include "DocAccessible.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "nsContentUtils.h"
+#include "mozilla/a11y/DocAccessible.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/dom/MutationEventBinding.h"
 
@@ -59,7 +59,7 @@ uint64_t HTMLLinkAccessible::NativeInteractiveState() const {
   // This is how we indicate it is a named anchor. In other words, this anchor
   // can be selected as a location :) There is no other better state to use to
   // indicate this.
-  if (mContent->AsElement()->HasAttr(kNameSpaceID_None, nsGkAtoms::name)) {
+  if (mContent->AsElement()->HasAttr(nsGkAtoms::name)) {
     state |= states::SELECTABLE;
   }
 
@@ -108,7 +108,7 @@ void HTMLLinkAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
   if (aAttribute == nsGkAtoms::href &&
       (aModType == dom::MutationEvent_Binding::ADDITION ||
        aModType == dom::MutationEvent_Binding::REMOVAL)) {
-    SendCache(CacheDomain::Actions, CacheUpdateType::Update);
+    mDoc->QueueCacheUpdate(this, CacheDomain::Actions);
   }
 }
 
@@ -118,11 +118,6 @@ void HTMLLinkAccessible::DOMAttributeChanged(int32_t aNameSpaceID,
 bool HTMLLinkAccessible::IsLink() const {
   // Expose HyperLinkAccessible unconditionally.
   return true;
-}
-
-already_AddRefed<nsIURI> HTMLLinkAccessible::AnchorURIAt(
-    uint32_t aAnchorIndex) const {
-  return aAnchorIndex == 0 ? mContent->AsElement()->GetHrefURI() : nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

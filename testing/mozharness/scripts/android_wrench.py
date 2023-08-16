@@ -5,7 +5,6 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 # ***** END LICENSE BLOCK *****
 
-from __future__ import absolute_import
 import datetime
 import enum
 import os
@@ -18,10 +17,7 @@ import time
 sys.path.insert(1, os.path.dirname(sys.path[0]))
 
 from mozharness.base.script import BaseScript
-from mozharness.mozilla.automation import (
-    EXIT_STATUS_DICT,
-    TBPL_FAILURE,
-)
+from mozharness.mozilla.automation import EXIT_STATUS_DICT, TBPL_FAILURE
 from mozharness.mozilla.mozbase import MozbaseMixin
 from mozharness.mozilla.testing.android import AndroidMixin
 from mozharness.mozilla.testing.testbase import TestingMixin
@@ -45,11 +41,15 @@ class AndroidWrench(TestingMixin, BaseScript, MozbaseMixin, AndroidMixin):
         # the path here, rather than using something like self.device.test_root,
         # because it needs to be kept in sync with the path hard-coded inside
         # the wrench source code.
-        self.wrench_dir = (
-            "/storage/emulated/0/Android/data/org.mozilla.wrench/files/wrench"
-        )
+        self.wrench_dir = "/data/data/org.mozilla.wrench/files/wrench"
 
         super(AndroidWrench, self).__init__()
+
+        # Override AndroidMixin's use_root to ensure we use run-as instead of
+        # root to push and pull files from the device, as the latter fails due
+        # to permission errors on recent Android versions.
+        self.use_root = False
+
         if self.device_serial is None:
             # Running on an emulator.
             self._is_emulator = True
@@ -125,9 +125,9 @@ class AndroidWrench(TestingMixin, BaseScript, MozbaseMixin, AndroidMixin):
         return self.abs_dirs
 
     def logcat_start(self):
-        """Overrides logcat_start in android.py - ensures any pre-existing logcat
-        is cleared before starting to record the new logcat. This is helpful
-        when running multiple times in a local emulator."""
+        """Ensures any pre-existing logcat is cleared before starting to record
+        the new logcat. This is helpful when running multiple times in a local
+        emulator."""
         logcat_cmd = [self.adb_path, "-s", self.device_serial, "logcat", "-c"]
         self.info(" ".join(logcat_cmd))
         subprocess.check_call(logcat_cmd)

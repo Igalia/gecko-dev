@@ -7,12 +7,12 @@
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
-const { MESSAGE_TYPE_HASH: msg } = ChromeUtils.import(
-  "resource://activity-stream/common/ActorConstants.jsm"
+const { MESSAGE_TYPE_HASH: msg } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/ActorConstants.sys.mjs"
 );
 
-const { actionTypes: at, actionUtils: au } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at, actionUtils: au } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 const { Prefs } = ChromeUtils.import(
   "resource://activity-stream/lib/ActivityStreamPrefs.jsm"
@@ -23,58 +23,31 @@ const { classifySite } = ChromeUtils.import(
 
 const lazy = {};
 
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "AboutNewTab",
-  "resource:///modules/AboutNewTab.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PingCentre",
-  "resource:///modules/PingCentre.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "pktApi",
-  "chrome://pocket/content/pktApi.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "UTEventReporting",
-  "resource://activity-stream/lib/UTEventReporting.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "UpdateUtils",
-  "resource://gre/modules/UpdateUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "HomePage",
-  "resource:///modules/HomePage.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "ExtensionSettingsStore",
-  "resource://gre/modules/ExtensionSettingsStore.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "ClientID",
-  "resource://gre/modules/ClientID.jsm"
-);
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  ExperimentAPI: "resource://nimbus/ExperimentAPI.jsm",
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
-  TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.jsm",
-  TelemetrySession: "resource://gre/modules/TelemetrySession.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AboutNewTab: "resource:///modules/AboutNewTab.sys.mjs",
+  ClientID: "resource://gre/modules/ClientID.sys.mjs",
+  ExperimentAPI: "resource://nimbus/ExperimentAPI.sys.mjs",
+  ExtensionSettingsStore:
+    "resource://gre/modules/ExtensionSettingsStore.sys.mjs",
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
+  PingCentre: "resource:///modules/PingCentre.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  TelemetryEnvironment: "resource://gre/modules/TelemetryEnvironment.sys.mjs",
+  TelemetrySession: "resource://gre/modules/TelemetrySession.sys.mjs",
+  UTEventReporting: "resource://activity-stream/lib/UTEventReporting.sys.mjs",
+  UpdateUtils: "resource://gre/modules/UpdateUtils.sys.mjs",
+  pktApi: "chrome://pocket/content/pktApi.sys.mjs",
 });
+XPCOMUtils.defineLazyModuleGetters(lazy, {
+  AboutWelcomeTelemetry:
+    "resource://activity-stream/aboutwelcome/lib/AboutWelcomeTelemetry.jsm",
+});
+XPCOMUtils.defineLazyGetter(
+  lazy,
+  "Telemetry",
+  () => new lazy.AboutWelcomeTelemetry()
+);
 
 const ACTIVITY_STREAM_ID = "activity-stream";
 const DOMWINDOW_OPENED_TOPIC = "domwindowopened";
@@ -177,6 +150,7 @@ class TelemetryFeed {
   }
 
   init() {
+    this._beginObservingNewtabPingPrefs();
     Services.obs.addObserver(
       this.browserOpenNewtabStart,
       "browser-open-newtab-start"
@@ -483,9 +457,8 @@ class TelemetryFeed {
     }
 
     Object.keys(impressionSets).forEach(source => {
-      const { tiles, window_inner_width, window_inner_height } = impressionSets[
-        source
-      ];
+      const { tiles, window_inner_width, window_inner_height } =
+        impressionSets[source];
       const payload = this.createImpressionStats(port, {
         source,
         tiles,
@@ -664,13 +637,15 @@ class TelemetryFeed {
 
   /**
    * Per Bug 1484035, CFR metrics comply with following policies:
-   * 1). In release, it collects impression_id, and treats bucket_id as message_id
+   * 1). In release, it collects impression_id and bucket_id
    * 2). In prerelease, it collects client_id and message_id
    * 3). In shield experiments conducted in release, it collects client_id and message_id
+   * 4). In Private Browsing windows, unless in experiment, collects impression_id and bucket_id
    */
   async applyCFRPolicy(ping) {
     if (
-      lazy.UpdateUtils.getUpdateChannel(true) === "release" &&
+      (lazy.UpdateUtils.getUpdateChannel(true) === "release" ||
+        ping.is_private) &&
       !this.isInCFRCohort
     ) {
       ping.message_id = "n/a";
@@ -679,6 +654,7 @@ class TelemetryFeed {
       ping.client_id = await this.telemetryClientId;
     }
     delete ping.action;
+    delete ping.is_private;
     return { ping, pingType: "cfr" };
   }
 
@@ -769,7 +745,7 @@ class TelemetryFeed {
       if (ONBOARDING_ALLOWED_PAGE_VALUES.includes(session.page)) {
         event_context.page = session.page;
       } else {
-        Cu.reportError(`Invalid 'page' for Onboarding event: ${session.page}`);
+        console.error(`Invalid 'page' for Onboarding event: ${session.page}`);
       }
       ping.event_context = JSON.stringify(event_context);
     }
@@ -849,7 +825,8 @@ class TelemetryFeed {
     if (this.telemetryEnabled) {
       this.pingCentre.sendStructuredIngestionPing(
         eventObject,
-        this._generateStructuredIngestionEndpoint(namespace, pingType, version)
+        this._generateStructuredIngestionEndpoint(namespace, pingType, version),
+        namespace
       );
     }
   }
@@ -867,9 +844,19 @@ class TelemetryFeed {
     );
   }
 
-  handleTopSitesImpressionStats(action) {
+  handleTopSitesSponsoredImpressionStats(action) {
     const { data } = action;
-    const { type, position, source, advertiser } = data;
+    const {
+      type,
+      position,
+      source,
+      advertiser: advertiser_name,
+      tile_id,
+    } = data;
+    // Legacy telemetry (scalars and PingCentre payloads) expects 1-based tile
+    // positions.
+    const legacyTelemetryPosition = position + 1;
+
     let pingType;
 
     const session = this.sessions.get(au.getPortIdOfSender(action));
@@ -877,34 +864,44 @@ class TelemetryFeed {
       pingType = "topsites-impression";
       Services.telemetry.keyedScalarAdd(
         `${SCALAR_CATEGORY_TOPSITES}.impression`,
-        `${source}_${position}`,
+        `${source}_${legacyTelemetryPosition}`,
         1
       );
       if (session) {
         Glean.topsites.impression.record({
+          advertiser_name,
+          tile_id: tile_id.toString(),
           newtab_visit_id: session.session_id,
-          is_sponsored: !!advertiser,
+          is_sponsored: true,
+          position,
         });
       }
     } else if (type === "click") {
       pingType = "topsites-click";
       Services.telemetry.keyedScalarAdd(
         `${SCALAR_CATEGORY_TOPSITES}.click`,
-        `${source}_${position}`,
+        `${source}_${legacyTelemetryPosition}`,
         1
       );
       if (session) {
         Glean.topsites.click.record({
+          advertiser_name,
+          tile_id: tile_id.toString(),
           newtab_visit_id: session.session_id,
-          is_sponsored: !!advertiser,
+          is_sponsored: true,
+          position,
         });
       }
     } else {
-      Cu.reportError("Unknown ping type for TopSites impression");
+      console.error("Unknown ping type for sponsored TopSites impression");
       return;
     }
 
-    let payload = { ...data, context_id: lazy.contextId };
+    let payload = {
+      ...data,
+      position: legacyTelemetryPosition,
+      context_id: lazy.contextId,
+    };
     delete payload.type;
     this.sendStructuredIngestionEvent(
       payload,
@@ -912,6 +909,44 @@ class TelemetryFeed {
       pingType,
       "1"
     );
+    Glean.topSites.pingType.set(pingType);
+    Glean.topSites.position.set(legacyTelemetryPosition);
+    Glean.topSites.source.set(source);
+    Glean.topSites.tileId.set(tile_id);
+    if (payload.reporting_url) {
+      Glean.topSites.reportingUrl.set(payload.reporting_url);
+    }
+    Glean.topSites.advertiser.set(advertiser_name);
+    Glean.topSites.contextId.set(lazy.contextId);
+    GleanPings.topSites.submit();
+  }
+
+  handleTopSitesOrganicImpressionStats(action) {
+    const session = this.sessions.get(au.getPortIdOfSender(action));
+    if (!session) {
+      return;
+    }
+
+    switch (action.data?.type) {
+      case "impression":
+        Glean.topsites.impression.record({
+          newtab_visit_id: session.session_id,
+          is_sponsored: false,
+          position: action.data.position,
+        });
+        break;
+
+      case "click":
+        Glean.topsites.click.record({
+          newtab_visit_id: session.session_id,
+          is_sponsored: false,
+          position: action.data.position,
+        });
+        break;
+
+      default:
+        break;
+    }
   }
 
   handleUserEvent(action) {
@@ -921,24 +956,59 @@ class TelemetryFeed {
   }
 
   handleDiscoveryStreamUserEvent(action) {
+    const pocket_logged_in_status = lazy.pktApi.isUserLoggedIn();
+    Glean.pocket.isSignedIn.set(pocket_logged_in_status);
     this.handleUserEvent({
       ...action,
       data: {
         ...(action.data || {}),
         value: {
           ...(action.data?.value || {}),
-          pocket_logged_in_status: lazy.pktApi.isUserLoggedIn(),
+          pocket_logged_in_status,
         },
       },
     });
+    const session = this.sessions.get(au.getPortIdOfSender(action));
+    switch (action.data?.event) {
+      case "CLICK":
+        if (
+          action.data.source === "POPULAR_TOPICS" ||
+          action.data.value?.card_type === "topics_widget"
+        ) {
+          Glean.pocket.topicClick.record({
+            newtab_visit_id: session.session_id,
+            topic: action.data.value?.topic,
+          });
+        } else if (["spoc", "organic"].includes(action.data.value?.card_type)) {
+          Glean.pocket.click.record({
+            newtab_visit_id: session.session_id,
+            is_sponsored: action.data.value?.card_type === "spoc",
+            position: action.data.action_position,
+          });
+        }
+        break;
+      case "SAVE_TO_POCKET":
+        Glean.pocket.save.record({
+          newtab_visit_id: session.session_id,
+          is_sponsored: action.data.value?.card_type === "spoc",
+          position: action.data.action_position,
+        });
+        break;
+    }
   }
 
   async handleASRouterUserEvent(action) {
     const { ping, pingType } = await this.createASRouterEvent(action);
     if (!pingType) {
-      Cu.reportError("Unknown ping type for ASRouter telemetry");
+      console.error("Unknown ping type for ASRouter telemetry");
       return;
     }
+
+    // Now that the action has become a ping, we can echo it to Glean.
+    if (this.telemetryEnabled) {
+      lazy.Telemetry.submitGleanPingForPing({ ...ping, pingType });
+    }
+
     this.sendStructuredIngestionEvent(
       ping,
       STRUCTURED_INGESTION_NAMESPACE_MS,
@@ -962,18 +1032,23 @@ class TelemetryFeed {
       const value = {};
       let newtabAffected = false;
       let homeAffected = false;
+      let newtabCategory = "disabled";
+      let homePageCategory = "disabled";
 
       // Check whether or not about:home and about:newtab are set to a custom URL.
       // If so, classify them.
-      if (
-        Services.prefs.getBoolPref("browser.newtabpage.enabled") &&
-        lazy.AboutNewTab.newTabURLOverridden &&
-        !lazy.AboutNewTab.newTabURL.startsWith("moz-extension://")
-      ) {
-        value.newtab_url_category = await this._classifySite(
-          lazy.AboutNewTab.newTabURL
-        );
-        newtabAffected = true;
+      if (Services.prefs.getBoolPref("browser.newtabpage.enabled")) {
+        newtabCategory = "enabled";
+        if (
+          lazy.AboutNewTab.newTabURLOverridden &&
+          !lazy.AboutNewTab.newTabURL.startsWith("moz-extension://")
+        ) {
+          value.newtab_url_category = await this._classifySite(
+            lazy.AboutNewTab.newTabURL
+          );
+          newtabAffected = true;
+          newtabCategory = value.newtab_url_category;
+        }
       }
       // Check if the newtab page setting is controlled by an extension.
       await lazy.ExtensionSettingsStore.initialize();
@@ -984,6 +1059,7 @@ class TelemetryFeed {
       if (newtabExtensionInfo && newtabExtensionInfo.id) {
         value.newtab_extension_id = newtabExtensionInfo.id;
         newtabAffected = true;
+        newtabCategory = "extension";
       }
 
       const homePageURL = lazy.HomePage.get();
@@ -993,6 +1069,7 @@ class TelemetryFeed {
       ) {
         value.home_url_category = await this._classifySite(homePageURL);
         homeAffected = true;
+        homePageCategory = value.home_url_category;
       }
       const homeExtensionInfo = lazy.ExtensionSettingsStore.getSetting(
         "prefs",
@@ -1001,6 +1078,10 @@ class TelemetryFeed {
       if (homeExtensionInfo && homeExtensionInfo.id) {
         value.home_extension_id = homeExtensionInfo.id;
         homeAffected = true;
+        homePageCategory = "extension";
+      }
+      if (!homeAffected && !lazy.HomePage.overridden) {
+        homePageCategory = "enabled";
       }
 
       let page;
@@ -1021,6 +1102,11 @@ class TelemetryFeed {
           session_id: "n/a",
         });
         this.sendEvent(event);
+      }
+      Glean.newtab.newtabCategory.set(newtabCategory);
+      Glean.newtab.homepageCategory.set(homePageCategory);
+      if (lazy.NimbusFeatures.glean.getVariable("newtabPingEnabled") ?? true) {
+        GleanPings.newtab.submit("component_init");
       }
     }
   }
@@ -1080,8 +1166,11 @@ class TelemetryFeed {
       case at.AS_ROUTER_TELEMETRY_USER_EVENT:
         this.handleASRouterUserEvent(action);
         break;
-      case at.TOP_SITES_IMPRESSION_STATS:
-        this.handleTopSitesImpressionStats(action);
+      case at.TOP_SITES_SPONSORED_IMPRESSION_STATS:
+        this.handleTopSitesSponsoredImpressionStats(action);
+        break;
+      case at.TOP_SITES_ORGANIC_IMPRESSION_STATS:
+        this.handleTopSitesOrganicImpressionStats(action);
         break;
       case at.UNINIT:
         this.uninit();
@@ -1116,13 +1205,18 @@ class TelemetryFeed {
       window_inner_height,
     };
     // The payload might contain other properties, we need `id`, `pos` and potentially `shim` here.
-    tiles.forEach(tile =>
+    tiles.forEach(tile => {
       impressions.tiles.push({
         id: tile.id,
         pos: tile.pos,
         ...(tile.shim ? { shim: tile.shim } : {}),
-      })
-    );
+      });
+      Glean.pocket.impression.record({
+        newtab_visit_id: session.session_id,
+        is_sponsored: tile.type === "spoc",
+        position: tile.pos,
+      });
+    });
     impressionSets[source] = impressions;
     session.impressionSets = impressionSets;
   }
@@ -1212,6 +1306,62 @@ class TelemetryFeed {
         source,
       });
     }
+  }
+
+  _beginObservingNewtabPingPrefs() {
+    const TOP_SITES_BLOCKED_SPONSORS_PREF = "browser.topsites.blockedSponsors";
+    const ACTIVITY_STREAM_PREF_BRANCH = "browser.newtabpage.activity-stream.";
+    const NEWTAB_PING_PREFS = {
+      showSearch: Glean.newtabSearch.enabled,
+      "feeds.topsites": Glean.topsites.enabled,
+      showSponsoredTopSites: Glean.topsites.sponsoredEnabled,
+      "feeds.section.topstories": Glean.pocket.enabled,
+      showSponsored: Glean.pocket.sponsoredStoriesEnabled,
+      topSitesRows: Glean.topsites.rows,
+    };
+    const setNewtabPrefMetrics = fullPrefName => {
+      const pref = fullPrefName.slice(ACTIVITY_STREAM_PREF_BRANCH.length);
+      if (!Object.hasOwn(NEWTAB_PING_PREFS, pref)) {
+        return;
+      }
+      const metric = NEWTAB_PING_PREFS[pref];
+      switch (Services.prefs.getPrefType(fullPrefName)) {
+        case Services.prefs.PREF_BOOL:
+          metric.set(Services.prefs.getBoolPref(fullPrefName));
+          break;
+
+        case Services.prefs.PREF_INT:
+          metric.set(Services.prefs.getIntPref(fullPrefName));
+          break;
+      }
+    };
+    Services.prefs.addObserver(
+      ACTIVITY_STREAM_PREF_BRANCH,
+      (subject, topic, data) => setNewtabPrefMetrics(data)
+    );
+    for (const pref of Object.keys(NEWTAB_PING_PREFS)) {
+      const fullPrefName = ACTIVITY_STREAM_PREF_BRANCH + pref;
+      setNewtabPrefMetrics(fullPrefName);
+    }
+    Glean.pocket.isSignedIn.set(lazy.pktApi.isUserLoggedIn());
+
+    const setBlockedSponsorsMetrics = () => {
+      let blocklist;
+      try {
+        blocklist = JSON.parse(
+          Services.prefs.getStringPref(TOP_SITES_BLOCKED_SPONSORS_PREF, "[]")
+        );
+      } catch (e) {}
+      if (blocklist) {
+        Glean.newtab.blockedSponsors.set(blocklist);
+      }
+    };
+
+    Services.prefs.addObserver(
+      TOP_SITES_BLOCKED_SPONSORS_PREF,
+      setBlockedSponsorsMetrics
+    );
+    setBlockedSponsorsMetrics();
   }
 
   uninit() {

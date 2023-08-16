@@ -20,14 +20,12 @@ class HTMLMetaElement final : public nsGenericHTMLElement {
   // nsISupports
   NS_INLINE_DECL_REFCOUNTING_INHERITED(HTMLMetaElement, nsGenericHTMLElement)
 
-  virtual nsresult BindToTree(BindContext&, nsINode& aParent) override;
-  virtual void UnbindFromTree(bool aNullParent = true) override;
+  nsresult BindToTree(BindContext&, nsINode& aParent) override;
+  void UnbindFromTree(bool aNullParent = true) override;
 
-  virtual nsresult AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aSubjectPrincipal,
-                                bool aNotify) override;
+  void AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                    const nsAttrValue* aValue, const nsAttrValue* aOldValue,
+                    nsIPrincipal* aSubjectPrincipal, bool aNotify) override;
 
   void CreateAndDispatchEvent(Document&, const nsAString& aEventName);
 
@@ -53,9 +51,12 @@ class HTMLMetaElement final : public nsGenericHTMLElement {
   void SetScheme(const nsAString& aScheme, ErrorResult& aRv) {
     SetHTMLAttr(nsGkAtoms::scheme, aScheme, aRv);
   }
+  void GetMedia(nsAString& aValue) { GetHTMLAttr(nsGkAtoms::media, aValue); }
+  void SetMedia(const nsAString& aMedia, ErrorResult& aRv) {
+    SetHTMLAttr(nsGkAtoms::media, aMedia, aRv);
+  }
 
-  virtual JSObject* WrapNode(JSContext* aCx,
-                             JS::Handle<JSObject*> aGivenProto) override;
+  JSObject* WrapNode(JSContext*, JS::Handle<JSObject*> aGivenProto) override;
 
  protected:
   virtual ~HTMLMetaElement();

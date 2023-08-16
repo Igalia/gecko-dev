@@ -44,6 +44,7 @@ MediaDecoderStateMachineBase::MediaDecoderStateMachineBase(
       INIT_MIRROR(mVolume, 1.0),
       INIT_MIRROR(mPreservesPitch, true),
       INIT_MIRROR(mLooping, false),
+      INIT_MIRROR(mSecondaryVideoContainer, nullptr),
       INIT_CANONICAL(mDuration, media::NullableTimeUnit()),
       INIT_CANONICAL(mCurrentPosition, media::TimeUnit::Zero()),
       INIT_CANONICAL(mIsAudioDataAudible, false),
@@ -95,12 +96,19 @@ nsresult MediaDecoderStateMachineBase::Init(MediaDecoder* aDecoder) {
       "MediaDecoderStateMachineBase::InitializationTask", this,
       &MediaDecoderStateMachineBase::InitializationTask, aDecoder);
   mTaskQueue->DispatchStateChange(r.forget());
-  ;
+
+  // Connect mirrors.
+  aDecoder->CanonicalPlayState().ConnectMirror(&mPlayState);
+  aDecoder->CanonicalVolume().ConnectMirror(&mVolume);
+  aDecoder->CanonicalPreservesPitch().ConnectMirror(&mPreservesPitch);
+  aDecoder->CanonicalLooping().ConnectMirror(&mLooping);
+  aDecoder->CanonicalSecondaryVideoContainer().ConnectMirror(
+      &mSecondaryVideoContainer);
+
   nsresult rv = mReader->Init();
   NS_ENSURE_SUCCESS(rv, rv);
 
   mMetadataManager.Connect(mReader->TimedMetadataEvent(), OwnerThread());
-  mReader->SetCanonicalDuration(&mDuration);
 
   return NS_OK;
 }
@@ -110,10 +118,7 @@ void MediaDecoderStateMachineBase::InitializationTask(MediaDecoder* aDecoder) {
 
   // Connect mirrors.
   mBuffered.Connect(mReader->CanonicalBuffered());
-  mPlayState.Connect(aDecoder->CanonicalPlayState());
-  mVolume.Connect(aDecoder->CanonicalVolume());
-  mPreservesPitch.Connect(aDecoder->CanonicalPreservesPitch());
-  mLooping.Connect(aDecoder->CanonicalLooping());
+  mReader->SetCanonicalDuration(mDuration);
 
   // Initialize watchers.
   mWatchManager.Watch(mBuffered,
@@ -124,15 +129,25 @@ void MediaDecoderStateMachineBase::InitializationTask(MediaDecoder* aDecoder) {
   mWatchManager.Watch(mPlayState,
                       &MediaDecoderStateMachineBase::PlayStateChanged);
   mWatchManager.Watch(mLooping, &MediaDecoderStateMachineBase::LoopingChanged);
+  mWatchManager.Watch(
+      mSecondaryVideoContainer,
+      &MediaDecoderStateMachineBase::UpdateSecondaryVideoContainer);
 }
 
 RefPtr<ShutdownPromise> MediaDecoderStateMachineBase::BeginShutdown() {
   MOZ_ASSERT(NS_IsMainThread());
-  return InvokeAsync(OwnerThread(), __func__,
-                     [self = RefPtr<MediaDecoderStateMachineBase>(this)]() {
-                       self->mWatchManager.Shutdown();
-                       return self->Shutdown();
-                     });
+  return InvokeAsync(
+      OwnerThread(), __func__,
+      [self = RefPtr<MediaDecoderStateMachineBase>(this), this]() {
+        mWatchManager.Shutdown();
+        mBuffered.DisconnectIfConnected();
+        mPlayState.DisconnectIfConnected();
+        mVolume.DisconnectIfConnected();
+        mPreservesPitch.DisconnectIfConnected();
+        mLooping.DisconnectIfConnected();
+        mSecondaryVideoContainer.DisconnectIfConnected();
+        return Shutdown();
+      });
 }
 
 RefPtr<MediaDecoder::SeekPromise> MediaDecoderStateMachineBase::InvokeSeek(
@@ -153,6 +168,11 @@ void MediaDecoderStateMachineBase::DecodeError(const MediaResult& aError) {
                        aError.Description());
   // Notify the decode error and MediaDecoder will shut down MDSM.
   mOnPlaybackErrorEvent.Notify(aError);
+}
+
+RefPtr<SetCDMPromise> MediaDecoderStateMachineBase::SetCDMProxy(
+    CDMProxy* aProxy) {
+  return mReader->SetCDMProxy(aProxy);
 }
 
 #undef INIT_MIRROR

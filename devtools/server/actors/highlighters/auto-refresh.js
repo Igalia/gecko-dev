@@ -4,15 +4,14 @@
 
 "use strict";
 
-const { Cu } = require("chrome");
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const {
   isNodeValid,
-} = require("devtools/server/actors/highlighters/utils/markup");
+} = require("resource://devtools/server/actors/highlighters/utils/markup.js");
 const {
   getAdjustedQuads,
   getWindowDimensions,
-} = require("devtools/shared/layout/utils");
+} = require("resource://devtools/shared/layout/utils.js");
 
 // Note that the order of items in this array is important because it is used
 // for drawing the BoxModelHighlighter's path elements correctly.
@@ -70,23 +69,29 @@ function areQuadsDifferent(oldQuads, newQuads) {
  * - hidden
  * - updated
  */
-function AutoRefreshHighlighter(highlighterEnv) {
-  EventEmitter.decorate(this);
+class AutoRefreshHighlighter extends EventEmitter {
+  constructor(highlighterEnv) {
+    super();
 
-  this.highlighterEnv = highlighterEnv;
+    this.highlighterEnv = highlighterEnv;
 
-  this.currentNode = null;
-  this.currentQuads = {};
+    this._updateSimpleHighlighters = this._updateSimpleHighlighters.bind(this);
+    this.highlighterEnv.on(
+      "use-simple-highlighters-updated",
+      this._updateSimpleHighlighters
+    );
 
-  this._winDimensions = getWindowDimensions(this.win);
-  this._scroll = { x: this.win.pageXOffset, y: this.win.pageYOffset };
+    this.currentNode = null;
+    this.currentQuads = {};
 
-  this.update = this.update.bind(this);
-}
+    this._winDimensions = getWindowDimensions(this.win);
+    this._scroll = { x: this.win.pageXOffset, y: this.win.pageYOffset };
 
-AutoRefreshHighlighter.prototype = {
-  _ignoreZoom: false,
-  _ignoreScroll: false,
+    this.update = this.update.bind(this);
+  }
+
+  _ignoreZoom = false;
+  _ignoreScroll = false;
 
   /**
    * Window corresponding to the current highlighterEnv.
@@ -96,12 +101,16 @@ AutoRefreshHighlighter.prototype = {
       return null;
     }
     return this.highlighterEnv.window;
-  },
+  }
 
   /* Window containing the target content. */
   get contentWindow() {
     return this.win;
-  },
+  }
+
+  get supportsSimpleHighlighters() {
+    return false;
+  }
 
   /**
    * Show the highlighter on a given node
@@ -121,6 +130,14 @@ AutoRefreshHighlighter.prototype = {
 
     this._stopRefreshLoop();
     this.currentNode = node;
+
+    // For offset-path, the highlighter needs to be computed from the containing block
+    // of the node, not the node itself.
+    this.useContainingBlock = this.options.mode === "cssOffsetPath";
+    this.drawingNode = this.useContainingBlock
+      ? InspectorUtils.containingBlockOf(this.currentNode)
+      : this.currentNode;
+
     this._updateAdjustedQuads();
     this._startRefreshLoop();
 
@@ -129,7 +146,7 @@ AutoRefreshHighlighter.prototype = {
       this.emit("shown");
     }
     return shown;
-  },
+  }
 
   /**
    * Hide the highlighter
@@ -146,7 +163,7 @@ AutoRefreshHighlighter.prototype = {
     this.options = null;
 
     this.emit("hidden");
-  },
+  }
 
   /**
    * Whether the current node is valid for this highlighter type.
@@ -157,7 +174,7 @@ AutoRefreshHighlighter.prototype = {
    */
   _isNodeValid(node) {
     return isNodeValid(node);
-  },
+  }
 
   /**
    * Are the provided options the same as the currently stored options?
@@ -181,7 +198,7 @@ AutoRefreshHighlighter.prototype = {
     }
 
     return true;
-  },
+  }
 
   /**
    * Update the stored box quads by reading the current node's box quads.
@@ -189,15 +206,24 @@ AutoRefreshHighlighter.prototype = {
   _updateAdjustedQuads() {
     this.currentQuads = {};
 
+    // If we need to use the containing block, and if it is the <html> element,
+    // we need to use the viewport quads.
+    const useViewport =
+      this.useContainingBlock &&
+      this.drawingNode === this.currentNode.ownerDocument.documentElement;
+    const node = useViewport
+      ? this.drawingNode.ownerDocument
+      : this.drawingNode;
+
     for (const region of BOX_MODEL_REGIONS) {
       this.currentQuads[region] = getAdjustedQuads(
         this.contentWindow,
-        this.currentNode,
+        node,
         region,
         { ignoreScroll: this._ignoreScroll, ignoreZoom: this._ignoreZoom }
       );
     }
-  },
+  }
 
   /**
    * Update the knowledge we have of the current node's boxquads and return true
@@ -209,7 +235,7 @@ AutoRefreshHighlighter.prototype = {
     this._updateAdjustedQuads();
 
     return areQuadsDifferent(oldQuads, this.currentQuads);
-  },
+  }
 
   /**
    * Update the knowledge we have of the current window's scrolling offset, both
@@ -228,7 +254,7 @@ AutoRefreshHighlighter.prototype = {
     this._scroll = { x: pageXOffset, y: pageYOffset };
 
     return hasChanged;
-  },
+  }
 
   /**
    * Update the knowledge we have of the current window's dimensions and return `true`
@@ -243,7 +269,7 @@ AutoRefreshHighlighter.prototype = {
 
     this._winDimensions = { width, height };
     return haveChanged;
-  },
+  }
 
   /**
    * Update the highlighter if the node has moved since the last update.
@@ -264,14 +290,14 @@ AutoRefreshHighlighter.prototype = {
 
     this._update();
     this.emit("updated");
-  },
+  }
 
   _show() {
     // To be implemented by sub classes
     // When called, sub classes should actually show the highlighter for
     // this.currentNode, potentially using options in this.options
     throw new Error("Custom highlighter class had to implement _show method");
-  },
+  }
 
   _update() {
     // To be implemented by sub classes
@@ -279,40 +305,64 @@ AutoRefreshHighlighter.prototype = {
     // this.currentNode
     // This is called as a result of a page zoom or repaint
     throw new Error("Custom highlighter class had to implement _update method");
-  },
+  }
 
   _scrollUpdate() {
     // Can be implemented by sub classes
     // When called, sub classes can upate the highlighter shown for
     // this.currentNode
     // This is called as a result of a page scroll
-  },
+  }
 
   _hide() {
     // To be implemented by sub classes
     // When called, sub classes should actually hide the highlighter
     throw new Error("Custom highlighter class had to implement _hide method");
-  },
+  }
 
   _startRefreshLoop() {
     const win = this.currentNode.ownerGlobal;
     this.rafID = win.requestAnimationFrame(this._startRefreshLoop.bind(this));
     this.rafWin = win;
     this.update();
-  },
+  }
 
   _stopRefreshLoop() {
     if (this.rafID && !Cu.isDeadWrapper(this.rafWin)) {
       this.rafWin.cancelAnimationFrame(this.rafID);
     }
     this.rafID = this.rafWin = null;
-  },
+  }
+
+  _updateSimpleHighlighters() {
+    if (!this.supportsSimpleHighlighters) {
+      return;
+    }
+
+    const root = this.getElement("root");
+    if (!root) {
+      // Highlighters which support simple highlighters are expected to use a
+      // root element with the id "root".
+      return;
+    }
+
+    // Add/remove the `user-simple-highlighters` class based on the current
+    // toolbox configuration.
+    root.classList.toggle(
+      "use-simple-highlighters",
+      this.highlighterEnv.useSimpleHighlightersForReducedMotion
+    );
+  }
 
   destroy() {
     this.hide();
 
+    this.highlighterEnv.off(
+      "use-simple-highlighters-updated",
+      this._updateSimpleHighlighters
+    );
     this.highlighterEnv = null;
     this.currentNode = null;
-  },
-};
+  }
+}
 exports.AutoRefreshHighlighter = AutoRefreshHighlighter;

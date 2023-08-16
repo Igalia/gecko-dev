@@ -1,7 +1,9 @@
 // Custom *.sjs specifically for the needs of Bug
 // Bug 1139297 - Implement CSP upgrade-insecure-requests directive
 
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
+);
 
 // small red image
 const IMG_BYTES = atob(
@@ -71,7 +73,7 @@ function handleRequest(request, response) {
   // (4) Finally we receive the report, let's return the request from (1)
   // signaling that we received the report correctly
   if (request.queryString == "report") {
-    getObjectState("queryResult", function(queryResponse) {
+    getObjectState("queryResult", function (queryResponse) {
       if (!queryResponse) {
         return;
       }

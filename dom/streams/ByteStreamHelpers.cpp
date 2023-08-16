@@ -4,7 +4,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "mozilla/dom/BodyStream.h"
 #include "mozilla/dom/ByteStreamHelpers.h"
 #include "mozilla/dom/ReadableByteStreamController.h"
 #include "js/ArrayBuffer.h"
@@ -27,7 +26,8 @@ JSObject* TransferArrayBuffer(JSContext* aCx, JS::Handle<JSObject*> aObject) {
   size_t bufferLength = JS::GetArrayBufferByteLength(aObject);
 
   // Step 2 (Reordered)
-  void* bufferData = JS::StealArrayBufferContents(aCx, aObject);
+  UniquePtr<void, JS::FreePolicy> bufferData{
+      JS::StealArrayBufferContents(aCx, aObject)};
 
   // Step 4.
   if (!JS::DetachArrayBuffer(aCx, aObject)) {
@@ -35,7 +35,8 @@ JSObject* TransferArrayBuffer(JSContext* aCx, JS::Handle<JSObject*> aObject) {
   }
 
   // Step 5.
-  return JS::NewArrayBufferWithContents(aCx, bufferLength, bufferData);
+  return JS::NewArrayBufferWithContents(aCx, bufferLength,
+                                        std::move(bufferData));
 }
 
 // https://streams.spec.whatwg.org/#can-transfer-array-buffer
@@ -54,7 +55,7 @@ bool CanTransferArrayBuffer(JSContext* aCx, JS::Handle<JSObject*> aObject,
   // return false.
   // Step 5. Return true.
   // Note: WASM memories are the only buffers that would qualify
-  // as having an undefined [[ArrayBufferDetachKey]],
+  // as having an [[ArrayBufferDetachKey]] which is not undefined.
   bool hasDefinedArrayBufferDetachKey = false;
   if (!JS::HasDefinedArrayBufferDetachKey(aCx, aObject,
                                           &hasDefinedArrayBufferDetachKey)) {
@@ -100,89 +101,6 @@ JSObject* CloneAsUint8Array(JSContext* aCx, JS::Handle<JSObject*> aObject) {
 
   // Step 6. Return array.
   return array;
-}
-
-class BodyStreamUnderlyingSourceAlgorithms final
-    : public UnderlyingSourceAlgorithmsBase {
- public:
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_CYCLE_COLLECTION_CLASS_INHERITED(BodyStreamUnderlyingSourceAlgorithms,
-                                           UnderlyingSourceAlgorithmsBase)
-
-  explicit BodyStreamUnderlyingSourceAlgorithms(
-      BodyStreamHolder* underlyingSource)
-      : mUnderlyingSource(underlyingSource) {}
-
-  MOZ_CAN_RUN_SCRIPT void StartCallback(JSContext* aCx,
-                                        ReadableStreamController& aController,
-                                        JS::MutableHandle<JS::Value> aRetVal,
-                                        ErrorResult& aRv) override {
-    aRetVal.setUndefined();
-  }
-
-  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> PullCallback(
-      JSContext* aCx, ReadableStreamController& aController,
-      ErrorResult& aRv) override {
-    RefPtr<BodyStream> bodyStream = mUnderlyingSource->GetBodyStream();
-    return bodyStream->PullCallback(aCx, aController, aRv);
-  }
-
-  MOZ_CAN_RUN_SCRIPT already_AddRefed<Promise> CancelCallback(
-      JSContext* aCx, const Optional<JS::Handle<JS::Value>>& aReason,
-      ErrorResult& aRv) override {
-    RefPtr<BodyStream> bodyStream = mUnderlyingSource->GetBodyStream();
-    return bodyStream->CancelCallback(aCx, aReason, aRv);
-  }
-
-  void ErrorCallback() override {
-    RefPtr<BodyStream> bodyStream = mUnderlyingSource->GetBodyStream();
-    bodyStream->ErrorCallback();
-  }
-
- protected:
-  ~BodyStreamUnderlyingSourceAlgorithms() override = default;
-
- private:
-  RefPtr<BodyStreamHolder> mUnderlyingSource;
-};
-
-NS_IMPL_CYCLE_COLLECTION_INHERITED(BodyStreamUnderlyingSourceAlgorithms,
-                                   UnderlyingSourceAlgorithmsBase,
-                                   mUnderlyingSource)
-NS_IMPL_ADDREF_INHERITED(BodyStreamUnderlyingSourceAlgorithms,
-                         UnderlyingSourceAlgorithmsBase)
-NS_IMPL_RELEASE_INHERITED(BodyStreamUnderlyingSourceAlgorithms,
-                          UnderlyingSourceAlgorithmsBase)
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(BodyStreamUnderlyingSourceAlgorithms)
-NS_INTERFACE_MAP_END_INHERITING(UnderlyingSourceAlgorithmsBase)
-
-// This is gently modelled on the pre-existing
-// SetUpExternalReadableByteStreamController, but specialized to the
-// BodyStreamUnderlyingSource model vs. the External streams of the JS
-// implementation.
-//
-// https://streams.spec.whatwg.org/#set-up-readable-byte-stream-controller-from-underlying-source
-void SetUpReadableByteStreamControllerFromBodyStreamUnderlyingSource(
-    JSContext* aCx, ReadableStream* aStream,
-    BodyStreamHolder* aUnderlyingSource, ErrorResult& aRv) {
-  // Step 1.
-  auto controller =
-      MakeRefPtr<ReadableByteStreamController>(aStream->GetParentObject());
-
-  // Step 2 - 7.
-  auto algorithms =
-      MakeRefPtr<BodyStreamUnderlyingSourceAlgorithms>(aUnderlyingSource);
-
-  // Step 8
-  Maybe<uint64_t> autoAllocateChunkSize = mozilla::Nothing();
-  // Step 9 (Skipped)
-
-  // Not Specified: Native underlying sources always use 0.0 high water mark.
-  double highWaterMark = 0.0;
-
-  // Step 10.
-  SetUpReadableByteStreamController(aCx, aStream, controller, algorithms,
-                                    highWaterMark, autoAllocateChunkSize, aRv);
 }
 
 }  // namespace mozilla::dom

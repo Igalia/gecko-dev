@@ -3,14 +3,14 @@
 
 "use strict";
 
-const { ExperimentFakes } = ChromeUtils.import(
-  "resource://testing-common/NimbusTestUtils.jsm"
+const { ExperimentFakes } = ChromeUtils.importESModule(
+  "resource://testing-common/NimbusTestUtils.sys.mjs"
 );
 
 registerCleanupFunction(async () => {
   // When the test completes, make sure we cleanup with a populated cache,
   // since this is the default starting state for these tests.
-  await BrowserTestUtils.withNewTab("about:home", async browser => {
+  await withFullyLoadedAboutHome(async browser => {
     await simulateRestart(browser);
   });
 });
@@ -21,7 +21,7 @@ registerCleanupFunction(async () => {
  */
 add_task(async function test_experiments_api_control() {
   // First, the disabled case.
-  await BrowserTestUtils.withNewTab("about:home", async browser => {
+  await withFullyLoadedAboutHome(async browser => {
     let doEnrollmentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
       featureId: "abouthomecache",
       value: { enabled: false },
@@ -44,7 +44,7 @@ add_task(async function test_experiments_api_control() {
   });
 
   // Now the enabled case.
-  await BrowserTestUtils.withNewTab("about:home", async browser => {
+  await withFullyLoadedAboutHome(async browser => {
     let doEnrollmentCleanup = await ExperimentFakes.enrollWithFeatureConfig({
       featureId: "abouthomecache",
       value: { enabled: true },

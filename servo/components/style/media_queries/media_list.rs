@@ -10,6 +10,7 @@ use super::{Device, MediaQuery, Qualifier};
 use crate::context::QuirksMode;
 use crate::error_reporting::ContextualParseError;
 use crate::parser::ParserContext;
+use crate::queries::condition::KleeneValue;
 use crate::values::computed;
 use cssparser::{Delimiter, Parser};
 use cssparser::{ParserInput, Token};
@@ -81,17 +82,19 @@ impl MediaList {
 
         computed::Context::for_media_query_evaluation(device, quirks_mode, |context| {
             self.media_queries.iter().any(|mq| {
-                let media_match = mq.media_type.matches(device.media_type());
-
-                // Check if the media condition match.
-                let query_match = media_match &&
-                    mq.condition.as_ref().map_or(true, |c| c.matches(context));
+                let mut query_match = if mq.media_type.matches(device.media_type()) {
+                    mq.condition
+                        .as_ref()
+                        .map_or(KleeneValue::True, |c| c.matches(context))
+                } else {
+                    KleeneValue::False
+                };
 
                 // Apply the logical NOT qualifier to the result
-                match mq.qualifier {
-                    Some(Qualifier::Not) => !query_match,
-                    _ => query_match,
+                if matches!(mq.qualifier, Some(Qualifier::Not)) {
+                    query_match = !query_match;
                 }
+                query_match.to_bool(/* unknown = */ false)
             })
         })
     }
@@ -99,6 +102,11 @@ impl MediaList {
     /// Whether this `MediaList` contains no media queries.
     pub fn is_empty(&self) -> bool {
         self.media_queries.is_empty()
+    }
+
+    /// Whether this `MediaList` depends on the viewport size.
+    pub fn is_viewport_dependent(&self) -> bool {
+        self.media_queries.iter().any(|q| q.is_viewport_dependent())
     }
 
     /// Append a new media query item to the media list.

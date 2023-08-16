@@ -4,14 +4,14 @@
 
 "use strict";
 
-const EventEmitter = require("devtools/shared/event-emitter");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const {
   getCurrentZoom,
   setIgnoreLayoutChanges,
-} = require("devtools/shared/layout/utils");
+} = require("resource://devtools/shared/layout/utils.js");
 const {
   CanvasFrameAnonymousContentHelper,
-} = require("devtools/server/actors/highlighters/utils/markup");
+} = require("resource://devtools/server/actors/highlighters/utils/markup.js");
 
 // Maximum size, in pixel, for the horizontal ruler and vertical ruler
 // used by RulersHighlighter
@@ -28,21 +28,21 @@ const RULERS_TEXT_STEP = 100;
  * vertical rules on the page, along the top and left edges, with pixel
  * graduations, useful for users to quickly check distances
  */
-function RulersHighlighter(highlighterEnv) {
-  this.env = highlighterEnv;
-  this.markup = new CanvasFrameAnonymousContentHelper(
-    highlighterEnv,
-    this._buildMarkup.bind(this)
-  );
-  this.isReady = this.markup.initialize();
+class RulersHighlighter {
+  constructor(highlighterEnv) {
+    this.env = highlighterEnv;
+    this.markup = new CanvasFrameAnonymousContentHelper(
+      highlighterEnv,
+      this._buildMarkup.bind(this)
+    );
+    this.isReady = this.markup.initialize();
 
-  const { pageListenerTarget } = highlighterEnv;
-  pageListenerTarget.addEventListener("scroll", this);
-  pageListenerTarget.addEventListener("pagehide", this);
-}
+    const { pageListenerTarget } = highlighterEnv;
+    pageListenerTarget.addEventListener("scroll", this);
+    pageListenerTarget.addEventListener("pagehide", this);
+  }
 
-RulersHighlighter.prototype = {
-  ID_CLASS_PREFIX: "rulers-highlighter-",
+  ID_CLASS_PREFIX = "rulers-highlighter-";
 
   _buildMarkup() {
     const prefix = this.ID_CLASS_PREFIX;
@@ -195,18 +195,8 @@ RulersHighlighter.prototype = {
     createRuler("x", RULERS_MAX_X_AXIS);
     createRuler("y", RULERS_MAX_Y_AXIS);
 
-    this.markup.createNode({
-      parent: container,
-      attributes: {
-        class: "viewport-infobar-container",
-        id: "viewport-infobar-container",
-        position: "top",
-      },
-      prefix,
-    });
-
     return container;
-  },
+  }
 
   handleEvent(event) {
     switch (event.type) {
@@ -221,7 +211,7 @@ RulersHighlighter.prototype = {
         }
         break;
     }
-  },
+  }
 
   _onScroll(event) {
     const prefix = this.ID_CLASS_PREFIX;
@@ -239,7 +229,7 @@ RulersHighlighter.prototype = {
     this.markup
       .getElement(`${prefix}y-axis-text`)
       .setAttribute("transform", `translate(0, ${-scrollY})`);
-  },
+  }
 
   _update() {
     const { window } = this.env;
@@ -254,19 +244,17 @@ RulersHighlighter.prototype = {
       this.updateViewport();
     }
 
-    this.updateViewportInfobar();
-
     setIgnoreLayoutChanges(false, window.document.documentElement);
 
     this._rafID = window.requestAnimationFrame(() => this._update());
-  },
+  }
 
   _cancelUpdate() {
     if (this._rafID) {
       this.env.window.cancelAnimationFrame(this._rafID);
       this._rafID = 0;
     }
-  },
+  }
   updateViewport() {
     const { devicePixelRatio } = this.env.window;
 
@@ -283,15 +271,7 @@ RulersHighlighter.prototype = {
     this.markup
       .getElement(this.ID_CLASS_PREFIX + "root")
       .setAttribute("style", `stroke-width:${strokeWidth};`);
-  },
-
-  updateViewportInfobar() {
-    const { window } = this.env;
-    const { innerHeight, innerWidth } = window;
-    const infobarId = this.ID_CLASS_PREFIX + "viewport-infobar-container";
-    const textContent = innerWidth + "px \u00D7 " + innerHeight + "px";
-    this.markup.getElement(infobarId).setTextContent(textContent);
-  },
+  }
 
   destroy() {
     this.hide();
@@ -306,22 +286,18 @@ RulersHighlighter.prototype = {
     this.markup.destroy();
 
     EventEmitter.emit(this, "destroy");
-  },
+  }
 
   show() {
     this.markup.removeAttributeForElement(
       this.ID_CLASS_PREFIX + "elements",
       "hidden"
     );
-    this.markup.removeAttributeForElement(
-      this.ID_CLASS_PREFIX + "viewport-infobar-container",
-      "hidden"
-    );
 
     this._update();
 
     return true;
-  },
+  }
 
   hide() {
     this.markup.setAttributeForElement(
@@ -329,13 +305,8 @@ RulersHighlighter.prototype = {
       "hidden",
       "true"
     );
-    this.markup.setAttributeForElement(
-      this.ID_CLASS_PREFIX + "viewport-infobar-container",
-      "hidden",
-      "true"
-    );
 
     this._cancelUpdate();
-  },
-};
+  }
+}
 exports.RulersHighlighter = RulersHighlighter;

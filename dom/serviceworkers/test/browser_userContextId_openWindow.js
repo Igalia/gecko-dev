@@ -13,11 +13,11 @@ let mockAlertsService = {
   showAlert(alert, alertListener) {
     ok(true, "Showing alert");
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    setTimeout(function() {
+    setTimeout(function () {
       alertListener.observe(null, "alertshow", alert.cookie);
     }, 100);
     // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-    setTimeout(function() {
+    setTimeout(function () {
       alertListener.observe(null, "alertclickcallback", alert.cookie);
     }, 100);
   },
@@ -56,7 +56,7 @@ registerCleanupFunction(() => {
   );
 });
 
-add_setup(async function() {
+add_setup(async function () {
   // make sure userContext, SW and notifications are enabled.
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -64,8 +64,6 @@ add_setup(async function() {
       ["dom.serviceWorkers.exemptFromPerDomainMax", true],
       ["dom.serviceWorkers.enabled", true],
       ["dom.serviceWorkers.testing.enabled", true],
-      ["dom.webnotifications.workers.enabled", true],
-      ["dom.webnotifications.serviceworker.enabled", true],
       ["notification.prompt.testing", true],
       ["dom.serviceWorkers.disable_open_click_delay", 1000],
       ["dom.serviceWorkers.idle_timeout", 299999],

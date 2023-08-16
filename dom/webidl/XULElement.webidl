@@ -11,10 +11,6 @@ interface XULControllers;
 interface XULElement : Element {
   [HTMLConstructor] constructor();
 
-  // Layout properties
-  [SetterThrows]
-  attribute DOMString flex;
-
   // Properties for hiding elements.
   attribute boolean hidden;
   attribute boolean collapsed;
@@ -31,20 +27,6 @@ interface XULElement : Element {
   [SetterThrows]
   attribute DOMString tooltip;
 
-  // Width/height properties
-  [SetterThrows]
-  attribute DOMString width;
-  [SetterThrows]
-  attribute DOMString height;
-  [SetterThrows]
-  attribute DOMString minWidth;
-  [SetterThrows]
-  attribute DOMString minHeight;
-  [SetterThrows]
-  attribute DOMString maxWidth;
-  [SetterThrows]
-  attribute DOMString maxHeight;
-
   // Tooltip
   [SetterThrows]
   attribute DOMString tooltipText;
@@ -57,8 +39,8 @@ interface XULElement : Element {
   readonly attribute XULControllers             controllers;
 
   [NeedsCallerType]
-  void                      click();
-  void                      doCommand();
+  undefined                      click();
+  undefined                      doCommand();
 
   // Returns true if this is a menu-type element that has a menu
   // frame associated with it.
@@ -66,7 +48,7 @@ interface XULElement : Element {
 
   // If this is a menu-type element, opens or closes the menu
   // depending on the argument passed.
-  void openMenu(boolean open);
+  undefined openMenu(boolean open);
 };
 
 XULElement includes GlobalEventHandlers;

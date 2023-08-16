@@ -15,7 +15,7 @@ const TEST_URL2 = "https://example.com/browser";
 const sentence = "The quick brown fox jumps over the lazy dog.";
 
 async function sendTextToInput(browser, text) {
-  await SpecialPowers.spawn(browser, [], function() {
+  await SpecialPowers.spawn(browser, [], function () {
     const input = content.document.querySelector(
       "#form1 > input[name='search']"
     );
@@ -25,7 +25,7 @@ async function sendTextToInput(browser, text) {
 
   EventUtils.sendString(text);
 
-  await SpecialPowers.spawn(browser, [{ text }], async function(args) {
+  await SpecialPowers.spawn(browser, [{ text }], async function (args) {
     await ContentTaskUtils.waitForCondition(
       () =>
         content.document.querySelector("#form1 > input[name='search']").value ==
@@ -47,7 +47,7 @@ add_task(async function test_typing_pushState() {
 
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -77,7 +77,7 @@ add_task(async function test_typing_pushState_sameUrl() {
 
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -102,7 +102,7 @@ add_task(async function test_typing_replaceState() {
 
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -132,7 +132,7 @@ add_task(async function test_typing_replaceState_sameUrl() {
 
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([
@@ -157,7 +157,7 @@ add_task(async function test_typing_hashchange() {
 
     await sendTextToInput(browser, sentence);
 
-    BrowserTestUtils.loadURI(browser, "about:blank");
+    BrowserTestUtils.loadURIString(browser, "about:blank");
     await BrowserTestUtils.browserLoaded(browser, false, "about:blank");
 
     await assertDatabaseValues([

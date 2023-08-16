@@ -22,6 +22,27 @@ and required versions of Selenium and Firefox:
     <th>max
   </tr>
  </thead>
+ </thead>
+ <tr>
+  <td>0.33.0
+  <td>≥ 3.11 (3.14 Python)
+  <td>102 ESR
+  <td>n/a
+ <tr>
+  <td>0.32.2
+  <td>≥ 3.11 (3.14 Python)
+  <td>102 ESR
+  <td>n/a
+ <tr>
+  <td>0.32.1
+  <td>≥ 3.11 (3.14 Python)
+  <td>102 ESR
+  <td>n/a
+ <tr>
+  <td>0.32.0
+  <td>≥ 3.11 (3.14 Python)
+  <td>102 ESR
+  <td>n/a
  <tr>
   <td>0.31.0
   <td>≥ 3.11 (3.14 Python)
@@ -147,13 +168,12 @@ supported release from Mozilla.
 
 To run tests on Android specific capabilities under `moz:firefoxOptions`
 have to be set when requesting a new session. See the Android section under
-[Firefox Capabilities](Capabilities.html#android) for more details.
+[Firefox Capabilities](Capabilities.md#android) for more details.
 
 [geckodriver releases]: https://github.com/mozilla/geckodriver/releases
 [Selenium]: https://github.com/seleniumhq/selenium
 [WebDriver]: https://w3c.github.io/webdriver/
 [implementation status]: https://bugzilla.mozilla.org/showdependencytree.cgi?id=721859&hide_resolved=1
-[Firefox Nightly]: https://whattrainisitnow.com/
 [remote protocol]: https://github.com/mozilla/geckodriver/issues?q=is%3Aissue+is%3Aopen+label%3Amarionette
 [specification]: https://github.com/mozilla/geckodriver/issues?q=is%3Aissue+is%3Aopen+label%3Aspec
 [issue tracker]: https://github.com/mozilla/geckodriver/issues

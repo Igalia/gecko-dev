@@ -56,7 +56,7 @@ add_task(async function resetToDefaultConfig() {
     TLS12_PAGE
   );
 
-  await SpecialPowers.spawn(browser, [], async function() {
+  await SpecialPowers.spawn(browser, [], async function () {
     const doc = content.document;
     ok(
       doc.documentURI.startsWith("about:neterror"),
@@ -64,9 +64,9 @@ add_task(async function resetToDefaultConfig() {
     );
 
     const prefResetButton = doc.getElementById("prefResetButton");
-    ok(
-      ContentTaskUtils.is_visible(prefResetButton),
-      "prefResetButton should be visible"
+    await ContentTaskUtils.waitForCondition(
+      () => ContentTaskUtils.is_visible(prefResetButton),
+      "prefResetButton is visible"
     );
 
     if (!Services.focus.focusedElement == prefResetButton) {
@@ -109,7 +109,7 @@ add_task(async function checkLearnMoreLink() {
 
   const baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
 
-  await SpecialPowers.spawn(browser, [baseURL], function(_baseURL) {
+  await SpecialPowers.spawn(browser, [baseURL], function (_baseURL) {
     const doc = content.document;
     ok(
       doc.documentURI.startsWith("about:neterror"),
@@ -137,7 +137,7 @@ add_task(async function checkLearnMoreLink() {
       "Correct error page title is set"
     );
 
-    const errorCodeEl = doc.querySelector("#errorShortDescText2");
+    const errorCodeEl = doc.querySelector("#errorShortDesc2");
     const actualDataL10Args = errorCodeEl.getAttribute("data-l10n-args");
     ok(
       actualDataL10Args.includes("SSL_ERROR_PROTOCOL_VERSION_ALERT"),
@@ -162,6 +162,7 @@ add_task(async function checkDomainCorrection() {
   info("Try loading a URI that should result in an error page");
   BrowserTestUtils.openNewForegroundTab(
     gBrowser,
+    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
     "http://example/example2/",
     false
   );
@@ -173,26 +174,23 @@ add_task(async function checkDomainCorrection() {
 
   const baseURL = Services.urlFormatter.formatURLPref("app.support.baseURL");
 
-  await SpecialPowers.spawn(browser, [baseURL], async function(_baseURL) {
+  await SpecialPowers.spawn(browser, [baseURL], async function (_baseURL) {
     const doc = content.document;
     ok(
       doc.documentURI.startsWith("about:neterror"),
       "Should be showing error page"
     );
 
-    const errorNotice = doc.getElementById("errorShortDescText");
+    const errorNotice = doc.getElementById("errorShortDesc");
     ok(ContentTaskUtils.is_visible(errorNotice), "Error text is visible");
 
     // Wait for the domain suggestion to be resolved and for the text to update
+    let link;
     await ContentTaskUtils.waitForCondition(() => {
-      let el = doc.getElementById("errorShortDescText");
-      if (el) {
-        return el.querySelector("a") && el.querySelector("a").textContent != "";
-      }
-      return false;
+      link = errorNotice.querySelector("a");
+      return link && link.textContent != "";
     }, "Helper link has been set");
 
-    const link = doc.getElementById("errorShortDescText").querySelector("a");
     is(
       link.getAttribute("href"),
       "https://www.example.com/example2/",
@@ -215,7 +213,7 @@ add_task(async function onlyAllow3DESWithDeprecatedTLS() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
     async browser => {
-      BrowserTestUtils.loadURI(browser, TRIPLEDES_PAGE);
+      BrowserTestUtils.loadURIString(browser, TRIPLEDES_PAGE);
       await BrowserTestUtils.waitForErrorPage(browser);
     }
   );
@@ -225,7 +223,7 @@ add_task(async function onlyAllow3DESWithDeprecatedTLS() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
     async browser => {
-      BrowserTestUtils.loadURI(browser, TRIPLEDES_PAGE);
+      BrowserTestUtils.loadURIString(browser, TRIPLEDES_PAGE);
       await BrowserTestUtils.browserLoaded(browser, false, TRIPLEDES_PAGE);
     }
   );
@@ -238,7 +236,7 @@ add_task(async function onlyAllow3DESWithDeprecatedTLS() {
   await BrowserTestUtils.withNewTab(
     { gBrowser, url: "about:blank" },
     async browser => {
-      BrowserTestUtils.loadURI(browser, TRIPLEDES_PAGE);
+      BrowserTestUtils.loadURIString(browser, TRIPLEDES_PAGE);
       await BrowserTestUtils.waitForErrorPage(browser);
     }
   );

@@ -3,10 +3,12 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-const { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+const { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 
 function sleep(ms) {
   /* eslint-disable mozilla/no-arbitrary-setTimeout */
@@ -28,9 +30,7 @@ add_task(
 const COUNT = 42;
 const STRING = "a string!";
 const ANOTHER_STRING = "another string!";
-/* TODO:(bugXXX) Support events in JOG
 const EVENT_EXTRA = { extra1: "so very extra" };
-*/
 const MEMORIES = [13, 31];
 const MEMORY_BUCKETS = ["13509772", "32131834"]; // buckets are strings : |
 const COUNTERS_1 = 3;
@@ -42,10 +42,16 @@ const INVALID_COUNTERS = 7;
 const METRICS = [
   ["counter", "jog_ipc", "jog_counter", ["test-only"], `"ping"`, false],
   ["string_list", "jog_ipc", "jog_string_list", ["test-only"], `"ping"`, false],
-  /* TODO:(bugXXX) Support events in JOG
-["event", "jog_ipc", "jog_event_no_extra", ["test-only"], `"ping"`, false],
-["event", "jog_ipc", "jog_event", ["test-only"], `"ping"`, false, JSON.stringify({extras: {extra1: "string"})}],
-*/
+  ["event", "jog_ipc", "jog_event_no_extra", ["test-only"], `"ping"`, false],
+  [
+    "event",
+    "jog_ipc",
+    "jog_event",
+    ["test-only"],
+    `"ping"`,
+    false,
+    JSON.stringify({ allowed_extra_keys: ["extra1"] }),
+  ],
   [
     "memory_distribution",
     "jog_ipc",
@@ -101,7 +107,7 @@ const METRICS = [
     ["test-only"],
     `"ping"`,
     false,
-    JSON.stringify({ labels: ["label_1", "label_2"] }),
+    JSON.stringify({ ordered_labels: ["label_1", "label_2"] }),
   ],
   [
     "labeled_counter",
@@ -110,12 +116,15 @@ const METRICS = [
     ["test-only"],
     `"ping"`,
     false,
-    JSON.stringify({ labels: ["label_1", "label_2"] }),
+    JSON.stringify({ ordered_labels: ["label_1", "label_2"] }),
   ],
   ["rate", "jog_ipc", "jog_rate", ["test-only"], `"ping"`, false],
 ];
 
 add_task({ skip_if: () => runningInParent }, async function run_child_stuff() {
+  // Ensure any _actual_ runtime metrics are registered first.
+  // Otherwise the jog_ipc.* ones will have incorrect ids.
+  Glean.testOnly.badCode;
   for (let metric of METRICS) {
     Services.fog.testRegisterRuntimeMetric(...metric);
   }
@@ -123,10 +132,8 @@ add_task({ skip_if: () => runningInParent }, async function run_child_stuff() {
   Glean.jogIpc.jogStringList.add(STRING);
   Glean.jogIpc.jogStringList.add(ANOTHER_STRING);
 
-  /* TODO:(bugXXX) Support events in JOG
   Glean.jogIpc.jogEventNoExtra.record();
   Glean.jogIpc.jogEvent.record(EVENT_EXTRA);
-  */
 
   for (let memory of MEMORIES) {
     Glean.jogIpc.jogMemoryDist.accumulate(memory);
@@ -150,12 +157,12 @@ add_task({ skip_if: () => runningInParent }, async function run_child_stuff() {
   Glean.jogIpc.jogLabeledCounter.label_1.add(COUNTERS_1);
   Glean.jogIpc.jogLabeledCounter.label_2.add(COUNTERS_2);
 
-  Glean.jogIpc.jogLabeledCounterErr.InvalidLabel.add(INVALID_COUNTERS);
+  Glean.jogIpc.jogLabeledCounterErr["1".repeat(72)].add(INVALID_COUNTERS);
 
   Glean.jogIpc.jogLabeledCounterWithLabels.label_1.add(COUNTERS_1);
   Glean.jogIpc.jogLabeledCounterWithLabels.label_2.add(COUNTERS_2);
 
-  Glean.jogIpc.jogLabeledCounterWithLabelsErr.InvalidLabel.add(
+  Glean.jogIpc.jogLabeledCounterWithLabelsErr["1".repeat(72)].add(
     INVALID_COUNTERS
   );
 
@@ -166,6 +173,9 @@ add_task({ skip_if: () => runningInParent }, async function run_child_stuff() {
 add_task(
   { skip_if: () => !runningInParent },
   async function test_child_metrics() {
+    // Ensure any _actual_ runtime metrics are registered first.
+    // Otherwise the jog_ipc.* ones will have incorrect ids.
+    Glean.testOnly.badCode;
     for (let metric of METRICS) {
       Services.fog.testRegisterRuntimeMetric(...metric);
     }
@@ -197,8 +207,7 @@ add_task(
       );
     }
 
-    /* TODO(bug XXX): Support events in JOG
-    var events = Glean.jogIpc.jogEventNoExtra.testGetValue();
+    let events = Glean.jogIpc.jogEventNoExtra.testGetValue();
     Assert.equal(1, events.length);
     Assert.equal("jog_ipc", events[0].category);
     Assert.equal("jog_event_no_extra", events[0].name);
@@ -208,7 +217,6 @@ add_task(
     Assert.equal("jog_ipc", events[0].category);
     Assert.equal("jog_event", events[0].name);
     Assert.deepEqual(EVENT_EXTRA, events[0].extra);
-    */
 
     const NANOS_IN_MILLIS = 1e6;
     const EPSILON = 40000; // bug 1701949

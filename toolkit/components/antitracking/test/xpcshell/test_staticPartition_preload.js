@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { CookieXPCShellUtils } = ChromeUtils.import(
-  "resource://testing-common/CookieXPCShellUtils.jsm"
+const { CookieXPCShellUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CookieXPCShellUtils.sys.mjs"
 );
 
 let gHints = 0;
@@ -122,7 +122,7 @@ add_task(async () => {
       "http://example.org/empty"
     );
 
-    await contentPage.spawn(null, () =>
+    await contentPage.spawn([], () =>
       // eslint-disable-next-line no-undef
       content.windowUtils.clearSharedStyleSheetCache()
     );

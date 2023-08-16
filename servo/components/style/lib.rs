@@ -82,6 +82,7 @@ pub mod attr;
 pub mod author_styles;
 pub mod bezier;
 pub mod bloom;
+pub mod color;
 #[path = "properties/computed_value_flags.rs"]
 pub mod computed_value_flags;
 pub mod context;
@@ -108,6 +109,7 @@ pub mod media_queries;
 pub mod parallel;
 pub mod parser;
 pub mod piecewise_linear;
+pub mod properties_and_values;
 #[macro_use]
 pub mod queries;
 pub mod rule_cache;
@@ -162,16 +164,9 @@ pub use style_traits::arc_slice::ArcSlice;
 pub use style_traits::owned_slice::OwnedSlice;
 pub use style_traits::owned_str::OwnedStr;
 
-use std::hash::{Hash, BuildHasher};
+use std::hash::{BuildHasher, Hash};
 
-/// The CSS properties supported by the style system.
-/// Generated from the properties.mako.rs template by build.rs
-#[macro_use]
-#[allow(unsafe_code)]
-#[deny(missing_docs)]
-pub mod properties {
-    include!(concat!(env!("OUT_DIR"), "/properties.rs"));
-}
+pub mod properties;
 
 #[cfg(feature = "gecko")]
 #[allow(unsafe_code)]
@@ -181,12 +176,6 @@ pub mod gecko;
 #[cfg(feature = "servo")]
 #[allow(unsafe_code)]
 pub mod servo;
-
-#[cfg(feature = "gecko")]
-#[allow(unsafe_code, missing_docs)]
-pub mod gecko_properties {
-    include!(concat!(env!("OUT_DIR"), "/gecko_properties.rs"));
-}
 
 macro_rules! reexport_computed_values {
     ( $( { $name: ident } )+ ) => {
@@ -215,6 +204,7 @@ pub trait CaseSensitivityExt {
 }
 
 impl CaseSensitivityExt for selectors::attr::CaseSensitivity {
+    #[inline]
     fn eq_atom(self, a: &WeakAtom, b: &WeakAtom) -> bool {
         match self {
             selectors::attr::CaseSensitivity::CaseSensitive => a == b,
@@ -244,6 +234,12 @@ where
     fn is_zero(&self) -> bool {
         <Self as num_traits::Zero>::is_zero(self)
     }
+}
+
+/// A trait implementing a function to tell if the number is zero without a percent
+pub trait ZeroNoPercent {
+    /// So, `0px` should return `true`, but `0%` or `1px` should return `false`
+    fn is_zero_no_percent(&self) -> bool;
 }
 
 /// A trait pretty much similar to num_traits::One, but without the need of
@@ -294,7 +290,7 @@ impl From<std::collections::TryReserveError> for AllocErr {
 }
 
 /// Shrink the capacity of the collection if needed.
-pub (crate) trait ShrinkIfNeeded {
+pub(crate) trait ShrinkIfNeeded {
     fn shrink_if_needed(&mut self);
 }
 

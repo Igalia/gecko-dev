@@ -5,7 +5,6 @@
 # You can obtain one at http://mozilla.org/MPL/2.0/.
 # ***** END LICENSE BLOCK *****
 
-from __future__ import absolute_import
 import datetime
 import functools
 import glob
@@ -13,13 +12,15 @@ import os
 import posixpath
 import re
 import signal
-import six
 import subprocess
-import time
 import tempfile
+import time
 from threading import Timer
-from mozharness.mozilla.automation import TBPL_RETRY, EXIT_STATUS_DICT
-from mozharness.base.script import PreScriptAction, PostScriptAction
+
+import six
+
+from mozharness.base.script import PostScriptAction, PreScriptAction
+from mozharness.mozilla.automation import EXIT_STATUS_DICT, TBPL_RETRY
 
 
 def ensure_dir(dir):
@@ -47,6 +48,7 @@ class AndroidMixin(object):
         self.logcat_proc = None
         self.logcat_file = None
         self.use_gles3 = False
+        self.use_root = True
         self.xre_path = None
         super(AndroidMixin, self).__init__(**kwargs)
 
@@ -69,7 +71,7 @@ class AndroidMixin(object):
             import mozdevice
 
             self._device = mozdevice.ADBDeviceFactory(
-                adb=adb, device=self.device_serial
+                adb=adb, device=self.device_serial, use_root=self.use_root
             )
         return self._device
 
@@ -489,7 +491,7 @@ class AndroidMixin(object):
 
         :param prefix specifies a filename prefix for the screenshot
         """
-        from mozscreenshot import dump_screen, dump_device_screen
+        from mozscreenshot import dump_device_screen, dump_screen
 
         reset_dir = False
         if not os.environ.get("MOZ_UPLOAD_DIR", None):

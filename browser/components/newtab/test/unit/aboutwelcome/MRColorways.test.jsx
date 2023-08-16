@@ -4,20 +4,16 @@ import {
   Colorways,
   computeColorWay,
   ColorwayDescription,
+  computeVariationIndex,
 } from "content-src/aboutwelcome/components/MRColorways";
 import { WelcomeScreen } from "content-src/aboutwelcome/components/MultiStageAboutWelcome";
 
 describe("Multistage AboutWelcome module", () => {
   let sandbox;
+  let COLORWAY_SCREEN_PROPS;
   beforeEach(() => {
     sandbox = sinon.createSandbox();
-  });
-  afterEach(() => {
-    sandbox.restore();
-  });
-
-  describe("MRColorway component", () => {
-    const COLORWAY_SCREEN_PROPS = {
+    COLORWAY_SCREEN_PROPS = {
       id: "test-colorway-screen",
       totalNumberofScreens: 1,
       content: {
@@ -46,11 +42,15 @@ describe("Multistage AboutWelcome module", () => {
           label: "test button",
         },
       },
-      topSites: [],
       messageId: "test-mr-colorway-screen",
       activeTheme: "automatic",
     };
+  });
+  afterEach(() => {
+    sandbox.restore();
+  });
 
+  describe("MRColorway component", () => {
     it("should render WelcomeScreen", () => {
       const wrapper = shallow(<WelcomeScreen {...COLORWAY_SCREEN_PROPS} />);
 
@@ -68,18 +68,12 @@ describe("Multistage AboutWelcome module", () => {
 
       // Default automatic theme is selected by default
       assert.strictEqual(
-        colorwaysOptionIcons
-          .first()
-          .prop("className")
-          .includes("selected"),
+        colorwaysOptionIcons.first().prop("className").includes("selected"),
         true
       );
 
       assert.strictEqual(
-        colorwaysOptionIcons
-          .first()
-          .prop("className")
-          .includes("default"),
+        colorwaysOptionIcons.first().prop("className").includes("default"),
         true
       );
     });
@@ -95,18 +89,12 @@ describe("Multistage AboutWelcome module", () => {
 
       // Default automatic theme is selected when unsupported in colorway alpenglow theme is active
       assert.strictEqual(
-        colorwaysOptionIcons
-          .first()
-          .prop("className")
-          .includes("selected"),
+        colorwaysOptionIcons.first().prop("className").includes("selected"),
         true
       );
 
       assert.strictEqual(
-        colorwaysOptionIcons
-          .first()
-          .prop("className")
-          .includes("default"),
+        colorwaysOptionIcons.first().prop("className").includes("default"),
         true
       );
     });
@@ -133,10 +121,7 @@ describe("Multistage AboutWelcome module", () => {
       // First colorway option
       // Default theme radio option is selected by default
       assert.strictEqual(
-        colorwaysOptionIcons
-          .first()
-          .prop("className")
-          .includes("selected"),
+        colorwaysOptionIcons.first().prop("className").includes("selected"),
         true
       );
 
@@ -148,10 +133,7 @@ describe("Multistage AboutWelcome module", () => {
 
       // Second colorway option
       assert.strictEqual(
-        colorwaysOptionIcons
-          .last()
-          .prop("className")
-          .includes("selected"),
+        colorwaysOptionIcons.last().prop("className").includes("selected"),
         false
       );
 
@@ -170,7 +152,9 @@ describe("Multistage AboutWelcome module", () => {
 
     it("should handle colorway clicks", () => {
       sandbox.stub(React, "useEffect").callsFake((fn, vals) => {
-        if (vals[0] === "in") {
+        if (vals === undefined) {
+          fn();
+        } else if (vals[0] === "in") {
           fn();
         }
       });
@@ -245,6 +229,100 @@ describe("Multistage AboutWelcome module", () => {
         TEST_COLORWAY_PROPS.content.tiles.systemVariations
       );
       assert.strictEqual(colorwayId, "abstract");
+    });
+
+    it("should computeVariationIndex for default active theme", () => {
+      let TEST_COLORWAY_PROPS = {
+        ...COLORWAY_SCREEN_PROPS,
+      };
+
+      const variationIndex = computeVariationIndex(
+        TEST_COLORWAY_PROPS.activeTheme,
+        TEST_COLORWAY_PROPS.content.tiles.systemVariations,
+        TEST_COLORWAY_PROPS.content.tiles.variations,
+        TEST_COLORWAY_PROPS.content.tiles.defaultVariationIndex
+      );
+      assert.strictEqual(
+        variationIndex,
+        TEST_COLORWAY_PROPS.content.tiles.defaultVariationIndex
+      );
+    });
+
+    it("should computeVariationIndex for active theme", () => {
+      let TEST_COLORWAY_PROPS = {
+        ...COLORWAY_SCREEN_PROPS,
+      };
+
+      const variationIndex = computeVariationIndex(
+        "light",
+        TEST_COLORWAY_PROPS.content.tiles.systemVariations,
+        TEST_COLORWAY_PROPS.content.tiles.variations,
+        TEST_COLORWAY_PROPS.content.tiles.defaultVariationIndex
+      );
+      assert.strictEqual(variationIndex, 1);
+    });
+
+    it("should computeVariationIndex for colorway theme", () => {
+      let TEST_COLORWAY_PROPS = {
+        ...COLORWAY_SCREEN_PROPS,
+      };
+
+      const variationIndex = computeVariationIndex(
+        "abstract-bold",
+        TEST_COLORWAY_PROPS.content.tiles.systemVariations,
+        TEST_COLORWAY_PROPS.content.tiles.variations,
+        TEST_COLORWAY_PROPS.content.tiles.defaultVariationIndex
+      );
+      assert.strictEqual(variationIndex, 1);
+    });
+
+    describe("random colorways", () => {
+      let test;
+      beforeEach(() => {
+        COLORWAY_SCREEN_PROPS.handleAction = sandbox.stub();
+        sandbox.stub(window, "matchMedia");
+        // eslint-disable-next-line max-nested-callbacks
+        sandbox.stub(React, "useEffect").callsFake((fn, vals) => {
+          if (vals?.length === 0) {
+            fn();
+          }
+        });
+        test = () => {
+          shallow(<Colorways {...COLORWAY_SCREEN_PROPS} />);
+          return COLORWAY_SCREEN_PROPS.handleAction.firstCall.firstArg
+            .currentTarget;
+        };
+      });
+
+      it("should select a random colorway", () => {
+        const { value } = test();
+
+        assert.strictEqual(value, "abstract-soft");
+        assert.calledThrice(React.useEffect);
+        assert.notCalled(window.matchMedia);
+      });
+
+      it("should select a random soft colorway when not dark", () => {
+        window.matchMedia.returns({ matches: false });
+        COLORWAY_SCREEN_PROPS.content.tiles.darkVariation = 1;
+
+        const { value } = test();
+
+        assert.strictEqual(value, "abstract-soft");
+        assert.calledThrice(React.useEffect);
+        assert.calledOnce(window.matchMedia);
+      });
+
+      it("should select a random bold colorway when dark", () => {
+        window.matchMedia.returns({ matches: true });
+        COLORWAY_SCREEN_PROPS.content.tiles.darkVariation = 1;
+
+        const { value } = test();
+
+        assert.strictEqual(value, "abstract-bold");
+        assert.calledThrice(React.useEffect);
+        assert.calledOnce(window.matchMedia);
+      });
     });
   });
 });

@@ -15,6 +15,10 @@
 #include "nsUnicharUtils.h"
 #include "nsXULAppAPI.h"
 
+#if defined(MOZ_GECKO_PROFILER)
+#  include "shared-libraries.h"
+#endif  // MOZ_GECKO_PROFILER
+
 namespace mozilla {
 namespace Telemetry {
 
@@ -165,6 +169,22 @@ static bool SerializeModule(JSContext* aCx,
       return false;
     }
   }
+
+#if defined(MOZ_GECKO_PROFILER)
+  if (aModule->mResolvedDosName) {
+    nsAutoString path;
+    if (aModule->mResolvedDosName->GetPath(path) == NS_OK) {
+      SharedLibraryInfo info = SharedLibraryInfo::GetInfoFromPath(path.Data());
+      if (info.GetSize() > 0) {
+        nsCString breakpadId = info.GetEntry(0).GetBreakpadId();
+        if (!AddLengthLimitedStringProp(aCx, obj, "debugID",
+                                        NS_ConvertASCIItoUTF16(breakpadId))) {
+          return false;
+        }
+      }
+    }
+  }
+#endif  // MOZ_GECKO_PROFILER
 
   if (aModule->mVendorInfo.isSome()) {
     const char* propName;
@@ -490,11 +510,14 @@ UntrustedModulesDataSerializer::UntrustedModulesDataSerializer(
       mCx(aCx),
       mMainObj(mCx, JS_NewPlainObject(mCx)),
       mModulesArray(mCx, JS::NewArrayObject(mCx, 0)),
+      mBlockedModulesArray(mCx, JS::NewArrayObject(mCx, 0)),
       mPerProcObjContainer(mCx, JS_NewPlainObject(mCx)),
       mMaxModulesArrayLen(aMaxModulesArrayLen),
       mCurModulesArrayIdx(0),
+      mCurBlockedModulesArrayIdx(0),
       mFlags(aFlags) {
-  if (!mMainObj || !mModulesArray || !mPerProcObjContainer) {
+  if (!mMainObj || !mModulesArray || !mBlockedModulesArray ||
+      !mPerProcObjContainer) {
     return;
   }
 
@@ -509,6 +532,13 @@ UntrustedModulesDataSerializer::UntrustedModulesDataSerializer(
   jsModulesArrayValue.setObject(*mModulesArray);
   if (!JS_DefineProperty(mCx, mMainObj, "modules", jsModulesArrayValue,
                          JSPROP_ENUMERATE)) {
+    return;
+  }
+
+  JS::Rooted<JS::Value> jsBlockedModulesArrayValue(mCx);
+  jsBlockedModulesArrayValue.setObject(*mBlockedModulesArray);
+  if (!JS_DefineProperty(mCx, mMainObj, "blockedModules",
+                         jsBlockedModulesArrayValue, JSPROP_ENUMERATE)) {
     return;
   }
 
@@ -547,6 +577,29 @@ nsresult UntrustedModulesDataSerializer::Add(
     if (NS_FAILED(rv)) {
       return rv;
     }
+  }
+
+  return NS_OK;
+}
+
+nsresult UntrustedModulesDataSerializer::AddBlockedModules(
+    const nsTArray<nsDependentSubstring>& blockedModules) {
+  if (NS_FAILED(mCtorResult)) {
+    return mCtorResult;
+  }
+
+  if (blockedModules.Length() >= mMaxModulesArrayLen) {
+    return NS_ERROR_CANNOT_CONVERT_DATA;
+  }
+
+  for (const auto& blockedModule : blockedModules) {
+    JS::Rooted<JS::Value> jsBlockedModule(mCx);
+    jsBlockedModule.setString(Common::ToJSString(mCx, blockedModule));
+    if (!JS_DefineElement(mCx, mBlockedModulesArray, mCurBlockedModulesArrayIdx,
+                          jsBlockedModule, JSPROP_ENUMERATE)) {
+      return NS_ERROR_FAILURE;
+    }
+    ++mCurBlockedModulesArrayIdx;
   }
 
   return NS_OK;

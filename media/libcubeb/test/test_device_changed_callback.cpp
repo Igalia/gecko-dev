@@ -75,8 +75,13 @@ TEST(cubeb, device_changed_callbacks)
   int r = CUBEB_OK;
   uint32_t latency_frames = 0;
 
+
   r = common_init(&ctx, "Cubeb duplex example with device change");
   ASSERT_EQ(r, CUBEB_OK) << "Error initializing cubeb library";
+
+  if (!can_run_audio_input_test(ctx)) {
+    return;
+  }
 
   std::unique_ptr<cubeb, decltype(&cubeb_destroy)>
     cleanup_cubeb_at_exit(ctx, cubeb_destroy);
@@ -107,3 +112,10 @@ TEST(cubeb, device_changed_callbacks)
 
   cubeb_stream_destroy(stream);
 }
+
+#undef SAMPLE_FREQUENCY
+#undef STREAM_FORMAT
+#undef INPUT_CHANNELS
+#undef INPUT_LAYOUT
+#undef OUTPUT_CHANNELS
+#undef OUTPUT_LAYOUT

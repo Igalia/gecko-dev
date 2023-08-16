@@ -13,7 +13,7 @@ const TEST_URI = `data:text/html;charset=utf-8,<!DOCTYPE html><p>Test keyboard a
   </script>
   `;
 
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
   info("Web Console opened");
   const outputScroller = hud.ui.outputScroller;
@@ -63,7 +63,7 @@ add_task(async function() {
     clearShortcut = WCUL10n.getStr("webconsole.clear.key");
   }
   synthesizeKeyShortcut(clearShortcut);
-  await waitFor(() => findAllMessages(hud).length == 0);
+  await waitFor(() => !findAllMessages(hud).length);
   ok(isInputFocused(hud), "console was cleared and input is focused");
 
   if (Services.appinfo.OS === "Darwin") {
@@ -73,7 +73,7 @@ add_task(async function() {
       "another simple text message",
       ".console-api"
     );
-    SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function() {
+    SpecialPowers.spawn(gBrowser.selectedBrowser, [], async function () {
       content.console.log("another simple text message");
     });
     await onMessage;
@@ -81,7 +81,7 @@ add_task(async function() {
     info("Send Cmd-K to clear console");
     synthesizeKeyShortcut(WCUL10n.getStr("webconsole.clear.alternativeKeyOSX"));
 
-    await waitFor(() => findAllMessages(hud).length == 0);
+    await waitFor(() => !findAllMessages(hud).length);
     ok(
       isInputFocused(hud),
       "console was cleared as expected with alternative shortcut"

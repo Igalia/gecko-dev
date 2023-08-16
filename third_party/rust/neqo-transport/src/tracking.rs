@@ -880,7 +880,7 @@ mod tests {
     }
 
     fn write_frame(rp: &mut RecvdPackets) {
-        let mut builder = PacketBuilder::short(Encoder::new(), false, &[]);
+        let mut builder = PacketBuilder::short(Encoder::new(), false, []);
         let mut stats = FrameStats::default();
         let mut tokens = Vec::new();
         rp.write_frame(*NOW, &mut builder, &mut tokens, &mut stats);
@@ -1013,13 +1013,15 @@ mod tests {
     #[test]
     fn drop_spaces() {
         let mut tracker = AckTracker::default();
-        let mut builder = PacketBuilder::short(Encoder::new(), false, &[]);
+        let mut builder = PacketBuilder::short(Encoder::new(), false, []);
         tracker
             .get_mut(PacketNumberSpace::Initial)
             .unwrap()
             .set_received(*NOW, 0, true);
         // The reference time for `ack_time` has to be in the past or we filter out the timer.
-        assert!(tracker.ack_time(*NOW - Duration::from_millis(1)).is_some());
+        assert!(tracker
+            .ack_time(NOW.checked_sub(Duration::from_millis(1)).unwrap())
+            .is_some());
 
         let mut tokens = Vec::new();
         let mut stats = FrameStats::default();
@@ -1039,13 +1041,17 @@ mod tests {
             .get_mut(PacketNumberSpace::Initial)
             .unwrap()
             .set_received(*NOW, 1, true);
-        assert!(tracker.ack_time(*NOW - Duration::from_millis(1)).is_some());
+        assert!(tracker
+            .ack_time(NOW.checked_sub(Duration::from_millis(1)).unwrap())
+            .is_some());
 
         // Now drop that space.
         tracker.drop_space(PacketNumberSpace::Initial);
 
         assert!(tracker.get_mut(PacketNumberSpace::Initial).is_none());
-        assert!(tracker.ack_time(*NOW - Duration::from_millis(1)).is_none());
+        assert!(tracker
+            .ack_time(NOW.checked_sub(Duration::from_millis(1)).unwrap())
+            .is_none());
         tracker
             .write_frame(
                 PacketNumberSpace::Initial,
@@ -1070,9 +1076,11 @@ mod tests {
             .get_mut(PacketNumberSpace::Initial)
             .unwrap()
             .set_received(*NOW, 0, true);
-        assert!(tracker.ack_time(*NOW - Duration::from_millis(1)).is_some());
+        assert!(tracker
+            .ack_time(NOW.checked_sub(Duration::from_millis(1)).unwrap())
+            .is_some());
 
-        let mut builder = PacketBuilder::short(Encoder::new(), false, &[]);
+        let mut builder = PacketBuilder::short(Encoder::new(), false, []);
         builder.set_limit(10);
 
         let mut stats = FrameStats::default();
@@ -1100,9 +1108,11 @@ mod tests {
             .get_mut(PacketNumberSpace::Initial)
             .unwrap()
             .set_received(*NOW, 2, true);
-        assert!(tracker.ack_time(*NOW - Duration::from_millis(1)).is_some());
+        assert!(tracker
+            .ack_time(NOW.checked_sub(Duration::from_millis(1)).unwrap())
+            .is_some());
 
-        let mut builder = PacketBuilder::short(Encoder::new(), false, &[]);
+        let mut builder = PacketBuilder::short(Encoder::new(), false, []);
         builder.set_limit(32);
 
         let mut stats = FrameStats::default();

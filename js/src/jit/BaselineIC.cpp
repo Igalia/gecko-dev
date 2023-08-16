@@ -19,9 +19,7 @@
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/Linker.h"
-#ifdef JS_ION_PERF
-#  include "jit/PerfSpewer.h"
-#endif
+#include "jit/PerfSpewer.h"
 #include "jit/SharedICHelpers.h"
 #include "jit/SharedICRegisters.h"
 #include "jit/VMFunctions.h"
@@ -88,8 +86,7 @@ class MOZ_RAII FallbackICCodeCompiler final {
   void pushStubPayload(MacroAssembler& masm, Register scratch);
 
   // Emits a tail call to a VMFunction wrapper.
-  [[nodiscard]] bool tailCallVMInternal(MacroAssembler& masm,
-                                        TailCallVMFunctionId id);
+  [[nodiscard]] bool tailCallVMInternal(MacroAssembler& masm, VMFunctionId id);
 
   template <typename Fn, Fn fn>
   [[nodiscard]] bool tailCallVM(MacroAssembler& masm);
@@ -179,6 +176,56 @@ void ICEntry::trace(JSTracer* trc) {
 
   // Fallback stubs use runtime-wide trampoline code we don't need to trace.
   MOZ_ASSERT(stub->usesTrampolineCode());
+}
+
+inline ICFallbackStub* GetFallbackStub(ICEntry* entry) {
+  ICStub* stub = entry->firstStub();
+  while (!stub->isFallback()) {
+    stub = stub->toCacheIRStub()->next();
+  }
+  return stub->toFallbackStub();
+}
+
+bool ICEntry::traceWeak(JSTracer* trc) {
+  // Trace CacheIR stubs and remove those containing weak pointers to dead GC
+  // things.  Prebarriers are not necessary because this happens as part of GC.
+
+  ICFallbackStub* fallbackStub = GetFallbackStub(this);
+
+  ICStub* stub = firstStub();
+  ICCacheIRStub* prev = nullptr;
+  bool allSurvived = true;
+  while (!stub->isFallback()) {
+    ICCacheIRStub* cacheIRStub = stub->toCacheIRStub();
+    if (!cacheIRStub->traceWeak(trc)) {
+      fallbackStub->unlinkStubUnbarriered(this, prev, cacheIRStub);
+      allSurvived = false;
+    } else {
+      prev = cacheIRStub;
+    }
+
+    stub = cacheIRStub->next();
+    MOZ_ASSERT_IF(prev, prev->next() == stub);
+  }
+
+  // Clear the folded stubs flag if we know for sure that there are none
+  // left. The flag will remain set if we have removed all folded stubs but
+  // other stubs remain.
+  if (fallbackStub->numOptimizedStubs() == 0 &&
+      fallbackStub->mayHaveFoldedStub()) {
+    fallbackStub->clearMayHaveFoldedStub();
+  }
+
+#ifdef DEBUG
+  size_t count = 0;
+  for (ICStub* stub = firstStub(); stub != fallbackStub;
+       stub = stub->toCacheIRStub()->next()) {
+    count++;
+  }
+  MOZ_ASSERT(count == fallbackStub->state().numOptimizedStubs());
+#endif
+
+  return allSurvived;
 }
 
 // constexpr table mapping JSOp to BaselineICFallbackKind. Each value in the
@@ -404,19 +451,29 @@ void ICCacheIRStub::trace(JSTracer* trc) {
   TraceCacheIRStub(trc, this, stubInfo());
 }
 
+bool ICCacheIRStub::traceWeak(JSTracer* trc) {
+  return TraceWeakCacheIRStub(trc, this, stubInfo());
+}
+
 static void MaybeTransition(JSContext* cx, BaselineFrame* frame,
                             ICFallbackStub* stub) {
-  if (stub->state().maybeTransition()) {
-    ICEntry* icEntry = frame->icScript()->icEntryForStub(stub);
-#ifdef JS_CACHEIR_SPEW
-    if (cx->spewer().enabled(cx, frame->script(),
-                             SpewChannel::CacheIRHealthReport)) {
-      CacheIRHealth cih;
-      RootedScript script(cx, frame->script());
-      cih.healthReportForIC(cx, icEntry, stub, script, SpewContext::Transition);
+  if (stub->state().shouldTransition()) {
+    if (!TryFoldingStubs(cx, stub, frame->script(), frame->icScript())) {
+      cx->recoverFromOutOfMemory();
     }
+    if (stub->state().maybeTransition()) {
+      ICEntry* icEntry = frame->icScript()->icEntryForStub(stub);
+#ifdef JS_CACHEIR_SPEW
+      if (cx->spewer().enabled(cx, frame->script(),
+                               SpewChannel::CacheIRHealthReport)) {
+        CacheIRHealth cih;
+        RootedScript script(cx, frame->script());
+        cih.healthReportForIC(cx, icEntry, stub, script,
+                              SpewContext::Transition);
+      }
 #endif
-    stub->discardStubs(cx, icEntry);
+      stub->discardStubs(cx, icEntry);
+    }
   }
 }
 
@@ -458,6 +515,16 @@ static void TryAttachStub(const char* name, JSContext* cx, BaselineFrame* frame,
 
 void ICFallbackStub::unlinkStub(Zone* zone, ICEntry* icEntry,
                                 ICCacheIRStub* prev, ICCacheIRStub* stub) {
+  // We are removing edges from ICStub to gcthings. Perform a barrier to let the
+  // GC know about those edges.
+  PreWriteBarrier(zone, stub);
+
+  unlinkStubUnbarriered(icEntry, prev, stub);
+}
+
+void ICFallbackStub::unlinkStubUnbarriered(ICEntry* icEntry,
+                                           ICCacheIRStub* prev,
+                                           ICCacheIRStub* stub) {
   if (prev) {
     MOZ_ASSERT(prev->next() == stub);
     prev->setNext(stub->next());
@@ -467,10 +534,6 @@ void ICFallbackStub::unlinkStub(Zone* zone, ICEntry* icEntry,
   }
 
   state_.trackUnlinkedStub();
-
-  // We are removing edges from ICStub to gcthings. Perform a barrier to let the
-  // GC know about those edges.
-  PreWriteBarrier(zone, stub);
 
 #ifdef DEBUG
   // Poison stub code to ensure we don't call this stub again. However, if
@@ -490,6 +553,7 @@ void ICFallbackStub::discardStubs(JSContext* cx, ICEntry* icEntry) {
                stub->toCacheIRStub());
     stub = stub->toCacheIRStub()->next();
   }
+  clearMayHaveFoldedStub();
 }
 
 static void InitMacroAssemblerForICStub(StackMacroAssembler& masm) {
@@ -504,10 +568,9 @@ static void InitMacroAssemblerForICStub(StackMacroAssembler& masm) {
 }
 
 bool FallbackICCodeCompiler::tailCallVMInternal(MacroAssembler& masm,
-                                                TailCallVMFunctionId id) {
+                                                VMFunctionId id) {
   TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
   const VMFunctionData& fun = GetVMFunction(id);
-  MOZ_ASSERT(fun.expectTailCall == TailCall);
   uint32_t argSize = fun.explicitStackSlots() * sizeof(void*);
   EmitBaselineTailCallVM(code, masm, argSize);
   return true;
@@ -518,7 +581,6 @@ bool FallbackICCodeCompiler::callVMInternal(MacroAssembler& masm,
   MOZ_ASSERT(inStubFrame_);
 
   TrampolinePtr code = cx->runtime()->jitRuntime()->getVMWrapper(id);
-  MOZ_ASSERT(GetVMFunction(id).expectTailCall == NonTailCall);
 
   EmitBaselineCallVM(code, masm);
   return true;
@@ -532,7 +594,7 @@ bool FallbackICCodeCompiler::callVM(MacroAssembler& masm) {
 
 template <typename Fn, Fn fn>
 bool FallbackICCodeCompiler::tailCallVM(MacroAssembler& masm) {
-  TailCallVMFunctionId id = TailCallVMFunctionToId<Fn, fn>::id;
+  VMFunctionId id = VMFunctionToId<Fn, fn>::id;
   return tailCallVMInternal(masm, id);
 }
 
@@ -1622,7 +1684,7 @@ bool DoSpreadCallFallback(JSContext* cx, BaselineFrame* frame,
       stub->state().canAttachStub()) {
     // Try CacheIR first:
     Rooted<ArrayObject*> aobj(cx, &arr.toObject().as<ArrayObject>());
-    MOZ_ASSERT(aobj->length() == aobj->getDenseInitializedLength());
+    MOZ_ASSERT(IsPackedArray(aobj));
 
     HandleValueArray args = HandleValueArray::fromMarkedLocation(
         aobj->length(), aobj->getDenseElements());
@@ -1845,12 +1907,12 @@ bool DoGetIteratorFallback(JSContext* cx, BaselineFrame* frame,
 
   TryAttachStub<GetIteratorIRGenerator>("GetIterator", cx, frame, stub, value);
 
-  JSObject* iterobj = ValueToIterator(cx, value);
-  if (!iterobj) {
+  PropertyIteratorObject* iterObj = ValueToIterator(cx, value);
+  if (!iterObj) {
     return false;
   }
 
-  res.setObject(*iterobj);
+  res.setObject(*iterObj);
   return true;
 }
 
@@ -2450,6 +2512,7 @@ bool FallbackICCodeCompiler::emit_CloseIter() {
 bool JitRuntime::generateBaselineICFallbackCode(JSContext* cx) {
   TempAllocator temp(&cx->tempLifoAlloc());
   StackMacroAssembler masm(cx, temp);
+  PerfSpewerRangeRecorder rangeRecorder(masm);
   AutoCreatedBy acb(masm, "JitRuntime::generateBaselineICFallbackCode");
 
   BaselineICFallbackCode& fallbackCode = baselineICFallbackCode_.ref();
@@ -2466,6 +2529,7 @@ bool JitRuntime::generateBaselineICFallbackCode(JSContext* cx) {
       return false;                                                \
     }                                                              \
     fallbackCode.initOffset(BaselineICFallbackKind::kind, offset); \
+    rangeRecorder.recordOffset("BaselineICFallback: " #kind);      \
   }
   IC_BASELINE_FALLBACK_CODE_KIND_LIST(EMIT_CODE)
 #undef EMIT_CODE
@@ -2476,9 +2540,8 @@ bool JitRuntime::generateBaselineICFallbackCode(JSContext* cx) {
     return false;
   }
 
-#ifdef JS_ION_PERF
-  writePerfSpewerJitCodeProfile(code, "BaselineICFallback");
-#endif
+  rangeRecorder.collectRangesForJitCode(code);
+
 #ifdef MOZ_VTUNE
   vtune::MarkStub(code, "BaselineICFallback");
 #endif

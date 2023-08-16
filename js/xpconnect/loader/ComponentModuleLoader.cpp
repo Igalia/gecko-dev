@@ -9,6 +9,9 @@
 #include "nsISupportsImpl.h"
 
 #include "js/loader/ModuleLoadRequest.h"
+#include "js/RootingAPI.h"          // JS::Rooted
+#include "js/PropertyAndElement.h"  // JS_SetProperty
+#include "js/Value.h"               // JS::Value, JS::NumberValue
 #include "mozJSModuleLoader.h"
 
 using namespace JS::loader;
@@ -20,13 +23,7 @@ namespace loader {
 // ComponentScriptLoader
 //////////////////////////////////////////////////////////////
 
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(ComponentScriptLoader)
-NS_INTERFACE_MAP_END
-
-NS_IMPL_CYCLE_COLLECTION(ComponentScriptLoader)
-
-NS_IMPL_CYCLE_COLLECTING_ADDREF(ComponentScriptLoader)
-NS_IMPL_CYCLE_COLLECTING_RELEASE(ComponentScriptLoader)
+NS_IMPL_ISUPPORTS0(ComponentScriptLoader)
 
 nsIURI* ComponentScriptLoader::GetBaseURI() const { return nullptr; }
 
@@ -68,7 +65,7 @@ already_AddRefed<ModuleLoadRequest> ComponentModuleLoader::CreateStaticImport(
     nsIURI* aURI, ModuleLoadRequest* aParent) {
   RefPtr<ComponentLoadContext> context = new ComponentLoadContext();
   RefPtr<ModuleLoadRequest> request = new ModuleLoadRequest(
-      aURI, aParent->mFetchOptions, SRIMetadata(), aParent->mURI, context,
+      aURI, aParent->mFetchOptions, dom::SRIMetadata(), aParent->mURI, context,
       false, /* is top level */
       false, /* is dynamic import */
       this, aParent->mVisitedSet, aParent->GetRootModule());
@@ -102,9 +99,9 @@ nsresult ComponentModuleLoader::StartFetch(ModuleLoadRequest* aRequest) {
   }
 
   JSContext* cx = jsapi.cx();
-  RootedScript script(cx);
+  JS::RootedScript script(cx);
   nsresult rv =
-      mozJSModuleLoader::LoadSingleModuleScript(cx, aRequest->mURI, &script);
+      mozJSModuleLoader::LoadSingleModuleScript(this, cx, aRequest, &script);
   MOZ_ASSERT_IF(jsapi.HasException(), NS_FAILED(rv));
   MOZ_ASSERT(bool(script) == NS_SUCCEEDED(rv));
 
@@ -123,6 +120,17 @@ nsresult ComponentModuleLoader::StartFetch(ModuleLoadRequest* aRequest) {
     }
     if (!jsapi.StealException(&mLoadException)) {
       return NS_ERROR_OUT_OF_MEMORY;
+    }
+
+    if (mLoadException.isObject()) {
+      // Expose `nsresult`.
+      JS::Rooted<JS::Value> resultVal(cx, JS::NumberValue(uint32_t(rv)));
+      JS::Rooted<JSObject*> exceptionObj(cx, &mLoadException.toObject());
+      if (!JS_SetProperty(cx, exceptionObj, "result", resultVal)) {
+        // Ignore the error and keep reporting the exception without the result
+        // property.
+        JS_ClearPendingException(cx);
+      }
     }
 
     return rv;

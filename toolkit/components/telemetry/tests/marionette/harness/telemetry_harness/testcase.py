@@ -15,7 +15,6 @@ from marionette_harness.runner.mixins.window_manager import WindowManagerMixin
 
 from telemetry_harness.ping_server import PingServer
 
-
 CANARY_CLIENT_ID = "c0ffeec0-ffee-c0ff-eec0-ffeec0ffeec0"
 UUID_PATTERN = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"
@@ -27,12 +26,14 @@ class TelemetryTestCase(WindowManagerMixin, MarionetteTestCase):
         """Initialize the test case and create a ping server."""
         super(TelemetryTestCase, self).__init__(*args, **kwargs)
 
+    def setUp(self, *args, **kwargs):
+        """Set up the test case and start the ping server."""
+
         self.ping_server = PingServer(
             self.testvars["server_root"], self.testvars["server_url"]
         )
+        self.ping_server.start()
 
-    def setUp(self, *args, **kwargs):
-        """Set up the test case and start the ping server."""
         super(TelemetryTestCase, self).setUp(*args, **kwargs)
 
         # Store IDs of addons installed via self.install_addon()
@@ -40,8 +41,6 @@ class TelemetryTestCase(WindowManagerMixin, MarionetteTestCase):
 
         with self.marionette.using_context(self.marionette.CONTEXT_CONTENT):
             self.marionette.navigate("about:about")
-
-        self.ping_server.start()
 
     def disable_telemetry(self):
         """Disable the Firefox Data Collection and Use in the current browser."""
@@ -150,7 +149,7 @@ class TelemetryTestCase(WindowManagerMixin, MarionetteTestCase):
 
     def quit_browser(self):
         """Quit the browser."""
-        return self.marionette.quit(in_app=True)
+        return self.marionette.quit()
 
     def install_addon(self):
         """Install a minimal addon."""
@@ -231,4 +230,4 @@ class TelemetryTestCase(WindowManagerMixin, MarionetteTestCase):
         """Stop the ping server and tear down the testcase."""
         super(TelemetryTestCase, self).tearDown()
         self.ping_server.stop()
-        self.marionette.quit(clean=True)
+        self.marionette.quit(in_app=False, clean=True)

@@ -181,37 +181,6 @@ class nsTString : public nsTSubstring<T> {
   char_type operator[](index_type aIndex) const { return CharAt(aIndex); }
 
   /**
-   * Perform string to double-precision float conversion.
-   *
-   * @param   aErrorCode will contain error if one occurs
-   * @return  double-precision float rep of string value
-   */
-  double ToDouble(nsresult* aErrorCode) const {
-    return ToDouble(/* aAllowTrailingChars = */ false, aErrorCode);
-  }
-
-  /**
-   * Perform string to single-precision float conversion.
-   *
-   * @param   aErrorCode will contain error if one occurs
-   * @return  single-precision float rep of string value
-   */
-  float ToFloat(nsresult* aErrorCode) const {
-    return float(ToDouble(aErrorCode));
-  }
-
-  /**
-   * Similar to above ToDouble and ToFloat but allows trailing characters that
-   * are not converted.
-   */
-  double ToDoubleAllowTrailingChars(nsresult* aErrorCode) const {
-    return ToDouble(/* aAllowTrailingChars = */ true, aErrorCode);
-  }
-  float ToFloatAllowTrailingChars(nsresult* aErrorCode) const {
-    return float(ToDoubleAllowTrailingChars(aErrorCode));
-  }
-
-  /**
    * Set a char inside this string at given index
    *
    * @param aChar is the char you want to write into this string
@@ -232,10 +201,9 @@ class nsTString : public nsTSubstring<T> {
    */
   void AssertValidDependentString() {
     MOZ_ASSERT(this->mData, "nsTDependentString must wrap a non-NULL buffer");
-    MOZ_DIAGNOSTIC_ASSERT(this->mData[substring_type::mLength] == 0,
-                          "nsTDependentString must wrap only null-terminated "
-                          "strings.  You are probably looking for "
-                          "nsTDependentSubstring.");
+    MOZ_ASSERT(this->mData[substring_type::mLength] == 0,
+               "nsTDependentString must wrap only null-terminated strings. "
+               "You are probably looking for nsTDependentSubstring.");
   }
 
  protected:
@@ -248,21 +216,12 @@ class nsTString : public nsTSubstring<T> {
   friend const nsTString<char>& VoidCString();
   friend const nsTString<char16_t>& VoidString();
 
-  double ToDouble(bool aAllowTrailingChars, nsresult* aErrorCode) const;
-
   // Used by Null[C]String.
   explicit nsTString(DataFlags aDataFlags)
       : substring_type(char_traits::sEmptyBuffer, 0,
                        aDataFlags | DataFlags::TERMINATED,
                        ClassFlags::NULL_TERMINATED) {}
 };
-
-template <>
-double nsTString<char>::ToDouble(bool aAllowTrailingChars,
-                                 nsresult* aErrorCode) const;
-template <>
-double nsTString<char16_t>::ToDouble(bool aAllowTrailingChars,
-                                     nsresult* aErrorCode) const;
 
 extern template class nsTString<char>;
 extern template class nsTString<char16_t>;

@@ -5,18 +5,10 @@
 import React from "react";
 import { shallow, mount } from "enzyme";
 import Frame from "../Frame.js";
-import {
-  makeMockFrame,
-  makeMockSource,
-  mockthreadcx,
-} from "../../../../utils/test-mockup";
-
-import FrameMenu from "../FrameMenu";
-jest.mock("../FrameMenu", () => jest.fn());
+import { makeMockFrame, makeMockSource } from "../../../../utils/test-mockup";
 
 function frameProperties(frame, selectedFrame, overrides = {}) {
   return {
-    cx: mockthreadcx,
     frame,
     selectedFrame,
     copyStackTrace: jest.fn(),
@@ -112,44 +104,5 @@ describe("Frame", () => {
     const component = shallow(<Frame {...props} />);
     expect(component.prop("title")).toBe(`Jump to ${url}:10`);
     expect(component).toMatchSnapshot();
-  });
-
-  describe("mouse events", () => {
-    it("does not call FrameMenu when disableContextMenu is true", () => {
-      const { component } = render(undefined, undefined, {
-        disableContextMenu: true,
-      });
-
-      const mockEvent = "mockEvent";
-      component.simulate("contextmenu", mockEvent);
-
-      expect(FrameMenu).toHaveBeenCalledTimes(0);
-    });
-
-    it("calls FrameMenu on right click", () => {
-      const { component, props } = render();
-      const {
-        copyStackTrace,
-        toggleFrameworkGrouping,
-        toggleBlackBox,
-        cx,
-        restart,
-      } = props;
-      const mockEvent = "mockEvent";
-      component.simulate("contextmenu", mockEvent);
-
-      expect(FrameMenu).toHaveBeenCalledWith(
-        props.frame,
-        props.frameworkGroupingOn,
-        {
-          copyStackTrace,
-          toggleFrameworkGrouping,
-          toggleBlackBox,
-          restart,
-        },
-        mockEvent,
-        cx
-      );
-    });
   });
 });

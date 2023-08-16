@@ -8,30 +8,36 @@ const { render, mount } = require("enzyme");
 const sinon = require("sinon");
 
 // React
-const { createFactory } = require("devtools/client/shared/vendor/react");
-const Provider = createFactory(require("react-redux").Provider);
+const {
+  createFactory,
+} = require("resource://devtools/client/shared/vendor/react.js");
+const Provider = createFactory(
+  require("resource://devtools/client/shared/vendor/react-redux.js").Provider
+);
 const {
   formatErrorTextWithCausedBy,
   setupStore,
-} = require("devtools/client/webconsole/test/node/helpers");
-const { prepareMessage } = require("devtools/client/webconsole/utils/messages");
+} = require("resource://devtools/client/webconsole/test/node/helpers.js");
+const {
+  prepareMessage,
+} = require("resource://devtools/client/webconsole/utils/messages.js");
 
 // Components under test.
-const PageError = require("devtools/client/webconsole/components/Output/message-types/PageError");
+const PageError = require("resource://devtools/client/webconsole/components/Output/message-types/PageError.js");
 const {
   MESSAGE_OPEN,
   MESSAGE_CLOSE,
-} = require("devtools/client/webconsole/constants");
+} = require("resource://devtools/client/webconsole/constants.js");
 const {
   INDENT_WIDTH,
-} = require("devtools/client/webconsole/components/Output/MessageIndent");
+} = require("resource://devtools/client/webconsole/components/Output/MessageIndent.js");
 
 // Test fakes.
 const {
   stubPackets,
   stubPreparedMessages,
-} = require("devtools/client/webconsole/test/node/fixtures/stubs/index");
-const serviceContainer = require("devtools/client/webconsole/test/node/fixtures/serviceContainer");
+} = require("resource://devtools/client/webconsole/test/node/fixtures/stubs/index.js");
+const serviceContainer = require("resource://devtools/client/webconsole/test/node/fixtures/serviceContainer.js");
 
 describe("PageError component:", () => {
   it("renders", () => {
@@ -47,7 +53,7 @@ describe("PageError component:", () => {
     );
     const {
       timestampString,
-    } = require("devtools/client/webconsole/utils/l10n");
+    } = require("resource://devtools/client/webconsole/utils/l10n.js");
 
     expect(wrapper.find(".timestamp").text()).toBe(
       timestampString(message.timeStamp)
@@ -399,22 +405,13 @@ describe("PageError component:", () => {
     const message = prepareMessage(packet, { getNextId: () => "1" });
     const wrapper = render(PageError({ message, serviceContainer }));
 
-    // Keep in sync with `urlCropLimit` in PageError.js.
-    const cropLimit = 120;
-    const partLength = cropLimit / 2;
-    const getCroppedUrl = url =>
-      `${url}${"a".repeat(partLength - url.length)}…${"a".repeat(partLength)}`;
-
-    const croppedEvil = getCroppedUrl(evilDomain);
-    const croppedbad = getCroppedUrl(badDomain);
-
     const text = wrapper.find(".message-body").text();
     expect(text).toBe(
-      `Uncaught “${croppedEvil}“ is evil and “${croppedbad}“ is not good either`
+      `Uncaught “${evilURL}“ is evil and “${badURL}“ is not good either`
     );
 
-    // There should be 2 links.
-    const links = wrapper.find(".message-body a");
+    // There should be 2 cropped links.
+    const links = wrapper.find(".message-body a.cropped-url");
     expect(links.length).toBe(2);
 
     expect(links.eq(0).attr("href")).toBe(evilURL);

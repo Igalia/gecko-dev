@@ -4,10 +4,8 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-var { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-const { TestUtils } = ChromeUtils.import(
-  "resource://testing-common/TestUtils.jsm"
+const { TestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TestUtils.sys.mjs"
 );
 
 let h2Port;
@@ -15,9 +13,6 @@ let h3Port;
 let h3NoResponsePort;
 let trrServer;
 
-const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
-  Ci.nsIDNSService
-);
 const certOverrideService = Cc[
   "@mozilla.org/security/certoverride;1"
 ].getService(Ci.nsICertOverrideService);
@@ -25,18 +20,15 @@ const certOverrideService = Cc[
 add_setup(async function setup() {
   trr_test_setup();
 
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  h2Port = env.get("MOZHTTP2_PORT");
+  h2Port = Services.env.get("MOZHTTP2_PORT");
   Assert.notEqual(h2Port, null);
   Assert.notEqual(h2Port, "");
 
-  h3Port = env.get("MOZHTTP3_PORT");
+  h3Port = Services.env.get("MOZHTTP3_PORT");
   Assert.notEqual(h3Port, null);
   Assert.notEqual(h3Port, "");
 
-  h3NoResponsePort = env.get("MOZHTTP3_PORT_NO_RESPONSE");
+  h3NoResponsePort = Services.env.get("MOZHTTP3_PORT_NO_RESPONSE");
   Assert.notEqual(h3NoResponsePort, null);
   Assert.notEqual(h3NoResponsePort, "");
 
@@ -49,7 +41,9 @@ add_setup(async function setup() {
     Services.prefs.clearUserPref("network.dns.upgrade_with_https_rr");
     Services.prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
     Services.prefs.clearUserPref("network.dns.echconfig.enabled");
-    Services.prefs.clearUserPref("network.dns.echconfig.fallback_to_origin");
+    Services.prefs.clearUserPref(
+      "network.dns.echconfig.fallback_to_origin_when_all_failed"
+    );
     Services.prefs.clearUserPref("network.dns.httpssvc.reset_exclustion_list");
     Services.prefs.clearUserPref("network.http.http3.enable");
     Services.prefs.clearUserPref(
@@ -64,6 +58,7 @@ add_setup(async function setup() {
   });
 
   if (mozinfo.socketprocess_networking) {
+    Services.dns; // Needed to trigger socket process.
     await TestUtils.waitForCondition(() => Services.io.socketProcessLaunched);
   }
 
@@ -186,6 +181,10 @@ add_task(async function testFallbackToTheOrigin() {
   trrServer = new TRRServer();
   await trrServer.start();
   Services.prefs.setIntPref("network.trr.mode", 3);
+  Services.prefs.setBoolPref(
+    "network.dns.echconfig.fallback_to_origin_when_all_failed",
+    true
+  );
   Services.prefs.setCharPref(
     "network.trr.uri",
     `https://foo.example.com:${trrServer.port}/dns-query`
@@ -274,7 +273,10 @@ add_task(async function testAllRecordsFailed() {
     "network.trr.uri",
     `https://foo.example.com:${trrServer.port}/dns-query`
   );
-  Services.prefs.setBoolPref("network.dns.echconfig.fallback_to_origin", false);
+  Services.prefs.setBoolPref(
+    "network.dns.echconfig.fallback_to_origin_when_all_failed",
+    false
+  );
 
   await trrServer.registerDoHAnswers("test.bar.com", "HTTPS", {
     answers: [
@@ -400,7 +402,7 @@ add_task(async function testFallbackToTheOrigin2() {
 // Test when some records have echConfig and some not, we directly fallback to
 // the origin one.
 add_task(async function testFallbackToTheOrigin3() {
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
 
   trrServer = new TRRServer();
   await trrServer.start();
@@ -717,7 +719,7 @@ add_task(async function testFastfallbackToH2() {
 add_task(async function testFailedH3Connection() {
   trrServer = new TRRServer();
   await trrServer.start();
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -764,7 +766,7 @@ add_task(async function testFailedH3Connection() {
 add_task(async function testHttp3ExcludedList() {
   trrServer = new TRRServer();
   await trrServer.start();
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setCharPref(
     "network.trr.uri",
@@ -836,7 +838,7 @@ add_task(async function testHttp3ExcludedList() {
 add_task(async function testAllRecordsInHttp3ExcludedList() {
   trrServer = new TRRServer();
   await trrServer.start();
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.trr.mode", 3);
   Services.prefs.setBoolPref("network.dns.http3_echconfig.enabled", true);
   Services.prefs.setCharPref(
@@ -928,7 +930,7 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
     type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
   });
 
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
   Services.prefs.setIntPref("network.http.speculative-parallel-limit", 0);
   Services.obs.notifyObservers(null, "net:prune-all-connections");
 
@@ -959,8 +961,6 @@ add_task(async function testAllRecordsInHttp3ExcludedList() {
 
   await trrServer.stop();
 });
-
-let WebSocketListener = function() {};
 
 WebSocketListener.prototype = {
   onAcknowledge(aContext, aSize) {},
@@ -1038,6 +1038,68 @@ add_task(async function testUpgradeNotUsingHTTPSRR() {
       true
     );
   });
+
+  await trrServer.stop();
+});
+
+// Test if we fallback to h2 with echConfig.
+add_task(async function testFallbackToH2WithEchConfig() {
+  trrServer = new TRRServer();
+  await trrServer.start();
+  Services.dns.clearCache(true);
+  Services.prefs.setIntPref("network.trr.mode", 3);
+  Services.prefs.setCharPref(
+    "network.trr.uri",
+    `https://foo.example.com:${trrServer.port}/dns-query`
+  );
+  Services.prefs.setBoolPref("network.http.http3.enable", true);
+  Services.prefs.setIntPref(
+    "network.dns.httpssvc.http3_fast_fallback_timeout",
+    0
+  );
+
+  await trrServer.registerDoHAnswers("test.fallback.org", "HTTPS", {
+    answers: [
+      {
+        name: "test.fallback.org",
+        ttl: 55,
+        type: "HTTPS",
+        flush: false,
+        data: {
+          priority: 1,
+          name: "test.fallback.org",
+          values: [
+            { key: "alpn", value: ["h2", "h3-29"] },
+            { key: "port", value: h2Port },
+            { key: "echconfig", value: "456..." },
+          ],
+        },
+      },
+    ],
+  });
+
+  await trrServer.registerDoHAnswers("test.fallback.org", "A", {
+    answers: [
+      {
+        name: "test.fallback.org",
+        ttl: 55,
+        type: "A",
+        flush: false,
+        data: "127.0.0.1",
+      },
+    ],
+  });
+
+  await new TRRDNSListener("test.fallback.org", {
+    type: Ci.nsIDNSService.RESOLVE_TYPE_HTTPSSVC,
+  });
+
+  await new TRRDNSListener("test.fallback.org", "127.0.0.1");
+
+  let chan = makeChan(`https://test.fallback.org/server-timing`);
+  let [req] = await channelOpenPromise(chan);
+  // Test if this request is done by h2.
+  Assert.equal(req.getResponseHeader("x-connection-http2"), "yes");
 
   await trrServer.stop();
 });

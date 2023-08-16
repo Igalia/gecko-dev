@@ -5,8 +5,10 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 #include "MediaSourceDecoder.h"
 
+#include "base/process_util.h"
 #include "mozilla/Logging.h"
 #include "ExternalEngineStateMachine.h"
+#include "MediaDecoder.h"
 #include "MediaDecoderStateMachine.h"
 #include "MediaShutdownManager.h"
 #include "MediaSource.h"
@@ -50,6 +52,9 @@ MediaDecoderStateMachineBase* MediaSourceDecoder::CreateStateMachine(
   init.mCrashHelper = GetOwner()->CreateGMPCrashHelper();
   init.mFrameStats = mFrameStats;
   init.mMediaDecoderOwnerID = mOwner;
+  static Atomic<uint32_t> sTrackingIdCounter(0);
+  init.mTrackingId.emplace(TrackingId::Source::MSEDecoder, sTrackingIdCounter++,
+                           TrackingId::TrackAcrossProcesses::Yes);
   mReader = new MediaFormatReader(init, mDemuxer);
 #ifdef MOZ_WMF_MEDIA_ENGINE
   // TODO : Only for testing development for now. In the future this should be
@@ -75,43 +80,63 @@ nsresult MediaSourceDecoder::Load(nsIPrincipal* aPrincipal) {
   return CreateAndInitStateMachine(!mEnded);
 }
 
-media::TimeIntervals MediaSourceDecoder::GetSeekable() {
+template <typename IntervalType>
+IntervalType MediaSourceDecoder::GetSeekableImpl() {
   MOZ_ASSERT(NS_IsMainThread());
   if (!mMediaSource) {
     NS_WARNING("MediaSource element isn't attached");
-    return media::TimeIntervals::Invalid();
+    return IntervalType();
   }
 
-  media::TimeIntervals seekable;
+  TimeIntervals seekable;
   double duration = mMediaSource->Duration();
-  if (IsNaN(duration)) {
+  if (std::isnan(duration)) {
     // Return empty range.
-  } else if (duration > 0 && mozilla::IsInfinite(duration)) {
+  } else if (duration > 0 && std::isinf(duration)) {
     media::TimeIntervals buffered = GetBuffered();
 
     // 1. If live seekable range is not empty:
     if (mMediaSource->HasLiveSeekableRange()) {
       // 1. Let union ranges be the union of live seekable range and the
       // HTMLMediaElement.buffered attribute.
-      media::TimeIntervals unionRanges =
-          buffered + mMediaSource->LiveSeekableRange();
+      TimeRanges unionRanges =
+          media::TimeRanges(buffered) + mMediaSource->LiveSeekableRange();
       // 2. Return a single range with a start time equal to the earliest start
       // time in union ranges and an end time equal to the highest end time in
       // union ranges and abort these steps.
-      seekable +=
-          media::TimeInterval(unionRanges.GetStart(), unionRanges.GetEnd());
-      return seekable;
+      if constexpr (std::is_same<IntervalType, TimeRanges>::value) {
+        TimeRanges seekableRange = media::TimeRanges(
+            TimeRange(unionRanges.GetStart(), unionRanges.GetEnd()));
+        return seekableRange;
+      } else {
+        MOZ_RELEASE_ASSERT(false);
+      }
     }
 
     if (!buffered.IsEmpty()) {
       seekable += media::TimeInterval(TimeUnit::Zero(), buffered.GetEnd());
     }
   } else {
-    seekable +=
-        media::TimeInterval(TimeUnit::Zero(), TimeUnit::FromSeconds(duration));
+    if constexpr (std::is_same<IntervalType, TimeRanges>::value) {
+      // Common case: seekable in entire range of the media.
+      return TimeRanges(TimeRange(0, duration));
+    } else if constexpr (std::is_same<IntervalType, TimeIntervals>::value) {
+      seekable += media::TimeInterval(TimeUnit::Zero(),
+                                      mDuration.match(DurationToTimeUnit()));
+    } else {
+      MOZ_RELEASE_ASSERT(false);
+    }
   }
   MSE_DEBUG("ranges=%s", DumpTimeRanges(seekable).get());
-  return seekable;
+  return IntervalType(seekable);
+}
+
+media::TimeIntervals MediaSourceDecoder::GetSeekable() {
+  return GetSeekableImpl<media::TimeIntervals>();
+}
+
+media::TimeRanges MediaSourceDecoder::GetSeekableTimeRanges() {
+  return GetSeekableImpl<media::TimeRanges>();
 }
 
 media::TimeIntervals MediaSourceDecoder::GetBuffered() {
@@ -199,31 +224,30 @@ void MediaSourceDecoder::AddSizeOfResources(ResourceSizes* aSizes) {
   }
 }
 
-void MediaSourceDecoder::SetInitialDuration(int64_t aDuration) {
+void MediaSourceDecoder::SetInitialDuration(const TimeUnit& aDuration) {
   MOZ_ASSERT(NS_IsMainThread());
   // Only use the decoded duration if one wasn't already
   // set.
-  if (!mMediaSource || !IsNaN(ExplicitDuration())) {
+  if (!mMediaSource || !std::isnan(ExplicitDuration())) {
     return;
   }
-  double duration = aDuration;
-  // A duration of -1 is +Infinity.
-  if (aDuration >= 0) {
-    duration /= USECS_PER_S;
+  SetMediaSourceDuration(aDuration);
+}
+
+void MediaSourceDecoder::SetMediaSourceDuration(const TimeUnit& aDuration) {
+  MOZ_ASSERT(NS_IsMainThread());
+  MOZ_ASSERT(!IsShutdown());
+  if (aDuration.IsPositiveOrZero()) {
+    SetExplicitDuration(ToMicrosecondResolution(aDuration.ToSeconds()));
+  } else {
+    SetExplicitDuration(PositiveInfinity<double>());
   }
-  SetMediaSourceDuration(duration);
 }
 
 void MediaSourceDecoder::SetMediaSourceDuration(double aDuration) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!IsShutdown());
   if (aDuration >= 0) {
-    int64_t checkedDuration;
-    if (NS_FAILED(SecondsToUsecs(aDuration, checkedDuration))) {
-      // INT64_MAX is used as infinity by the state machine.
-      // We want a very bigger number, but not infinity.
-      checkedDuration = INT64_MAX - 1;
-    }
     SetExplicitDuration(aDuration);
   } else {
     SetExplicitDuration(PositiveInfinity<double>());
@@ -284,7 +308,7 @@ bool MediaSourceDecoder::CanPlayThroughImpl() {
     return false;
   }
 
-  if (IsNaN(mMediaSource->Duration())) {
+  if (std::isnan(mMediaSource->Duration())) {
     // Don't have any data yet.
     return false;
   }
@@ -295,12 +319,12 @@ bool MediaSourceDecoder::CanPlayThroughImpl() {
   }
   // If we have data up to the mediasource's duration or 3s ahead, we can
   // assume that we can play without interruption.
-  TimeIntervals buffered = GetBuffered();
-  buffered.SetFuzz(MediaSourceDemuxer::EOS_FUZZ / 2);
+  dom::SourceBufferList* sourceBuffers = mMediaSource->ActiveSourceBuffers();
+  TimeUnit bufferedEnd = sourceBuffers->GetHighestBufferedEndTime();
   TimeUnit timeAhead =
       std::min(duration, currentPosition + TimeUnit::FromSeconds(3));
   TimeInterval interval(currentPosition, timeAhead);
-  return buffered.ContainsWithStrictEnd(ClampIntervalToEnd(interval));
+  return bufferedEnd >= timeAhead;
 }
 
 TimeInterval MediaSourceDecoder::ClampIntervalToEnd(
@@ -310,7 +334,7 @@ TimeInterval MediaSourceDecoder::ClampIntervalToEnd(
   if (!mEnded) {
     return aInterval;
   }
-  TimeUnit duration = TimeUnit::FromSeconds(GetDuration());
+  TimeUnit duration = mDuration.match(DurationToTimeUnit());
   if (duration < aInterval.mStart) {
     return aInterval;
   }
@@ -320,7 +344,6 @@ TimeInterval MediaSourceDecoder::ClampIntervalToEnd(
 
 void MediaSourceDecoder::NotifyInitDataArrived() {
   MOZ_ASSERT(NS_IsMainThread());
-
   if (mDemuxer) {
     mDemuxer->NotifyInitDataArrived();
   }

@@ -16,6 +16,7 @@
 #include "nsIIDNService.h"
 #include "mozilla/Logging.h"
 #include "nsIURLParser.h"
+#include "nsPrintfCString.h"
 #include "nsNetCID.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/ipc/URIUtils.h"
@@ -35,7 +36,7 @@
 //
 // setenv MOZ_LOG nsStandardURL:5
 //
-static LazyLogModule gStandardURLLog("nsStandardURL");
+static mozilla::LazyLogModule gStandardURLLog("nsStandardURL");
 
 // The Chromium code defines its own LOG macro which we don't want
 #undef LOG
@@ -49,7 +50,6 @@ namespace mozilla {
 namespace net {
 
 static NS_DEFINE_CID(kThisImplCID, NS_THIS_STANDARDURL_IMPL_CID);
-static NS_DEFINE_CID(kStandardURLCID, NS_STANDARDURL_CID);
 
 // This will always be initialized and destroyed on the main thread, but
 // can be safely used on other threads.
@@ -622,16 +622,6 @@ nsresult nsStandardURL::NormalizeIDN(const nsCString& host, nsCString& result) {
 
   if (!gIDN) {
     return NS_ERROR_UNEXPECTED;
-  }
-
-  // If the input is ASCII, and not ACE encoded, then there's no processing
-  // needed. This is needed because we want to allow ascii labels longer than
-  // 64 characters for some schemes.
-  bool isACE = false;
-  if (IsAscii(host) && NS_SUCCEEDED(gIDN->IsACE(host, &isACE)) && !isACE) {
-    mCheckedIfHostA = true;
-    result = host;
-    return NS_OK;
   }
 
   // Even if it's already ACE, we must still call ConvertUTF8toACE in order
@@ -1739,7 +1729,9 @@ nsresult nsStandardURL::SetSpecWithEncoding(const nsACString& input,
 }
 
 nsresult nsStandardURL::SetScheme(const nsACString& input) {
-  const nsPromiseFlatCString& scheme = PromiseFlatCString(input);
+  // Strip tabs, newlines, carriage returns from input
+  nsAutoCString scheme(input);
+  scheme.StripTaggedASCII(ASCIIMask::MaskCRLFTab());
 
   LOG(("nsStandardURL::SetScheme [scheme=%s]\n", scheme.get()));
 
@@ -1778,6 +1770,17 @@ nsresult nsStandardURL::SetScheme(const nsACString& input) {
   // XXX the string code unfortunately doesn't provide a ToLowerCase
   //     that operates on a substring.
   net_ToLowerCase((char*)mSpec.get(), mScheme.mLen);
+
+  // If the scheme changes the default port also changes.
+  if (Scheme() == "http"_ns || Scheme() == "ws"_ns) {
+    mDefaultPort = 80;
+  } else if (Scheme() == "https"_ns || Scheme() == "wss"_ns) {
+    mDefaultPort = 443;
+  }
+  if (mPort == mDefaultPort) {
+    MOZ_ALWAYS_SUCCEEDS(SetPort(-1));
+  }
+
   return NS_OK;
 }
 

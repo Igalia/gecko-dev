@@ -10,12 +10,8 @@
 #define builtin_Array_h
 
 #include "mozilla/Attributes.h"
-#include "mozilla/TextUtils.h"
-
-#include "jspubtd.h"
 
 #include "vm/JSObject.h"
-#include "vm/NativeObject.h"  // js::ShouldUpdateTypes
 
 namespace js {
 
@@ -74,6 +70,12 @@ extern ArrayObject* NewDenseCopiedArray(JSContext* cx, uint32_t length,
                                         const Value* values,
                                         NewObjectKind newKind = GenericObject);
 
+// Create a dense array from the given (linear)string values, which must be
+// rooted
+extern ArrayObject* NewDenseCopiedArray(JSContext* cx, uint32_t length,
+                                        JSLinearString** values,
+                                        NewObjectKind newKind = GenericObject);
+
 // Like NewDenseCopiedArray, but the array will have |proto| as prototype (or
 // Array.prototype if |proto| is nullptr).
 extern ArrayObject* NewDenseCopiedArrayWithProto(JSContext* cx, uint32_t length,
@@ -108,23 +110,15 @@ extern bool GetElements(JSContext* cx, HandleObject aobj, uint32_t length,
 extern bool intrinsic_ArrayNativeSort(JSContext* cx, unsigned argc,
                                       js::Value* vp);
 
-extern bool ArrayNativeSort(JSContext* cx, Handle<JSObject*> obj);
-
 extern bool array_includes(JSContext* cx, unsigned argc, js::Value* vp);
 extern bool array_indexOf(JSContext* cx, unsigned argc, js::Value* vp);
 extern bool array_lastIndexOf(JSContext* cx, unsigned argc, js::Value* vp);
-
-extern bool array_push(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern bool array_pop(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern bool array_join(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern void ArrayShiftMoveElements(ArrayObject* arr);
-
-extern bool array_shift(JSContext* cx, unsigned argc, js::Value* vp);
-
-extern bool array_slice(JSContext* cx, unsigned argc, js::Value* vp);
 
 extern JSObject* ArraySliceDense(JSContext* cx, HandleObject obj, int32_t begin,
                                  int32_t end, HandleObject result);

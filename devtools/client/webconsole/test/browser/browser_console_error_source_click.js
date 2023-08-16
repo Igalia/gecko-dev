@@ -10,12 +10,11 @@ const TEST_URI =
   "data:text/html;charset=utf8,<!DOCTYPE html><p>hello world" +
   "<button onclick='foobar.explode()'>click!</button>";
 
-add_task(async function() {
+add_task(async function () {
   // Disable the preloaded process as it creates processes intermittently
   // which forces the emission of RDP requests we aren't correctly waiting for.
   await pushPref("dom.ipc.processPrelaunch.enabled", false);
 
-  await pushPref("devtools.browserconsole.contentMessages", true);
   await pushPref("devtools.browsertoolbox.scope", "everything");
   await addTab(TEST_URI);
 

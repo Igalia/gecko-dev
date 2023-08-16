@@ -4,9 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+import { AppConstants } from "resource://gre/modules/AppConstants.sys.mjs";
 
 let global = Cu.getGlobalForObject({});
 
@@ -45,21 +43,8 @@ export var XPCOMUtils = {
    *        A function that returns what the getter should return.  This will
    *        only ever be called once.
    */
-  defineLazyGetter: function XPCU_defineLazyGetter(aObject, aName, aLambda)
-  {
-    let redefining = false;
-    Object.defineProperty(aObject, aName, {
-      get: function () {
-        if (!redefining) {
-          // Make sure we don't get into an infinite recursion loop if
-          // the getter lambda does something shady.
-          redefining = true;
-          return redefine(aObject, aName, aLambda.apply(aObject));
-        }
-      },
-      configurable: true,
-      enumerable: true
-    });
+  defineLazyGetter(aObject, aName, aLambda) {
+    ChromeUtils.defineLazyGetter(aObject, aName, aLambda);
   },
 
   /**
@@ -76,15 +61,13 @@ export var XPCOMUtils = {
    * @param aResource
    *        The URL used to obtain the script.
    */
-  defineLazyScriptGetter: function XPCU_defineLazyScriptGetter(aObject, aNames,
-                                                               aResource)
-  {
+  defineLazyScriptGetter(aObject, aNames, aResource) {
     if (!Array.isArray(aNames)) {
       aNames = [aNames];
     }
     for (let name of aNames) {
       Object.defineProperty(aObject, name, {
-        get: function() {
+        get() {
           XPCOMUtils._scriptloader.loadSubScript(aResource, aObject);
           return aObject[name];
         },
@@ -92,7 +75,7 @@ export var XPCOMUtils = {
           redefine(aObject, name, value);
         },
         configurable: true,
-        enumerable: true
+        enumerable: true,
       });
     }
   },
@@ -127,6 +110,7 @@ export var XPCOMUtils = {
       this.defineLazyGetter(aObject, name, () => {
         if (!(name in global)) {
           let importName = EXTRA_GLOBAL_NAME_TO_IMPORT_NAME[name] || name;
+          // eslint-disable-next-line mozilla/reject-importGlobalProperties, no-unused-vars
           Cu.importGlobalProperties([importName]);
         }
         return global[name];
@@ -147,11 +131,8 @@ export var XPCOMUtils = {
    * @param aInterfaceName
    *        The name of the interface to query the service to.
    */
-  defineLazyServiceGetter: function XPCU_defineLazyServiceGetter(aObject, aName,
-                                                                 aContract,
-                                                                 aInterfaceName)
-  {
-    this.defineLazyGetter(aObject, aName, function XPCU_serviceLambda() {
+  defineLazyServiceGetter(aObject, aName, aContract, aInterfaceName) {
+    this.defineLazyGetter(aObject, aName, () => {
       if (aInterfaceName) {
         return Cc[aContract].getService(Ci[aInterfaceName]);
       }
@@ -172,14 +153,17 @@ export var XPCOMUtils = {
    *        containing the contract ID and, optionally, the interface
    *        name of the service, as passed to defineLazyServiceGetter.
    */
-  defineLazyServiceGetters: function XPCU_defineLazyServiceGetters(
-                                   aObject, aServices)
-  {
+  defineLazyServiceGetters(aObject, aServices) {
     for (let [name, service] of Object.entries(aServices)) {
       // Note: This is hot code, and cross-compartment array wrappers
       // are not JIT-friendly to destructuring or spread operators, so
       // we need to use indexed access instead.
-      this.defineLazyServiceGetter(aObject, name, service[0], service[1] || null);
+      this.defineLazyServiceGetter(
+        aObject,
+        name,
+        service[0],
+        service[1] || null
+      );
     }
   },
 
@@ -209,30 +193,36 @@ export var XPCOMUtils = {
    *        An object which acts on behalf of the module to be imported until
    *        the module has been imported.
    */
-  defineLazyModuleGetter: function XPCU_defineLazyModuleGetter(
-                                   aObject, aName, aResource, aSymbol,
-                                   aPreLambda, aPostLambda, aProxy)
-  {
+  defineLazyModuleGetter(
+    aObject,
+    aName,
+    aResource,
+    aSymbol,
+    aPreLambda,
+    aPostLambda,
+    aProxy
+  ) {
     if (arguments.length == 3) {
-      return ChromeUtils.defineModuleGetter(aObject, aName, aResource);
+      ChromeUtils.defineModuleGetter(aObject, aName, aResource);
+      return;
     }
 
     let proxy = aProxy || {};
 
-    if (typeof(aPreLambda) === "function") {
+    if (typeof aPreLambda === "function") {
       aPreLambda.apply(proxy);
     }
 
-    this.defineLazyGetter(aObject, aName, function XPCU_moduleLambda() {
+    this.defineLazyGetter(aObject, aName, () => {
       var temp = {};
       try {
-        ChromeUtils.import(aResource, temp);
+        temp = ChromeUtils.import(aResource);
 
-        if (typeof(aPostLambda) === "function") {
+        if (typeof aPostLambda === "function") {
           aPostLambda.apply(proxy);
         }
       } catch (ex) {
-        Cu.reportError("Failed to load module " + aResource + ".");
+        console.error("Failed to load module " + aResource + ".");
         throw ex;
       }
       return temp[aSymbol || aName];
@@ -250,9 +240,7 @@ export var XPCOMUtils = {
    *        imported, where the property name is the name of the
    *        imported symbol and the value is the module URI.
    */
-  defineLazyModuleGetters: function XPCU_defineLazyModuleGetters(
-                                   aObject, aModules)
-  {
+  defineLazyModuleGetters(aObject, aModules) {
     for (let [name, module] of Object.entries(aModules)) {
       ChromeUtils.defineModuleGetter(aObject, name, module);
     }
@@ -269,8 +257,9 @@ export var XPCOMUtils = {
    *        The name of the getter property to define on aObject.
    * @param aPreference
    *        The name of the preference to read.
-   * @param aDefaultValue
+   * @param aDefaultPrefValue
    *        The default value to use, if the preference is not defined.
+   *        This is the default value of the pref, before applying aTransform.
    * @param aOnUpdate
    *        A function to call upon update. Receives as arguments
    *         `(aPreference, previousValue, newValue)`
@@ -279,13 +268,15 @@ export var XPCOMUtils = {
    *        this function receives the new preference value as an argument
    *        and its return value is used by the getter.
    */
-  defineLazyPreferenceGetter: function XPCU_defineLazyPreferenceGetter(
-                                   aObject, aName, aPreference,
-                                   aDefaultValue = null,
-                                   aOnUpdate = null,
-                                   aTransform = val => val)
-  {
-    if (AppConstants.DEBUG && aDefaultValue !== null) {
+  defineLazyPreferenceGetter(
+    aObject,
+    aName,
+    aPreference,
+    aDefaultPrefValue = null,
+    aOnUpdate = null,
+    aTransform = val => val
+  ) {
+    if (AppConstants.DEBUG && aDefaultPrefValue !== null) {
       let prefType = Services.prefs.getPrefType(aPreference);
       if (prefType != Ci.nsIPrefBranch.PREF_INVALID) {
         // The pref may get defined after the lazy getter is called
@@ -294,7 +285,7 @@ export var XPCOMUtils = {
           boolean: Ci.nsIPrefBranch.PREF_BOOL,
           number: Ci.nsIPrefBranch.PREF_INT,
           string: Ci.nsIPrefBranch.PREF_STRING,
-        }[typeof aDefaultValue];
+        }[typeof aDefaultPrefValue];
         if (prefTypeForDefaultValue != prefType) {
           throw new Error(
             `Default value does not match preference type (Got ${prefTypeForDefaultValue}, expected ${prefType}) for ${aPreference}`
@@ -323,13 +314,12 @@ export var XPCOMUtils = {
             let latest = lazyGetter();
             aOnUpdate(data, previous, latest);
           } else {
-
             // Empty cache, next call to the getter will cause refetch.
             this.value = undefined;
           }
         }
       },
-    }
+    };
 
     let defineGetter = get => {
       Object.defineProperty(aObject, aName, {
@@ -356,14 +346,16 @@ export var XPCOMUtils = {
             break;
 
           case Ci.nsIPrefBranch.PREF_INVALID:
-            prefValue = aDefaultValue;
+            prefValue = aDefaultPrefValue;
             break;
 
           default:
             // This should never happen.
-            throw new Error(`Error getting pref ${aPreference}; its value's type is ` +
-                            `${Services.prefs.getPrefType(aPreference)}, which I don't ` +
-                            `know how to handle.`);
+            throw new Error(
+              `Error getting pref ${aPreference}; its value's type is ` +
+                `${Services.prefs.getPrefType(aPreference)}, which I don't ` +
+                `know how to handle.`
+            );
         }
 
         observer.value = aTransform(prefValue);
@@ -382,195 +374,20 @@ export var XPCOMUtils = {
   /**
    * Defines a non-writable property on an object.
    */
-  defineConstant: function XPCOMUtils__defineConstant(aObj, aName, aValue) {
+  defineConstant(aObj, aName, aValue) {
     Object.defineProperty(aObj, aName, {
       value: aValue,
       enumerable: true,
-      writable: false
+      writable: false,
     });
-  },
-
-  /**
-   * Defines a proxy which acts as a lazy object getter that can be passed
-   * around as a reference, and will only be evaluated when something in
-   * that object gets accessed.
-   *
-   * The evaluation can be triggered by a function call, by getting or
-   * setting a property, calling this as a constructor, or enumerating
-   * the properties of this object (e.g. during an iteration).
-   *
-   * Please note that, even after evaluated, the object given to you
-   * remains being the proxy object (which forwards everything to the
-   * real object). This is important to correctly use these objects
-   * in pairs of add+remove listeners, for example.
-   * If your use case requires access to the direct object, you can
-   * get it through the untrap callback.
-   *
-   * @param aObject
-   *        The object to define the lazy getter on.
-   *
-   *        You can pass null to aObject if you just want to get this
-   *        proxy through the return value.
-   *
-   * @param aName
-   *        The name of the getter to define on aObject.
-   *
-   * @param aInitFuncOrResource
-   *        A function or a module that defines what this object actually
-   *        should be when it gets evaluated. This will only ever be called once.
-   *
-   *        Short-hand: If you pass a string to this parameter, it will be treated
-   *        as the URI of a module to be imported, and aName will be used as
-   *        the symbol to retrieve from the module.
-   *
-   * @param aStubProperties
-   *        In this parameter, you can provide an object which contains
-   *        properties from the original object that, when accessed, will still
-   *        prevent the entire object from being evaluated.
-   *
-   *        These can be copies or simplified versions of the original properties.
-   *
-   *        One example is to provide an alternative QueryInterface implementation
-   *        to avoid the entire object from being evaluated when it's added as an
-   *        observer (as addObserver calls object.QueryInterface(Ci.nsIObserver)).
-   *
-   *        Once the object has been evaluated, the properties from the real
-   *        object will be used instead of the ones provided here.
-   *
-   * @param aUntrapCallback
-   *        A function that gets called once when the object has just been evaluated.
-   *        You can use this to do some work (e.g. setting properties) that you need
-   *        to do on this object but that can wait until it gets evaluated.
-   *
-   *        Another use case for this is to use during code development to log when
-   *        this object gets evaluated, to make sure you're not accidentally triggering
-   *        it earlier than expected.
-   */
-  defineLazyProxy: function XPCOMUtils__defineLazyProxy(aObject, aName, aInitFuncOrResource,
-                                                        aStubProperties, aUntrapCallback) {
-    let initFunc = aInitFuncOrResource;
-
-    if (typeof(aInitFuncOrResource) == "string") {
-      initFunc = function () {
-        let tmp = {};
-        ChromeUtils.import(aInitFuncOrResource, tmp);
-        return tmp[aName];
-      };
-    }
-
-    let handler = new LazyProxyHandler(aName, initFunc,
-                                       aStubProperties, aUntrapCallback);
-
-    /*
-     * We cannot simply create a lazy getter for the underlying
-     * object and pass it as the target of the proxy, because
-     * just passing it in `new Proxy` means it would get
-     * evaluated. Becase of this, a full handler needs to be
-     * implemented (the LazyProxyHandler).
-     *
-     * So, an empty object is used as the target, and the handler
-     * replaces it on every call with the real object.
-     */
-    let proxy = new Proxy({}, handler);
-
-    if (aObject) {
-      Object.defineProperty(aObject, aName, {
-        value: proxy,
-        enumerable: true,
-        writable: true,
-      });
-    }
-
-    return proxy;
   },
 };
 
-XPCOMUtils.defineLazyGetter(XPCOMUtils, "_scriptloader", () => { return Services.scriptloader; });
+ChromeUtils.defineLazyGetter(XPCOMUtils, "_scriptloader", () => {
+  return Services.scriptloader;
+});
 
-/**
- * LazyProxyHandler
- * This class implements the handler used
- * in the proxy from defineLazyProxy.
- *
- * This handler forwards all calls to an underlying object,
- * stored as `this.realObject`, which is obtained as the returned
- * value from aInitFunc, which will be called on the first time
- * time that it needs to be used (with an exception in the get() trap
- * for the properties provided in the `aStubProperties` parameter).
- */
-
-class LazyProxyHandler {
-  constructor(aName, aInitFunc, aStubProperties, aUntrapCallback) {
-    this.pending = true;
-    this.name = aName;
-    this.initFuncOrResource = aInitFunc;
-    this.stubProperties = aStubProperties;
-    this.untrapCallback = aUntrapCallback;
-  }
-
-  getObject() {
-    if (this.pending) {
-      this.realObject = this.initFuncOrResource.call(null);
-
-      if (this.untrapCallback) {
-        this.untrapCallback.call(null, this.realObject);
-        this.untrapCallback = null;
-      }
-
-      this.pending = false;
-      this.stubProperties = null;
-    }
-    return this.realObject;
-  }
-
-  getPrototypeOf(target) {
-    return Reflect.getPrototypeOf(this.getObject());
-  }
-
-  setPrototypeOf(target, prototype) {
-    return Reflect.setPrototypeOf(this.getObject(), prototype);
-  }
-
-  isExtensible(target) {
-    return Reflect.isExtensible(this.getObject());
-  }
-
-  preventExtensions(target) {
-    return Reflect.preventExtensions(this.getObject());
-  }
-
-  getOwnPropertyDescriptor(target, prop) {
-    return Reflect.getOwnPropertyDescriptor(this.getObject(), prop);
-  }
-
-  defineProperty(target, prop, descriptor) {
-    return Reflect.defineProperty(this.getObject(), prop, descriptor);
-  }
-
-  has(target, prop) {
-    return Reflect.has(this.getObject(), prop);
-  }
-
-  get(target, prop, receiver) {
-    if (this.pending &&
-        this.stubProperties &&
-        Object.prototype.hasOwnProperty.call(this.stubProperties, prop)) {
-      return this.stubProperties[prop];
-    }
-    return Reflect.get(this.getObject(), prop, receiver);
-  }
-
-  set(target, prop, value, receiver) {
-    return Reflect.set(this.getObject(), prop, value, receiver);
-  }
-
-  deleteProperty(target, prop) {
-    return Reflect.deleteProperty(this.getObject(), prop);
-  }
-
-  ownKeys(target) {
-    return Reflect.ownKeys(this.getObject());
-  }
-}
-
-var XPCU_lazyPreferenceObserverQI = ChromeUtils.generateQI(["nsIObserver", "nsISupportsWeakReference"]);
+var XPCU_lazyPreferenceObserverQI = ChromeUtils.generateQI([
+  "nsIObserver",
+  "nsISupportsWeakReference",
+]);

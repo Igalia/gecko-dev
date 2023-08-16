@@ -2,18 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
   SearchUIUtils: "resource:///modules/SearchUIUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
 });
 
 const EMPTY_ADD_ENGINES = [];
@@ -74,12 +67,6 @@ export class SearchOneOffs {
 
     this.contextMenuPopup = this.querySelector(".search-one-offs-context-menu");
 
-    /**
-     * When a context menu is opened on a one-off button, this is set to the
-     * engine of that button for use with the context menu actions.
-     */
-    this._contextEngine = null;
-
     this._engineInfo = null;
 
     /**
@@ -110,7 +97,6 @@ export class SearchOneOffs {
       "nsIObserver",
       "nsISupportsWeakReference",
     ]);
-    Services.prefs.addObserver("browser.search.hiddenOneOffs", this, true);
     Services.obs.addObserver(this, "browser-search-engine-modified", true);
     Services.obs.addObserver(this, "browser-search-service", true);
 
@@ -191,6 +177,8 @@ export class SearchOneOffs {
   /**
    * Width in pixels of the one-off buttons.
    * NOTE: Used in browser/components/search/content/searchbar.js only.
+   *
+   * @returns {number}
    */
   get buttonWidth() {
     return 48;
@@ -361,16 +349,13 @@ export class SearchOneOffs {
       currentEngineNameToIgnore = this._engineInfo.default.name;
     }
 
-    let pref = Services.prefs.getStringPref("browser.search.hiddenOneOffs");
-    let hiddenList = pref ? pref.split(",") : [];
-
     this._engineInfo.engines = (
       await Services.search.getVisibleEngines()
     ).filter(e => {
       let name = e.name;
       return (
         (!currentEngineNameToIgnore || name != currentEngineNameToIgnore) &&
-        !hiddenList.includes(name)
+        !e.hideOneOffButton
       );
     });
 
@@ -378,8 +363,16 @@ export class SearchOneOffs {
   }
 
   observe(aEngine, aTopic, aData) {
-    // Make sure the engine list was updated.
-    this.invalidateCache();
+    // For the "browser-search-service" topic, we only need to invalidate
+    // the cache on initialization complete or when the engines are reloaded.
+    if (
+      aTopic != "browser-search-service" ||
+      aData == "init-complete" ||
+      aData == "engines-reloaded"
+    ) {
+      // Make sure the engine list was updated.
+      this.invalidateCache();
+    }
   }
 
   _getAddEngines() {
@@ -402,9 +395,10 @@ export class SearchOneOffs {
     try {
       await this.__rebuild();
     } catch (ex) {
-      Cu.reportError("Search-one-offs::_rebuild() error: " + ex);
+      console.error("Search-one-offs::_rebuild() error:", ex);
     } finally {
       this._rebuilding = false;
+      this.dispatchEvent(new Event("rebuild"));
     }
   }
 
@@ -424,6 +418,7 @@ export class SearchOneOffs {
       let textboxWidth = await this.window.promiseDocumentFlushed(() => {
         return this._textbox.clientWidth;
       });
+
       if (
         this._engineInfo?.domWasUpdated &&
         this._textboxWidth == textboxWidth &&
@@ -433,6 +428,12 @@ export class SearchOneOffs {
       }
       this._textboxWidth = textboxWidth;
       this._addEngines = addEngines;
+    }
+
+    const isSearchBar = this.hasAttribute("is_searchbar");
+    if (isSearchBar) {
+      // Hide the container during updating to avoid flickering.
+      this.container.hidden = true;
     }
 
     // Finally, build the list of one-off buttons.
@@ -446,7 +447,10 @@ export class SearchOneOffs {
     headerText.id = this.telemetryOrigin + "-one-offs-header-label";
     this.buttons.setAttribute("aria-labelledby", headerText.id);
 
-    let hideOneOffs = await this.willHide();
+    // For the search-bar, always show the one-off buttons where there is an
+    // option to add an engine.
+    let addEngineNeeded = isSearchBar && addEngines.length;
+    let hideOneOffs = (await this.willHide()) && !addEngineNeeded;
 
     // The _engineInfo cache is used by more consumers, thus it is not a good
     // representation of whether this method already updated the one-off buttons
@@ -467,16 +471,14 @@ export class SearchOneOffs {
 
     let engines = (await this.getEngineInfo()).engines;
     this._rebuildEngineList(engines, addEngines);
-
-    this.dispatchEvent(new Event("rebuild"));
   }
 
   /**
    * Adds one-offs for the given engines to the DOM.
    *
-   * @param {array} engines
+   * @param {Array} engines
    *        The engines to add.
-   * @param {array} addEngines
+   * @param {Array} addEngines
    *        The engines that can be added.
    */
   _rebuildEngineList(engines, addEngines) {
@@ -509,11 +511,9 @@ export class SearchOneOffs {
       if (engine.icon) {
         button.setAttribute("image", engine.icon);
       }
-      button.setAttribute("data-l10n-id", "search-one-offs-add-engine");
-      button.setAttribute(
-        "data-l10n-args",
-        JSON.stringify({ engineName: engine.title })
-      );
+      this.document.l10n.setAttributes(button, "search-one-offs-add-engine", {
+        engineName: engine.title,
+      });
       button.setAttribute("engine-name", engine.title);
       button.setAttribute("uri", engine.uri);
       this.buttons.appendChild(button);
@@ -523,18 +523,9 @@ export class SearchOneOffs {
   _buttonIDForEngine(engine) {
     return (
       this.telemetryOrigin +
-      "-engine-one-off-item-" +
-      this._fixUpEngineNameForID(engine.name || engine.title)
+      "-engine-one-off-item-engine-" +
+      this._engineInfo.engines.indexOf(engine)
     );
-  }
-
-  _fixUpEngineNameForID(name) {
-    return name.replace(/ /g, "-");
-  }
-
-  _buttonForEngine(engine) {
-    let id = this._buttonIDForEngine(engine);
-    return this.document.getElementById(id);
   }
 
   getSelectableButtons(aIncludeNonEngineButtons) {
@@ -1026,8 +1017,8 @@ export class SearchOneOffs {
     if (target.classList.contains("search-one-offs-context-open-in-new-tab")) {
       // Select the context-clicked button so that consumers can easily
       // tell which button was acted on.
-      this.selectedButton = this._buttonForEngine(this._contextEngine);
-      this.handleSearchCommand(event, this._contextEngine, true);
+      this.selectedButton = target.closest("menupopup")._triggerButton;
+      this.handleSearchCommand(event, this.selectedButton.engine, true);
     }
 
     const isPrivateButton = target.classList.contains(
@@ -1045,6 +1036,9 @@ export class SearchOneOffs {
       const isPrivateWin = lazy.PrivateBrowsingUtils.isWindowPrivate(
         this.window
       );
+      let button = target.closest("menupopup")._triggerButton;
+      // We're about to replace this, so it must be stored now.
+      let newDefaultEngine = button.engine;
       if (
         !this.getAttribute("includecurrentengine") &&
         isPrivateButton == isPrivateWin
@@ -1052,8 +1046,6 @@ export class SearchOneOffs {
         // Make the target button of the context menu reflect the current
         // search engine first. Doing this as opposed to rebuilding all the
         // one-off buttons avoids flicker.
-        let button = this._buttonForEngine(this._contextEngine);
-        button.id = this._buttonIDForEngine(currentEngine);
         let uri = "chrome://browser/skin/search-engine-placeholder.png";
         if (currentEngine.iconURI) {
           uri = currentEngine.iconURI.spec;
@@ -1063,7 +1055,17 @@ export class SearchOneOffs {
         button.engine = currentEngine;
       }
 
-      Services.search[engineType] = this._contextEngine;
+      if (isPrivateButton) {
+        Services.search.setDefaultPrivate(
+          newDefaultEngine,
+          Ci.nsISearchService.CHANGE_REASON_USER_SEARCHBAR_CONTEXT
+        );
+      } else {
+        Services.search.setDefault(
+          newDefaultEngine,
+          Ci.nsISearchService.CHANGE_REASON_USER_SEARCHBAR_CONTEXT
+        );
+      }
     }
   }
 
@@ -1104,10 +1106,11 @@ export class SearchOneOffs {
       privateDefaultItem.hidden = true;
     }
 
+    // When a context menu is opened on a one-off button, this is set to the
+    // button to be used for the command.
+    this.contextMenuPopup._triggerButton = target;
     this.contextMenuPopup.openPopupAtScreen(event.screenX, event.screenY, true);
     event.preventDefault();
-
-    this._contextEngine = target.engine;
   }
 
   _on_input(event) {
@@ -1124,6 +1127,5 @@ export class SearchOneOffs {
 
   _on_popuphidden() {
     this.selectedButton = null;
-    this._contextEngine = null;
   }
 }

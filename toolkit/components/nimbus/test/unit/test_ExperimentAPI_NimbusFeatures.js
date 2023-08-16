@@ -1,12 +1,10 @@
 "use strict";
 
-const {
-  ExperimentAPI,
-  _ExperimentFeature: ExperimentFeature,
-} = ChromeUtils.import("resource://nimbus/ExperimentAPI.jsm");
+const { ExperimentAPI, _ExperimentFeature: ExperimentFeature } =
+  ChromeUtils.importESModule("resource://nimbus/ExperimentAPI.sys.mjs");
 
-const { JsonSchema } = ChromeUtils.import(
-  "resource://gre/modules/JsonSchema.jsm"
+const { JsonSchema } = ChromeUtils.importESModule(
+  "resource://gre/modules/JsonSchema.sys.mjs"
 );
 
 Cu.importGlobalProperties(["fetch"]);
@@ -24,7 +22,7 @@ const NON_MATCHING_ROLLOUT = Object.freeze(
       features: [
         {
           featureId: "aboutwelcome",
-          value: { skipFocus: false, enabled: false },
+          value: { enabled: false },
         },
       ],
     },
@@ -37,7 +35,7 @@ const MATCHING_ROLLOUT = Object.freeze(
       features: [
         {
           featureId: "aboutwelcome",
-          value: { skipFocus: false, enabled: true },
+          value: { enabled: false },
         },
       ],
     },
@@ -56,9 +54,6 @@ const AW_FAKE_MANIFEST = {
       type: "boolean",
     },
     enabled: {
-      type: "boolean",
-    },
-    skipFocus: {
       type: "boolean",
     },
   },
@@ -94,11 +89,11 @@ add_task(async function readyCallAfterStore_with_remote_value() {
   let { sandbox, manager } = await setupForExperimentFeature();
   let feature = new ExperimentFeature("aboutwelcome");
 
-  Assert.ok(feature.getVariable("skipFocus"), "Feature is true by default");
+  Assert.ok(feature.getVariable("enabled"), "Feature is true by default");
 
   await manager.store.addEnrollment(MATCHING_ROLLOUT);
 
-  Assert.ok(!feature.getVariable("skipFocus"), "Loads value from store");
+  Assert.ok(!feature.getVariable("enabled"), "Loads value from store");
   manager.store._deleteForTests("aboutwelcome");
   sandbox.restore();
 });
@@ -162,7 +157,7 @@ add_task(async function test_features_over_feature() {
         features: [
           {
             featureId: "aboutwelcome",
-            value: { skipFocus: false, enabled: true },
+            value: { enabled: true },
           },
         ],
       },

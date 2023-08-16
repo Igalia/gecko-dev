@@ -120,6 +120,7 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
     texture = AndroidSurfaceTextureData::CreateTextureClient(
         typedImage->GetHandle(), size, typedImage->GetContinuous(),
         typedImage->GetOriginPos(), typedImage->GetHasAlpha(),
+        typedImage->GetTransformOverride(),
         aKnowsCompositor->GetTextureForwarder(), TextureFlags::DEFAULT);
 #endif
   } else {
@@ -157,8 +158,7 @@ already_AddRefed<TextureClient> ImageClient::CreateTextureClientForImage(
   return texture.forget();
 }
 
-bool ImageClientSingle::UpdateImage(ImageContainer* aContainer,
-                                    uint32_t aContentFlags) {
+bool ImageClientSingle::UpdateImage(ImageContainer* aContainer) {
   AutoTArray<ImageContainer::OwningImage, 4> images;
   uint32_t generationCounter;
   aContainer->GetCurrentImages(&images, &generationCounter);

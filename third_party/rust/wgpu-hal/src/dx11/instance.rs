@@ -27,7 +27,8 @@ impl crate::Instance<super::Api> for super::Instance {
 
     unsafe fn create_surface(
         &self,
-        rwh: &impl raw_window_handle::HasRawWindowHandle,
+        display_handle: raw_window_handle::RawDisplayHandle,
+        window_handle: raw_window_handle::RawWindowHandle,
     ) -> Result<super::Surface, crate::InstanceError> {
         todo!()
     }
@@ -37,7 +38,7 @@ impl crate::Instance<super::Api> for super::Instance {
     }
 
     unsafe fn enumerate_adapters(&self) -> Vec<crate::ExposedAdapter<super::Api>> {
-        let adapters = auxil::dxgi::factory::enumerate_adapters(self.factory);
+        let adapters = auxil::dxgi::factory::enumerate_adapters(self.factory.clone());
 
         adapters
             .into_iter()

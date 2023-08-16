@@ -137,10 +137,6 @@ bool HTMLButtonElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     }
 
     if (aAttribute == nsGkAtoms::formmethod) {
-      if (StaticPrefs::dom_dialog_element_enabled() || IsInChromeDocument()) {
-        return aResult.ParseEnumValue(aValue, kFormMethodTableDialogEnabled,
-                                      false);
-      }
       return aResult.ParseEnumValue(aValue, kFormMethodTable, false);
     }
     if (aAttribute == nsGkAtoms::formenctype) {
@@ -148,8 +144,8 @@ bool HTMLButtonElement::ParseAttribute(int32_t aNamespaceID, nsAtom* aAttribute,
     }
   }
 
-  return nsGenericHTMLElement::ParseAttribute(aNamespaceID, aAttribute, aValue,
-                                              aMaybeScriptedPrincipal, aResult);
+  return nsGenericHTMLFormControlElementWithState::ParseAttribute(
+      aNamespaceID, aAttribute, aValue, aMaybeScriptedPrincipal, aResult);
 }
 
 bool HTMLButtonElement::IsDisabledForEvents(WidgetEvent* aEvent) {
@@ -221,19 +217,12 @@ nsresult HTMLButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
     }
   }
 
-  if ((aVisitor.mItemFlags & NS_IN_SUBMIT_CLICK)) {
-    nsCOMPtr<nsIContent> content(do_QueryInterface(aVisitor.mItemData));
-    RefPtr<HTMLFormElement> form = HTMLFormElement::FromNodeOrNull(content);
-    MOZ_ASSERT(form);
-    // tell the form that we are about to exit a click handler
-    // so the form knows not to defer subsequent submissions
-    // the pending ones that were created during the handler
-    // will be flushed or forgoten.
-    form->OnSubmitClickEnd();
-  }
-
   if (nsEventStatus_eIgnore == aVisitor.mEventStatus) {
-    HandleKeyboardActivation(aVisitor);
+    WidgetKeyboardEvent* keyEvent = aVisitor.mEvent->AsKeyboardEvent();
+    if (keyEvent && keyEvent->IsTrusted()) {
+      HandleKeyboardActivation(aVisitor);
+    }
+
     if (aVisitor.mItemFlags & NS_OUTER_ACTIVATE_EVENT) {
       if (mForm) {
         // Hold a strong ref while dispatching
@@ -247,8 +236,8 @@ nsresult HTMLButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
         }
         // https://html.spec.whatwg.org/multipage/form-elements.html#attr-button-type-button-state
         // NS_FORM_BUTTON_BUTTON do nothing.
-        return rv;
       }
+      HandlePopoverTargetAction();
     }
   }
 
@@ -256,6 +245,11 @@ nsresult HTMLButtonElement::PostHandleEvent(EventChainPostVisitor& aVisitor) {
     nsCOMPtr<nsIContent> content(do_QueryInterface(aVisitor.mItemData));
     RefPtr<HTMLFormElement> form = HTMLFormElement::FromNodeOrNull(content);
     MOZ_ASSERT(form);
+    // Tell the form that we are about to exit a click handler,
+    // so the form knows not to defer subsequent submissions.
+    // The pending ones that were created during the handler
+    // will be flushed or forgotten.
+    form->OnSubmitClickEnd();
     // Tell the form to flush a possible pending submission.
     // the reason is that the script returned false (the event was
     // not ignored) so if there is a stored submission, it needs to
@@ -330,9 +324,8 @@ void HTMLButtonElement::DoneCreatingElement() {
   }
 }
 
-nsresult HTMLButtonElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                          const nsAttrValueOrString* aValue,
-                                          bool aNotify) {
+void HTMLButtonElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                      const nsAttrValue* aValue, bool aNotify) {
   if (aNotify && aName == nsGkAtoms::disabled &&
       aNameSpaceID == kNameSpaceID_None) {
     mDisabledChanged = true;
@@ -342,11 +335,11 @@ nsresult HTMLButtonElement::BeforeSetAttr(int32_t aNameSpaceID, nsAtom* aName,
       aNameSpaceID, aName, aValue, aNotify);
 }
 
-nsresult HTMLButtonElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
-                                         const nsAttrValue* aValue,
-                                         const nsAttrValue* aOldValue,
-                                         nsIPrincipal* aSubjectPrincipal,
-                                         bool aNotify) {
+void HTMLButtonElement::AfterSetAttr(int32_t aNameSpaceID, nsAtom* aName,
+                                     const nsAttrValue* aValue,
+                                     const nsAttrValue* aOldValue,
+                                     nsIPrincipal* aSubjectPrincipal,
+                                     bool aNotify) {
   if (aNameSpaceID == kNameSpaceID_None) {
     if (aName == nsGkAtoms::type) {
       if (aValue) {
@@ -380,7 +373,7 @@ void HTMLButtonElement::SaveState() {
   if (state) {
     // We do not want to save the real disabled state but the disabled
     // attribute.
-    state->disabled() = HasAttr(kNameSpaceID_None, nsGkAtoms::disabled);
+    state->disabled() = HasAttr(nsGkAtoms::disabled);
     state->disabledSet() = true;
   }
 }

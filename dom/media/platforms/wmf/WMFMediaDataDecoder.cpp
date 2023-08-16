@@ -122,12 +122,6 @@ bool WMFMediaDataDecoder::ShouldGuardAgaintIncorrectFirstSample(
     return false;
   }
 
-  // By observation so far this issue only happens on Windows 10 so we don't
-  // need to enable this on other versions.
-  if (!IsWin10OrLater()) {
-    return false;
-  }
-
   // This is not the first output sample so we don't need to guard it.
   if (mOutputsCount != 0) {
     return false;

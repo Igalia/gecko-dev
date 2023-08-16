@@ -12,7 +12,6 @@
 #include "Crypto.h"
 #include "GeckoProfiler.h"
 #include "MainThreadUtils.h"
-#include "Principal.h"
 #include "ScriptLoader.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/CompileOptions.h"
@@ -63,6 +62,7 @@
 #include "mozilla/dom/ImageBitmapSource.h"
 #include "mozilla/dom/MessagePortBinding.h"
 #include "mozilla/ipc/PBackgroundChild.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/dom/Performance.h"
 #include "mozilla/dom/Promise.h"
 #include "mozilla/dom/PromiseWorkerProxy.h"
@@ -133,6 +133,13 @@ using mozilla::ipc::PrincipalInfo;
 
 namespace mozilla::dom {
 
+static mozilla::LazyLogModule sWorkerScopeLog("WorkerScope");
+
+#ifdef LOG
+#  undef LOG
+#endif
+#define LOG(args) MOZ_LOG(sWorkerScopeLog, LogLevel::Debug, args);
+
 class WorkerScriptTimeoutHandler final : public ScriptTimeoutHandler {
  public:
   NS_DECL_ISUPPORTS_INHERITED
@@ -192,6 +199,7 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(WorkerGlobalScopeBase,
                                                   DOMEventTargetHelper)
   tmp->AssertIsOnWorkerThread();
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mConsole)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mModuleLoader)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSerialEventTarget)
   tmp->TraverseObjectsInGlobal(cb);
   // If we already exited WorkerThreadPrimaryRunnable, we will find it
@@ -206,6 +214,7 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(WorkerGlobalScopeBase,
                                                 DOMEventTargetHelper)
   tmp->AssertIsOnWorkerThread();
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsole)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mModuleLoader)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSerialEventTarget)
   tmp->UnlinkObjectsInGlobal();
   // If we already exited WorkerThreadPrimaryRunnable, we will find it
@@ -235,6 +244,7 @@ WorkerGlobalScopeBase::WorkerGlobalScopeBase(
     : mWorkerPrivate(aWorkerPrivate),
       mClientSource(std::move(aClientSource)),
       mSerialEventTarget(aWorkerPrivate->HybridEventTarget()) {
+  LOG(("WorkerGlobalScopeBase::WorkerGlobalScopeBase [%p]", this));
   MOZ_ASSERT(mWorkerPrivate);
 #ifdef DEBUG
   mWorkerPrivate->AssertIsOnWorkerThread();
@@ -268,14 +278,10 @@ bool WorkerGlobalScopeBase::IsSharedMemoryAllowed() const {
   return mWorkerPrivate->IsSharedMemoryAllowed();
 }
 
-bool WorkerGlobalScopeBase::ShouldResistFingerprinting() const {
+bool WorkerGlobalScopeBase::ShouldResistFingerprinting(
+    RFPTarget aTarget) const {
   AssertIsOnWorkerThread();
-  return mWorkerPrivate->ShouldResistFingerprinting();
-}
-
-uint32_t WorkerGlobalScopeBase::GetPrincipalHashValue() const {
-  AssertIsOnWorkerThread();
-  return mWorkerPrivate->GetPrincipalHashValue();
+  return mWorkerPrivate->ShouldResistFingerprinting(aTarget);
 }
 
 OriginTrials WorkerGlobalScopeBase::Trials() const {
@@ -294,6 +300,24 @@ Maybe<ClientInfo> WorkerGlobalScopeBase::GetClientInfo() const {
 
 Maybe<ServiceWorkerDescriptor> WorkerGlobalScopeBase::GetController() const {
   return mClientSource->GetController();
+}
+
+mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult>
+WorkerGlobalScopeBase::GetStorageKey() {
+  AssertIsOnWorkerThread();
+
+  const mozilla::ipc::PrincipalInfo& principalInfo =
+      mWorkerPrivate->GetEffectiveStoragePrincipalInfo();
+
+  // Block expanded and null principals, let content and system through.
+  if (principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TContentPrincipalInfo &&
+      principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TSystemPrincipalInfo) {
+    return Err(NS_ERROR_DOM_SECURITY_ERR);
+  }
+
+  return principalInfo;
 }
 
 void WorkerGlobalScopeBase::Control(
@@ -411,6 +435,25 @@ NS_IMPL_ISUPPORTS_CYCLE_COLLECTION_INHERITED_0(WorkerGlobalScope,
 
 WorkerGlobalScope::~WorkerGlobalScope() = default;
 
+void WorkerGlobalScope::NoteTerminating() {
+  LOG(("WorkerGlobalScope::NoteTerminating [%p]", this));
+  if (IsDying()) {
+    return;
+  }
+
+  StartDying();
+}
+
+void WorkerGlobalScope::NoteShuttingDown() {
+  MOZ_ASSERT(IsDying());
+  LOG(("WorkerGlobalScope::NoteShuttingDown [%p]", this));
+
+  if (mNavigator) {
+    mNavigator->Invalidate();
+    mNavigator = nullptr;
+  }
+}
+
 Crypto* WorkerGlobalScope::GetCrypto(ErrorResult& aError) {
   AssertIsOnWorkerThread();
 
@@ -470,12 +513,15 @@ already_AddRefed<WorkerNavigator> WorkerGlobalScope::GetExistingNavigator()
   return navigator.forget();
 }
 
-FontFaceSet* WorkerGlobalScope::Fonts() {
+FontFaceSet* WorkerGlobalScope::GetFonts(ErrorResult& aRv) {
   AssertIsOnWorkerThread();
 
   if (!mFontFaceSet) {
     mFontFaceSet = FontFaceSet::CreateForWorker(this, mWorkerPrivate);
-    MOZ_ASSERT(mFontFaceSet);
+    if (MOZ_UNLIKELY(!mFontFaceSet)) {
+      aRv.ThrowInvalidStateError("Couldn't acquire worker reference");
+      return nullptr;
+    }
   }
 
   return mFontFaceSet;
@@ -513,7 +559,11 @@ void WorkerGlobalScope::ImportScripts(JSContext* aCx,
         profiler_thread_is_being_profiled_for_markers()
             ? StringJoin(","_ns, aScriptURLs,
                          [](nsACString& dest, const auto& scriptUrl) {
-                           AppendUTF16toUTF8(scriptUrl, dest);
+                           AppendUTF16toUTF8(
+                               Substring(
+                                   scriptUrl, 0,
+                                   std::min(size_t(128), scriptUrl.Length())),
+                               dest);
                          })
             : nsAutoCString{});
     workerinternals::Load(mWorkerPrivate, std::move(stack), aScriptURLs,
@@ -615,7 +665,8 @@ int32_t WorkerGlobalScope::SetTimeoutOrInterval(JSContext* aCx,
 
 void WorkerGlobalScope::GetOrigin(nsAString& aOrigin) const {
   AssertIsOnWorkerThread();
-  aOrigin = mWorkerPrivate->OriginNoSuffix();
+  nsContentUtils::GetWebExposedOriginSerialization(
+      mWorkerPrivate->GetPrincipal(), aOrigin);
 }
 
 bool WorkerGlobalScope::CrossOriginIsolated() const {
@@ -648,7 +699,7 @@ Performance* WorkerGlobalScope::GetPerformance() {
   AssertIsOnWorkerThread();
 
   if (!mPerformance) {
-    mPerformance = Performance::CreateForWorker(mWorkerPrivate);
+    mPerformance = Performance::CreateForWorker(this);
   }
 
   return mPerformance;
@@ -678,12 +729,6 @@ already_AddRefed<Promise> WorkerGlobalScope::Fetch(
 already_AddRefed<IDBFactory> WorkerGlobalScope::GetIndexedDB(
     JSContext* aCx, ErrorResult& aErrorResult) {
   AssertIsOnWorkerThread();
-
-  if (!IDBFactory::IsEnabled(aCx, GetGlobalJSObject())) {
-    // Let window.indexedDB be an attribute with a null value, to prevent
-    // undefined identifier error
-    return nullptr;
-  }
 
   RefPtr<IDBFactory> indexedDB = mIndexedDB;
 
@@ -806,6 +851,16 @@ WorkerGlobalScope::GetOrCreateServiceWorkerRegistration(
   return ref;
 }
 
+mozilla::dom::StorageManager* WorkerGlobalScope::GetStorageManager() {
+  return RefPtr(Navigator())->Storage();
+}
+
+// https://html.spec.whatwg.org/multipage/web-messaging.html#eligible-for-messaging
+// * a WorkerGlobalScope object whose closing flag is false and whose worker
+//   is not a suspendable worker.
+bool WorkerGlobalScope::IsEligibleForMessaging() {
+  return mIsEligibleForMessaging;
+}
 void WorkerGlobalScope::StorageAccessPermissionGranted() {
   // Reset the IndexedDB factory.
   mIndexedDB = nullptr;
@@ -868,9 +923,7 @@ bool DedicatedWorkerGlobalScope::WrapGlobalObject(
 
   return DedicatedWorkerGlobalScope_Binding::Wrap(
       aCx, this, this, options,
-      new WorkerPrincipal(usesSystemPrincipal ||
-                          mWorkerPrivate->UsesAddonOrExpandedAddonPrincipal()),
-      true, aReflector);
+      nsJSPrincipals::get(mWorkerPrivate->GetPrincipal()), true, aReflector);
 }
 
 void DedicatedWorkerGlobalScope::PostMessage(
@@ -998,7 +1051,8 @@ void DedicatedWorkerGlobalScope::OnVsync(const VsyncEvent& aVsync) {
     // needs to have it's Time Reduction Logic refactored, so it's currently
     // only clamping for RFP mode. RFP mode gives a much lower time precision,
     // so we accept the security leak here for now.
-    timeStamp = nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(timeStamp, 0);
+    timeStamp = nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(
+        timeStamp, 0, this->GetRTPCallerType());
   }
 
   for (auto& callback : callbacks) {
@@ -1030,9 +1084,7 @@ bool SharedWorkerGlobalScope::WrapGlobalObject(
 
   return SharedWorkerGlobalScope_Binding::Wrap(
       aCx, this, this, options,
-      new WorkerPrincipal(mWorkerPrivate->UsesSystemPrincipal() ||
-                          mWorkerPrivate->UsesAddonOrExpandedAddonPrincipal()),
-      true, aReflector);
+      nsJSPrincipals::get(mWorkerPrivate->GetPrincipal()), true, aReflector);
 }
 
 void SharedWorkerGlobalScope::Close() {
@@ -1073,9 +1125,7 @@ bool ServiceWorkerGlobalScope::WrapGlobalObject(
 
   return ServiceWorkerGlobalScope_Binding::Wrap(
       aCx, this, this, options,
-      new WorkerPrincipal(mWorkerPrivate->UsesSystemPrincipal() ||
-                          mWorkerPrivate->UsesAddonOrExpandedAddonPrincipal()),
-      true, aReflector);
+      nsJSPrincipals::get(mWorkerPrivate->GetPrincipal()), true, aReflector);
 }
 
 already_AddRefed<Clients> ServiceWorkerGlobalScope::GetClients() {
@@ -1200,9 +1250,7 @@ bool WorkerDebuggerGlobalScope::WrapGlobalObject(
 
   return WorkerDebuggerGlobalScope_Binding::Wrap(
       aCx, this, this, options,
-      new WorkerPrincipal(mWorkerPrivate->UsesSystemPrincipal() ||
-                          mWorkerPrivate->UsesAddonOrExpandedAddonPrincipal()),
-      true, aReflector);
+      nsJSPrincipals::get(mWorkerPrivate->GetPrincipal()), true, aReflector);
 }
 
 void WorkerDebuggerGlobalScope::GetGlobal(JSContext* aCx,

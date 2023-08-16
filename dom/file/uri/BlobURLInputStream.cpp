@@ -13,6 +13,7 @@
 #include "mozilla/dom/ContentChild.h"
 #include "mozilla/dom/IPCBlobUtils.h"
 #include "nsStreamUtils.h"
+#include "nsMimeTypes.h"
 
 namespace mozilla::dom {
 
@@ -69,7 +70,27 @@ NS_IMETHODIMP BlobURLInputStream::Available(uint64_t* aLength) {
     return mAsyncInputStream->Available(aLength);
   }
 
-  return NS_BASE_STREAM_WOULD_BLOCK;
+  return NS_OK;
+}
+
+NS_IMETHODIMP BlobURLInputStream::StreamStatus() {
+  MutexAutoLock lock(mStateMachineMutex);
+
+  if (mState == State::ERROR) {
+    MOZ_ASSERT(NS_FAILED(mError));
+    return mError;
+  }
+
+  if (mState == State::CLOSED) {
+    return NS_BASE_STREAM_CLOSED;
+  }
+
+  if (mState == State::READY) {
+    MOZ_ASSERT(mAsyncInputStream);
+    return mAsyncInputStream->StreamStatus();
+  }
+
+  return NS_OK;
 }
 
 NS_IMETHODIMP BlobURLInputStream::Read(char* aBuffer, uint32_t aCount,
@@ -461,9 +482,21 @@ nsresult BlobURLInputStream::StoreBlobImplStream(
     already_AddRefed<BlobImpl> aBlobImpl, const MutexAutoLock& aProofOfLock) {
   MOZ_ASSERT(NS_IsMainThread(), "Only call on main thread");
   const RefPtr<BlobImpl> blobImpl = aBlobImpl;
-  nsAutoString contentType;
-  blobImpl->GetType(contentType);
-  mChannel->SetContentType(NS_ConvertUTF16toUTF8(contentType));
+  nsAutoString blobContentType;
+  nsAutoCString channelContentType;
+
+  blobImpl->GetType(blobContentType);
+  mChannel->GetContentType(channelContentType);
+  // A empty content type is the correct channel content type in the case of a
+  // fetch of a blob where the type was not set. It is invalid in others cases
+  // such as a XHR (See https://xhr.spec.whatwg.org/#response-mime-type). The
+  // XMLHttpRequestMainThread will set the channel content type to the correct
+  // fallback value before this point, so we need to be careful to only override
+  // it when the blob type is valid.
+  if (!blobContentType.IsEmpty() ||
+      channelContentType.EqualsLiteral(UNKNOWN_CONTENT_TYPE)) {
+    mChannel->SetContentType(NS_ConvertUTF16toUTF8(blobContentType));
+  }
 
   auto cleanupOnExit = MakeScopeExit([&] { mChannel = nullptr; });
 

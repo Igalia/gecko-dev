@@ -7,8 +7,9 @@
 #include "js/Conversions.h"
 #include "MediaData.h"
 #include "mozilla/ArrayUtils.h"
+#include "mozilla/gtest/MozAssertions.h"
 #include "mozilla/Preferences.h"
-#include "mozilla/Tuple.h"
+
 #include "BufferStream.h"
 #include "MP4Metadata.h"
 #include "MoofParser.h"
@@ -159,11 +160,11 @@ struct TestFileData {
   bool mParseResult;
   uint32_t mNumberVideoTracks;
   bool mHasVideoIndice;
-  int64_t mVideoDuration;  // For first video track, -1 if N/A.
+  double mVideoDuration;  // For first video track, -1 if N/A, in seconds.
   int32_t mWidth;
   int32_t mHeight;
   uint32_t mNumberAudioTracks;
-  int64_t mAudioDuration;  // For first audio track, -1 if N/A.
+  double mAudioDuration;  // For first audio track, -1 if N/A, in seconds.
   bool mHasCrypto;  // Note, MP4Metadata only considers pssh box for crypto.
   uint64_t mMoofReachedOffset;  // or 0 for the end.
   bool mValidMoof;
@@ -173,40 +174,40 @@ struct TestFileData {
 static const TestFileData testFiles[] = {
     // filename parses? #V hasVideoIndex vDur w h #A aDur hasCrypto? moofOffset
     // validMoof? audio_profile
-    {"test_case_1156505.mp4", false, 0, false, -1, 0, 0, 0, -1, false, 152,
+    {"test_case_1156505.mp4", false, 0, false, -1, 0, 0, 0, -1., false, 152,
      false, 0},  // invalid ''trak box
-    {"test_case_1181213.mp4", true, 1, true, 416666, 320, 240, 1, 477460, true,
-     0, false, 2},
+    {"test_case_1181213.mp4", true, 1, true, 0.41666666, 320, 240, 1,
+     0.47746032, true, 0, false, 2},
     {"test_case_1181215.mp4", true, 0, false, -1, 0, 0, 0, -1, false, 0, false,
      0},
-    {"test_case_1181223.mp4", false, 0, false, 416666, 320, 240, 0, -1, false,
-     0, false, 0},
+    {"test_case_1181223.mp4", false, 0, false, 0.41666666, 320, 240, 0, -1,
+     false, 0, false, 0},
     {"test_case_1181719.mp4", false, 0, false, -1, 0, 0, 0, -1, false, 0, false,
      0},
-    {"test_case_1185230.mp4", true, 2, true, 416666, 320, 240, 2, 5, false, 0,
-     false, 2},
-    {"test_case_1187067.mp4", true, 1, true, 80000, 160, 90, 0, -1, false, 0,
+    {"test_case_1185230.mp4", true, 2, true, 0.41666666, 320, 240, 2,
+     0.0000059754907, false, 0, false, 2},
+    {"test_case_1187067.mp4", true, 1, true, 0.080000, 160, 90, 0, -1, false, 0,
      false, 0},
     {"test_case_1200326.mp4", false, 0, false, -1, 0, 0, 0, -1, false, 0, false,
      0},
-    {"test_case_1204580.mp4", true, 1, true, 502500, 320, 180, 0, -1, false, 0,
-     false, 0},
+    {"test_case_1204580.mp4", true, 1, true, 0.502500, 320, 180, 0, -1, false,
+     0, false, 0},
     {"test_case_1216748.mp4", false, 0, false, -1, 0, 0, 0, -1, false, 152,
      false, 0},  // invalid 'trak' box
     {"test_case_1296473.mp4", false, 0, false, -1, 0, 0, 0, -1, false, 0, false,
      0},
-    {"test_case_1296532.mp4", true, 1, true, 5589333, 560, 320, 1, 5589333,
+    {"test_case_1296532.mp4", true, 1, true, 5.589333, 560, 320, 1, 5.589333,
      true, 0, true, 2},
-    {"test_case_1301065.mp4", true, 0, false, -1, 0, 0, 1, 100079991719000000,
-     false, 0, false, 2},
-    {"test_case_1301065-u32max.mp4", true, 0, false, -1, 0, 0, 1, 97391548639,
+    {"test_case_1301065.mp4", true, 0, false, -1, 0, 0, 1, 100079991719, false,
+     0, false, 2},
+    {"test_case_1301065-u32max.mp4", true, 0, false, -1, 0, 0, 1, 97391.548639,
      false, 0, false, 2},
     {"test_case_1301065-max-ez.mp4", true, 0, false, -1, 0, 0, 1,
-     209146758205306, false, 0, false, 2},
+     209146758.205306, false, 0, false, 2},
     {"test_case_1301065-harder.mp4", true, 0, false, -1, 0, 0, 1,
-     209146758205328, false, 0, false, 2},
+     209146758.205328, false, 0, false, 2},
     {"test_case_1301065-max-ok.mp4", true, 0, false, -1, 0, 0, 1,
-     9223372036854775804, false, 0, false, 2},
+     9223372036854.775, false, 0, false, 2},
     // The duration is overflow for int64_t in TestFileData, parser uses
     // uint64_t so
     // this file is ignore.
@@ -214,36 +215,36 @@ static const TestFileData testFiles[] = {
     //                                                          false,   0,
     //                                                          false, 2
     //                                                          },
-    {"test_case_1301065-i64max.mp4", true, 0, false, -1, 0, 0, 0, -1, false, 0,
-     false, 0},
-    {"test_case_1301065-i64min.mp4", true, 0, false, -1, 0, 0, 0, -1, false, 0,
-     false, 0},
+    {"test_case_1301065-i64max.mp4", true, 0, false, -1, 0, 0, 1,
+     std::numeric_limits<double>::infinity(), false, 0, false, 2},
+    {"test_case_1301065-i64min.mp4", true, 0, false, -1, 0, 0, 1,
+     -std::numeric_limits<double>::infinity(), false, 0, false, 2},
     {"test_case_1301065-u64max.mp4", true, 0, false, -1, 0, 0, 1, 0, false, 0,
      false, 2},
     {"test_case_1329061.mov", false, 0, false, -1, 0, 0, 1, 234567981, false, 0,
      false, 2},
     {"test_case_1351094.mp4", true, 0, false, -1, 0, 0, 0, -1, false, 0, true,
      0},
-    {"test_case_1389299.mp4", true, 1, true, 5589333, 560, 320, 1, 5589333,
+    {"test_case_1389299.mp4", true, 1, true, 5.589333, 560, 320, 1, 5.589333,
      true, 0, true, 2},
 
-    {"test_case_1389527.mp4", true, 1, false, 5005000, 80, 128, 1, 4992000,
+    {"test_case_1389527.mp4", true, 1, false, 5.005000, 80, 128, 1, 4.992000,
      false, 0, false, 2},
-    {"test_case_1395244.mp4", true, 1, true, 416666, 320, 240, 1, 477460, false,
-     0, false, 2},
-    {"test_case_1388991.mp4", true, 0, false, -1, 0, 0, 1, 30000181, false, 0,
+    {"test_case_1395244.mp4", true, 1, true, 0.41666666, 320, 240, 1,
+     0.47746032, false, 0, false, 2},
+    {"test_case_1388991.mp4", true, 0, false, -1, 0, 0, 1, 30.000181, false, 0,
      false, 2},
     {"test_case_1410565.mp4", false, 0, false, 0, 0, 0, 0, 0, false, 955100,
      true, 2},  // negative 'timescale'
     {"test_case_1513651-2-sample-description-entries.mp4", true, 1, true,
-     9843344, 400, 300, 0, -1, true, 0, false, 0},
+     9.843344, 400, 300, 0, -1, true, 0, false, 0},
     {"test_case_1519617-cenc-init-with-track_id-0.mp4", true, 1, true, 0, 1272,
      530, 0, -1, false, 0, false,
      0},  // Uses bad track id 0 and has a sinf but no pssh
-    {"test_case_1519617-track2-trafs-removed.mp4", true, 1, true, 10032000, 400,
-     300, 1, 10032000, false, 0, true, 2},
-    {"test_case_1519617-video-has-track_id-0.mp4", true, 1, true, 10032000, 400,
-     300, 1, 10032000, false, 0, true, 2},  // Uses bad track id 0
+    {"test_case_1519617-track2-trafs-removed.mp4", true, 1, true, 10.032000,
+     400, 300, 1, 10.032000, false, 0, true, 2},
+    {"test_case_1519617-video-has-track_id-0.mp4", true, 1, true, 10.032000,
+     400, 300, 1, 10.032000, false, 0, true, 2},  // Uses bad track id 0
     // The following file has multiple sample description entries with the same
     // crypto information. This does not cover multiple entries with different
     // crypto information which is tracked by
@@ -301,9 +302,13 @@ TEST(MP4Metadata, test_case_mp4)
       ASSERT_TRUE(!!videoInfo);
       EXPECT_TRUE(videoInfo->IsValid()) << tests[test].mFilename;
       EXPECT_TRUE(videoInfo->IsVideo()) << tests[test].mFilename;
-      EXPECT_EQ(tests[test].mVideoDuration,
-                videoInfo->mDuration.ToMicroseconds())
-          << tests[test].mFilename;
+      if (std::isinf(tests[test].mVideoDuration)) {
+        ASSERT_TRUE(std::isinf(videoInfo->mDuration.ToSeconds()));
+      } else {
+        EXPECT_FLOAT_EQ(tests[test].mVideoDuration,
+                        videoInfo->mDuration.ToSeconds())
+            << tests[test].mFilename;
+      }
       EXPECT_EQ(tests[test].mWidth, videoInfo->mDisplay.width)
           << tests[test].mFilename;
       EXPECT_EQ(tests[test].mHeight, videoInfo->mDisplay.height)
@@ -315,7 +320,7 @@ TEST(MP4Metadata, test_case_mp4)
           << tests[test].mFilename;
       if (tests[test].mHasVideoIndice) {
         for (size_t i = 0; i < indices.Ref()->Length(); i++) {
-          Index::Indice data;
+          MP4SampleIndex::Indice data;
           EXPECT_TRUE(indices.Ref()->GetIndice(i, data))
               << tests[test].mFilename;
           EXPECT_TRUE(data.start_offset <= data.end_offset)
@@ -335,20 +340,22 @@ TEST(MP4Metadata, test_case_mp4)
       ASSERT_TRUE(!!audioInfo);
       EXPECT_TRUE(audioInfo->IsValid()) << tests[test].mFilename;
       EXPECT_TRUE(audioInfo->IsAudio()) << tests[test].mFilename;
-      EXPECT_EQ(tests[test].mAudioDuration,
-                audioInfo->mDuration.ToMicroseconds())
-          << tests[test].mFilename;
+      if (std::isinf(tests[test].mAudioDuration)) {
+        ASSERT_TRUE(std::isinf(audioInfo->mDuration.ToSeconds()))
+        << tests[test].mFilename;
+      } else {
+        EXPECT_FLOAT_EQ(tests[test].mAudioDuration,
+                        audioInfo->mDuration.ToSeconds())
+            << tests[test].mFilename;
+      }
       EXPECT_EQ(tests[test].mAudioProfile, audioInfo->mProfile)
           << tests[test].mFilename;
-      if (tests[test].mAudioDuration != audioInfo->mDuration.ToMicroseconds()) {
-        MOZ_RELEASE_ASSERT(false);
-      }
 
       MP4Metadata::ResultAndIndice indices =
           metadata.GetTrackIndice(audioInfo->mTrackId);
       EXPECT_TRUE(!!indices.Ref()) << tests[test].mFilename;
       for (size_t i = 0; i < indices.Ref()->Length(); i++) {
-        Index::Indice data;
+        MP4SampleIndex::Indice data;
         EXPECT_TRUE(indices.Ref()->GetIndice(i, data)) << tests[test].mFilename;
         EXPECT_TRUE(data.start_offset <= data.end_offset)
             << tests[test].mFilename;
@@ -807,7 +814,7 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
 
     MP4Metadata metadata(stream);
     nsresult res = metadata.Parse();
-    EXPECT_TRUE(NS_SUCCEEDED(res));
+    EXPECT_NS_SUCCEEDED(res);
     auto audioTrackCount = metadata.GetNumberTracks(TrackInfo::kAudioTrack);
     ASSERT_NE(audioTrackCount.Ref(), MP4Metadata::NumberTracksError());
     auto videoTrackCount = metadata.GetNumberTracks(TrackInfo::kVideoTrack);
@@ -839,10 +846,10 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
   // and is used to log if our telem counts are not in an expected state.
   auto CheckHistograms =
       [this, &cx](
-          const Tuple<uint32_t, uint32_t>& aExpectedMultipleCodecCounts,
-          const Tuple<uint32_t, uint32_t>& aExpectedMultipleCryptoCounts,
-          const Tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
-                      uint32_t>& aExpectedSampleDescriptionEntryCounts,
+          const std::tuple<uint32_t, uint32_t>& aExpectedMultipleCodecCounts,
+          const std::tuple<uint32_t, uint32_t>& aExpectedMultipleCryptoCounts,
+          const std::tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                           uint32_t>& aExpectedSampleDescriptionEntryCounts,
           const char* aFileName) {
         // Get a snapshot of the current histograms
         JS::Rooted<JS::Value> snapshot(cx.GetJSContext());
@@ -869,13 +876,13 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 0, values, &value);
         uint32_t uValue = 0;
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<0>(aExpectedMultipleCodecCounts), uValue)
+        EXPECT_EQ(std::get<0>(aExpectedMultipleCodecCounts), uValue)
             << "Unexpected number of false multiple codecs after parsing "
             << aFileName;
         // True count.
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 1, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<1>(aExpectedMultipleCodecCounts), uValue)
+        EXPECT_EQ(std::get<1>(aExpectedMultipleCodecCounts), uValue)
             << "Unexpected number of true multiple codecs after parsing "
             << aFileName;
 
@@ -893,13 +900,13 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
         // False count.
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 0, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<0>(aExpectedMultipleCryptoCounts), uValue)
+        EXPECT_EQ(std::get<0>(aExpectedMultipleCryptoCounts), uValue)
             << "Unexpected number of false multiple cryptos after parsing "
             << aFileName;
         // True count.
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 1, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<1>(aExpectedMultipleCryptoCounts), uValue)
+        EXPECT_EQ(std::get<1>(aExpectedMultipleCryptoCounts), uValue)
             << "Unexpected number of true multiple cryptos after parsing "
             << aFileName;
 
@@ -916,32 +923,32 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
 
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 0, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<0>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<0>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 0 sample entry descriptions after parsing "
             << aFileName;
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 1, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<1>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<1>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 1 sample entry descriptions after parsing "
             << aFileName;
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 2, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<2>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<2>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 2 sample entry descriptions after parsing "
             << aFileName;
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 3, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<3>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<3>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 3 sample entry descriptions after parsing "
             << aFileName;
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 4, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<4>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<4>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 4 sample entry descriptions after parsing "
             << aFileName;
         TelemetryTestHelpers::GetElement(cx.GetJSContext(), 5, values, &value);
         JS::ToUint32(cx.GetJSContext(), value, &uValue);
-        EXPECT_EQ(Get<5>(aExpectedSampleDescriptionEntryCounts), uValue)
+        EXPECT_EQ(std::get<5>(aExpectedSampleDescriptionEntryCounts), uValue)
             << "Unexpected number of 5 sample entry descriptions after parsing "
             << aFileName;
       };
@@ -976,11 +983,11 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
   UpdateMetadataAndHistograms("test_case_1185230.mp4");
 
   // Verify our histograms are updated.
-  CheckHistograms(
-      MakeTuple<uint32_t, uint32_t>(4, 0), MakeTuple<uint32_t, uint32_t>(4, 0),
-      MakeTuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>(
-          0, 4, 0, 0, 0, 0),
-      "test_case_1185230.mp4");
+  CheckHistograms(std::make_tuple<uint32_t, uint32_t>(4, 0),
+                  std::make_tuple<uint32_t, uint32_t>(4, 0),
+                  std::make_tuple<uint32_t, uint32_t, uint32_t, uint32_t,
+                                  uint32_t, uint32_t>(0, 4, 0, 0, 0, 0),
+                  "test_case_1185230.mp4");
 
   // Parse another test case. This one has a single moov with a single video
   // track. However, the track has two sample description entries, and our
@@ -989,11 +996,11 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
       "test_case_1513651-2-sample-description-entries.mp4");
 
   // Verify our histograms are updated.
-  CheckHistograms(
-      MakeTuple<uint32_t, uint32_t>(5, 0), MakeTuple<uint32_t, uint32_t>(5, 0),
-      MakeTuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>(
-          0, 4, 1, 0, 0, 0),
-      "test_case_1513651-2-sample-description-entries.mp4");
+  CheckHistograms(std::make_tuple<uint32_t, uint32_t>(5, 0),
+                  std::make_tuple<uint32_t, uint32_t>(5, 0),
+                  std::make_tuple<uint32_t, uint32_t, uint32_t, uint32_t,
+                                  uint32_t, uint32_t>(0, 4, 1, 0, 0, 0),
+                  "test_case_1513651-2-sample-description-entries.mp4");
 
   // Parse another test case. This one has 2 sample decription entries, both
   // with crypto information, which should be reflected in our telemetry.
@@ -1003,9 +1010,10 @@ TEST_F(MP4MetadataTelemetryFixture, Telemetry) {
 
   // Verify our histograms are updated.
   CheckHistograms(
-      MakeTuple<uint32_t, uint32_t>(6, 0), MakeTuple<uint32_t, uint32_t>(5, 1),
-      MakeTuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t, uint32_t>(
-          0, 4, 2, 0, 0, 0),
+      std::make_tuple<uint32_t, uint32_t>(6, 0),
+      std::make_tuple<uint32_t, uint32_t>(5, 1),
+      std::make_tuple<uint32_t, uint32_t, uint32_t, uint32_t, uint32_t,
+                      uint32_t>(0, 4, 2, 0, 0, 0),
       "test_case_1714125-2-sample-description-entires-with-identical-crypto."
       "mp4");
 }

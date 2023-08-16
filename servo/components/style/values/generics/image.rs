@@ -6,6 +6,7 @@
 //!
 //! [images]: https://drafts.csswg.org/css-images/#image-values
 
+use crate::color::{mix::ColorInterpolationMethod, ColorSpace};
 use crate::custom_properties;
 use crate::values::generics::position::PositionComponent;
 use crate::values::generics::Optional;
@@ -108,7 +109,7 @@ pub use self::GenericCrossFadeImage as CrossFadeImage;
 #[css(comma, function = "image-set")]
 #[repr(C)]
 pub struct GenericImageSet<Image, Resolution> {
-    /// The index of the selected candidate. Zero for specified values.
+    /// The index of the selected candidate. usize::MAX for specified values or invalid images.
     #[css(skip)]
     pub selected_index: usize,
 
@@ -142,14 +143,14 @@ impl<I: style_traits::ToCss, R: style_traits::ToCss> ToCss for GenericImageSetIt
         W: fmt::Write,
     {
         self.image.to_css(dest)?;
-        dest.write_str(" ")?;
+        dest.write_char(' ')?;
         self.resolution.to_css(dest)?;
 
         if self.has_mime_type {
-            dest.write_str(" ")?;
+            dest.write_char(' ')?;
             dest.write_str("type(")?;
             self.mime_type.to_css(dest)?;
-            dest.write_str(")")?;
+            dest.write_char(')')?;
         }
         Ok(())
     }
@@ -176,6 +177,8 @@ pub enum GenericGradient<
     Linear {
         /// Line direction
         direction: LineDirection,
+        /// Method to use for color interpolation.
+        color_interpolation_method: ColorInterpolationMethod,
         /// The color stops and interpolation hints.
         items: crate::OwnedSlice<GenericGradientItem<Color, LengthPercentage>>,
         /// True if this is a repeating gradient.
@@ -189,6 +192,8 @@ pub enum GenericGradient<
         shape: GenericEndingShape<NonNegativeLength, NonNegativeLengthPercentage>,
         /// Center of gradient
         position: Position,
+        /// Method to use for color interpolation.
+        color_interpolation_method: ColorInterpolationMethod,
         /// The color stops and interpolation hints.
         items: crate::OwnedSlice<GenericGradientItem<Color, LengthPercentage>>,
         /// True if this is a repeating gradient.
@@ -202,6 +207,8 @@ pub enum GenericGradient<
         angle: Angle,
         /// Center of gradient
         position: Position,
+        /// Method to use for color interpolation.
+        color_interpolation_method: ColorInterpolationMethod,
         /// The color stops and interpolation hints.
         items: crate::OwnedSlice<GenericGradientItem<Color, AngleOrPercentage>>,
         /// True if this is a repeating gradient.
@@ -369,7 +376,7 @@ impl ToCss for PaintWorklet {
             dest.write_str(", ")?;
             argument.to_css(dest)?;
         }
-        dest.write_str(")")
+        dest.write_char(')')
     }
 }
 
@@ -433,7 +440,7 @@ where
             Image::Element(ref selector) => {
                 dest.write_str("-moz-element(#")?;
                 serialize_atom_identifier(selector, dest)?;
-                dest.write_str(")")
+                dest.write_char(')')
             },
             Image::ImageSet(ref is) => is.to_css(dest),
             Image::CrossFade(ref cf) => cf.to_css(dest),
@@ -483,17 +490,24 @@ where
         match *self {
             Gradient::Linear {
                 ref direction,
+                ref color_interpolation_method,
                 ref items,
                 compat_mode,
                 ..
             } => {
                 dest.write_str("linear-gradient(")?;
-                let mut skip_comma = if !direction.points_downwards(compat_mode) {
+                let mut skip_comma = true;
+                if !direction.points_downwards(compat_mode) {
                     direction.to_css(dest, compat_mode)?;
-                    false
-                } else {
-                    true
-                };
+                    skip_comma = false;
+                }
+                if !matches!(color_interpolation_method.space, ColorSpace::Srgb) {
+                    if !skip_comma {
+                        dest.write_char(' ')?;
+                    }
+                    color_interpolation_method.to_css(dest)?;
+                    skip_comma = false;
+                }
                 for item in &**items {
                     if !skip_comma {
                         dest.write_str(", ")?;
@@ -505,6 +519,7 @@ where
             Gradient::Radial {
                 ref shape,
                 ref position,
+                ref color_interpolation_method,
                 ref items,
                 compat_mode,
                 ..
@@ -520,7 +535,7 @@ where
                     if !omit_shape {
                         shape.to_css(dest)?;
                         if !omit_position {
-                            dest.write_str(" ")?;
+                            dest.write_char(' ')?;
                         }
                     }
                     if !omit_position {
@@ -538,7 +553,16 @@ where
                         shape.to_css(dest)?;
                     }
                 }
-                let mut skip_comma = omit_shape && omit_position;
+                let omit_color_interpolation_method =
+                    matches!(color_interpolation_method.space, ColorSpace::Srgb);
+                if !omit_color_interpolation_method {
+                    if !omit_shape || !omit_position {
+                        dest.write_char(' ')?;
+                    }
+                    color_interpolation_method.to_css(dest)?;
+                }
+
+                let mut skip_comma = omit_shape && omit_position && omit_color_interpolation_method;
                 for item in &**items {
                     if !skip_comma {
                         dest.write_str(", ")?;
@@ -560,7 +584,7 @@ where
                     dest.write_str("from ")?;
                     angle.to_css(dest)?;
                     if !omit_position {
-                        dest.write_str(" ")?;
+                        dest.write_char(' ')?;
                     }
                 }
                 if !omit_position {
@@ -577,7 +601,7 @@ where
                 }
             },
         }
-        dest.write_str(")")
+        dest.write_char(')')
     }
 }
 

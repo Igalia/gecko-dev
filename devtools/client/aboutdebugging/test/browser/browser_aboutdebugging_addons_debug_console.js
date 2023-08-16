@@ -7,8 +7,8 @@ Services.scriptloader.loadSubScript(CHROME_URL_ROOT + "helper-addons.js", this);
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
@@ -41,7 +41,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
   await installTemporaryExtensionFromXPI(
     {
       background() {
-        window.myWebExtensionAddonFunction = function() {
+        window.myWebExtensionAddonFunction = function () {
           console.log(
             "Background page function called",
             this.browser.runtime.getManifest()
@@ -58,6 +58,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
         browser_action: {
           default_title: "WebExtension Popup Debugging",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -72,7 +73,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
           </body>
         </html>
       `,
-        "popup.js": function() {
+        "popup.js": function () {
           console.log("Popup log");
 
           const style = document.createElement("style");
@@ -104,6 +105,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
         browser_action: {
           default_title: "Other addon popup",
           default_popup: "other-popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -118,7 +120,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
           </body>
         </html>
       `,
-        "other-popup.js": function() {
+        "other-popup.js": function () {
           console.log("Other popup log");
 
           const style = document.createElement("style");
@@ -134,7 +136,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
     document
   );
 
-  const { devtoolsTab, devtoolsWindow } = await openAboutDevtoolsToolbox(
+  const { devtoolsWindow } = await openAboutDevtoolsToolbox(
     document,
     tab,
     window,
@@ -146,16 +148,15 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
 
   info("Trigger some code in the background page logging some stuff");
   const onMessage = waitUntil(() => {
-    return (
-      findMessagesByType(hud, "Background page exception", ".error").length > 0
-    );
+    return !!findMessagesByType(hud, "Background page exception", ".error")
+      .length;
   });
   hud.ui.wrapper.dispatchEvaluateExpression("myWebExtensionAddonFunction()");
   await onMessage;
 
   info("Open the two add-ons popups to cover popups messages");
   const onPopupMessage = waitUntil(() => {
-    return findMessagesByType(hud, "Popup exception", ".error").length > 0;
+    return !!findMessagesByType(hud, "Popup exception", ".error").length;
   });
   clickOnAddonWidget(OTHER_ADDON_ID);
   clickOnAddonWidget(ADDON_ID);
@@ -229,9 +230,8 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
 
   // Verify that console evaluations still work after reloading the page
   info("Reload the webextension document");
-  const {
-    onDomCompleteResource,
-  } = await waitForNextTopLevelDomCompleteResource(toolbox.commands);
+  const { onDomCompleteResource } =
+    await waitForNextTopLevelDomCompleteResource(toolbox.commands);
   hud.ui.wrapper.dispatchEvaluateExpression("location.reload()");
   await onDomCompleteResource;
 
@@ -251,7 +251,7 @@ add_task(async function testWebExtensionsToolboxWebConsole() {
   // And we received the evaluation result
   await onEvaluationResultAfterReload;
 
-  await closeAboutDevtoolsToolbox(document, devtoolsTab, window);
+  await closeWebExtAboutDevtoolsToolbox(devtoolsWindow, window);
 
   // Note that it seems to be important to remove the addons in the reverse order
   // from which they were installed...
@@ -272,6 +272,7 @@ add_task(async function testWebExtensionNoBgScript() {
         browser_action: {
           default_title: "WebExtension Popup Only",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -286,7 +287,7 @@ add_task(async function testWebExtensionNoBgScript() {
           </body>
         </html>
       `,
-        "popup.js": function() {
+        "popup.js": function () {
           console.log("Popup-only log");
 
           const style = document.createElement("style");
@@ -302,7 +303,7 @@ add_task(async function testWebExtensionNoBgScript() {
     document
   );
 
-  const { devtoolsTab, devtoolsWindow } = await openAboutDevtoolsToolbox(
+  const { devtoolsWindow } = await openAboutDevtoolsToolbox(
     document,
     tab,
     window,
@@ -314,7 +315,7 @@ add_task(async function testWebExtensionNoBgScript() {
 
   info("Open the add-on popup");
   const onPopupMessage = waitUntil(() => {
-    return findMessagesByType(hud, "Popup-only exception", ".error").length > 0;
+    return !!findMessagesByType(hud, "Popup-only exception", ".error").length;
   });
   clickOnAddonWidget(POPUPONLY_ADDON_ID);
   await onPopupMessage;
@@ -341,7 +342,7 @@ add_task(async function testWebExtensionNoBgScript() {
     "We get the addon's popup CSS error message"
   );
 
-  await closeAboutDevtoolsToolbox(document, devtoolsTab, window);
+  await closeWebExtAboutDevtoolsToolbox(devtoolsWindow, window);
   await removeTemporaryExtension(POPUPONLY_ADDON_NAME, document);
   await removeTab(tab);
 });
@@ -362,6 +363,7 @@ add_task(async function testWebExtensionTwoReloads() {
         browser_action: {
           default_title: "WebExtension with background script",
           default_popup: "popup.html",
+          default_area: "navbar",
         },
       },
       files: {
@@ -384,7 +386,7 @@ add_task(async function testWebExtensionTwoReloads() {
   // instead.
   const addonTarget = findDebugTargetByText(BACKGROUND_ADDON_NAME, document);
 
-  const { devtoolsTab, devtoolsWindow } = await openAboutDevtoolsToolbox(
+  const { devtoolsWindow } = await openAboutDevtoolsToolbox(
     document,
     tab,
     window,
@@ -432,7 +434,7 @@ add_task(async function testWebExtensionTwoReloads() {
   hud.ui.wrapper.dispatchEvaluateExpression("40+2");
   await waitUntil(() => findMessageByType(hud, "42", ".result"));
 
-  await closeAboutDevtoolsToolbox(document, devtoolsTab, window);
+  await closeWebExtAboutDevtoolsToolbox(devtoolsWindow, window);
   await removeTemporaryExtension(BACKGROUND_ADDON_NAME, document);
   await removeTab(tab);
 });

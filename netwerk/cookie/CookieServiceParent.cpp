@@ -4,6 +4,7 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 #include "CookieCommons.h"
+#include "CookieLogging.h"
 #include "mozilla/net/CookieService.h"
 #include "mozilla/net/CookieServiceParent.h"
 #include "mozilla/net/NeckoParent.h"
@@ -13,7 +14,9 @@
 #include "mozIThirdPartyUtil.h"
 #include "nsArrayUtils.h"
 #include "nsIChannel.h"
+#include "nsIEffectiveTLDService.h"
 #include "nsNetCID.h"
+#include "nsMixedContentBlocker.h"
 
 using namespace mozilla::ipc;
 
@@ -28,6 +31,10 @@ CookieServiceParent::CookieServiceParent() {
   // Get the CookieService instance directly, so we can call internal methods.
   mCookieService = CookieService::GetSingleton();
   NS_ASSERTION(mCookieService, "couldn't get nsICookieService");
+
+  mTLDService = do_GetService(NS_EFFECTIVETLDSERVICE_CONTRACTID);
+  MOZ_ALWAYS_TRUE(mTLDService);
+
   mProcessingCookie = false;
 }
 
@@ -40,11 +47,13 @@ void CookieServiceParent::RemoveBatchDeletedCookies(nsIArray* aCookieList) {
   nsTArray<OriginAttributes> attrsList;
   for (uint32_t i = 0; i < len; i++) {
     nsCOMPtr<nsICookie> xpcCookie = do_QueryElementAt(aCookieList, i);
-    auto* cookie = static_cast<Cookie*>(xpcCookie.get());
-    attrs = cookie->OriginAttributesRef();
-    cookieStruct = cookie->ToIPC();
-    if (cookie->IsHttpOnly()) {
-      // Child only needs to exist if an HttpOnly cookie exists, not its value
+    const auto& cookie = xpcCookie->AsCookie();
+    attrs = cookie.OriginAttributesRef();
+    cookieStruct = cookie.ToIPC();
+
+    // Child only needs to know HttpOnly cookies exists, not its value
+    // Same for Secure cookies going to a process for an insecure site.
+    if (cookie.IsHttpOnly() || !InsecureCookieOrSecureOrigin(cookie)) {
       cookieStruct.value() = "";
     }
     cookieStructList.AppendElement(cookieStruct);
@@ -55,24 +64,52 @@ void CookieServiceParent::RemoveBatchDeletedCookies(nsIArray* aCookieList) {
 
 void CookieServiceParent::RemoveAll() { Unused << SendRemoveAll(); }
 
-void CookieServiceParent::RemoveCookie(nsICookie* aCookie) {
-  auto* cookie = static_cast<Cookie*>(aCookie);
-  const OriginAttributes& attrs = cookie->OriginAttributesRef();
-  CookieStruct cookieStruct = cookie->ToIPC();
-  if (cookie->IsHttpOnly()) {
+void CookieServiceParent::RemoveCookie(const Cookie& cookie) {
+  const OriginAttributes& attrs = cookie.OriginAttributesRef();
+  CookieStruct cookieStruct = cookie.ToIPC();
+
+  // Child only needs to know HttpOnly cookies exists, not its value
+  // Same for Secure cookies going to a process for an insecure site.
+  if (cookie.IsHttpOnly() || !InsecureCookieOrSecureOrigin(cookie)) {
     cookieStruct.value() = "";
   }
   Unused << SendRemoveCookie(cookieStruct, attrs);
 }
 
-void CookieServiceParent::AddCookie(nsICookie* aCookie) {
-  auto* cookie = static_cast<Cookie*>(aCookie);
-  const OriginAttributes& attrs = cookie->OriginAttributesRef();
-  CookieStruct cookieStruct = cookie->ToIPC();
-  if (cookie->IsHttpOnly()) {
+void CookieServiceParent::AddCookie(const Cookie& cookie) {
+  const OriginAttributes& attrs = cookie.OriginAttributesRef();
+  CookieStruct cookieStruct = cookie.ToIPC();
+
+  // Child only needs to know HttpOnly cookies exists, not its value
+  // Same for Secure cookies going to a process for an insecure site.
+  if (cookie.IsHttpOnly() || !InsecureCookieOrSecureOrigin(cookie)) {
     cookieStruct.value() = "";
   }
   Unused << SendAddCookie(cookieStruct, attrs);
+}
+
+bool CookieServiceParent::ContentProcessHasCookie(const Cookie& cookie) {
+  nsCString baseDomain;
+  // CookieStorage notifications triggering this won't fail to get base domain
+  MOZ_ALWAYS_SUCCEEDS(CookieCommons::GetBaseDomainFromHost(
+      mTLDService, cookie.Host(), baseDomain));
+
+  CookieKey cookieKey(baseDomain, cookie.OriginAttributesRef());
+  return mCookieKeysInContent.MaybeGet(cookieKey).isSome();
+}
+
+bool CookieServiceParent::InsecureCookieOrSecureOrigin(const Cookie& cookie) {
+  nsCString baseDomain;
+  // CookieStorage notifications triggering this won't fail to get base domain
+  MOZ_ALWAYS_SUCCEEDS(CookieCommons::GetBaseDomainFromHost(
+      mTLDService, cookie.Host(), baseDomain));
+
+  // cookie is insecure or cookie is associated with a secure-origin process
+  CookieKey cookieKey(baseDomain, cookie.OriginAttributesRef());
+  if (Maybe<bool> allowSecure = mCookieKeysInContent.MaybeGet(cookieKey)) {
+    return (!cookie.IsSecure() || *allowSecure);
+  }
+  return false;
 }
 
 void CookieServiceParent::TrackCookieLoad(nsIChannel* aChannel) {
@@ -89,7 +126,6 @@ void CookieServiceParent::TrackCookieLoad(nsIChannel* aChannel) {
   StoragePrincipalHelper::PrepareEffectiveStoragePrincipalOriginAttributes(
       aChannel, attrs);
 
-  // Send matching cookies to Child.
   nsCOMPtr<mozIThirdPartyUtil> thirdPartyUtil;
   thirdPartyUtil = do_GetService(THIRDPARTYUTIL_CONTRACTID);
 
@@ -97,6 +133,9 @@ void CookieServiceParent::TrackCookieLoad(nsIChannel* aChannel) {
   ThirdPartyAnalysisResult result = thirdPartyUtil->AnalyzeChannel(
       aChannel, false, nullptr, nullptr, &rejectedReason);
 
+  UpdateCookieInContentList(uri, attrs);
+
+  // Send matching cookies to Child.
   nsTArray<Cookie*> foundCookieList;
   mCookieService->GetCookiesForURI(
       uri, aChannel, result.contains(ThirdPartyAnalysis::IsForeign),
@@ -104,22 +143,50 @@ void CookieServiceParent::TrackCookieLoad(nsIChannel* aChannel) {
       result.contains(ThirdPartyAnalysis::IsThirdPartySocialTrackingResource),
       result.contains(ThirdPartyAnalysis::IsStorageAccessPermissionGranted),
       rejectedReason, isSafeTopLevelNav, isSameSiteForeign,
-      hadCrossSiteRedirects, false, attrs, foundCookieList);
+      hadCrossSiteRedirects, false, true, attrs, foundCookieList);
   nsTArray<CookieStruct> matchingCookiesList;
-  SerialializeCookieList(foundCookieList, matchingCookiesList);
+  SerializeCookieList(foundCookieList, matchingCookiesList, uri);
   Unused << SendTrackCookiesLoad(matchingCookiesList, attrs);
 }
 
+// we append outgoing cookie info into a list here so the ContentParent can
+// filter cookies passing to unnecessary ContentProcesses
+void CookieServiceParent::UpdateCookieInContentList(
+    nsIURI* uri, const OriginAttributes& originAttrs) {
+  nsCString baseDomain;
+  bool requireAHostMatch = false;
+
+  // prevent malformed urls from being added to the cookie list
+  if (NS_WARN_IF(NS_FAILED(CookieCommons::GetBaseDomain(
+          mTLDService, uri, baseDomain, requireAHostMatch)))) {
+    return;
+  }
+
+  CookieKey cookieKey(baseDomain, originAttrs);
+  bool& allowSecure = mCookieKeysInContent.LookupOrInsert(cookieKey, false);
+  allowSecure =
+      allowSecure || nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(uri);
+}
+
 // static
-void CookieServiceParent::SerialializeCookieList(
+void CookieServiceParent::SerializeCookieList(
     const nsTArray<Cookie*>& aFoundCookieList,
-    nsTArray<CookieStruct>& aCookiesList) {
+    nsTArray<CookieStruct>& aCookiesList, nsIURI* aHostURI) {
   for (uint32_t i = 0; i < aFoundCookieList.Length(); i++) {
     Cookie* cookie = aFoundCookieList.ElementAt(i);
     CookieStruct* cookieStruct = aCookiesList.AppendElement();
     *cookieStruct = cookie->ToIPC();
+
+    // clear http-only cookie values
     if (cookie->IsHttpOnly()) {
       // Value only needs to exist if an HttpOnly cookie exists.
+      cookieStruct->value() = "";
+    }
+
+    // clear secure cookie values in insecure context
+    bool potentiallyTurstworthy =
+        nsMixedContentBlocker::IsPotentiallyTrustworthyOrigin(aHostURI);
+    if (cookie->IsSecure() && !potentiallyTurstworthy) {
       cookieStruct->value() = "";
     }
   }
@@ -138,6 +205,10 @@ IPCResult CookieServiceParent::RecvPrepareCookieList(
     return IPC_FAIL(this, "aHost must not be null");
   }
 
+  // we append outgoing cookie info into a list here so the ContentParent can
+  // filter cookies that do not need to go to certain ContentProcesses
+  UpdateCookieInContentList(aHost, aAttrs);
+
   nsTArray<Cookie*> foundCookieList;
   // Note: passing nullptr as aChannel to GetCookiesForURI() here is fine since
   // this argument is only used for proper reporting of cookie loads, but the
@@ -146,9 +217,9 @@ IPCResult CookieServiceParent::RecvPrepareCookieList(
       aHost, nullptr, aIsForeign, aIsThirdPartyTrackingResource,
       aIsThirdPartySocialTrackingResource, aStorageAccessPermissionGranted,
       aRejectedReason, aIsSafeTopLevelNav, aIsSameSiteForeign,
-      aHadCrossSiteRedirects, false, aAttrs, foundCookieList);
+      aHadCrossSiteRedirects, false, true, aAttrs, foundCookieList);
   nsTArray<CookieStruct> matchingCookiesList;
-  SerialializeCookieList(foundCookieList, matchingCookiesList);
+  SerializeCookieList(foundCookieList, matchingCookiesList, aHost);
   Unused << SendTrackCookiesLoad(matchingCookiesList, aAttrs);
   return IPC_OK();
 }

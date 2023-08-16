@@ -47,7 +47,6 @@ class xpcAccessible : public nsIAccessible {
   NS_IMETHOD GetName(nsAString& aName) final;
   NS_IMETHOD GetLanguage(nsAString& aLanguage) final;
   NS_IMETHOD GetValue(nsAString& aValue) final;
-  NS_IMETHOD GetHelp(nsAString& aHelp) final;
 
   NS_IMETHOD GetAccessKey(nsAString& aAccessKey) final;
   NS_IMETHOD GetKeyboardShortcut(nsAString& aKeyBinding) final;
@@ -92,6 +91,8 @@ class xpcAccessible : public nsIAccessible {
                            int32_t aY) final;
 
   NS_IMETHOD Announce(const nsAString& aAnnouncement, uint16_t aPriority) final;
+
+  NS_IMETHOD GetComputedARIARole(nsAString& aRole) final;
 
  protected:
   xpcAccessible() {}

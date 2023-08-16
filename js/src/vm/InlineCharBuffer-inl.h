@@ -7,6 +7,8 @@
 #ifndef vm_InlineCharBuffer_inl_h
 #define vm_InlineCharBuffer_inl_h
 
+#include "vm/JSAtomUtils.h"
+
 #include "vm/StringType-inl.h"
 
 namespace js {
@@ -110,9 +112,8 @@ class MOZ_NON_PARAM InlineCharBuffer {
     return true;
   }
 
-  JSString* toStringDontDeflate(
-      JSContext* cx, size_t length,
-      js::gc::InitialHeap heap = js::gc::DefaultHeap) {
+  JSString* toStringDontDeflate(JSContext* cx, size_t length,
+                                js::gc::Heap heap = js::gc::Heap::Default) {
     MOZ_ASSERT(length == lastRequestedLength);
 
     if (JSInlineString::lengthFits<CharT>(length)) {
@@ -136,7 +137,7 @@ class MOZ_NON_PARAM InlineCharBuffer {
   }
 
   JSString* toString(JSContext* cx, size_t length,
-                     js::gc::InitialHeap heap = js::gc::DefaultHeap) {
+                     js::gc::Heap heap = js::gc::Heap::Default) {
     MOZ_ASSERT(length == lastRequestedLength);
 
     if (JSInlineString::lengthFits<CharT>(length)) {
@@ -151,6 +152,11 @@ class MOZ_NON_PARAM InlineCharBuffer {
                "heap storage was not allocated for non-inline string");
 
     return NewString<CanGC>(cx, std::move(heapStorage), length, heap);
+  }
+
+  JSAtom* toAtom(JSContext* cx, size_t length) {
+    MOZ_ASSERT(length == lastRequestedLength);
+    return AtomizeChars(cx, get(), length);
   }
 };
 

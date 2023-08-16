@@ -23,7 +23,7 @@ const EAGER_EVALUATION_PREF = "devtools.webconsole.input.eagerEvaluation";
 // Basic testing of eager evaluation functionality. Expressions which can be
 // eagerly evaluated should show their results, and expressions with side
 // effects should not perform those side effects.
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
 
   // Do an evaluation to populate $_
@@ -107,6 +107,9 @@ add_task(async function() {
 
   setInputValue(hud, "4 + 7");
   await waitForEagerEvaluationResult(hud, "11");
+
+  // go back to inline layout.
+  await toggleLayout(hud);
 
   setInputValue(hud, "typeof new Proxy({}, {})");
   await waitForEagerEvaluationResult(hud, `"object"`);
@@ -236,12 +239,14 @@ add_task(async function() {
   setInputValue(hud, "array");
   await waitForEagerEvaluationResult(hud, "Array(3) [ 1, 2, 3 ]");
 
-  // go back to inline layout.
-  await toggleLayout(hud);
+  info("Check that top-level await expression are not evaluated");
+  setInputValue(hud, "await 1; 2 + 3;");
+  await waitForNoEagerEvaluationResult(hud);
+  ok(true, "instant evaluation is disabled for top-level await expressions");
 });
 
 // Test that the currently selected autocomplete result is eagerly evaluated.
-add_task(async function() {
+add_task(async function () {
   const hud = await openNewTabAndConsole(TEST_URI);
   const { jsterm } = hud;
 
@@ -293,7 +298,7 @@ add_task(async function() {
 });
 
 // Test that the setting works as expected.
-add_task(async function() {
+add_task(async function () {
   // start with the pref off.
   await pushPref(EAGER_EVALUATION_PREF, false);
   const hud = await openNewTabAndConsole(TEST_URI);
@@ -353,7 +358,7 @@ add_task(async function() {
 });
 
 // Test that the console instant evaluation is updated on page navigation
-add_task(async function() {
+add_task(async function () {
   const start_uri = "data:text/html, Start uri";
   const new_uri = "data:text/html, Test console refresh instant value";
   const hud = await openNewTabAndConsole(start_uri);

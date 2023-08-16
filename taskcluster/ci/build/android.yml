@@ -46,6 +46,7 @@ job-defaults:
         toolchain:
             - android-ndk-linux
             - android-sdk-linux
+            - linux64-binutils
             - linux64-jdk
             - linux64-rust-android
             - linux64-rust-size
@@ -132,30 +133,6 @@ android-x86-lite/opt:
             - linux64-sccache
             - android-gradle-dependencies-lite
 
-android-x86-fuzzing/debug:
-    description: "Android x86 Fuzzing Debug"
-    index:
-        job-name: android-x86-fuzzing-debug
-    treeherder:
-        platform: android-4-1-x86/debug
-        symbol: Bf
-    worker-type: b-linux-gcp
-    worker:
-        env:
-            TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
-    run:
-        actions: [get-secrets, build]
-        config: ["builds/releng_base_android_64_builds.py"]
-        custom-build-variant-cfg: x86-fuzzing-debug
-    use-sccache: true
-    fetches:
-        toolchain:
-            - linux64-clang
-            - linux64-sccache
-            - android-gradle-dependencies
-    optimization:
-        skip-unless-expanded: null
-
 android-x86-shippable/opt:
     description: "Android 5.0 x86 Shippable"
     use-pgo: true
@@ -171,7 +148,7 @@ android-x86-shippable/opt:
         platform: android-5-0-x86-shippable/opt
         symbol: B
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
@@ -202,7 +179,7 @@ android-x86-shippable-lite/opt:
         platform: android-4-1-x86-shippable-lite/opt
         symbol: Bl
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
@@ -284,7 +261,7 @@ android-arm-shippable/opt:
         platform: android-5-0-armv7-shippable/opt
         symbol: Bpgo(B)
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
@@ -315,7 +292,7 @@ android-arm-shippable-lite/opt:
         platform: android-4-1-armv7-shippable-lite/opt
         symbol: Bpgo(Bl)
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
@@ -423,7 +400,7 @@ android-aarch64-shippable/opt:
         platform: android-5-0-aarch64-shippable/opt
         symbol: Bpgo(B)
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
@@ -454,7 +431,7 @@ android-aarch64-shippable-lite/opt:
         platform: android-5-0-aarch64-shippable-lite/opt
         symbol: Bpgo(Bl)
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android/releng.manifest"
@@ -524,6 +501,31 @@ android-x86_64-lite/opt:
             - linux64-sccache
             - android-gradle-dependencies-lite
 
+android-x86_64-fuzzing/debug:
+    description: "Android x86_64 Fuzzing Debug"
+    index:
+        job-name: android-x86_64-fuzzing-debug
+    treeherder:
+        platform: android-5-0-x86_64/debug
+        symbol: Bf
+    worker-type: b-linux-gcp
+    worker:
+        env:
+            TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
+            PERFHERDER_EXTRA_OPTIONS: fuzzing
+    run:
+        actions: [get-secrets, build]
+        config: ["builds/releng_base_android_64_builds.py"]
+        custom-build-variant-cfg: fuzzing-debug
+    use-sccache: true
+    fetches:
+        toolchain:
+            - linux64-clang
+            - linux64-sccache
+            - android-gradle-dependencies
+    optimization:
+        skip-unless-expanded: null
+
 android-x86_64-shippable/opt:
     description: "Android 5.0 x86-64 Shippable"
     use-pgo: true
@@ -539,7 +541,7 @@ android-x86_64-shippable/opt:
         platform: android-5-0-x86_64-shippable/opt
         symbol: B
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"
@@ -570,7 +572,7 @@ android-x86_64-shippable-lite/opt:
         platform: android-5-0-x86_64-shippable-lite/opt
         symbol: Bl
     run-on-projects: ['release']
-    worker-type: b-linux
+    worker-type: b-linux-gcp
     worker:
         env:
             TOOLTOOL_MANIFEST: "mobile/android/config/tooltool-manifests/android-x86/releng.manifest"

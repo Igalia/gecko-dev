@@ -14,13 +14,16 @@
 #include "nsIAnonymousContentCreator.h"
 #include "nsIDOMEventListener.h"
 #include "nsCOMPtr.h"
+#include "nsTArray.h"
 
 class nsDisplayRangeFocusRing;
 
 namespace mozilla {
+class ListMutationObserver;
 class PresShell;
 namespace dom {
 class Event;
+class HTMLInputElement;
 }  // namespace dom
 }  // namespace mozilla
 
@@ -28,6 +31,9 @@ class nsRangeFrame final : public nsContainerFrame,
                            public nsIAnonymousContentCreator {
   friend nsIFrame* NS_NewRangeFrame(mozilla::PresShell* aPresShell,
                                     ComputedStyle* aStyle);
+
+  void Init(nsIContent* aContent, nsContainerFrame* aParent,
+            nsIFrame* aPrevInFlow) override;
 
   friend class nsDisplayRangeFocusRing;
 
@@ -109,6 +115,18 @@ class nsRangeFrame final : public nsContainerFrame,
     return GetWritingMode().IsPhysicalRTL();
   }
 
+  /**
+   * Returns true if the range progresses upwards (for vertical ranges in
+   * horizontal writing mode, or for bidi-RTL in vertical mode). Only
+   * relevant when IsHorizontal() is false.
+   */
+  bool IsUpwards() const {
+    MOZ_ASSERT(!IsHorizontal());
+    mozilla::WritingMode wm = GetWritingMode();
+    return wm.GetBlockDir() == mozilla::WritingMode::eBlockTB ||
+           wm.GetInlineDir() == mozilla::WritingMode::eInlineBTT;
+  }
+
   double GetMin() const;
   double GetMax() const;
   double GetValue() const;
@@ -120,6 +138,14 @@ class nsRangeFrame final : public nsContainerFrame,
    * maximum).
    */
   double GetValueAsFractionOfRange();
+
+  /**
+   * Returns the given value as a fraction of the difference between the input's
+   * minimum and its maximum (i.e. returns 0.0 when the value is the same as the
+   * input's minimum, and returns 1.0 when the value is the same as the input's
+   * maximum).
+   */
+  double GetDoubleAsFractionOfRange(const mozilla::Decimal& value);
 
   /**
    * Returns whether the frame and its child should use the native style.
@@ -136,6 +162,17 @@ class nsRangeFrame final : public nsContainerFrame,
    * frames.)
    */
   void UpdateForValueChange();
+
+  nsTArray<mozilla::Decimal> TickMarks();
+
+  /**
+   * Returns the given value's offset from the range's nearest list tick mark
+   * or NaN if there are no tick marks.
+   */
+  mozilla::Decimal NearestTickMark(const mozilla::Decimal& aValue);
+
+ protected:
+  mozilla::dom::HTMLInputElement& InputElement() const;
 
  private:
   // Return our preferred size in the cross-axis (the axis perpendicular
@@ -174,6 +211,12 @@ class nsRangeFrame final : public nsContainerFrame,
    * @see nsRangeFrame::CreateAnonymousContent
    */
   nsCOMPtr<Element> mThumbDiv;
+
+  /**
+   * This mutation observer is used to invalidate paint when the @list changes,
+   * when a @list exists.
+   */
+  RefPtr<mozilla::ListMutationObserver> mListMutationObserver;
 };
 
 #endif

@@ -4,8 +4,8 @@
 
 /* import-globals-from ../../../../../toolkit/components/satchel/test/satchel_common.js */
 
-const { LoginTestUtils } = SpecialPowers.ChromeUtils.import(
-  "resource://testing-common/LoginTestUtils.jsm"
+const { LoginTestUtils } = SpecialPowers.ChromeUtils.importESModule(
+  "resource://testing-common/LoginTestUtils.sys.mjs"
 );
 const Services = SpecialPowers.Services;
 
@@ -16,14 +16,12 @@ LoginTestUtils.setAssertReporter(
   })
 );
 
-const { LoginHelper } = SpecialPowers.ChromeUtils.import(
-  "resource://gre/modules/LoginHelper.jsm"
+const { LoginHelper } = SpecialPowers.ChromeUtils.importESModule(
+  "resource://gre/modules/LoginHelper.sys.mjs"
 );
 
-const {
-  LENGTH: GENERATED_PASSWORD_LENGTH,
-  REGEX: GENERATED_PASSWORD_REGEX,
-} = LoginTestUtils.generation;
+const { LENGTH: GENERATED_PASSWORD_LENGTH, REGEX: GENERATED_PASSWORD_REGEX } =
+  LoginTestUtils.generation;
 const LOGIN_FIELD_UTILS = LoginTestUtils.loginField;
 const TESTS_DIR = "/tests/toolkit/components/passwordmgr/test/";
 
@@ -40,36 +38,6 @@ let authPromptIsCommonDialog =
       "prompts.tabChromePromptSubDialog",
       false
     ));
-
-/**
- * Returns the element with the specified |name| attribute.
- */
-function $_(formNum, name) {
-  var form = document.getElementById("form" + formNum);
-  if (!form) {
-    ok(false, "$_ couldn't find requested form " + formNum);
-    return null;
-  }
-
-  var element = form.querySelector(`:is([name="${name}"], [id="${name}"])`);
-  if (!element) {
-    ok(false, `$_ couldn't find requested element "${name}"`);
-    return null;
-  }
-
-  // Note that namedItem is a bit stupid, and will prefer an
-  // |id| attribute over a |name| attribute when looking for
-  // the element. Login Mananger happens to use .namedItem
-  // anyway, but let's rigorously check it here anyway so
-  // that we don't end up with tests that mistakenly pass.
-
-  if (element.getAttribute("name") != name) {
-    ok(false, "$_ got confused.");
-    return null;
-  }
-
-  return element;
-}
 
 /**
  * Recreate a DOM tree using the outerHTML to ensure that any event listeners
@@ -130,6 +98,17 @@ function checkAutoCompleteResults(actualValues, expectedValues, hostname, msg) {
 
   // Check the rest of the autocomplete item values.
   _checkArrayValues(actualValues.slice(0, -1), expectedValues, msg);
+}
+
+/**
+ * Wait for autocomplete popup to get closed
+ * @return {Promise} resolving when the AC popup is closed
+ */
+async function untilAutocompletePopupClosed() {
+  return SimpleTest.promiseWaitForCondition(async () => {
+    const popupState = await getPopupState();
+    return !popupState.open;
+  }, "Wait for autocomplete popup to be closed");
 }
 
 function getIframeBrowsingContext(window, iframeNumber = 0) {
@@ -213,6 +192,132 @@ function getPasswordEditedMessage() {
 }
 
 /**
+ * Create a login form and insert into contents dom (identified by id
+ * `content`). If the form (identified by its number) is already present in the
+ * dom, it gets replaced.
+ *
+ * @param {number} [num = 1] - number of the form, used as id, eg `form1`
+ * @param {string} [action = ""] - action attribute of the form
+ * @param {string} [autocomplete  = null] - forms autocomplete attribute. Default is none
+ * @param {object} [username = {}] - object describing attributes to the username field:
+ * @param {string} [username.id = null] - id of the field
+ * @param {string} [username.name = "uname"] - name attribute
+ * @param {string} [username.type = "text"] - type of the field
+ * @param {string} [username.value = null] - initial value of the field
+ * @param {string} [username.autocomplete = null] - autocomplete attribute
+ * @param {object} [password = {}] - an object describing attributes to the password field. If falsy, do not create a password field
+ * @param {string} [password.id = null] - id of the field
+ * @param {string} [password.name = "pword"] - name attribute
+ * @param {string} [password.type = "password"] - type of the field
+ * @param {string} [password.value = null] - initial value of the field
+ * @param {string} [password.label = null] - if present, wrap field in a label containing its value
+ * @param {string} [password.autocomplete = null] - autocomplete attribute
+ *
+ * @return {HTMLDomElement} the form
+ */
+function createLoginForm({
+  num = 1,
+  action = "",
+  autocomplete = null,
+  username = {},
+  password = {},
+} = {}) {
+  username.name ||= "uname";
+  username.type ||= "text";
+  username.id ||= null;
+  username.value ||= null;
+  username.autocomplete ||= null;
+
+  password.name ||= "pword";
+  password.type ||= "password";
+  password.id ||= null;
+  password.value ||= null;
+  password.label ||= null;
+  password.autocomplete ||= null;
+  password.readonly ||= null;
+  password.disabled ||= null;
+
+  info(
+    `Creating login form ${JSON.stringify({ num, action, username, password })}`
+  );
+
+  const form = document.createElement("form");
+  form.id = `form${num}`;
+  form.action = action;
+  form.onsubmit = () => false;
+
+  if (autocomplete != null) {
+    form.setAttribute("autocomplete", autocomplete);
+  }
+
+  const usernameInput = document.createElement("input");
+
+  usernameInput.type = username.type;
+  usernameInput.name = username.name;
+
+  if (username.id != null) {
+    usernameInput.id = username.id;
+  }
+  if (username.value != null) {
+    usernameInput.value = username.value;
+  }
+  if (username.autocomplete != null) {
+    usernameInput.setAttribute("autocomplete", username.autocomplete);
+  }
+
+  form.appendChild(usernameInput);
+
+  if (password) {
+    const passwordInput = document.createElement("input");
+
+    passwordInput.type = password.type;
+    passwordInput.name = password.name;
+
+    if (password.id != null) {
+      passwordInput.id = password.id;
+    }
+    if (password.value != null) {
+      passwordInput.value = password.value;
+    }
+    if (password.autocomplete != null) {
+      passwordInput.setAttribute("autocomplete", password.autocomplete);
+    }
+    if (password.readonly != null) {
+      passwordInput.setAttribute("readonly", password.readonly);
+    }
+    if (password.disabled != null) {
+      passwordInput.setAttribute("disabled", password.disabled);
+    }
+
+    if (password.label != null) {
+      const passwordLabel = document.createElement("label");
+      passwordLabel.innerText = password.label;
+      passwordLabel.appendChild(passwordInput);
+      form.appendChild(passwordLabel);
+    } else {
+      form.appendChild(passwordInput);
+    }
+  }
+
+  const submitButton = document.createElement("button");
+  submitButton.type = "submit";
+  submitButton.name = "submit";
+  submitButton.innerText = "Submit";
+  form.appendChild(submitButton);
+
+  const content = document.getElementById("content");
+
+  const oldForm = document.getElementById(form.id);
+  if (oldForm) {
+    content.replaceChild(form, oldForm);
+  } else {
+    content.appendChild(form);
+  }
+
+  return form;
+}
+
+/**
  * Check for expected username/password in form.
  * @see `checkForm` below for a similar function.
  */
@@ -235,6 +340,67 @@ function checkLoginForm(
   );
 }
 
+/**
+ * Check repeatedly for a while to see if a particular condition still applies.
+ * This function checks the return value of `condition` repeatedly until either
+ * the condition has a falsy return value, or `retryTimes` is exceeded.
+ */
+
+function ensureCondition(
+  condition,
+  errorMsg = "Condition did not last.",
+  retryTimes = 10
+) {
+  return new Promise((resolve, reject) => {
+    let tries = 0;
+    let conditionFailed = false;
+    let interval = setInterval(async function () {
+      try {
+        const conditionPassed = await condition();
+        conditionFailed ||= !conditionPassed;
+      } catch (e) {
+        ok(false, e + "\n" + e.stack);
+        conditionFailed = true;
+      }
+      if (conditionFailed || tries >= retryTimes) {
+        ok(!conditionFailed, errorMsg);
+        clearInterval(interval);
+        if (conditionFailed) {
+          reject(errorMsg);
+        } else {
+          resolve();
+        }
+      }
+      tries++;
+    }, 100);
+  });
+}
+
+/**
+ * Wait a while to ensure login form stays filled with username and password
+ * @see `checkLoginForm` below for a similar function.
+ * @returns a promise, resolving when done
+ *
+ * TODO: eventually get rid of this time based check, and transition to an
+ * event based approach. See Bug 1811142.
+ * Filling happens by `_fillForm()` which can report it's decision and we can
+ * wait for it. One of the options is to have `didFillFormAsync()` from
+ * https://phabricator.services.mozilla.com/D167214#change-3njWgUgqswws
+ */
+function ensureLoginFormStaysFilledWith(
+  usernameField,
+  expectedUsername,
+  passwordField,
+  expectedPassword
+) {
+  return ensureCondition(() => {
+    return (
+      Object.is(usernameField.value, expectedUsername) &&
+      Object.is(passwordField.value, expectedPassword)
+    );
+  }, `Ensuring form ${usernameField.parentNode.id} stays filled with "${expectedUsername}:${expectedPassword}"`);
+}
+
 function checkLoginFormInFrame(
   iframeBC,
   usernameFieldId,
@@ -251,12 +417,10 @@ function checkLoginFormInFrame(
       passwordFieldIdF,
       expectedPasswordF
     ) => {
-      let usernameField = this.content.document.getElementById(
-        usernameFieldIdF
-      );
-      let passwordField = this.content.document.getElementById(
-        passwordFieldIdF
-      );
+      let usernameField =
+        this.content.document.getElementById(usernameFieldIdF);
+      let passwordField =
+        this.content.document.getElementById(passwordFieldIdF);
 
       let formID = usernameField.parentNode.id;
       Assert.equal(
@@ -470,7 +634,7 @@ function checkUnmodifiedForm(formNum) {
  * @param existingPasswordFieldsCount the number of password fields
  * that begin on the test page.
  */
-function registerRunTests(existingPasswordFieldsCount = 0) {
+function registerRunTests(existingPasswordFieldsCount = 0, callback) {
   return new Promise(resolve => {
     function onDOMContentLoaded() {
       var form = document.createElement("form");
@@ -484,7 +648,11 @@ function registerRunTests(existingPasswordFieldsCount = 0) {
       form.appendChild(password);
 
       let foundForcer = false;
-      var observer = SpecialPowers.wrapCallback(function(subject, topic, data) {
+      var observer = SpecialPowers.wrapCallback(function (
+        subject,
+        topic,
+        data
+      ) {
         if (data === "observerforcer") {
           foundForcer = true;
         } else {
@@ -498,8 +666,7 @@ function registerRunTests(existingPasswordFieldsCount = 0) {
         SpecialPowers.removeObserver(observer, "passwordmgr-processed-form");
         form.remove();
         SimpleTest.executeSoon(() => {
-          var runTestEvent = new Event("runTests");
-          window.dispatchEvent(runTestEvent);
+          callback?.();
           resolve();
         });
       });
@@ -574,13 +741,16 @@ function promiseFormsProcessedInSameProcess(expectedCount = 1) {
  * This works across processes.
  */
 async function promiseFormsProcessed(expectedCount = 1) {
+  info(`waiting for ${expectedCount} forms to be processed`);
   var processedCount = 0;
   return new Promise(resolve => {
     PWMGR_COMMON_PARENT.addMessageListener(
       "formProcessed",
       function formProcessed() {
         processedCount++;
+        info(`processed form ${processedCount} of ${expectedCount}`);
         if (processedCount == expectedCount) {
+          info(`processing of ${expectedCount} forms complete`);
           PWMGR_COMMON_PARENT.removeMessageListener(
             "formProcessed",
             formProcessed
@@ -592,11 +762,11 @@ async function promiseFormsProcessed(expectedCount = 1) {
   });
 }
 
-async function loadFormIntoWindow(origin, html, win, task) {
+async function loadFormIntoWindow(origin, html, win, expectedCount = 1, task) {
   let loadedPromise = new Promise(resolve => {
     win.addEventListener(
       "load",
-      function(event) {
+      function (event) {
         if (event.target.location.href.endsWith("blank.html")) {
           resolve();
         }
@@ -605,117 +775,66 @@ async function loadFormIntoWindow(origin, html, win, task) {
     );
   });
 
-  let processedPromise = promiseFormsProcessed();
+  let processedPromise = promiseFormsProcessed(expectedCount);
   win.location =
     origin + "/tests/toolkit/components/passwordmgr/test/mochitest/blank.html";
   info(`Waiting for window to load for origin: ${origin}`);
   await loadedPromise;
 
-  await SpecialPowers.spawn(win, [html, task?.toString()], function(
-    contentHtml,
-    contentTask = null
-  ) {
-    // eslint-disable-next-line no-unsanitized/property
-    this.content.document.documentElement.innerHTML = contentHtml;
-    // Similar to the invokeContentTask helper in accessible/tests/browser/shared-head.js
-    if (contentTask) {
-      // eslint-disable-next-line no-eval
-      const runnableTask = eval(`
+  await SpecialPowers.spawn(
+    win,
+    [html, task?.toString()],
+    function (contentHtml, contentTask = null) {
+      // eslint-disable-next-line no-unsanitized/property
+      this.content.document.documentElement.innerHTML = contentHtml;
+      // Similar to the invokeContentTask helper in accessible/tests/browser/shared-head.js
+      if (contentTask) {
+        // eslint-disable-next-line no-eval
+        const runnableTask = eval(`
       (() => {
         return (${contentTask});
       })();`);
-      runnableTask.call(this);
+        runnableTask.call(this);
+      }
     }
-  });
+  );
 
   info("Waiting for the form to be processed");
   await processedPromise;
 }
 
-function getTelemetryEvents(options) {
-  return new Promise(resolve => {
-    PWMGR_COMMON_PARENT.addMessageListener(
-      "getTelemetryEvents",
-      function gotResult(events) {
-        info(
-          "CONTENT: getTelemetryEvents gotResult: " + JSON.stringify(events)
-        );
-        PWMGR_COMMON_PARENT.removeMessageListener(
-          "getTelemetryEvents",
-          gotResult
-        );
-        resolve(events);
-      }
-    );
-    PWMGR_COMMON_PARENT.sendAsyncMessage("getTelemetryEvents", options);
-  });
+async function getTelemetryEvents(options) {
+  let events = await PWMGR_COMMON_PARENT.sendQuery(
+    "getTelemetryEvents",
+    options
+  );
+  info("CONTENT: getTelemetryEvents gotResult: " + JSON.stringify(events));
+  return events;
 }
 
 function loadRecipes(recipes) {
   info("Loading recipes");
-  return new Promise(resolve => {
-    PWMGR_COMMON_PARENT.addMessageListener("loadedRecipes", function loaded() {
-      PWMGR_COMMON_PARENT.removeMessageListener("loadedRecipes", loaded);
-      resolve(recipes);
-    });
-    PWMGR_COMMON_PARENT.sendAsyncMessage("loadRecipes", recipes);
-  });
+  return PWMGR_COMMON_PARENT.sendQuery("loadRecipes", recipes);
 }
 
 function resetRecipes() {
   info("Resetting recipes");
-  return new Promise(resolve => {
-    PWMGR_COMMON_PARENT.addMessageListener("recipesReset", function reset() {
-      PWMGR_COMMON_PARENT.removeMessageListener("recipesReset", reset);
-      resolve();
-    });
-    PWMGR_COMMON_PARENT.sendAsyncMessage("resetRecipes");
-  });
+  return PWMGR_COMMON_PARENT.sendQuery("resetRecipes");
 }
 
-function resetWebsitesWithSharedCredential() {
-  info("Resetting the 'websites-with-shared-credential-backend' collection");
-  return new Promise(resolve => {
-    PWMGR_COMMON_PARENT.addMessageListener(
-      "resetWebsitesWithSharedCredential",
-      function reset() {
-        PWMGR_COMMON_PARENT.removeMessageListener(
-          "resetWebsitesWithSharedCredential",
-          reset
-        );
-        resolve();
-      }
-    );
-    PWMGR_COMMON_PARENT.sendAsyncMessage("resetWebsitesWithSharedCredential");
+async function promiseStorageChanged(expectedChangeTypes) {
+  let result = await PWMGR_COMMON_PARENT.sendQuery("storageChanged", {
+    expectedChangeTypes,
   });
+
+  if (result) {
+    ok(false, result);
+  }
 }
 
-function promiseStorageChanged(expectedChangeTypes) {
-  return new Promise((resolve, reject) => {
-    function onStorageChanged({ topic, data }) {
-      let changeType = expectedChangeTypes.shift();
-      is(data, changeType, "Check expected passwordmgr-storage-changed type");
-      if (expectedChangeTypes.length === 0) {
-        PWMGR_COMMON_PARENT.removeMessageListener(
-          "storageChanged",
-          onStorageChanged
-        );
-        resolve();
-      }
-    }
-    PWMGR_COMMON_PARENT.addMessageListener("storageChanged", onStorageChanged);
-  });
-}
-
-function promisePromptShown(expectedTopic) {
-  return new Promise((resolve, reject) => {
-    function onPromptShown({ topic, data }) {
-      is(topic, expectedTopic, "Check expected prompt topic");
-      PWMGR_COMMON_PARENT.removeMessageListener("promptShown", onPromptShown);
-      resolve();
-    }
-    PWMGR_COMMON_PARENT.addMessageListener("promptShown", onPromptShown);
-  });
+async function promisePromptShown(expectedTopic) {
+  let topic = await PWMGR_COMMON_PARENT.sendQuery("promptShown");
+  is(topic, expectedTopic, "Check expected prompt topic");
 }
 
 /**
@@ -733,31 +852,52 @@ function runInParent(aFunctionOrURL) {
   return chromeScript;
 }
 
-/** Initialize with a list of logins. The logins are added within the parent chrome process.
- * @param {array} aLogins - a list of logins to add. Each login is an array of the arguments
- *                          that would be passed to nsLoginInfo.init().
- */
-function addLoginsInParent(...aLogins) {
-  let script = runInParent(function addLoginsInParentInner() {
+/** Manage logins in parent chrome process.
+ * */
+function manageLoginsInParent() {
+  return runInParent(function addLoginsInParentInner() {
     /* eslint-env mozilla/chrome-script */
-    addMessageListener("addLogins", logins => {
+    addMessageListener("removeAllUserFacingLogins", () => {
+      Services.logins.removeAllUserFacingLogins();
+    });
+
+    /* eslint-env mozilla/chrome-script */
+    addMessageListener("addLogins", async logins => {
       let nsLoginInfo = Components.Constructor(
         "@mozilla.org/login-manager/loginInfo;1",
         Ci.nsILoginInfo,
         "init"
       );
 
-      for (let login of logins) {
-        let loginInfo = new nsLoginInfo(...login);
-        try {
-          Services.logins.addLogin(loginInfo);
-        } catch (e) {
-          assert.ok(false, "addLogin threw: " + e);
-        }
+      const loginInfos = logins.map(login => new nsLoginInfo(...login));
+      try {
+        await Services.logins.addLogins(loginInfos);
+      } catch (e) {
+        assert.ok(false, "addLogins threw: " + e);
       }
     });
   });
-  script.sendQuery("addLogins", aLogins);
+}
+
+/** Initialize with a list of logins. The logins are added within the parent chrome process.
+ * @param {array} aLogins - a list of logins to add. Each login is an array of the arguments
+ *                          that would be passed to nsLoginInfo.init().
+ */
+async function addLoginsInParent(...aLogins) {
+  const script = manageLoginsInParent();
+  await script.sendQuery("addLogins", aLogins);
+  return script;
+}
+
+/** Initialize with a list of logins, after removing all user facing logins.
+ * The logins are added within the parent chrome process.
+ * @param {array} aLogins - a list of logins to add. Each login is an array of the arguments
+ *                          that would be passed to nsLoginInfo.init().
+ */
+async function setStoredLoginsAsync(...aLogins) {
+  const script = manageLoginsInParent();
+  script.sendQuery("removeAllUserFacingLogins");
+  await script.sendQuery("addLogins", aLogins);
   return script;
 }
 
@@ -791,21 +931,20 @@ function setFormAndWaitForFieldFilled(
 }
 
 /**
- * Run commonInit synchronously in the parent then run the test function after the runTests event.
+ * Run commonInit synchronously in the parent then run the test function if supplied.
  *
  * @param {Function} aFunction The test function to run
  */
-function runChecksAfterCommonInit(aFunction = null) {
+async function runChecksAfterCommonInit(aFunction = null) {
   SimpleTest.waitForExplicitFinish();
-  if (aFunction) {
-    window.addEventListener("runTests", aFunction);
-    PWMGR_COMMON_PARENT.addMessageListener("registerRunTests", () =>
-      registerRunTests()
-    );
-  }
-  PWMGR_COMMON_PARENT.sendAsyncMessage("setupParent", {
+  await PWMGR_COMMON_PARENT.sendQuery("setupParent", {
     testDependsOnDeprecatedLogin: gTestDependsOnDeprecatedLogin,
   });
+
+  if (aFunction) {
+    await registerRunTests(0, aFunction);
+  }
+
   return PWMGR_COMMON_PARENT;
 }
 
@@ -823,8 +962,8 @@ SimpleTest.registerCleanupFunction(() => {
   runInParent(function cleanupParent() {
     /* eslint-env mozilla/chrome-script */
     // eslint-disable-next-line no-shadow
-    const { LoginManagerParent } = ChromeUtils.import(
-      "resource://gre/modules/LoginManagerParent.jsm"
+    const { LoginManagerParent } = ChromeUtils.importESModule(
+      "resource://gre/modules/LoginManagerParent.sys.mjs"
     );
 
     // Remove all logins and disabled hosts

@@ -65,6 +65,11 @@ class ChromeUtils {
   static already_AddRefed<devtools::HeapSnapshot> ReadHeapSnapshot(
       GlobalObject& global, const nsAString& filePath, ErrorResult& rv);
 
+  static bool IsDevToolsOpened();
+  static bool IsDevToolsOpened(GlobalObject& aGlobal);
+  static void NotifyDevToolsOpened(GlobalObject& aGlobal);
+  static void NotifyDevToolsClosed(GlobalObject& aGlobal);
+
   static void NondeterministicGetWeakMapKeys(
       GlobalObject& aGlobal, JS::Handle<JS::Value> aMap,
       JS::MutableHandle<JS::Value> aRetval, ErrorResult& aRv);
@@ -145,8 +150,7 @@ class ChromeUtils {
       const dom::CompileScriptOptionsDictionary& aOptions, ErrorResult& aRv);
 
   static MozQueryInterface* GenerateQI(const GlobalObject& global,
-                                       const Sequence<JS::Value>& interfaces,
-                                       ErrorResult& aRv);
+                                       const Sequence<JS::Value>& interfaces);
 
   static void WaiveXrays(GlobalObject& aGlobal, JS::Handle<JS::Value> aVal,
                          JS::MutableHandle<JS::Value> aRetval,
@@ -158,6 +162,9 @@ class ChromeUtils {
 
   static void GetClassName(GlobalObject& aGlobal, JS::Handle<JSObject*> aObj,
                            bool aUnwrap, nsAString& aRetval);
+
+  static bool IsDOMObject(GlobalObject& aGlobal, JS::Handle<JSObject*> aObj,
+                          bool aUnwrap);
 
   static void ShallowClone(GlobalObject& aGlobal, JS::Handle<JSObject*> aObj,
                            JS::Handle<JSObject*> aTarget,
@@ -182,9 +189,6 @@ class ChromeUtils {
 
   static void ClearStyleSheetCache(GlobalObject& aGlobal);
 
-  static already_AddRefed<Promise> RequestPerformanceMetrics(
-      GlobalObject& aGlobal, ErrorResult& aRv);
-
   static void SetPerfStatsCollectionMask(GlobalObject& aGlobal, uint64_t aMask);
 
   static already_AddRefed<Promise> CollectPerfStats(GlobalObject& aGlobal,
@@ -202,8 +206,14 @@ class ChromeUtils {
 
   static void ImportESModule(const GlobalObject& aGlobal,
                              const nsAString& aResourceURI,
+                             const ImportESModuleOptionsDictionary& aOptions,
                              JS::MutableHandle<JSObject*> aRetval,
                              ErrorResult& aRv);
+
+  static void DefineLazyGetter(const GlobalObject& aGlobal,
+                               JS::Handle<JSObject*> aTarget,
+                               JS::Handle<JS::Value> aName,
+                               JS::Handle<JSObject*> aLambda, ErrorResult& aRv);
 
   static void DefineModuleGetter(const GlobalObject& global,
                                  JS::Handle<JSObject*> target,
@@ -215,6 +225,10 @@ class ChromeUtils {
                                     JS::Handle<JSObject*> target,
                                     JS::Handle<JSObject*> modules,
                                     ErrorResult& aRv);
+
+#ifdef XP_UNIX
+  static void GetLibcConstants(const GlobalObject&, LibcConstants& aConsts);
+#endif
 
   static void GetCallerLocation(const GlobalObject& global,
                                 nsIPrincipal* principal,
@@ -237,6 +251,8 @@ class ChromeUtils {
   static double LastExternalProtocolIframeAllowed(GlobalObject& aGlobal);
 
   static void ResetLastExternalProtocolIframeAllowed(GlobalObject& aGlobal);
+
+  static void EndWheelTransaction(GlobalObject& aGlobal);
 
   static void RegisterWindowActor(const GlobalObject& aGlobal,
                                   const nsACString& aName,
@@ -278,6 +294,22 @@ class ChromeUtils {
       nsTArray<FormAutofillConfidences>& aResults, ErrorResult& aRv);
 
   static bool IsDarkBackground(GlobalObject&, Element&);
+
+  static double DateNow(GlobalObject&);
+
+  static void EnsureJSOracleStarted(GlobalObject&);
+
+  static unsigned AliveUtilityProcesses(const GlobalObject&);
+
+  static void GetAllPossibleUtilityActorNames(GlobalObject& aGlobal,
+                                              nsTArray<nsCString>& aNames);
+
+  static bool ShouldResistFingerprinting(GlobalObject& aGlobal,
+                                         JSRFPTarget aTarget);
+
+ private:
+  // Number of DevTools session debugging the current process
+  static std::atomic<uint32_t> sDevToolsOpenedCount;
 };
 
 }  // namespace dom

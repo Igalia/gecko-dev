@@ -15,6 +15,7 @@
 #include "RemoteVideoDecoder.h"
 #include "VideoUtils.h"  // for MediaThreadType
 #include "mozilla/RDDParent.h"
+#include "mozilla/RemoteDecodeUtils.h"
 #include "mozilla/ipc/UtilityProcessChild.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/gfx/GPUParent.h"
@@ -27,7 +28,14 @@
 #  include "MFMediaEngineParent.h"
 #endif
 
+#ifdef MOZ_WMF_CDM
+#  include "MFCDMParent.h"
+#endif
+
 namespace mozilla {
+
+#define LOG(msg, ...) \
+  MOZ_LOG(gRemoteDecodeLog, LogLevel::Debug, (msg, ##__VA_ARGS__))
 
 using namespace ipc;
 using namespace layers;
@@ -99,10 +107,8 @@ void RemoteDecoderManagerParent::ShutdownThreads() {
 void RemoteDecoderManagerParent::ShutdownVideoBridge() {
   if (sRemoteDecoderManagerParentThread) {
     RefPtr<Runnable> task = NS_NewRunnableFunction(
-        "RemoteDecoderManagerParent::ShutdownVideoBridge", []() {
-          VideoBridgeParent::Shutdown();
-          VideoBridgeChild::Shutdown();
-        });
+        "RemoteDecoderManagerParent::ShutdownVideoBridge",
+        []() { VideoBridgeChild::Shutdown(); });
     SyncRunnable::DispatchToThread(sRemoteDecoderManagerParentThread, task);
   }
 }
@@ -144,9 +150,16 @@ bool RemoteDecoderManagerParent::CreateForContent(
 
 bool RemoteDecoderManagerParent::CreateVideoBridgeToOtherProcess(
     Endpoint<PVideoBridgeChild>&& aEndpoint) {
+  LOG("Create video bridge");
   // We never want to decode in the GPU process, but output
   // frames to the parent process.
-  MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_RDD);
+  MOZ_ASSERT(XRE_GetProcessType() == GeckoProcessType_RDD ||
+             XRE_GetProcessType() == GeckoProcessType_Utility);
+#ifdef MOZ_WMF_MEDIA_ENGINE
+  MOZ_ASSERT_IF(
+      XRE_GetProcessType() == GeckoProcessType_Utility,
+      GetCurrentSandboxingKind() == SandboxingKind::MF_MEDIA_ENGINE_CDM);
+#endif
   MOZ_ASSERT(NS_IsMainThread());
 
   if (!StartupThreads()) {
@@ -192,7 +205,8 @@ PRemoteDecoderParent* RemoteDecoderManagerParent::AllocPRemoteDecoderParent(
     const RemoteDecoderInfoIPDL& aRemoteDecoderInfo,
     const CreateDecoderParams::OptionSet& aOptions,
     const Maybe<layers::TextureFactoryIdentifier>& aIdentifier,
-    const Maybe<uint64_t>& aMediaEngineId) {
+    const Maybe<uint64_t>& aMediaEngineId,
+    const Maybe<TrackingId>& aTrackingId) {
   RefPtr<TaskQueue> decodeTaskQueue =
       TaskQueue::Create(GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER),
                         "RemoteVideoDecoderParent::mDecodeTaskQueue");
@@ -204,7 +218,7 @@ PRemoteDecoderParent* RemoteDecoderManagerParent::AllocPRemoteDecoderParent(
     return new RemoteVideoDecoderParent(
         this, decoderInfo.videoInfo(), decoderInfo.framerate(), aOptions,
         aIdentifier, sRemoteDecoderManagerParentThread, decodeTaskQueue,
-        aMediaEngineId);
+        aMediaEngineId, aTrackingId);
   }
 
   if (aRemoteDecoderInfo.type() == RemoteDecoderInfoIPDL::TAudioInfo) {
@@ -241,16 +255,29 @@ bool RemoteDecoderManagerParent::DeallocPMFMediaEngineParent(
   return true;
 }
 
+PMFCDMParent* RemoteDecoderManagerParent::AllocPMFCDMParent(
+    const nsAString& aKeySystem) {
+#ifdef MOZ_WMF_CDM
+  return new MFCDMParent(aKeySystem, this, sRemoteDecoderManagerParentThread);
+#else
+  return nullptr;
+#endif
+}
+
+bool RemoteDecoderManagerParent::DeallocPMFCDMParent(PMFCDMParent* actor) {
+#ifdef MOZ_WMF_CDM
+  static_cast<MFCDMParent*>(actor)->Destroy();
+#endif
+  return true;
+}
+
 void RemoteDecoderManagerParent::Open(
     Endpoint<PRemoteDecoderManagerParent>&& aEndpoint) {
   if (!aEndpoint.Bind(this)) {
     // We can't recover from this.
     MOZ_CRASH("Failed to bind RemoteDecoderManagerParent to endpoint");
   }
-  AddRef();
 }
-
-void RemoteDecoderManagerParent::ActorDealloc() { Release(); }
 
 mozilla::ipc::IPCResult RemoteDecoderManagerParent::RecvReadback(
     const SurfaceDescriptorGPUVideo& aSD, SurfaceDescriptor* aResult) {
@@ -317,5 +344,7 @@ void RemoteDecoderManagerParent::DeallocateSurfaceDescriptor(
     RecvDeallocateSurfaceDescriptorGPUVideo(aSD);
   }
 }
+
+#undef LOG
 
 }  // namespace mozilla

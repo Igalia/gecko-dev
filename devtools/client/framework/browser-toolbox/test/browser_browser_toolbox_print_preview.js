@@ -3,12 +3,11 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
-/* import-globals-from ../../../inspector/test/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/inspector/test/shared-head.js",
   this
@@ -19,7 +18,7 @@ requestLongerTimeout(4);
 
 // Test that the MultiProcessBrowserToolbox can be opened when print preview is
 // started, and can select elements in the print preview document.
-add_task(async function() {
+add_task(async function () {
   // Forces the Browser Toolbox to open on the inspector by default
   await pushPref("devtools.browsertoolbox.panel", "inspector");
 
@@ -33,9 +32,7 @@ add_task(async function() {
   info("Start the print preview for the current tab");
   document.getElementById("cmd_print").doCommand();
 
-  const ToolboxTask = await initBrowserToolboxTask({
-    enableBrowserToolboxFission: true,
-  });
+  const ToolboxTask = await initBrowserToolboxTask();
   await ToolboxTask.importFunctions({
     getNodeFront,
     getNodeFrontInFrames,

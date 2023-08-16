@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { CommonDialog } = ChromeUtils.import(
-  "resource://gre/modules/CommonDialog.jsm"
+const { CommonDialog } = ChromeUtils.importESModule(
+  "resource://gre/modules/CommonDialog.sys.mjs"
 );
 
 // imported by adjustableTitle.js loaded in the same context:
@@ -20,7 +20,8 @@ var propBag, args, Dialog;
     openerColorSchemeOverride &&
     window.browsingContext == window.browsingContext.top
   ) {
-    window.browsingContext.prefersColorSchemeOverride = openerColorSchemeOverride;
+    window.browsingContext.prefersColorSchemeOverride =
+      openerColorSchemeOverride;
   }
 }
 
@@ -106,22 +107,22 @@ function commonDialogOnLoad() {
   };
 
   Dialog = new CommonDialog(args, ui);
-  window.addEventListener("dialogclosing", function(aEvent) {
+  window.addEventListener("dialogclosing", function (aEvent) {
     if (aEvent.detail?.abort) {
       Dialog.abortPrompt();
     }
   });
-  document.addEventListener("dialogaccept", function() {
+  document.addEventListener("dialogaccept", function () {
     Dialog.onButton0();
   });
-  document.addEventListener("dialogcancel", function() {
+  document.addEventListener("dialogcancel", function () {
     Dialog.onButton1();
   });
-  document.addEventListener("dialogextra1", function() {
+  document.addEventListener("dialogextra1", function () {
     Dialog.onButton2();
     window.close();
   });
-  document.addEventListener("dialogextra2", function() {
+  document.addEventListener("dialogextra2", function () {
     Dialog.onButton3();
     window.close();
   });

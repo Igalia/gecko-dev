@@ -21,9 +21,10 @@
 
 #ifdef MOZ_LOGGING
 #  undef LOG
-#  define LOG(...)                                    \
+#  define LOG(str, ...)                               \
     MOZ_LOG(IsPopup() ? gWidgetPopupLog : gWidgetLog, \
-            mozilla::LogLevel::Debug, (__VA_ARGS__))
+            mozilla::LogLevel::Debug,                 \
+            ("[%p]: " str, mWidget.get(), ##__VA_ARGS__))
 #endif /* MOZ_LOGGING */
 
 namespace mozilla {
@@ -34,24 +35,12 @@ GtkCompositorWidget::GtkCompositorWidget(
     const layers::CompositorOptions& aOptions, RefPtr<nsWindow> aWindow)
     : CompositorWidget(aOptions),
       mWidget(std::move(aWindow)),
-      mClientSize("GtkCompositorWidget::mClientSize"),
-      mIsRenderingSuspended(true) {
-#if defined(MOZ_WAYLAND)
-  if (GdkIsWaylandDisplay()) {
-    ConfigureWaylandBackend(mWidget);
-  }
-#endif
+      mClientSize(LayoutDeviceIntSize(aInitData.InitialClientSize()),
+                  "GtkCompositorWidget::mClientSize") {
 #if defined(MOZ_X11)
   if (GdkIsX11Display()) {
     mXWindow = (Window)aInitData.XWindow();
     ConfigureX11Backend(mXWindow, aInitData.Shaped());
-  }
-#endif
-  auto size = mClientSize.Lock();
-  *size = aInitData.InitialClientSize();
-
-#if defined(MOZ_X11)
-  if (GdkIsX11Display()) {
     LOG("GtkCompositorWidget::GtkCompositorWidget() [%p] mXWindow %p "
         "mIsRenderingSuspended %d\n",
         (void*)mWidget.get(), (void*)mXWindow, !!mIsRenderingSuspended);
@@ -59,6 +48,7 @@ GtkCompositorWidget::GtkCompositorWidget(
 #endif
 #if defined(MOZ_WAYLAND)
   if (GdkIsWaylandDisplay()) {
+    ConfigureWaylandBackend();
     LOG("GtkCompositorWidget::GtkCompositorWidget() [%p] mWidget %p "
         "mIsRenderingSuspended %d\n",
         (void*)mWidget.get(), (void*)mWidget, !!mIsRenderingSuspended);
@@ -69,6 +59,8 @@ GtkCompositorWidget::GtkCompositorWidget(
 GtkCompositorWidget::~GtkCompositorWidget() {
   LOG("GtkCompositorWidget::~GtkCompositorWidget [%p]\n", (void*)mWidget.get());
   DisableRendering();
+  RefPtr<nsIWidget> widget = mWidget.forget();
+  NS_ReleaseOnMainThread("GtkCompositorWidget::mWidget", widget.forget());
 }
 
 already_AddRefed<gfx::DrawTarget> GtkCompositorWidget::StartRemoteDrawing() {
@@ -92,6 +84,9 @@ nsIWidget* GtkCompositorWidget::RealWidget() { return mWidget; }
 
 void GtkCompositorWidget::NotifyClientSizeChanged(
     const LayoutDeviceIntSize& aClientSize) {
+  LOG("GtkCompositorWidget::NotifyClientSizeChanged() to %d x %d",
+      aClientSize.width, aClientSize.height);
+
   auto size = mClientSize.Lock();
   *size = aClientSize;
 }
@@ -107,10 +102,15 @@ void GtkCompositorWidget::RemoteLayoutSizeUpdated(
     return;
   }
 
+  LOG("GtkCompositorWidget::RemoteLayoutSizeUpdated() %d x %d",
+      (int)aSize.width, (int)aSize.height);
+
   // We're waiting for layout to match widget size.
   auto clientSize = mClientSize.Lock();
   if (clientSize->width != (int)aSize.width ||
       clientSize->height != (int)aSize.height) {
+    LOG("quit, client size doesn't match (%d x %d)", clientSize->width,
+        clientSize->height);
     return;
   }
 
@@ -132,14 +132,14 @@ EGLNativeWindowType GtkCompositorWidget::GetEGLNativeWindow() {
   return window;
 }
 
-#if defined(MOZ_WAYLAND)
 void GtkCompositorWidget::SetEGLNativeWindowSize(
     const LayoutDeviceIntSize& aEGLWindowSize) {
+#if defined(MOZ_WAYLAND)
   if (mWidget) {
     mWidget->SetEGLNativeWindowSize(aEGLWindowSize);
   }
-}
 #endif
+}
 
 LayoutDeviceIntRegion GtkCompositorWidget::GetTransparentRegion() {
   // We need to clear target buffer alpha values of popup windows as
@@ -178,8 +178,8 @@ void GtkCompositorWidget::DisableRendering() {
 }
 
 #if defined(MOZ_WAYLAND)
-bool GtkCompositorWidget::ConfigureWaylandBackend(RefPtr<nsWindow> aWindow) {
-  mProvider.Initialize(aWindow);
+bool GtkCompositorWidget::ConfigureWaylandBackend() {
+  mProvider.Initialize(this);
   return true;
 }
 #endif
@@ -221,7 +221,7 @@ void GtkCompositorWidget::EnableRendering(const uintptr_t aXWindow,
 #if defined(MOZ_WAYLAND)
   if (GdkIsWaylandDisplay()) {
     LOG("  configure widget %p\n", mWidget.get());
-    if (!ConfigureWaylandBackend(mWidget)) {
+    if (!ConfigureWaylandBackend()) {
       return;
     }
   }

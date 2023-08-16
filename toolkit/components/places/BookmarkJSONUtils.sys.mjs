@@ -54,7 +54,8 @@ export var BookmarkJSONUtils = Object.freeze({
    *        imported bookmarks. Defaults to `RESTORE` if `replace = true`, or
    *        `IMPORT` otherwise.
    *
-   * @return {Promise}
+   * @returns {Promise<number>} The number of imported bookmarks, not including
+   *                            folders and separators.
    * @resolves When the new bookmarks have been created.
    * @rejects JavaScript exception.
    */
@@ -68,16 +69,18 @@ export var BookmarkJSONUtils = Object.freeze({
     } = {}
   ) {
     notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_BEGIN, aReplace);
+    let bookmarkCount = 0;
     try {
       let importer = new BookmarkImporter(aReplace, aSource);
-      await importer.importFromURL(aSpec);
+      bookmarkCount = await importer.importFromURL(aSpec);
 
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_SUCCESS, aReplace);
     } catch (ex) {
-      Cu.reportError("Failed to restore bookmarks from " + aSpec + ": " + ex);
+      console.error(`Failed to restore bookmarks from ${aSpec}:`, ex);
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_FAILED, aReplace);
       throw ex;
     }
+    return bookmarkCount;
   },
 
   /**
@@ -92,7 +95,8 @@ export var BookmarkJSONUtils = Object.freeze({
    *        imported bookmarks. Defaults to `RESTORE` if `replace = true`, or
    *        `IMPORT` otherwise.
    *
-   * @return {Promise}
+   * @returns {Promise<number>} The number of imported bookmarks, not including
+   *                            folders and separators.
    * @resolves When the new bookmarks have been created.
    * @rejects JavaScript exception.
    */
@@ -106,6 +110,7 @@ export var BookmarkJSONUtils = Object.freeze({
     } = {}
   ) {
     notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_BEGIN, aReplace);
+    let bookmarkCount = 0;
     try {
       if (!(await IOUtils.exists(aFilePath))) {
         throw new Error("Cannot restore from nonexisting json file");
@@ -113,18 +118,19 @@ export var BookmarkJSONUtils = Object.freeze({
 
       let importer = new BookmarkImporter(aReplace, aSource);
       if (aFilePath.endsWith("jsonlz4")) {
-        await importer.importFromCompressedFile(aFilePath);
+        bookmarkCount = await importer.importFromCompressedFile(aFilePath);
       } else {
-        await importer.importFromURL(PathUtils.toFileURI(aFilePath));
+        bookmarkCount = await importer.importFromURL(
+          PathUtils.toFileURI(aFilePath)
+        );
       }
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_SUCCESS, aReplace);
     } catch (ex) {
-      Cu.reportError(
-        "Failed to restore bookmarks from " + aFilePath + ": " + ex
-      );
+      console.error(`Failed to restore bookmarks from ${aFilePath}:`, ex);
       notifyObservers(PlacesUtils.TOPIC_BOOKMARKS_RESTORE_FAILED, aReplace);
       throw ex;
     }
+    return bookmarkCount;
   },
 
   /**
@@ -155,7 +161,7 @@ export var BookmarkJSONUtils = Object.freeze({
         .getHistogramById("PLACES_BACKUPS_TOJSON_MS")
         .add(Date.now() - startTime);
     } catch (ex) {
-      Cu.reportError("Unable to report telemetry.");
+      console.error("Unable to report telemetry.");
     }
 
     let hash = generateHash(jsonString);
@@ -188,7 +194,8 @@ BookmarkImporter.prototype = {
    * @param {string} aSpec
    *        url of the bookmark data.
    *
-   * @return {Promise}
+   * @returns {Promise<number>} The number of imported bookmarks, not including
+   *                            folders and separators.
    * @resolves When the new bookmarks have been created.
    * @rejects JavaScript exception.
    */
@@ -201,10 +208,10 @@ BookmarkImporter.prototype = {
     let nodes = await (await fetch(spec)).json();
 
     if (!nodes.children || !nodes.children.length) {
-      return;
+      return 0;
     }
 
-    await this.import(nodes);
+    return this.import(nodes);
   },
 
   /**
@@ -213,7 +220,8 @@ BookmarkImporter.prototype = {
    * @param aFilePath
    *        OS.File path string of the bookmark data.
    *
-   * @return {Promise}
+   * @returns {Promise<number>} The number of imported bookmarks, not including
+   *                           folders and separators.
    * @resolves When the new bookmarks have been created.
    * @rejects JavaScript exception.
    */
@@ -223,14 +231,15 @@ BookmarkImporter.prototype = {
     // We read as UTF8 rather than JSON, as PlacesUtils.unwrapNodes expects
     // a JSON string.
     let result = await IOUtils.readUTF8(aFilePath, { decompress: true });
-    await this.importFromJSON(result);
+    return this.importFromJSON(result);
   },
 
   /**
    * Import bookmarks from a JSON string.
    *
    * @param {String} aString JSON string of serialized bookmark data.
-   * @return {Promise}
+   * @returns {Promise<number>} The number of imported bookmarks, not including
+   *                            folders and separators.
    * @resolves When the new bookmarks have been created.
    * @rejects JavaScript exception.
    */
@@ -241,10 +250,10 @@ BookmarkImporter.prototype = {
     );
 
     if (!nodes.length || !nodes[0].children || !nodes[0].children.length) {
-      return;
+      return 0;
     }
 
-    await this.import(nodes[0]);
+    return this.import(nodes[0]);
   },
 
   async import(rootNode) {
@@ -276,6 +285,7 @@ BookmarkImporter.prototype = {
       folderIdToGuidMap = Object.assign(folderIdToGuidMap, folders);
     }
 
+    let bookmarkCount = 0;
     // Now we can add the actual nodes to the database.
     for (let node of nodes) {
       // Drop any nodes without children, we can't insert them.
@@ -291,17 +301,21 @@ BookmarkImporter.prototype = {
 
       fixupSearchQueries(node, folderIdToGuidMap);
 
-      await PlacesUtils.bookmarks.insertTree(node, {
+      let bookmarks = await PlacesUtils.bookmarks.insertTree(node, {
         fixupOrSkipInvalidEntries: true,
       });
-
+      // We want to count only bookmarks, not folders or separators
+      bookmarkCount += bookmarks.filter(
+        bookmark => bookmark.type == PlacesUtils.bookmarks.TYPE_BOOKMARK
+      ).length;
       // Now add any favicons.
       try {
         insertFaviconsForTree(node);
       } catch (ex) {
-        Cu.reportError(`Failed to insert favicons: ${ex}`);
+        console.error("Failed to insert favicons:", ex);
       }
     }
+    return bookmarkCount;
   },
 };
 
@@ -341,7 +355,7 @@ function fixupSearchQueries(aNode, aFolderIdMap) {
  */
 function fixupQuery(aQueryURL, aFolderIdMap) {
   let invalid = false;
-  let convert = function(str, existingFolderId) {
+  let convert = function (str, existingFolderId) {
     let guid;
     if (
       Object.keys(OLD_BOOKMARK_QUERY_TRANSLATIONS).includes(existingFolderId)
@@ -440,7 +454,7 @@ function translateTreeTypes(node) {
       break;
     default:
       // No need to throw/reject here, insertTree will remove this node automatically.
-      Cu.reportError(`Unexpected bookmark type ${node.type}`);
+      console.error("Unexpected bookmark type", node.type);
       break;
   }
 
@@ -525,7 +539,7 @@ function insertFaviconForNode(node) {
         Services.scriptSecurityManager.getSystemPrincipal()
       );
     } catch (ex) {
-      Cu.reportError("Failed to import favicon data:" + ex);
+      console.error("Failed to import favicon data:", ex);
     }
   }
 
@@ -543,7 +557,7 @@ function insertFaviconForNode(node) {
       Services.scriptSecurityManager.getSystemPrincipal()
     );
   } catch (ex) {
-    Cu.reportError("Failed to import favicon URI:" + ex);
+    console.error("Failed to import favicon URI:" + ex);
   }
 }
 

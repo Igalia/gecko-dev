@@ -195,6 +195,7 @@ class EditorCommand : public nsIControllerCommand {
       case Command::ToggleObjectResizers:
       case Command::ToggleInlineTableEditor:
       case Command::ToggleAbsolutePositionEditor:
+      case Command::EnableCompatibleJoinSplitNodeDirection:
         return EditorCommandParamType::Bool |
                EditorCommandParamType::StateAttribute;
 
@@ -562,7 +563,7 @@ class StateUpdatingCommandBase : public EditorCommand {
 
   // get the current state (on or off) for this style or block format
   MOZ_CAN_RUN_SCRIPT virtual nsresult GetCurrentState(
-      nsAtom* aTagName, HTMLEditor* aHTMLEditor,
+      nsStaticAtom& aTagName, HTMLEditor& aHTMLEditor,
       nsCommandParams& aParams) const = 0;
 
   // add/remove the style
@@ -635,7 +636,7 @@ class StyleUpdatingCommand final : public StateUpdatingCommandBase {
 
   // get the current state (on or off) for this style or block format
   MOZ_CAN_RUN_SCRIPT nsresult
-  GetCurrentState(nsAtom* aTagName, HTMLEditor* aHTMLEditor,
+  GetCurrentState(nsStaticAtom& aTagName, HTMLEditor& aHTMLEditor,
                   nsCommandParams& aParams) const final;
 
   // add/remove the style
@@ -681,7 +682,7 @@ class ListCommand final : public StateUpdatingCommandBase {
 
   // get the current state (on or off) for this style or block format
   MOZ_CAN_RUN_SCRIPT nsresult
-  GetCurrentState(nsAtom* aTagName, HTMLEditor* aHTMLEditor,
+  GetCurrentState(nsStaticAtom& aTagName, HTMLEditor& aHTMLEditor,
                   nsCommandParams& aParams) const final;
 
   // add/remove the style
@@ -700,7 +701,7 @@ class ListItemCommand final : public StateUpdatingCommandBase {
 
   // get the current state (on or off) for this style or block format
   MOZ_CAN_RUN_SCRIPT nsresult
-  GetCurrentState(nsAtom* aTagName, HTMLEditor* aHTMLEditor,
+  GetCurrentState(nsStaticAtom& aTagName, HTMLEditor& aHTMLEditor,
                   nsCommandParams& aParams) const final;
 
   // add/remove the style
@@ -842,7 +843,7 @@ class AbsolutePositioningCommand final : public StateUpdatingCommandBase {
   virtual ~AbsolutePositioningCommand() = default;
 
   MOZ_CAN_RUN_SCRIPT nsresult
-  GetCurrentState(nsAtom* aTagName, HTMLEditor* aHTMLEditor,
+  GetCurrentState(nsStaticAtom& aTagName, HTMLEditor& aHTMLEditor,
                   nsCommandParams& aParams) const final;
   MOZ_CAN_RUN_SCRIPT nsresult ToggleState(nsStaticAtom& aTagName,
                                           HTMLEditor& aHTMLEditor,

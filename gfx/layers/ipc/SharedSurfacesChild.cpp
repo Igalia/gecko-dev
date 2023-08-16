@@ -7,13 +7,17 @@
 #include "SharedSurfacesChild.h"
 #include "SharedSurfacesParent.h"
 #include "CompositorManagerChild.h"
-#include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/IpcResourceUpdateQueue.h"
 #include "mozilla/layers/SourceSurfaceSharedData.h"
 #include "mozilla/layers/WebRenderBridgeChild.h"
 #include "mozilla/layers/RenderRootStateManager.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
+#include "mozilla/layers/CompositorBridgeChild.h"
 #include "mozilla/SchedulerGroup.h"
 #include "mozilla/StaticPrefs_image.h"
+#include "mozilla/PresShell.h"
+#include "nsRefreshDriver.h"
+#include "nsView.h"
 
 namespace mozilla {
 namespace layers {
@@ -171,7 +175,7 @@ nsresult SharedSurfacesChild::ShareInternal(SourceSurfaceSharedData* aSurface,
   MOZ_ASSERT(aUserData);
 
   CompositorManagerChild* manager = CompositorManagerChild::GetInstance();
-  if (NS_WARN_IF(!manager || !manager->CanSend() || !gfxVars::UseWebRender())) {
+  if (NS_WARN_IF(!manager || !manager->CanSend())) {
     // We cannot try to share the surface, most likely because the GPU process
     // crashed. Ideally, we would retry when it is ready, but the handles may be
     // a scarce resource, which can cause much more serious problems if we run
@@ -447,6 +451,25 @@ void SharedSurfacesAnimation::HoldSurfaceForRecycling(
   aEntry.mPendingRelease.AppendElement(aSurface);
 }
 
+// This will get the widget listener that handles painting. Generally, this is
+// the attached widget listener (or previously attached if the attached is paint
+// suppressed). Otherwise it is the widget listener. There should be a function
+// in nsIWidget that does this for us but there isn't yet.
+static nsIWidgetListener* GetPaintWidgetListener(nsIWidget* aWidget) {
+  if (auto* attached = aWidget->GetAttachedWidgetListener()) {
+    if (attached->GetView() &&
+        attached->GetView()->IsPrimaryFramePaintSuppressed()) {
+      if (auto* previouslyAttached =
+              aWidget->GetPreviouslyAttachedWidgetListener()) {
+        return previouslyAttached;
+      }
+    }
+    return attached;
+  }
+
+  return aWidget->GetWidgetListener();
+}
+
 nsresult SharedSurfacesAnimation::SetCurrentFrame(
     SourceSurfaceSharedData* aSurface, const gfx::IntRect& aDirtyRect) {
   MOZ_ASSERT(aSurface);
@@ -465,6 +488,28 @@ nsresult SharedSurfacesAnimation::SetCurrentFrame(
     --i;
     AnimationImageKeyData& entry = mKeys[i];
     MOZ_ASSERT(!entry.mManager->IsDestroyed());
+
+    if (auto* cbc =
+            entry.mManager->LayerManager()->GetCompositorBridgeChild()) {
+      if (cbc->IsPaused()) {
+        continue;
+      }
+    }
+
+    // Only root compositor bridge childs record if they are paused, so check
+    // the refresh driver.
+    if (auto* widget = entry.mManager->LayerManager()->GetWidget()) {
+      nsIWidgetListener* wl = GetPaintWidgetListener(widget);
+      // Note call to wl->GetView() to make sure this is view type widget
+      // listener even though we don't use the view in this code.
+      if (wl && wl->GetView() && wl->GetPresShell()) {
+        if (auto* rd = wl->GetPresShell()->GetRefreshDriver()) {
+          if (rd->IsThrottled()) {
+            continue;
+          }
+        }
+      }
+    }
 
     entry.MergeDirtyRect(Some(aDirtyRect));
     Maybe<IntRect> dirtyRect = entry.TakeDirtyRect();

@@ -82,8 +82,6 @@ class CompositorBridgeChild final : public PCompositorBridgeChild,
   mozilla::ipc::IPCResult RecvNotifyFrameStats(
       nsTArray<FrameStats>&& aFrameStats);
 
-  mozilla::ipc::IPCResult RecvInvalidateLayers(const LayersId& aLayersId);
-
   mozilla::ipc::IPCResult RecvNotifyJankedAnimations(
       const LayersId& aLayersId, nsTArray<uint64_t>&& aJankedAnimations);
 
@@ -125,6 +123,8 @@ class CompositorBridgeChild final : public PCompositorBridgeChild,
   bool IsSameProcess() const override;
 
   bool IPCOpen() const override { return mCanSend; }
+
+  bool IsPaused() const { return mPaused; }
 
   static void ShutDown();
 
@@ -216,6 +216,8 @@ class CompositorBridgeChild final : public PCompositorBridgeChild,
 
   // False until the actor is destroyed.
   bool mActorDestroyed;
+
+  bool mPaused;
 
   /**
    * Transaction id of ShadowLayerForwarder.

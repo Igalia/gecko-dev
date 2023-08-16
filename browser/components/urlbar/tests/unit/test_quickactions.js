@@ -9,24 +9,31 @@ ChromeUtils.defineESModuleGetters(this, {
     "resource:///modules/UrlbarProviderQuickActions.sys.mjs",
 });
 
-const EXPECTED_MATCH = {
+let expectedMatch = (key, inputLength) => ({
   type: UrlbarUtils.RESULT_TYPE.DYNAMIC,
   source: UrlbarUtils.RESULT_SOURCE.ACTIONS,
   heuristic: false,
-  payload: { results: [{ key: "newaction" }], dynamicType: "quickactions" },
-};
+  payload: {
+    results: [{ key }],
+    dynamicType: "quickactions",
+    inQuickActionsSearchMode: false,
+    helpUrl: UrlbarProviderQuickActions.helpUrl,
+    inputLength,
+  },
+});
+
+testEngine_setup();
 
 add_task(async function init() {
+  UrlbarPrefs.set("quickactions.enabled", true);
   UrlbarPrefs.set("suggest.quickactions", true);
-  // Install a default test engine.
-  let engine = await addTestSuggestionsEngine();
-  await Services.search.setDefault(engine);
 
   UrlbarProviderQuickActions.addAction("newaction", {
     commands: ["newaction"],
   });
 
   registerCleanupFunction(async () => {
+    UrlbarPrefs.clear("quickactions.enabled");
     UrlbarPrefs.clear("suggest.quickactions");
     UrlbarProviderQuickActions.removeAction("newaction");
   });
@@ -63,6 +70,58 @@ add_task(async function quickactions_match() {
   });
   await check_results({
     context,
-    matches: [EXPECTED_MATCH],
+    matches: [expectedMatch("newaction", 3)],
   });
+});
+
+add_task(async function duplicate_matches() {
+  UrlbarProviderQuickActions.addAction("testaction", {
+    commands: ["testaction", "test"],
+  });
+
+  let context = createContext("testaction", {
+    providers: [UrlbarProviderQuickActions.name],
+    isPrivate: false,
+  });
+
+  await check_results({
+    context,
+    matches: [expectedMatch("testaction", 10)],
+  });
+
+  UrlbarProviderQuickActions.removeAction("testaction");
+});
+
+add_task(async function remove_action() {
+  UrlbarProviderQuickActions.addAction("testaction", {
+    commands: ["testaction"],
+  });
+  UrlbarProviderQuickActions.removeAction("testaction");
+
+  let context = createContext("test", {
+    providers: [UrlbarProviderQuickActions.name],
+    isPrivate: false,
+  });
+
+  await check_results({
+    context,
+    matches: [],
+  });
+});
+
+add_task(async function minimum_search_string() {
+  let searchString = "newa";
+  for (let minimumSearchString of [0, 3]) {
+    UrlbarPrefs.set("quickactions.minimumSearchString", minimumSearchString);
+    for (let i = 1; i < 4; i++) {
+      let context = createContext(searchString.substring(0, i), {
+        providers: [UrlbarProviderQuickActions.name],
+        isPrivate: false,
+      });
+      let matches =
+        i >= minimumSearchString ? [expectedMatch("newaction", i)] : [];
+      await check_results({ context, matches });
+    }
+  }
+  UrlbarPrefs.clear("quickactions.minimumSearchString");
 });

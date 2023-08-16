@@ -4,16 +4,15 @@
 
 "use strict";
 
-const ChromeUtils = require("ChromeUtils");
-var { settleAll } = require("devtools/shared/DevToolsUtils");
-var EventEmitter = require("devtools/shared/event-emitter");
+var { settleAll } = require("resource://devtools/shared/DevToolsUtils.js");
+var EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
-var { Pool } = require("devtools/shared/protocol/Pool");
+var { Pool } = require("resource://devtools/shared/protocol/Pool.js");
 var {
   getStack,
   callFunctionWithAsyncStack,
-} = require("devtools/shared/platform/stack");
-const defer = require("devtools/shared/defer");
+} = require("resource://devtools/shared/platform/stack.js");
+const defer = require("resource://devtools/shared/defer.js");
 
 /**
  * Base class for client-side actor fronts.
@@ -91,7 +90,7 @@ class Front extends Pool {
   baseFrontClassDestroy() {
     // Reject all outstanding requests, they won't make sense after
     // the front is destroyed.
-    while (this._requests.length > 0) {
+    while (this._requests.length) {
       const { deferred, to, type, stack } = this._requests.shift();
       // Note: many tests are ignoring `Connection closed` promise rejections,
       // via PromiseTestUtils.allowMatchingRejectionsGlobally.

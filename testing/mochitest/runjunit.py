@@ -2,14 +2,11 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function
-
 import argparse
 import os
 import posixpath
 import re
 import shutil
-import six
 import sys
 import tempfile
 import traceback
@@ -18,8 +15,9 @@ import mozcrash
 import mozinfo
 import mozlog
 import moznetwork
+import six
 from mozdevice import ADBDeviceFactory, ADBError, ADBTimeoutError
-from mozprofile import Profile, DEFAULT_PORTS
+from mozprofile import DEFAULT_PORTS, Profile
 from mozprofile.cli import parse_preferences
 from mozprofile.permissions import ServerLocations
 from runtests import MochitestDesktop, update_mozinfo
@@ -27,11 +25,9 @@ from runtests import MochitestDesktop, update_mozinfo
 here = os.path.abspath(os.path.dirname(__file__))
 
 try:
-    from mozbuild.base import (
-        MozbuildObject,
-        MachCommandConditions as conditions,
-    )
     from mach.util import UserError
+    from mozbuild.base import MachCommandConditions as conditions
+    from mozbuild.base import MozbuildObject
 
     build_obj = MozbuildObject.from_environment(cwd=here)
 except ImportError:
@@ -52,6 +48,9 @@ class JUnitTestRunner(MochitestDesktop):
     def __init__(self, log, options):
         self.log = log
         self.verbose = False
+        self.http3Server = None
+        self.http2Server = None
+        self.dohServer = None
         if (
             options.log_tbpl_level == "debug"
             or options.log_mach_level == "debug"
@@ -130,10 +129,14 @@ class JUnitTestRunner(MochitestDesktop):
         self.options.webServer = self.options.remoteWebServer
         self.options.webSocketPort = "9988"
         self.options.httpdPath = None
+        self.options.http3ServerPath = None
+        self.options.http2ServerPath = None
         self.options.keep_open = False
         self.options.pidFile = ""
         self.options.subsuite = None
         self.options.xrePath = None
+        self.options.useHttp3Server = False
+        self.options.useHttp2Server = False
         if build_obj and "MOZ_HOST_BIN" in os.environ:
             self.options.xrePath = os.environ["MOZ_HOST_BIN"]
             if not self.options.utilityPath:
@@ -520,8 +523,8 @@ class JunitArgumentParser(argparse.ArgumentParser):
             action="store",
             type=int,
             dest="max_time",
-            default="2400",
-            help="Max time in seconds to wait for tests (default 2400s).",
+            default="3000",
+            help="Max time in seconds to wait for tests (default 3000s).",
         )
         self.add_argument(
             "--runner",

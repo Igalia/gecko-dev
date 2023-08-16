@@ -1,8 +1,7 @@
 "use strict";
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  MockRegistry: "resource://testing-common/MockRegistry.jsm",
-  OS: "resource://gre/modules/osfile.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  MockRegistry: "resource://testing-common/MockRegistry.sys.mjs",
 });
 
 const MANIFEST = {
@@ -41,10 +40,10 @@ add_task(async function setup() {
 
   let typeSlug =
     AppConstants.platform === "linux" ? "managed-storage" : "ManagedStorage";
-  OS.File.makeDir(OS.Path.join(tmpDir.path, typeSlug));
+  await IOUtils.makeDirectory(PathUtils.join(tmpDir.path, typeSlug));
 
-  let path = OS.Path.join(tmpDir.path, typeSlug, `${MANIFEST.name}.json`);
-  await OS.File.writeAtomic(path, JSON.stringify(MANIFEST));
+  let path = PathUtils.join(tmpDir.path, typeSlug, `${MANIFEST.name}.json`);
+  await IOUtils.writeJSON(path, MANIFEST);
 
   let registry;
   if (AppConstants.platform === "win") {
@@ -69,7 +68,7 @@ add_task(async function setup() {
 add_task(async function test_storage_managed() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: MANIFEST.name } },
+      browser_specific_settings: { gecko: { id: MANIFEST.name } },
       permissions: ["storage"],
     },
 
@@ -117,7 +116,7 @@ add_task(async function test_storage_managed() {
 add_task(async function test_storage_managed_from_content_script() {
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: MANIFEST.name } },
+      browser_specific_settings: { gecko: { id: MANIFEST.name } },
       permissions: ["storage"],
       content_scripts: [
         {
@@ -129,7 +128,7 @@ add_task(async function test_storage_managed_from_content_script() {
     },
 
     files: {
-      "contentscript.js": async function() {
+      "contentscript.js": async function () {
         browser.test.sendMessage(
           "results",
           await browser.storage.managed.get()

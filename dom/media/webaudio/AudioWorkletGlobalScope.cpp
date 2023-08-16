@@ -12,12 +12,12 @@
 #include "jsapi.h"
 #include "js/ForOfIterator.h"
 #include "js/PropertyAndElement.h"  // JS_GetProperty
+#include "mozilla/BasePrincipal.h"
 #include "mozilla/dom/AudioWorkletGlobalScopeBinding.h"
 #include "mozilla/dom/AudioWorkletProcessor.h"
 #include "mozilla/dom/BindingCallContext.h"
 #include "mozilla/dom/MessagePort.h"
 #include "mozilla/dom/StructuredCloneHolder.h"
-#include "mozilla/dom/WorkletPrincipals.h"
 #include "mozilla/dom/AudioParamDescriptorBinding.h"
 #include "nsPrintfCString.h"
 #include "nsTHashSet.h"
@@ -49,6 +49,11 @@ bool AudioWorkletGlobalScope::WrapGlobalObject(
 
   JS::RealmOptions options;
 
+  options.creationOptions().setForceUTC(
+      ShouldResistFingerprinting(RFPTarget::JSDateTimeUTC));
+  options.creationOptions().setAlwaysUseFdlibm(
+      ShouldResistFingerprinting(RFPTarget::JSMathFdlibm));
+
   // The SharedArrayBuffer global constructor property should not be present in
   // a fresh global object when shared memory objects aren't allowed (because
   // COOP/COEP support isn't enabled, or because COOP/COEP don't act to isolate
@@ -56,9 +61,9 @@ bool AudioWorkletGlobalScope::WrapGlobalObject(
   options.creationOptions().setDefineSharedArrayBufferConstructor(
       IsSharedMemoryAllowed());
 
-  JS::AutoHoldPrincipals principals(aCx, new WorkletPrincipals(mImpl));
   return AudioWorkletGlobalScope_Binding::Wrap(
-      aCx, this, this, options, principals.get(), true, aReflector);
+      aCx, this, this, options, BasePrincipal::Cast(mImpl->Principal()), true,
+      aReflector);
 }
 
 void AudioWorkletGlobalScope::RegisterProcessor(

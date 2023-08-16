@@ -4,6 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
+#include "mozilla/RefPtr.h"
 #include "mozilla/dom/ReferrerPolicyBinding.h"
 #include "nsIClassInfoImpl.h"
 #include "nsIEffectiveTLDService.h"
@@ -11,12 +12,14 @@
 #include "nsIObjectInputStream.h"
 #include "nsIObjectOutputStream.h"
 #include "nsIOService.h"
+#include "nsIPipe.h"
 #include "nsIURL.h"
 
 #include "nsWhitespaceTokenizer.h"
 #include "nsAlgorithm.h"
 #include "nsContentUtils.h"
 #include "nsCharSeparatedTokenizer.h"
+#include "nsStreamUtils.h"
 #include "ReferrerInfo.h"
 
 #include "mozilla/BasePrincipal.h"
@@ -41,7 +44,7 @@ using namespace mozilla::net;
 namespace mozilla::dom {
 
 // Implementation of ClassInfo is required to serialize/deserialize
-NS_IMPL_CLASSINFO(ReferrerInfo, nullptr, nsIClassInfo::MAIN_THREAD_ONLY,
+NS_IMPL_CLASSINFO(ReferrerInfo, nullptr, nsIClassInfo::THREADSAFE,
                   REFERRERINFO_CID)
 
 NS_IMPL_ISUPPORTS_CI(ReferrerInfo, nsIReferrerInfo, nsISerializable)
@@ -235,7 +238,8 @@ ReferrerPolicy ReferrerInfo::GetDefaultReferrerPolicy(nsIHttpChannel* aChannel,
     Unused << loadInfo->GetCookieJarSettings(getter_AddRefs(cjs));
     if (!cjs) {
       bool shouldResistFingerprinting =
-          nsContentUtils::ShouldResistFingerprinting(aChannel);
+          nsContentUtils::ShouldResistFingerprinting(
+              aChannel, RFPTarget::IsAlwaysEnabledForPrecompute);
       cjs = aPrivateBrowsing
                 ? net::CookieJarSettings::Create(CookieJarSettings::ePrivate,
                                                  shouldResistFingerprinting)
@@ -433,9 +437,7 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
   MOZ_ASSERT(aChannel);
   MOZ_ASSERT(aOriginURI);
 
-  // This code should not really be here, but we always need to send an Origin
-  // header for CORS requests that aren't GET or HEAD. Also see the comment
-  // in nsHttpChannel::SetOriginHeader.
+  // If request’s mode is not "cors", then switch on request’s referrer policy:
   RequestMode requestMode = RequestMode::No_cors;
   MOZ_ALWAYS_SUCCEEDS(aChannel->GetRequestMode(&requestMode));
   if (requestMode == RequestMode::Cors) {
@@ -448,25 +450,40 @@ bool ReferrerInfo::ShouldSetNullOriginHeader(net::HttpBaseChannel* aChannel,
   if (!referrerInfo) {
     return false;
   }
+
+  // "no-referrer":
   enum ReferrerPolicy policy = referrerInfo->ReferrerPolicy();
   if (policy == ReferrerPolicy::No_referrer) {
+    // Set serializedOrigin to `null`.
+    // Note: Returning true is the same as setting the serializedOrigin to null
+    // in this method.
     return true;
   }
 
+  // "no-referrer-when-downgrade":
+  // "strict-origin":
+  // "strict-origin-when-cross-origin":
+  //   If request’s origin is a tuple origin, its scheme is "https", and
+  //   request’s current URL’s scheme is not "https", then set serializedOrigin
+  //   to `null`.
   bool allowed = false;
   nsCOMPtr<nsIURI> uri;
   NS_ENSURE_SUCCESS(aChannel->GetURI(getter_AddRefs(uri)), false);
-
   if (NS_SUCCEEDED(ReferrerInfo::HandleSecureToInsecureReferral(
           aOriginURI, uri, policy, allowed)) &&
       !allowed) {
     return true;
   }
 
+  // "same-origin":
   if (policy == ReferrerPolicy::Same_origin) {
+    // If request’s origin is not same origin with request’s current URL’s
+    // origin, then set serializedOrigin to `null`.
     return ReferrerInfo::IsCrossOriginRequest(aChannel);
   }
 
+  // Otherwise:
+  //  Do Nothing.
   return false;
 }
 
@@ -1136,8 +1153,10 @@ static ReferrerPolicy ReferrerPolicyFromAttribute(const Element& aElement) {
 }
 
 static bool HasRelNoReferrer(const Element& aElement) {
-  // rel=noreferrer is only support in <a> and <area>
-  if (!aElement.IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area)) {
+  // rel=noreferrer is only supported in <a>, <area>, and <form>
+  if (!aElement.IsAnyOfHTMLElements(nsGkAtoms::a, nsGkAtoms::area,
+                                    nsGkAtoms::form) &&
+      !aElement.IsSVGElement(nsGkAtoms::a)) {
     return false;
   }
 
@@ -1264,26 +1283,11 @@ already_AddRefed<nsIReferrerInfo> ReferrerInfo::CreateForExternalCSSResources(
 }
 
 /* static */
-already_AddRefed<nsIReferrerInfo> ReferrerInfo::CreateForInternalCSSResources(
-    Document* aDocument) {
+already_AddRefed<nsIReferrerInfo>
+ReferrerInfo::CreateForInternalCSSAndSVGResources(Document* aDocument) {
   MOZ_ASSERT(aDocument);
-  nsCOMPtr<nsIReferrerInfo> referrerInfo;
-
-  referrerInfo = new ReferrerInfo(aDocument->GetDocumentURI(),
-                                  aDocument->GetReferrerPolicy());
-  return referrerInfo.forget();
-}
-
-// Bug 1415044 to investigate which referrer and policy we should use
-/* static */
-already_AddRefed<nsIReferrerInfo> ReferrerInfo::CreateForSVGResources(
-    Document* aDocument) {
-  MOZ_ASSERT(aDocument);
-  nsCOMPtr<nsIReferrerInfo> referrerInfo;
-
-  referrerInfo = new ReferrerInfo(aDocument->GetDocumentURI(),
-                                  aDocument->GetReferrerPolicy());
-  return referrerInfo.forget();
+  return do_AddRef(new ReferrerInfo(aDocument->GetDocumentURI(),
+                                    aDocument->GetReferrerPolicy()));
 }
 
 nsresult ReferrerInfo::ComputeReferrer(nsIHttpChannel* aChannel) {
@@ -1449,6 +1453,98 @@ nsresult ReferrerInfo::ComputeReferrer(nsIHttpChannel* aChannel) {
 
 /* ===== nsISerializable implementation ====== */
 
+nsresult ReferrerInfo::ReadTailDataBeforeGecko100(
+    const uint32_t& aData, nsIObjectInputStream* aInputStream) {
+  MOZ_ASSERT(aInputStream);
+
+  nsCOMPtr<nsIInputStream> reader;
+  nsCOMPtr<nsIOutputStream> writer;
+
+  // We need to create a new pipe in order to read the aData and the rest of
+  // the input stream together in the old format. This would also help us with
+  // handling big endian correctly.
+  NS_NewPipe(getter_AddRefs(reader), getter_AddRefs(writer));
+
+  nsCOMPtr<nsIBinaryOutputStream> binaryPipeWriter =
+      NS_NewObjectOutputStream(writer);
+
+  // Write back the aData so that we can read bytes from it and handle big
+  // endian correctly.
+  nsresult rv = binaryPipeWriter->Write32(aData);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  nsCOMPtr<nsIBinaryInputStream> binaryPipeReader =
+      NS_NewObjectInputStream(reader);
+
+  rv = binaryPipeReader->ReadBoolean(&mSendReferrer);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  bool isComputed;
+  rv = binaryPipeReader->ReadBoolean(&isComputed);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  // We need to handle the following string if isComputed is true.
+  if (isComputed) {
+    // Comsume the following 2 bytes from the input stream. They are the half
+    // part of the length prefix of the following string.
+    uint16_t data;
+    rv = aInputStream->Read16(&data);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    // Write the bytes to the pipe so that we can read the length of the string.
+    rv = binaryPipeWriter->Write16(data);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    uint32_t length;
+    rv = binaryPipeReader->Read32(&length);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    // Consume the string body from the input stream.
+    nsAutoCString computedReferrer;
+    rv = NS_ConsumeStream(aInputStream, length, computedReferrer);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+    mComputedReferrer.emplace(computedReferrer);
+
+    // Read the remaining two bytes and write to the pipe.
+    uint16_t remain;
+    rv = aInputStream->Read16(&remain);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+
+    rv = binaryPipeWriter->Write16(remain);
+    if (NS_WARN_IF(NS_FAILED(rv))) {
+      return rv;
+    }
+  }
+
+  rv = binaryPipeReader->ReadBoolean(&mInitialized);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  rv = binaryPipeReader->ReadBoolean(&mOverridePolicyByDefault);
+  if (NS_WARN_IF(NS_FAILED(rv))) {
+    return rv;
+  }
+
+  return NS_OK;
+}
+
 NS_IMETHODIMP
 ReferrerInfo::Read(nsIObjectInputStream* aStream) {
   bool nonNull;
@@ -1488,6 +1584,19 @@ ReferrerInfo::Read(nsIObjectInputStream* aStream) {
   if (NS_WARN_IF(NS_FAILED(rv))) {
     return rv;
   }
+
+  // See https://bugzilla.mozilla.org/show_bug.cgi?id=1784045#c6 for more
+  // details.
+  //
+  // We need to differentiate the old format and the new format here in order
+  // to be able to read both formats. The check here helps us with verifying
+  // which format it is.
+  if (MOZ_UNLIKELY(originalPolicy > 0xFF)) {
+    mOriginalPolicy = mPolicy;
+
+    return ReadTailDataBeforeGecko100(originalPolicy, aStream);
+  }
+
   mOriginalPolicy = ReferrerPolicyIDLToReferrerPolicy(
       static_cast<nsIReferrerInfo::ReferrerPolicyIDL>(originalPolicy));
 

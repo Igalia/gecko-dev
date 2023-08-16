@@ -24,10 +24,9 @@ class RenderAndroidSurfaceTextureHost final : public RenderTextureHostSWGL {
   explicit RenderAndroidSurfaceTextureHost(
       const java::GeckoSurfaceTexture::GlobalRef& aSurfTex, gfx::IntSize aSize,
       gfx::SurfaceFormat aFormat, bool aContinuousUpdate,
-      bool aIgnoreTransform);
+      Maybe<gfx::Matrix4x4> aTransformOverride, bool aIsRemoteTexture);
 
-  wr::WrExternalImage Lock(uint8_t aChannelIndex, gl::GLContext* aGL,
-                           wr::ImageRendering aRendering) override;
+  wr::WrExternalImage Lock(uint8_t aChannelIndex, gl::GLContext* aGL) override;
   void Unlock() override;
 
   size_t Bytes() override {
@@ -53,13 +52,15 @@ class RenderAndroidSurfaceTextureHost final : public RenderTextureHostSWGL {
     return this;
   }
 
+  void UpdateTexImageIfNecessary();
+
   mozilla::java::GeckoSurfaceTexture::GlobalRef mSurfTex;
   const gfx::IntSize mSize;
   const gfx::SurfaceFormat mFormat;
   // mContinuousUpdate was used for rendering video in the past.
   // It is not used on current gecko.
   const bool mContinuousUpdate;
-  const bool mIgnoreTransform;
+  const Maybe<gfx::Matrix4x4> mTransformOverride;
 
  private:
   virtual ~RenderAndroidSurfaceTextureHost();
@@ -85,6 +86,8 @@ class RenderAndroidSurfaceTextureHost final : public RenderTextureHostSWGL {
   RefPtr<gl::GLContext> mGL;
 
   RefPtr<gfx::DataSourceSurface> mReadback;
+
+  bool mIsRemoteTexture;
 };
 
 }  // namespace wr

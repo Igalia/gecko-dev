@@ -71,6 +71,10 @@
 
 namespace mozilla {
 
+RetainedDisplayListData::RetainedDisplayListData()
+    : mModifiedFrameLimit(
+          StaticPrefs::layout_display_list_rebuild_frame_limit()) {}
+
 void RetainedDisplayListData::AddModifiedFrame(nsIFrame* aFrame) {
   MOZ_ASSERT(!aFrame->IsFrameModified());
   Flags(aFrame) += RetainedDisplayListData::FrameFlag::Modified;
@@ -220,10 +224,6 @@ bool RetainedDisplayListBuilder::PreProcessDisplayList(
         aList->mOldItems[i].mItem = nullptr;
       }
 
-      if (item->IsGlassItem() && item == mBuilder.GetGlassDisplayItem()) {
-        mBuilder.ClearGlassDisplayItem();
-      }
-
       item->Destroy(&mBuilder);
       Metrics()->mRemovedItems++;
 
@@ -362,6 +362,9 @@ static Maybe<const ActiveScrolledRoot*> SelectContainerASR(
   const ActiveScrolledRoot* itemClipASR =
       aClipChain ? aClipChain->mASR : nullptr;
 
+  MOZ_DIAGNOSTIC_ASSERT(!aClipChain || aClipChain->mOnStack || !itemClipASR ||
+                        itemClipASR->mScrollableFrame);
+
   const ActiveScrolledRoot* finiteBoundsASR =
       ActiveScrolledRoot::PickDescendant(itemClipASR, aItemASR);
 
@@ -475,20 +478,6 @@ class MergeState {
           oldItem->SetBuildingRect(aNewItem->GetBuildingRect());
         }
 
-        if (destItem == aNewItem) {
-          if (oldItem->IsGlassItem() &&
-              oldItem == mBuilder->Builder()->GetGlassDisplayItem()) {
-            mBuilder->Builder()->ClearGlassDisplayItem();
-          }
-        }  // aNewItem can't be the glass item on the builder yet.
-
-        if (destItem->IsGlassItem()) {
-          if (destItem != oldItem ||
-              destItem != mBuilder->Builder()->GetGlassDisplayItem()) {
-            mBuilder->Builder()->SetGlassDisplayItem(destItem);
-          }
-        }
-
         MergeChildLists(aNewItem, oldItem, destItem);
 
         AutoTArray<MergedListIndex, 2> directPredecessors =
@@ -505,9 +494,6 @@ class MergeState {
       }
     }
     mResultIsModified = true;
-    if (aNewItem->IsGlassItem()) {
-      mBuilder->Builder()->SetGlassDisplayItem(aNewItem);
-    }
     return Some(AddNewNode(aNewItem, Nothing(), Span<MergedListIndex>(),
                            aPreviousItem));
   }
@@ -684,11 +670,6 @@ class MergeState {
                       nsTArray<MergedListIndex>&& aDirectPredecessors) {
     nsDisplayItem* item = mOldItems[aNode.val].mItem;
     if (mOldItems[aNode.val].IsChanged()) {
-      if (item && item->IsGlassItem() &&
-          item == mBuilder->Builder()->GetGlassDisplayItem()) {
-        mBuilder->Builder()->ClearGlassDisplayItem();
-      }
-
       mOldItems[aNode.val].Discard(mBuilder, std::move(aDirectPredecessors));
       mResultIsModified = true;
     } else {
@@ -1178,10 +1159,27 @@ static void FindContainingBlocks(nsIFrame* aFrame,
     f->SetForceDescendIntoIfVisible(true);
     CRR_LOG("Considering OOFs for %p\n", f);
 
-    AddFramesForContainingBlock(f, f->GetChildList(nsIFrame::kFloatList),
+    AddFramesForContainingBlock(f, f->GetChildList(FrameChildListID::Float),
                                 aExtraFrames);
     AddFramesForContainingBlock(f, f->GetChildList(f->GetAbsoluteListID()),
                                 aExtraFrames);
+
+    // This condition must match the condition in
+    // nsLayoutUtils::GetParentOrPlaceholderFor which is used by
+    // nsLayoutUtils::GetDisplayListParent
+    if (f->HasAnyStateBits(NS_FRAME_OUT_OF_FLOW) && !f->GetPrevInFlow()) {
+      nsIFrame* parent = f->GetParent();
+      if (parent && !parent->ForceDescendIntoIfVisible()) {
+        // If the GetDisplayListParent call is going to walk to a placeholder,
+        // in rare cases the placeholder might be contained in a different
+        // continuation from the oof. So we have to make sure to mark the oofs
+        // parent. In the common case this doesn't make us do any extra work,
+        // just changes the order in which we visit the frames since walking
+        // through placeholders will walk through the parent, and we stop when
+        // we find a ForceDescendIntoIfVisible bit set.
+        FindContainingBlocks(parent, aExtraFrames);
+      }
+    }
   }
 }
 
@@ -1628,8 +1626,8 @@ PartialUpdateResult RetainedDisplayListBuilder::AttemptPartialUpdate(
     }
   }
 
-  modifiedDirty.IntersectRect(
-      modifiedDirty, RootReferenceFrame()->InkOverflowRectRelativeToSelf());
+  nsRect rootOverflow = RootOverflowRect();
+  modifiedDirty.IntersectRect(modifiedDirty, rootOverflow);
 
   mBuilder.SetDirtyRect(modifiedDirty);
   mBuilder.SetPartialUpdate(true);
@@ -1643,8 +1641,7 @@ PartialUpdateResult RetainedDisplayListBuilder::AttemptPartialUpdate(
   if (!modifiedDL.IsEmpty()) {
     nsLayoutUtils::AddExtraBackgroundItems(
         &mBuilder, &modifiedDL, RootReferenceFrame(),
-        nsRect(nsPoint(0, 0), RootReferenceFrame()->GetSize()),
-        RootReferenceFrame()->InkOverflowRectRelativeToSelf(), aBackstop);
+        nsRect(nsPoint(0, 0), rootOverflow.Size()), rootOverflow, aBackstop);
   }
   mBuilder.SetPartialUpdate(false);
 
@@ -1693,6 +1690,20 @@ PartialUpdateResult RetainedDisplayListBuilder::AttemptPartialUpdate(
 
   mBuilder.LeavePresShell(RootReferenceFrame(), List());
   return result;
+}
+
+nsRect RetainedDisplayListBuilder::RootOverflowRect() const {
+  const nsIFrame* rootReferenceFrame = RootReferenceFrame();
+  nsRect rootOverflowRect = rootReferenceFrame->InkOverflowRectRelativeToSelf();
+  const nsPresContext* presContext = rootReferenceFrame->PresContext();
+  if (!rootReferenceFrame->GetParent() &&
+      presContext->IsRootContentDocumentCrossProcess() &&
+      presContext->HasDynamicToolbar()) {
+    rootOverflowRect.SizeTo(nsLayoutUtils::ExpandHeightForDynamicToolbar(
+        presContext, rootOverflowRect.Size()));
+  }
+
+  return rootOverflowRect;
 }
 
 }  // namespace mozilla

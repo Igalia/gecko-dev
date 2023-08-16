@@ -1,18 +1,16 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
+import json
 import os
 import sys
 from functools import partial
-import json
 
-from mach.decorators import Command, CommandArgument
+from mach.decorators import Command, CommandArgument, SubCommand
 from mozbuild.base import MachCommandConditions as conditions
-
 
 _TRY_PLATFORMS = {
     "g5-browsertime": "perftest-android-hw-g5-browsertime",
-    "p2-browsertime": "perftest-android-hw-p2-browsertime",
     "linux-xpcshell": "perftest-linux-try-xpcshell",
     "mac-xpcshell": "perftest-macosx-try-xpcshell",
     "linux-browsertime": "perftest-linux-try-browsertime",
@@ -28,6 +26,16 @@ def get_perftest_parser():
     from mozperftest import PerftestArgumentParser
 
     return PerftestArgumentParser
+
+
+def get_perftest_tools_parser(tool):
+    def tools_parser_func():
+        from mozperftest import PerftestToolsArgumentParser
+
+        PerftestToolsArgumentParser.tool = tool
+        return PerftestToolsArgumentParser
+
+    return tools_parser_func
 
 
 def get_parser():
@@ -47,12 +55,14 @@ def run_perftest(command_context, **kwargs):
 
     from pathlib import Path
 
+    from mozperftest.script import ParseError, ScriptInfo, ScriptType
+
     # user selection with fuzzy UI
     from mozperftest.utils import ON_TRY
-    from mozperftest.script import ScriptInfo, ScriptType, ParseError
 
     if not ON_TRY and kwargs.get("tests", []) == []:
         from moztest.resolve import TestResolver
+
         from mozperftest.fzf.fzf import select
 
         resolver = command_context._spawn(TestResolver)
@@ -179,6 +189,7 @@ def run_perftest(command_context, **kwargs):
 )
 def run_tests(command_context, **kwargs):
     from pathlib import Path
+
     from mozperftest.utils import temporary_env
 
     with temporary_env(
@@ -189,11 +200,8 @@ def run_tests(command_context, **kwargs):
 
 def _run_tests(command_context, **kwargs):
     from pathlib import Path
-    from mozperftest.utils import (
-        ON_TRY,
-        checkout_script,
-        checkout_python_script,
-    )
+
+    from mozperftest.utils import ON_TRY, checkout_python_script, checkout_script
 
     venv = command_context.virtualenv_manager
     skip_linters = kwargs.get("skip_linters", False)
@@ -249,3 +257,49 @@ def _run_tests(command_context, **kwargs):
         venv, "coverage", ["report"], display=True
     ):
         raise ValueError("Coverage is too low!")
+
+
+@Command(
+    "perftest-tools",
+    category="testing",
+    description="Run perftest tools",
+)
+def run_tools(command_context, **kwargs):
+    """
+    Runs various perftest tools such as the side-by-side generator.
+    """
+    print("Runs various perftest tools such as the side-by-side generator.")
+
+
+@SubCommand(
+    "perftest-tools",
+    "side-by-side",
+    description="This tool can be used to generate a side-by-side visualization of two videos. "
+    "When using this tool, make sure that the `--test-name` is an exact match, i.e. if you are "
+    "comparing  the task `test-linux64-shippable-qr/opt-browsertime-tp6-firefox-linkedin-e10s` "
+    "between two revisions, then use `browsertime-tp6-firefox-linkedin-e10s` as the suite name "
+    "and `test-linux64-shippable-qr/opt` as the platform.",
+    virtualenv_name="perftest-side-by-side",
+    parser=get_perftest_tools_parser("side-by-side"),
+)
+def run_side_by_side(command_context, **kwargs):
+    from mozperftest.runner import run_tools
+
+    kwargs["tool"] = "side-by-side"
+    run_tools(command_context, kwargs)
+
+
+@SubCommand(
+    "perftest-tools",
+    "change-detector",
+    description="This tool can be used to determine if there are differences between two "
+    "revisions. It can do either direct comparisons, or searching for regressions in between "
+    "two revisions (with a maximum or autocomputed depth).",
+    virtualenv_name="perftest-side-by-side",
+    parser=get_perftest_tools_parser("change-detector"),
+)
+def run_change_detector(command_context, **kwargs):
+    from mozperftest.runner import run_tools
+
+    kwargs["tool"] = "change-detector"
+    run_tools(command_context, kwargs)

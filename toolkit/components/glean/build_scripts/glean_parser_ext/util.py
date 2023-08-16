@@ -8,9 +8,9 @@
 Utility functions for the glean_parser-based code generator
 """
 import copy
+from typing import Dict, List, Tuple
 
 from glean_parser import util
-from typing import Dict, List, Tuple
 
 
 def generate_ping_ids(objs):
@@ -95,7 +95,7 @@ def type_ids_and_categories(objs) -> Tuple[Dict[str, Tuple[int, List[str]]], Lis
                 type_id = len(metric_type_ids) + 1
                 args = util.common_metric_args.copy()
                 for arg_name in util.extra_metric_args:
-                    if hasattr(metric, arg_name) and arg_name != "allowed_extra_keys":
+                    if hasattr(metric, arg_name):
                         args.append(arg_name)
                 metric_type_ids[metric.type] = {"id": type_id, "args": args}
 

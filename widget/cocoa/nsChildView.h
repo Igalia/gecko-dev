@@ -140,6 +140,9 @@ class WidgetRenderingContext;
   // Whether we're inside updateRootCALayer at the moment.
   BOOL mIsUpdatingLayer;
 
+  // Whether the drag and drop was performed.
+  BOOL mPerformedDrag;
+
   // Holds our drag service across multiple drag calls. The reference to the
   // service is obtained when the mouse enters the view and is released when
   // the mouse exits or there is a drop. This prevents us from having to
@@ -291,7 +294,7 @@ class nsChildView final : public nsBaseWidget {
   // nsIWidget interface
   [[nodiscard]] virtual nsresult Create(nsIWidget* aParent, nsNativeWidget aNativeParent,
                                         const LayoutDeviceIntRect& aRect,
-                                        nsWidgetInitData* aInitData = nullptr) override;
+                                        InitData* = nullptr) override;
 
   virtual void Destroy() override;
 
@@ -480,7 +483,7 @@ class nsChildView final : public nsBaseWidget {
 
   virtual LayoutDeviceIntPoint GetClientOffset() override;
 
-  void DispatchAPZWheelInputEvent(mozilla::InputData& aEvent, bool aCanTriggerSwipe);
+  void DispatchAPZWheelInputEvent(mozilla::InputData& aEvent);
   nsEventStatus DispatchAPZInputEvent(mozilla::InputData& aEvent);
 
   void DispatchDoubleTapGesture(mozilla::TimeStamp aEventTimeStamp,
@@ -506,6 +509,12 @@ class nsChildView final : public nsBaseWidget {
 
   // Called by nsCocoaWindow when the window's fullscreen state changes.
   void UpdateFullscreen(bool aFullscreen);
+
+#ifdef DEBUG
+  // test only.
+  virtual nsresult SetHiDPIMode(bool aHiDPI) override;
+  virtual nsresult RestoreHiDPIMode() override;
+#endif
 
  protected:
   virtual ~nsChildView();

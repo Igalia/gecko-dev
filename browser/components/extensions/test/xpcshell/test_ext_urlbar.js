@@ -1,20 +1,24 @@
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
   SearchTestUtils: "resource://testing-common/SearchTestUtils.sys.mjs",
   UrlbarPrefs: "resource:///modules/UrlbarPrefs.sys.mjs",
   UrlbarProvidersManager: "resource:///modules/UrlbarProvidersManager.sys.mjs",
   UrlbarQueryContext: "resource:///modules/UrlbarUtils.sys.mjs",
-  UrlbarTestUtils: "resource://testing-common/UrlbarTestUtils.sys.mjs",
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ExtensionParent: "resource://gre/modules/ExtensionParent.jsm",
+ChromeUtils.defineLazyGetter(this, "UrlbarTestUtils", () => {
+  const { UrlbarTestUtils: module } = ChromeUtils.importESModule(
+    "resource://testing-common/UrlbarTestUtils.sys.mjs"
+  );
+  module.init(this);
+  return module;
 });
 
 AddonTestUtils.init(this);
@@ -65,18 +69,17 @@ add_task(async function startup() {
   });
 
   await AddonTestUtils.promiseStartupManager();
-  await UrlbarTestUtils.initXPCShellDependencies();
 
   // Add a test engine and make it default so that when we do searches below,
   // Firefox doesn't try to include search suggestions from the actual default
   // engine from over the network.
-  await SearchTestUtils.installSearchExtension({
-    name: "Test engine",
-    keyword: "@testengine",
-    search_url_get_params: "s={searchTerms}",
-  });
-  Services.search.defaultEngine = Services.search.getEngineByName(
-    "Test engine"
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: "Test engine",
+      keyword: "@testengine",
+      search_url_get_params: "s={searchTerms}",
+    },
+    { setAsDefault: true }
   );
 });
 
@@ -137,7 +140,8 @@ add_task(async function test_urlbar_temporary_without_privilege() {
     {
       expected: [
         {
-          message: /Using the privileged permission 'urlbar' requires a privileged add-on/,
+          message:
+            /Using the privileged permission 'urlbar' requires a privileged add-on/,
         },
       ],
     },
@@ -382,6 +386,11 @@ add_task(async function test_onProviderResultsRequested() {
         buttonText: "Test tip-local result button text",
         buttonUrl: "https://example.com/tip-button",
         helpUrl: "https://example.com/tip-help",
+        helpL10n: {
+          id: UrlbarPrefs.get("resultMenu")
+            ? "urlbar-result-menu-tip-get-help"
+            : "urlbar-tip-help-icon",
+        },
         type: "extension",
       },
     },
@@ -1104,7 +1113,8 @@ add_task(async function test_onBehaviorRequestedTimeout() {
     incognitoOverride: "spanning",
     background() {
       browser.urlbar.onBehaviorRequested.addListener(async query => {
-        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        // setTimeout is available in background scripts
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout, no-undef
         await new Promise(r => setTimeout(r, 500));
         return "active";
       }, "test");
@@ -1159,7 +1169,8 @@ add_task(async function test_onResultsRequestedTimeout() {
         return "active";
       }, "test");
       browser.urlbar.onResultsRequested.addListener(async query => {
-        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
+        // setTimeout is available in background scripts
+        // eslint-disable-next-line mozilla/no-arbitrary-setTimeout, no-undef
         await new Promise(r => setTimeout(r, 600));
         return [
           {

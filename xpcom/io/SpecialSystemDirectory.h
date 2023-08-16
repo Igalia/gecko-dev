@@ -29,6 +29,7 @@ enum SystemDirectories {
   Mac_LocalApplicationsDirectory = 106,
   Mac_UserPreferencesDirectory = 107,
   Mac_PictureDocumentsDirectory = 108,
+  Mac_DefaultScreenshotDirectory = 109,
 
   Win_SystemDirectory = 201,
   Win_WindowsDirectory = 202,
@@ -44,13 +45,11 @@ enum SystemDirectories {
 #if defined(MOZ_THUNDERBIRD) || defined(MOZ_SUITE)
   Win_Documents = 228,
 #endif
-#if defined(MOZ_SANDBOX)
-  Win_LocalAppdataLow = 232,
-#endif
 
   Unix_HomeDirectory = 303,
   Unix_XDG_Desktop = 304,
-  Unix_XDG_Download = 306
+  Unix_XDG_Download = 306,
+  Unix_SystemConfigDirectory = 307
 };
 
 nsresult GetSpecialSystemDirectory(SystemDirectories aSystemSystemDirectory,

@@ -45,6 +45,7 @@ struct DefaultJitOptions {
   bool checkRangeAnalysis;
   bool runExtraChecks;
   bool disableJitBackend;
+  bool disableJitHints;
   bool disableAma;
   bool disableEaa;
   bool disableEdgeCaseAnalysis;
@@ -53,12 +54,14 @@ struct DefaultJitOptions {
   bool disableLicm;
   bool disablePruning;
   bool disableInstructionReordering;
+  bool disableIteratorIndices;
   bool disableRangeAnalysis;
   bool disableRecoverIns;
   bool disableScalarReplacement;
   bool disableCacheIR;
   bool disableSink;
   bool disableRedundantShapeGuards;
+  bool disableRedundantGCBarriers;
   bool disableBailoutLoopCheck;
   bool baselineInterpreter;
   bool baselineJit;
@@ -72,12 +75,10 @@ struct DefaultJitOptions {
   bool osr;
   bool wasmFoldOffsets;
   bool wasmDelayTier2;
-  bool traceRegExpParser;
-  bool traceRegExpAssembler;
-  bool traceRegExpInterpreter;
-  bool traceRegExpPeephole;
   bool lessDebugCode;
   bool enableWatchtowerMegamorphic;
+  bool onlyInlineSelfHosted;
+  bool enableICFramePointers;
   bool enableWasmJitExit;
   bool enableWasmJitEntry;
   bool enableWasmIonFastCalls;
@@ -85,6 +86,7 @@ struct DefaultJitOptions {
   bool enableWasmImportCallSpew;
   bool enableWasmFuncCallSpew;
 #endif
+  bool emitInterpreterEntryTrampoline;
   uint32_t baselineInterpreterWarmUpThreshold;
   uint32_t baselineJitWarmUpThreshold;
   uint32_t trialInliningWarmUpThreshold;
@@ -120,8 +122,22 @@ struct DefaultJitOptions {
   bool spectreValueMasking;
   bool spectreJitToCxxCalls;
 
+  bool writeProtectCode;
+
   bool supportsUnalignedAccesses;
   BaseRegForAddress baseRegForLocals;
+
+  // Irregexp shim flags
+  bool correctness_fuzzer_suppressions;
+  bool enable_regexp_unaligned_accesses;
+  bool regexp_possessive_quantifier;
+  bool regexp_optimization;
+  bool regexp_peephole_optimization;
+  bool regexp_tier_up;
+  bool trace_regexp_assembler;
+  bool trace_regexp_bytecodes;
+  bool trace_regexp_parser;
+  bool trace_regexp_peephole_optimization;
 
   DefaultJitOptions();
   bool isSmallFunction(JSScript* script) const;
@@ -131,6 +147,8 @@ struct DefaultJitOptions {
   void resetNormalIonWarmUpThreshold();
   void enableGvn(bool val);
   void setFastWarmUp();
+
+  void maybeSetWriteProtectCode(bool val);
 
   bool eagerIonCompilation() const { return normalIonWarmUpThreshold == 0; }
 };
@@ -147,6 +165,10 @@ inline bool HasJitBackend() {
 
 inline bool IsBaselineInterpreterEnabled() {
   return HasJitBackend() && JitOptions.baselineInterpreter;
+}
+
+inline bool TooManyActualArguments(size_t nargs) {
+  return nargs > JitOptions.maxStackArgs;
 }
 
 }  // namespace jit

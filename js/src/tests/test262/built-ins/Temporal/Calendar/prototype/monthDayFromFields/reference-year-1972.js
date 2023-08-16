@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 the V8 project authors. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -21,6 +21,12 @@ let result = cal.monthDayFromFields({ year: 2021, monthCode: "M02", day: 29 });
 TemporalHelpers.assertPlainMonthDay(result, "M02", 29, "year is ignored and reference year should be a leap year if monthCode is given");
 
 result = cal.monthDayFromFields({ year: 2021, month: 2, day: 29 }, { overflow: "constrain" });
-TemporalHelpers.assertPlainMonthDay(result, "M02", 28, "year should not be ignored if monthCode is not given");
+TemporalHelpers.assertPlainMonthDay(result, "M02", 28, "year should not be ignored if monthCode is not given (overflow constrain)");
+
+assert.throws(
+  RangeError,
+  () => cal.monthDayFromFields({ year: 2021, month: 2, day: 29 }, { overflow: "reject" }),
+  "year should not be ignored if monthCode is not given (overflow reject)"
+);
 
 reportCompare(0, 0);

@@ -26,10 +26,7 @@ struct RetainedDisplayListData {
   enum class FrameFlag : uint8_t { Modified, HasProps, HadWillChange };
   using FrameFlags = mozilla::EnumSet<FrameFlag, uint8_t>;
 
-  RetainedDisplayListData() : mModifiedFrameCount(0) {
-    mModifiedFrameLimit =
-        StaticPrefs::layout_display_list_rebuild_frame_limit();
-  }
+  RetainedDisplayListData();
 
   /**
    * Adds the frame to modified frames list.
@@ -86,8 +83,8 @@ struct RetainedDisplayListData {
 
  private:
   nsTHashMap<nsPtrHashKey<nsIFrame>, FrameFlags> mFrames;
-  uint32_t mModifiedFrameCount;
-  uint32_t mModifiedFrameLimit;
+  uint32_t mModifiedFrameCount = 0;
+  uint32_t mModifiedFrameLimit;  // initialized to a pref value in constructor
 };
 
 enum class PartialUpdateResult { Failed, NoChange, Updated };
@@ -255,6 +252,11 @@ class RetainedDisplayListBuilder {
                     nsIFrame** aOutModifiedAGR);
 
   nsIFrame* RootReferenceFrame() { return mBuilder.RootReferenceFrame(); }
+  const nsIFrame* RootReferenceFrame() const {
+    return mBuilder.RootReferenceFrame();
+  }
+
+  nsRect RootOverflowRect() const;
 
   /**
    * Tries to perform a simple partial display list build without display list

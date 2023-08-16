@@ -7,6 +7,7 @@
 #include "Screen.h"
 
 #include "mozilla/dom/DOMTypes.h"
+#include "mozilla/dom/ScreenBinding.h"
 #include "mozilla/Hal.h"
 #include "mozilla/LookAndFeel.h"
 #include "mozilla/StaticPrefs_layout.h"
@@ -112,6 +113,14 @@ Screen::GetAvailRectDisplayPix(int32_t* aOutLeft, int32_t* aOutTop,
 }
 
 NS_IMETHODIMP
+Screen::GetColorGamut(dom::ScreenColorGamut* aScreenColorGamut) {
+  // TODO(zrhoffman, bug 1771373): Return a wider color gamut when one is
+  // available
+  *aScreenColorGamut = dom::ScreenColorGamut::Srgb;
+  return NS_OK;
+}
+
+NS_IMETHODIMP
 Screen::GetPixelDepth(int32_t* aPixelDepth) {
   *aPixelDepth = mPixelDepth;
   return NS_OK;
@@ -129,15 +138,21 @@ Screen::GetContentsScaleFactor(double* aOutScale) {
   return NS_OK;
 }
 
+CSSToLayoutDeviceScale Screen::GetCSSToLayoutDeviceScale(
+    IncludeOSZoom aIncludeOSZoom) const {
+  auto scale = CSSToLayoutDeviceScale(StaticPrefs::layout_css_devPixelsPerPx());
+  if (scale.scale <= 0.0) {
+    scale = mDefaultCssScale;
+  }
+  if (bool(aIncludeOSZoom)) {
+    scale.scale *= LookAndFeel::SystemZoomSettings().mFullZoom;
+  }
+  return scale;
+}
+
 NS_IMETHODIMP
 Screen::GetDefaultCSSScaleFactor(double* aOutScale) {
-  double scale = StaticPrefs::layout_css_devPixelsPerPx();
-  if (scale > 0.0) {
-    *aOutScale = scale;
-  } else {
-    *aOutScale = mDefaultCssScale.scale;
-  }
-  *aOutScale *= LookAndFeel::SystemZoomSettings().mFullZoom;
+  *aOutScale = GetCSSToLayoutDeviceScale(IncludeOSZoom::Yes).scale;
   return NS_OK;
 }
 
@@ -157,6 +172,20 @@ NS_IMETHODIMP
 Screen::GetIsPseudoDisplay(bool* aIsPseudoDisplay) {
   *aIsPseudoDisplay = mIsPseudoDisplay;
   return NS_OK;
+}
+
+hal::ScreenOrientation Screen::GetDefaultOrientationType() const {
+  if (mRect.Width() >= mRect.Height()) {
+    if (mOrientationAngle == 0 || mOrientationAngle == 180) {
+      return hal::ScreenOrientation::LandscapePrimary;
+    }
+    return hal::ScreenOrientation::PortraitPrimary;
+  }
+
+  if (mOrientationAngle == 0 || mOrientationAngle == 180) {
+    return hal::ScreenOrientation::PortraitPrimary;
+  }
+  return hal::ScreenOrientation::LandscapePrimary;
 }
 
 }  // namespace mozilla::widget

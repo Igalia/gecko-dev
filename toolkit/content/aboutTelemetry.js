@@ -4,35 +4,29 @@
 
 "use strict";
 
-const { BrowserUtils } = ChromeUtils.import(
-  "resource://gre/modules/BrowserUtils.jsm"
+const { BrowserUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/BrowserUtils.sys.mjs"
 );
-const { TelemetryTimestamps } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryTimestamps.jsm"
+const { TelemetryTimestamps } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryTimestamps.sys.mjs"
 );
-const { TelemetryController } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryController.jsm"
+const { TelemetryController } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryController.sys.mjs"
 );
-const { TelemetryArchive } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryArchive.jsm"
+const { TelemetryArchive } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryArchive.sys.mjs"
 );
-const { TelemetrySend } = ChromeUtils.import(
-  "resource://gre/modules/TelemetrySend.jsm"
+const { TelemetrySend } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetrySend.sys.mjs"
 );
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+const { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "ObjectUtils",
-  "resource://gre/modules/ObjectUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+});
 
 const Telemetry = Services.telemetry;
 
@@ -175,11 +169,11 @@ var Settings = {
   attachObservers() {
     let elements = document.getElementsByClassName("change-data-choices-link");
     for (let el of elements) {
-      el.parentElement.addEventListener("click", function(event) {
+      el.parentElement.addEventListener("click", function (event) {
         if (event.target.localName === "a") {
           if (AppConstants.platform == "android") {
-            var { EventDispatcher } = ChromeUtils.import(
-              "resource://gre/modules/Messaging.jsm"
+            var { EventDispatcher } = ChromeUtils.importESModule(
+              "resource://gre/modules/Messaging.sys.mjs"
             );
             EventDispatcher.instance.sendRequest({
               type: "Settings:Show",
@@ -415,10 +409,6 @@ var PingPicker = {
         );
       }
     }
-
-    // augment "current ping payload" with origin telemetry
-    const originSnapshot = Telemetry.getOriginSnapshot(false /* clear */);
-    ping.payload.origins = originSnapshot;
 
     displayPingData(ping, true);
   },
@@ -999,64 +989,71 @@ function SymbolicationRequest(
  * A callback for onreadystatechange. It replaces the numeric stack with
  * the symbolicated one returned by the symbolication server.
  */
-SymbolicationRequest.prototype.handleSymbolResponse = async function SymbolicationRequest_handleSymbolResponse() {
-  if (this.symbolRequest.readyState != 4) {
-    return;
-  }
+SymbolicationRequest.prototype.handleSymbolResponse =
+  async function SymbolicationRequest_handleSymbolResponse() {
+    if (this.symbolRequest.readyState != 4) {
+      return;
+    }
 
-  let fetchElement = document.getElementById(this.prefix + "-fetch-symbols");
-  fetchElement.hidden = true;
-  let hideElement = document.getElementById(this.prefix + "-hide-symbols");
-  hideElement.hidden = false;
-  let div = document.getElementById(this.prefix);
-  removeAllChildNodes(div);
-  let errorMessage = await document.l10n.formatValue(
-    "about-telemetry-error-fetching-symbols"
-  );
+    let fetchElement = document.getElementById(this.prefix + "-fetch-symbols");
+    fetchElement.hidden = true;
+    let hideElement = document.getElementById(this.prefix + "-hide-symbols");
+    hideElement.hidden = false;
+    let div = document.getElementById(this.prefix);
+    removeAllChildNodes(div);
+    let errorMessage = await document.l10n.formatValue(
+      "about-telemetry-error-fetching-symbols"
+    );
 
-  if (this.symbolRequest.status != 200) {
-    div.appendChild(document.createTextNode(errorMessage));
-    return;
-  }
+    if (this.symbolRequest.status != 200) {
+      div.appendChild(document.createTextNode(errorMessage));
+      return;
+    }
 
-  let jsonResponse = {};
-  try {
-    jsonResponse = JSON.parse(this.symbolRequest.responseText);
-  } catch (e) {
-    div.appendChild(document.createTextNode(errorMessage));
-    return;
-  }
+    let jsonResponse = {};
+    try {
+      jsonResponse = JSON.parse(this.symbolRequest.responseText);
+    } catch (e) {
+      div.appendChild(document.createTextNode(errorMessage));
+      return;
+    }
 
-  for (let i = 0; i < jsonResponse.length; ++i) {
-    let stack = jsonResponse[i];
-    this.renderHeader(i, this.durations);
+    for (let i = 0; i < jsonResponse.length; ++i) {
+      let stack = jsonResponse[i];
+      this.renderHeader(i, this.durations);
 
-    for (let symbol of stack) {
-      div.appendChild(document.createTextNode(symbol));
+      for (let symbol of stack) {
+        div.appendChild(document.createTextNode(symbol));
+        div.appendChild(document.createElement("br"));
+      }
       div.appendChild(document.createElement("br"));
     }
-    div.appendChild(document.createElement("br"));
-  }
-};
+  };
 /**
  * Send a request to the symbolication server to symbolicate this stack.
  */
-SymbolicationRequest.prototype.fetchSymbols = function SymbolicationRequest_fetchSymbols() {
-  let symbolServerURI = Preferences.get(
-    PREF_SYMBOL_SERVER_URI,
-    DEFAULT_SYMBOL_SERVER_URI
-  );
-  let request = { memoryMap: this.memoryMap, stacks: this.stacks, version: 3 };
-  let requestJSON = JSON.stringify(request);
+SymbolicationRequest.prototype.fetchSymbols =
+  function SymbolicationRequest_fetchSymbols() {
+    let symbolServerURI = Preferences.get(
+      PREF_SYMBOL_SERVER_URI,
+      DEFAULT_SYMBOL_SERVER_URI
+    );
+    let request = {
+      memoryMap: this.memoryMap,
+      stacks: this.stacks,
+      version: 3,
+    };
+    let requestJSON = JSON.stringify(request);
 
-  this.symbolRequest = new XMLHttpRequest();
-  this.symbolRequest.open("POST", symbolServerURI, true);
-  this.symbolRequest.setRequestHeader("Content-type", "application/json");
-  this.symbolRequest.setRequestHeader("Content-length", requestJSON.length);
-  this.symbolRequest.setRequestHeader("Connection", "close");
-  this.symbolRequest.onreadystatechange = this.handleSymbolResponse.bind(this);
-  this.symbolRequest.send(requestJSON);
-};
+    this.symbolRequest = new XMLHttpRequest();
+    this.symbolRequest.open("POST", symbolServerURI, true);
+    this.symbolRequest.setRequestHeader("Content-type", "application/json");
+    this.symbolRequest.setRequestHeader("Content-length", requestJSON.length);
+    this.symbolRequest.setRequestHeader("Connection", "close");
+    this.symbolRequest.onreadystatechange =
+      this.handleSymbolResponse.bind(this);
+    this.symbolRequest.send(requestJSON);
+  };
 
 var Histogram = {
   /**
@@ -1107,7 +1104,7 @@ var Histogram = {
     copyButton.className = "copy-node";
     document.l10n.setAttributes(copyButton, "about-telemetry-histogram-copy");
 
-    copyButton.addEventListener("click", async function() {
+    copyButton.addEventListener("click", async function () {
       let divStatsString = await document.l10n.formatValue(
         "about-telemetry-histogram-stats",
         histogramStatsArgs
@@ -1273,7 +1270,7 @@ var Search = {
         filter = RegExp(r[1], r[2]);
       } catch (e) {
         // Incomplete or bad RegExp - always no match
-        isPassFunc = function() {
+        isPassFunc = function () {
           return false;
         };
       }
@@ -1961,34 +1958,6 @@ var Events = {
   },
 };
 
-var Origins = {
-  render(aOrigins) {
-    let originSection = document.getElementById("origins");
-    removeAllChildNodes(originSection);
-
-    const headings = [
-      "about-telemetry-origin-origin",
-      "about-telemetry-origin-count",
-    ];
-
-    let hasData = false;
-    for (let [metric, origins] of Object.entries(aOrigins || {})) {
-      if (!Object.entries(origins).length) {
-        continue;
-      }
-      hasData = true;
-      const metricHeader = document.createElement("caption");
-      metricHeader.appendChild(document.createTextNode(metric));
-
-      const table = GenericTable.render(Object.entries(origins), headings);
-      table.appendChild(metricHeader);
-      originSection.appendChild(table);
-    }
-
-    setHasData("origin-telemetry-section", hasData);
-  },
-};
-
 /**
  * Helper function for showing either the toggle element or "No data collected" message for a section
  *
@@ -2013,10 +1982,6 @@ function setupServerOwnerBranding() {
   let serverOwner = Preferences.get(PREF_TELEMETRY_SERVER_OWNER, "Mozilla");
   const elements = [
     [document.getElementById("page-subtitle"), "about-telemetry-page-subtitle"],
-    [
-      document.getElementById("origins-explanation"),
-      "about-telemetry-origins-explanation",
-    ],
   ];
   for (const [elt, l10nName] of elements) {
     document.l10n.setAttributes(elt, l10nName, {
@@ -2202,8 +2167,8 @@ function showSubSection(selected) {
   });
   section.hidden = false;
 
-  let title = selected.parentElement.querySelector(".category-name")
-    .textContent;
+  let title =
+    selected.parentElement.querySelector(".category-name").textContent;
   let subsection = selected.textContent;
   document.getElementById("sectionTitle").textContent =
     title + " - " + subsection;
@@ -2230,7 +2195,7 @@ function setupListeners() {
 
   document
     .getElementById("late-writes-fetch-symbols")
-    .addEventListener("click", function() {
+    .addEventListener("click", function () {
       if (!gPingData) {
         return;
       }
@@ -2247,7 +2212,7 @@ function setupListeners() {
 
   document
     .getElementById("late-writes-hide-symbols")
-    .addEventListener("click", function() {
+    .addEventListener("click", function () {
       if (!gPingData) {
         return;
       }
@@ -2645,9 +2610,6 @@ function displayRichPingData(ping, updatePayloadList) {
   Events.render(payload);
 
   LateWritesSingleton.renderLateWrites(payload.lateWrites);
-
-  // Show origin telemetry.
-  Origins.render(payload.origins);
 
   // Show simple measurements
   SimpleMeasurements.render(payload);

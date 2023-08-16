@@ -1,10 +1,10 @@
 "use strict";
 
-const { TelemetryEvents } = ChromeUtils.import(
-  "resource://normandy/lib/TelemetryEvents.jsm"
+const { TelemetryEvents } = ChromeUtils.importESModule(
+  "resource://normandy/lib/TelemetryEvents.sys.mjs"
 );
-const { TelemetryEnvironment } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryEnvironment.jsm"
+const { TelemetryEnvironment } = ChromeUtils.importESModule(
+  "resource://gre/modules/TelemetryEnvironment.sys.mjs"
 );
 const STUDIES_OPT_OUT_PREF = "app.shield.optoutstudies.enabled";
 const UPLOAD_ENABLED_PREF = "datareporting.healthreport.uploadEnabled";
@@ -384,7 +384,10 @@ add_task(async function test_remove_rollouts() {
     "Called to set the rollout as !active"
   );
   Assert.ok(
-    manager.store.updateExperiment.calledWith(rollout.slug, { active: false }),
+    manager.store.updateExperiment.calledWith(rollout.slug, {
+      active: false,
+      unenrollReason: "some-reason",
+    }),
     "Called with expected parameters"
   );
 });
@@ -394,7 +397,7 @@ add_task(async function test_remove_rollout_onFinalize() {
   const manager = ExperimentFakes.manager(store);
   const rollout = ExperimentFakes.rollout("foo");
 
-  sinon.stub(store, "getAllRollouts").returns([rollout]);
+  sinon.stub(store, "getAllActiveRollouts").returns([rollout]);
   sinon.stub(store, "get").returns(rollout);
   sinon.spy(manager, "unenroll");
   sinon.spy(manager, "sendFailureTelemetry");
@@ -427,7 +430,7 @@ add_task(async function test_rollout_telemetry_events() {
   globalSandbox.spy(TelemetryEnvironment, "setExperimentInactive");
   globalSandbox.spy(TelemetryEvents, "sendEvent");
 
-  sinon.stub(store, "getAllRollouts").returns([rollout]);
+  sinon.stub(store, "getAllActiveRollouts").returns([rollout]);
   sinon.stub(store, "get").returns(rollout);
   sinon.spy(manager, "sendFailureTelemetry");
 

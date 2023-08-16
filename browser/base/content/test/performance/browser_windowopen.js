@@ -38,7 +38,7 @@ function isLikelyFocusChange(rects) {
  * This test ensures that there are no unexpected
  * uninterruptible reflows or flickering areas when opening new windows.
  */
-add_task(async function() {
+add_task(async function () {
   // Flushing all caches helps to ensure that we get consistent
   // behaviour when opening a new window, even if windows have been
   // opened in previous tests.
@@ -113,22 +113,9 @@ add_task(async function() {
             inRange(r.x1, 11, 13), // very close to the left of the screen
         },
         {
-          name: "Initial favicon appearing after first paint",
-          condition: r => {
-            let faviconRect = win.gBrowser.tabs[0].iconImage.getBoundingClientRect();
-            return (
-              r.w == faviconRect.width &&
-              r.h == faviconRect.height &&
-              r.x1 == faviconRect.x &&
-              r.y1 == faviconRect.y
-            );
-          },
-        },
-        {
           // Note that the length and x values here are a bit weird because on
           // some fonts, we appear to detect the two words separately.
-          name:
-            "Initial bookmark text ('Getting Started' or 'Get Involved') appearing after startup",
+          name: "Initial bookmark text ('Getting Started' or 'Get Involved') appearing after startup",
           condition: r =>
             inRange(r.w, 25, 120) && // length of text
             inRange(r.h, 9, 15) && // height of text
@@ -144,7 +131,7 @@ add_task(async function() {
   };
 
   await withPerfObserver(
-    async function() {
+    async function () {
       // Avoid showing the remotecontrol UI.
       await new Promise(resolve => {
         win.addEventListener(

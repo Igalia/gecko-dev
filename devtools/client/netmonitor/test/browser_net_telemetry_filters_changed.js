@@ -8,7 +8,7 @@ const ALL_CHANNELS = Ci.nsITelemetry.DATASET_ALL_CHANNELS;
 /**
  * Test the filters_changed telemetry event.
  */
-add_task(async function() {
+add_task(async function () {
   const { monitor } = await initNetMonitor(HTTPS_SIMPLE_URL, {
     requestCount: 1,
   });
@@ -74,7 +74,7 @@ add_task(async function() {
   setFreetextFilter(monitor, "nomatch");
 
   // Wait till the text filter is applied.
-  await waitUntil(() => getDisplayedRequests(store.getState()).length == 0);
+  await waitUntil(() => !getDisplayedRequests(store.getState()).length);
 
   checkTelemetryEvent(
     {
@@ -96,8 +96,5 @@ function setFreetextFilter(monitor, value) {
   const filterBox = document.querySelector(".devtools-filterinput");
   filterBox.focus();
   filterBox.value = "";
-
-  for (const ch of value) {
-    EventUtils.synthesizeKey(ch, {}, monitor.panelWin);
-  }
+  typeInNetmonitor(value, monitor);
 }

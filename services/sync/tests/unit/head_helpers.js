@@ -10,18 +10,23 @@
 // is used (from service.js).
 /* global Service */
 
-var { AddonTestUtils, MockAsyncShutdown } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+var { AddonTestUtils, MockAsyncShutdown } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
-var { Async } = ChromeUtils.import("resource://services-common/async.js");
-var { CommonUtils } = ChromeUtils.import("resource://services-common/utils.js");
+var { Async } = ChromeUtils.importESModule(
+  "resource://services-common/async.sys.mjs"
+);
+var { CommonUtils } = ChromeUtils.importESModule(
+  "resource://services-common/utils.sys.mjs"
+);
 var { PlacesTestUtils } = ChromeUtils.importESModule(
   "resource://testing-common/PlacesTestUtils.sys.mjs"
 );
-var { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
-var { SerializableSet, Svc, Utils, getChromeWindow } = ChromeUtils.import(
-  "resource://services-sync/util.js"
+var { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
 );
+var { SerializableSet, Svc, Utils, getChromeWindow } =
+  ChromeUtils.importESModule("resource://services-sync/util.sys.mjs");
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
@@ -31,11 +36,10 @@ var { PlacesUtils } = ChromeUtils.importESModule(
 var { PlacesSyncUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/PlacesSyncUtils.sys.mjs"
 );
-var { ObjectUtils } = ChromeUtils.import(
-  "resource://gre/modules/ObjectUtils.jsm"
+var { ObjectUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/ObjectUtils.sys.mjs"
 );
 var {
-  AccountState,
   MockFxaStorageManager,
   SyncTestingInfrastructure,
   configureFxAccountIdentity,
@@ -49,12 +53,12 @@ var {
   sumHistogram,
   syncTestLogging,
   waitForZeroTimer,
-} = ChromeUtils.import("resource://testing-common/services/sync/utils.js");
-ChromeUtils.defineModuleGetter(
-  this,
-  "AddonManager",
-  "resource://gre/modules/AddonManager.jsm"
+} = ChromeUtils.importESModule(
+  "resource://testing-common/services/sync/utils.sys.mjs"
 );
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+});
 
 add_setup(async function head_setup() {
   // Initialize logging. This will sometimes be reset by a pref reset,
@@ -66,11 +70,13 @@ add_setup(async function head_setup() {
   }
 });
 
-XPCOMUtils.defineLazyGetter(this, "SyncPingSchema", function() {
-  let { FileUtils } = ChromeUtils.import(
-    "resource://gre/modules/FileUtils.jsm"
+XPCOMUtils.defineLazyGetter(this, "SyncPingSchema", function () {
+  let { FileUtils } = ChromeUtils.importESModule(
+    "resource://gre/modules/FileUtils.sys.mjs"
   );
-  let { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
+  let { NetUtil } = ChromeUtils.importESModule(
+    "resource://gre/modules/NetUtil.sys.mjs"
+  );
   let stream = Cc["@mozilla.org/network/file-input-stream;1"].createInstance(
     Ci.nsIFileInputStream
   );
@@ -91,9 +97,9 @@ XPCOMUtils.defineLazyGetter(this, "SyncPingSchema", function() {
   return schema;
 });
 
-XPCOMUtils.defineLazyGetter(this, "SyncPingValidator", function() {
-  const { JsonSchema } = ChromeUtils.import(
-    "resource://gre/modules/JsonSchema.jsm"
+XPCOMUtils.defineLazyGetter(this, "SyncPingValidator", function () {
+  const { JsonSchema } = ChromeUtils.importESModule(
+    "resource://gre/modules/JsonSchema.sys.mjs"
   );
   return new JsonSchema.Validator(SyncPingSchema);
 });
@@ -208,16 +214,10 @@ function mockGetTabState(tab) {
   return tab;
 }
 
-function mockGetWindowEnumerator(url, numWindows, numTabs, indexes, moreURLs) {
+function mockGetWindowEnumerator(urls) {
   let elements = [];
 
-  function url2entry(urlToConvert) {
-    return {
-      url: typeof urlToConvert == "function" ? urlToConvert() : urlToConvert,
-      title: "title",
-    };
-  }
-
+  const numWindows = 1;
   for (let w = 0; w < numWindows; ++w) {
     let tabs = [];
     let win = {
@@ -229,22 +229,16 @@ function mockGetWindowEnumerator(url, numWindows, numTabs, indexes, moreURLs) {
     };
     elements.push(win);
 
-    for (let t = 0; t < numTabs; ++t) {
-      tabs.push(
-        Cu.cloneInto(
-          {
-            index: indexes ? indexes() : 1,
-            entries: (moreURLs ? [url].concat(moreURLs()) : [url]).map(
-              url2entry
-            ),
-            attributes: {
-              image: "image",
-            },
-            lastAccessed: 1499,
-          },
-          {}
-        )
-      );
+    let lastAccessed = 2000;
+    for (let url of urls) {
+      tabs.push({
+        linkedBrowser: {
+          currentURI: Services.io.newURI(url),
+          contentTitle: "title",
+        },
+        lastAccessed,
+      });
+      lastAccessed += 1000;
     }
   }
 
@@ -271,10 +265,10 @@ function mockGetWindowEnumerator(url, numWindows, numTabs, indexes, moreURLs) {
 // Helper function to get the sync telemetry and add the typically used test
 // engine names to its list of allowed engines.
 function get_sync_test_telemetry() {
-  let { SyncTelemetry } = ChromeUtils.import(
-    "resource://services-sync/telemetry.js"
+  let { SyncTelemetry } = ChromeUtils.importESModule(
+    "resource://services-sync/telemetry.sys.mjs"
   );
-  SyncTelemetry.tryRefreshDevices = function() {};
+  SyncTelemetry.tryRefreshDevices = function () {};
   let testEngines = ["rotary", "steam", "sterling", "catapult", "nineties"];
   for (let engineName of testEngines) {
     SyncTelemetry.allowedEngines.add(engineName);
@@ -292,7 +286,7 @@ function assert_valid_ping(record) {
   // will typically have no recorded syncs, and the validator complains about
   // it. So ignore such records (but only ignore when *both* shutdown and
   // no Syncs - either of them not being true might be an actual problem)
-  if (record && (record.why != "shutdown" || record.syncs.length != 0)) {
+  if (record && (record.why != "shutdown" || !!record.syncs.length)) {
     const result = SyncPingValidator.validate(record);
     if (!result.valid) {
       if (result.errors.length) {
@@ -359,7 +353,7 @@ function wait_for_pings(expectedPings) {
     let telem = get_sync_test_telemetry();
     let oldSubmit = telem.submit;
     let pings = [];
-    telem.submit = function(record) {
+    telem.submit = function (record) {
       pings.push(record);
       if (pings.length == expectedPings) {
         telem.submit = oldSubmit;
@@ -397,7 +391,7 @@ async function sync_and_validate_telem(
   let telem = get_sync_test_telemetry();
   let oldSubmit = telem.submit;
   try {
-    telem.submit = function(record) {
+    telem.submit = function (record) {
       // This is called via an observer, so failures here don't cause the test
       // to fail :(
       try {
@@ -442,7 +436,9 @@ async function sync_engine_and_validate_telem(
   let caughtError = null;
   // Clear out status, so failures from previous syncs won't show up in the
   // telemetry ping.
-  let { Status } = ChromeUtils.import("resource://services-sync/status.js");
+  let { Status } = ChromeUtils.importESModule(
+    "resource://services-sync/status.sys.mjs"
+  );
   Status._engines = {};
   Status.partial = false;
   // Ideally we'd clear these out like we do with engines, (probably via
@@ -457,7 +453,7 @@ async function sync_engine_and_validate_telem(
 
   let oldSubmit = telem.submit;
   let submitPromise = new Promise((resolve, reject) => {
-    telem.submit = function(ping) {
+    telem.submit = function (ping) {
       telem.submit = oldSubmit;
       ping.syncs.forEach(record => {
         if (record && record.status) {
@@ -536,7 +532,7 @@ async function sync_engine_and_validate_telem(
 // has fired.
 function promiseOneObserver(topic, callback) {
   return new Promise((resolve, reject) => {
-    let observer = function(subject, data) {
+    let observer = function (subject, data) {
       Svc.Obs.remove(topic, observer);
       resolve({ subject, data });
     };
@@ -545,8 +541,8 @@ function promiseOneObserver(topic, callback) {
 }
 
 async function registerRotaryEngine() {
-  let { RotaryEngine } = ChromeUtils.import(
-    "resource://testing-common/services/sync/rotaryengine.js"
+  let { RotaryEngine } = ChromeUtils.importESModule(
+    "resource://testing-common/services/sync/rotaryengine.sys.mjs"
   );
   await Service.engineManager.clear();
 
@@ -561,10 +557,13 @@ async function registerRotaryEngine() {
 // Set the validation prefs to attempt validation every time to avoid non-determinism.
 function enableValidationPrefs(engines = ["bookmarks"]) {
   for (let engine of engines) {
-    Svc.Prefs.set(`engine.${engine}.validation.interval`, 0);
-    Svc.Prefs.set(`engine.${engine}.validation.percentageChance`, 100);
-    Svc.Prefs.set(`engine.${engine}.validation.maxRecords`, -1);
-    Svc.Prefs.set(`engine.${engine}.validation.enabled`, true);
+    Svc.PrefBranch.setIntPref(`engine.${engine}.validation.interval`, 0);
+    Svc.PrefBranch.setIntPref(
+      `engine.${engine}.validation.percentageChance`,
+      100
+    );
+    Svc.PrefBranch.setIntPref(`engine.${engine}.validation.maxRecords`, -1);
+    Svc.PrefBranch.setBoolPref(`engine.${engine}.validation.enabled`, true);
   }
 }
 
@@ -692,11 +691,11 @@ async function assertBookmarksTreeMatches(rootGuid, expected, message) {
 }
 
 function add_bookmark_test(task) {
-  const { BookmarksEngine } = ChromeUtils.import(
-    "resource://services-sync/engines/bookmarks.js"
+  const { BookmarksEngine } = ChromeUtils.importESModule(
+    "resource://services-sync/engines/bookmarks.sys.mjs"
   );
 
-  add_task(async function() {
+  add_task(async function () {
     _(`Running bookmarks test ${task.name}`);
     let engine = new BookmarksEngine(Service);
     await engine.initialize();

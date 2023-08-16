@@ -17,6 +17,10 @@
 HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
+namespace {
+
+// These templates are not found via ADL.
+using hwy::HWY_NAMESPACE::IfThenZeroElse;
 
 template <typename Op>
 struct PerChannelOp {
@@ -86,7 +90,7 @@ struct OpGamma {
   const float inverse_gamma;
   template <typename D, typename T>
   T Transform(D d, const T& linear) const {
-    return IfThenZeroElse(linear <= Set(d, 1e-5f),
+    return IfThenZeroElse(Le(linear, Set(d, 1e-5f)),
                           FastPowf(d, linear, Set(d, inverse_gamma)));
   }
 };
@@ -101,7 +105,6 @@ class FromLinearStage : public RenderPipelineStage {
   void ProcessRow(const RowInfo& input_rows, const RowInfo& output_rows,
                   size_t xextra, size_t xsize, size_t xpos, size_t ypos,
                   size_t thread_id) const final {
-    PROFILER_ZONE("FromLinear");
     const HWY_FULL(float) d;
     const size_t xsize_v = RoundUpTo(xsize, Lanes(d));
     float* JXL_RESTRICT row0 = GetInputRow(input_rows, 0, 0);
@@ -163,10 +166,11 @@ std::unique_ptr<RenderPipelineStage> GetFromLinearStage(
         MakePerChannelOp(OpGamma{output_encoding_info.inverse_gamma}));
   } else {
     // This is a programming error.
-    JXL_ABORT("Invalid target encoding");
+    JXL_UNREACHABLE("Invalid target encoding");
   }
 }
 
+}  // namespace
 // NOLINTNEXTLINE(google-readability-namespace-comments)
 }  // namespace HWY_NAMESPACE
 }  // namespace jxl

@@ -4,7 +4,7 @@
 "use strict";
 
 const httpServer = createTestHTTPServer();
-httpServer.registerPathHandler(`/`, function(request, response) {
+httpServer.registerPathHandler(`/`, function (request, response) {
   response.setStatusLine(request.httpVersion, 200, "OK");
   response.write(`
     <html>
@@ -16,7 +16,7 @@ httpServer.registerPathHandler(`/`, function(request, response) {
     </html>`);
 });
 
-httpServer.registerPathHandler("/test.js", function(request, response) {
+httpServer.registerPathHandler("/test.js", function (request, response) {
   response.setHeader("Content-Type", "application/javascript");
   response.write(`
     window.logStuff = function() {
@@ -42,8 +42,9 @@ const { MockFilePicker } = SpecialPowers;
 MockFilePicker.init(window);
 MockFilePicker.returnValue = MockFilePicker.returnOK;
 
-var FileUtils = ChromeUtils.import("resource://gre/modules/FileUtils.jsm")
-  .FileUtils;
+var FileUtils = ChromeUtils.importESModule(
+  "resource://gre/modules/FileUtils.sys.mjs"
+).FileUtils;
 
 // Test the export visible messages to clipboard of the webconsole copies the expected
 // clipboard text for different log messages to find if everything is copied to clipboard.
@@ -51,12 +52,15 @@ var FileUtils = ChromeUtils.import("resource://gre/modules/FileUtils.jsm")
 add_task(async function testExportToClipboard() {
   // Clear clipboard content.
   SpecialPowers.clipboardCopyString("");
+  // Display timestamp to make sure we export them (there's a container query that would
+  // hide them in the regular case, which we don't want).
+  await pushPref("devtools.webconsole.timestampMessages", true);
 
   const hud = await openNewTabAndConsole(TEST_URI);
   await clearOutput(hud);
 
   info("Call the log function defined in the test page");
-  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function() {
+  await SpecialPowers.spawn(gBrowser.selectedBrowser, [], function () {
     content.wrappedJSObject.logStuff();
   });
 
@@ -107,10 +111,16 @@ function checkExportedText(text) {
   //   item-99 test.js:11:19
   //   -----------------------------------------------------
   info("Check if all messages where exported as expected");
-  const lines = text.split("\n").map(line => line.replace(/\r$/, ""));
+  let lines = text.split("\n").map(line => line.replace(/\r$/, ""));
 
   is(lines.length, 115, "There's 115 lines of text");
   is(lines.at(-1), "", "Last line is empty");
+
+  info("Check that timestamp are displayed");
+  const timestampRegex = /^\d{2}:\d{2}:\d{2}\.\d{3} /;
+  // only check the first message
+  ok(timestampRegex.test(lines[0]), "timestamp are included in the messages");
+  lines = lines.map(l => l.replace(timestampRegex, ""));
 
   info("Check simple text message");
   is(lines[0], "hello test.js:4:17", "Simple log has expected text");
@@ -151,9 +161,9 @@ async function exportAllToFile(hud, message) {
   const exportFile = menuPopup.querySelector("#console-menu-export-file");
   ok(exportFile, "copy menu item is enabled");
 
-  const nsiFile = FileUtils.getFile("TmpD", [
-    `export_console_${Date.now()}.log`,
-  ]);
+  const nsiFile = new FileUtils.File(
+    PathUtils.join(PathUtils.tempDir, `export_console_${Date.now()}.log`)
+  );
   MockFilePicker.setFiles([nsiFile]);
   exportFile.click();
   info("Exporting to file");

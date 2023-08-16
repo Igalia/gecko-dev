@@ -151,7 +151,8 @@ class JsepTrackTest : public JsepTrackTestBase {
 
   void CreateAnswer() {
     if (mRecvAns.GetMediaType() != SdpMediaSection::MediaType::kApplication) {
-      mRecvAns.UpdateRecvTrack(*mOffer, GetOffer());
+      mRecvAns.RecvTrackSetRemote(*mOffer, GetOffer());
+      mSendAns.SendTrackSetRemote(mSsrcGenerator, GetOffer());
     }
 
     mSendAns.AddToAnswer(GetOffer(), mSsrcGenerator, &GetAnswer());
@@ -160,7 +161,8 @@ class JsepTrackTest : public JsepTrackTestBase {
 
   void Negotiate() {
     if (mRecvOff.GetMediaType() != SdpMediaSection::MediaType::kApplication) {
-      mRecvOff.UpdateRecvTrack(*mAnswer, GetAnswer());
+      mRecvOff.RecvTrackSetRemote(*mAnswer, GetAnswer());
+      mSendOff.SendTrackSetRemote(mSsrcGenerator, GetAnswer());
     }
 
     if (GetAnswer().IsSending()) {
@@ -1273,20 +1275,12 @@ TEST_F(JsepTrackTest, DataChannelDraft21AnswerWithDifferentPort) {
   ASSERT_EQ(std::string::npos, mAnswer->ToString().find("a=sctpmap"));
 }
 
-static JsepTrack::JsConstraints MakeConstraints(const std::string& rid,
-                                                uint32_t maxBitrate) {
-  JsepTrack::JsConstraints constraints;
-  constraints.rid = rid;
-  constraints.constraints.maxBr = maxBitrate;
-  return constraints;
-}
-
 TEST_F(JsepTrackTest, SimulcastRejected) {
   Init(SdpMediaSection::kVideo);
-  std::vector<JsepTrack::JsConstraints> constraints;
-  constraints.push_back(MakeConstraints("foo", 40000));
-  constraints.push_back(MakeConstraints("bar", 10000));
-  mSendOff.SetJsConstraints(constraints);
+  std::vector<std::string> rids;
+  rids.push_back("foo");
+  rids.push_back("bar");
+  mSendOff.SetRids(rids);
   OfferAnswer();
   CheckOffEncodingCount(1);
   CheckAnsEncodingCount(1);
@@ -1294,10 +1288,10 @@ TEST_F(JsepTrackTest, SimulcastRejected) {
 
 TEST_F(JsepTrackTest, SimulcastPrevented) {
   Init(SdpMediaSection::kVideo);
-  std::vector<JsepTrack::JsConstraints> constraints;
-  constraints.push_back(MakeConstraints("foo", 40000));
-  constraints.push_back(MakeConstraints("bar", 10000));
-  mSendAns.SetJsConstraints(constraints);
+  std::vector<std::string> rids;
+  rids.push_back("foo");
+  rids.push_back("bar");
+  mSendAns.SetRids(rids);
   OfferAnswer();
   CheckOffEncodingCount(1);
   CheckAnsEncodingCount(1);
@@ -1305,24 +1299,19 @@ TEST_F(JsepTrackTest, SimulcastPrevented) {
 
 TEST_F(JsepTrackTest, SimulcastOfferer) {
   Init(SdpMediaSection::kVideo);
-  std::vector<JsepTrack::JsConstraints> constraints;
-  constraints.push_back(MakeConstraints("foo", 40000));
-  constraints.push_back(MakeConstraints("bar", 10000));
-  mSendOff.SetJsConstraints(constraints);
+  std::vector<std::string> rids;
+  rids.push_back("foo");
+  rids.push_back("bar");
+  mSendOff.SetRids(rids);
   CreateOffer();
   CreateAnswer();
   // Add simulcast/rid to answer
-  mRecvAns.AddToMsection(constraints, sdp::kRecv, mSsrcGenerator, false,
-                         &GetAnswer());
+  mRecvAns.AddToMsection(rids, sdp::kRecv, mSsrcGenerator, false, &GetAnswer());
   Negotiate();
   ASSERT_TRUE(mSendOff.GetNegotiatedDetails());
   ASSERT_EQ(2U, mSendOff.GetNegotiatedDetails()->GetEncodingCount());
   ASSERT_EQ("foo", mSendOff.GetNegotiatedDetails()->GetEncoding(0).mRid);
-  ASSERT_EQ(40000U,
-            mSendOff.GetNegotiatedDetails()->GetEncoding(0).mConstraints.maxBr);
   ASSERT_EQ("bar", mSendOff.GetNegotiatedDetails()->GetEncoding(1).mRid);
-  ASSERT_EQ(10000U,
-            mSendOff.GetNegotiatedDetails()->GetEncoding(1).mConstraints.maxBr);
   ASSERT_NE(std::string::npos,
             mOffer->ToString().find("a=simulcast:send foo;bar"));
   ASSERT_NE(std::string::npos,
@@ -1335,19 +1324,16 @@ TEST_F(JsepTrackTest, SimulcastOfferer) {
 
 TEST_F(JsepTrackTest, SimulcastOffererWithRtx) {
   Init(SdpMediaSection::kVideo);
-  std::vector<JsepTrack::JsConstraints> constraints;
-  constraints.push_back(MakeConstraints("foo", 40000));
-  constraints.push_back(MakeConstraints("bar", 10000));
-  constraints.push_back(MakeConstraints("pop", 5000));
-  mSendOff.SetJsConstraints(constraints);
-  mSendOff.AddToMsection(constraints, sdp::kSend, mSsrcGenerator, true,
-                         &GetOffer());
-  mRecvOff.AddToMsection(constraints, sdp::kSend, mSsrcGenerator, true,
-                         &GetOffer());
+  std::vector<std::string> rids;
+  rids.push_back("foo");
+  rids.push_back("bar");
+  rids.push_back("pop");
+  mSendOff.SetRids(rids);
+  mSendOff.AddToMsection(rids, sdp::kSend, mSsrcGenerator, true, &GetOffer());
+  mRecvOff.AddToMsection(rids, sdp::kSend, mSsrcGenerator, true, &GetOffer());
   CreateAnswer();
   // Add simulcast/rid to answer
-  mRecvAns.AddToMsection(constraints, sdp::kRecv, mSsrcGenerator, false,
-                         &GetAnswer());
+  mRecvAns.AddToMsection(rids, sdp::kRecv, mSsrcGenerator, false, &GetAnswer());
   Negotiate();
 
   ASSERT_EQ(3U, mSendOff.GetSsrcs().size());
@@ -1367,24 +1353,19 @@ TEST_F(JsepTrackTest, SimulcastOffererWithRtx) {
 
 TEST_F(JsepTrackTest, SimulcastAnswerer) {
   Init(SdpMediaSection::kVideo);
-  std::vector<JsepTrack::JsConstraints> constraints;
-  constraints.push_back(MakeConstraints("foo", 40000));
-  constraints.push_back(MakeConstraints("bar", 10000));
-  mSendAns.SetJsConstraints(constraints);
+  std::vector<std::string> rids;
+  rids.push_back("foo");
+  rids.push_back("bar");
+  mSendAns.SetRids(rids);
   CreateOffer();
   // Add simulcast/rid to offer
-  mRecvOff.AddToMsection(constraints, sdp::kRecv, mSsrcGenerator, false,
-                         &GetOffer());
+  mRecvOff.AddToMsection(rids, sdp::kRecv, mSsrcGenerator, false, &GetOffer());
   CreateAnswer();
   Negotiate();
   ASSERT_TRUE(mSendAns.GetNegotiatedDetails());
   ASSERT_EQ(2U, mSendAns.GetNegotiatedDetails()->GetEncodingCount());
   ASSERT_EQ("foo", mSendAns.GetNegotiatedDetails()->GetEncoding(0).mRid);
-  ASSERT_EQ(40000U,
-            mSendAns.GetNegotiatedDetails()->GetEncoding(0).mConstraints.maxBr);
   ASSERT_EQ("bar", mSendAns.GetNegotiatedDetails()->GetEncoding(1).mRid);
-  ASSERT_EQ(10000U,
-            mSendAns.GetNegotiatedDetails()->GetEncoding(1).mConstraints.maxBr);
   ASSERT_NE(std::string::npos,
             mOffer->ToString().find("a=simulcast:recv foo;bar"));
   ASSERT_NE(std::string::npos,
@@ -1501,7 +1482,7 @@ TEST_F(JsepTrackTest, RtcpFbWithPayloadTypeAsymmetry) {
       "c=IN IP4 0.0.0.0\r\n"
       "a=sendrecv\r\n"
       "a=fmtp:136 "
-      "profile-level-id=42e00d;level-asymmetry-allowed=1;packetization-mode="
+      "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode="
       "1\r\n"
       "a=msid:stream_id\r\n"
       "a=rtcp-fb:136 nack\r\n"
@@ -1516,7 +1497,7 @@ TEST_F(JsepTrackTest, RtcpFbWithPayloadTypeAsymmetry) {
   mAnswer = std::move(parser->Parse(answer)->Sdp());
   ASSERT_TRUE(mAnswer);
 
-  mRecvOff.UpdateRecvTrack(*mAnswer, GetAnswer());
+  mRecvOff.RecvTrackSetRemote(*mAnswer, GetAnswer());
   mRecvOff.Negotiate(GetAnswer(), GetAnswer(), GetOffer());
   mSendOff.Negotiate(GetAnswer(), GetAnswer(), GetOffer());
 
@@ -1601,7 +1582,7 @@ TEST_F(JsepTrackTest, NonDefaultAudioSdpFmtpLine) {
     // Set them directly in the offer sdp instead.
     auto params = MakeUnique<SdpFmtpAttributeList::TelephoneEventParameters>();
     params->dtmfTones = "2-9";
-    GetOffer().SetFmtp({"101", std::move(params)});
+    GetOffer().SetFmtp({"101", *params});
   }
 
   {
@@ -1609,7 +1590,7 @@ TEST_F(JsepTrackTest, NonDefaultAudioSdpFmtpLine) {
     // Set them directly in the answer sdp instead.
     auto params = MakeUnique<SdpFmtpAttributeList::TelephoneEventParameters>();
     params->dtmfTones = "0-3,10";
-    GetAnswer().SetFmtp({"101", std::move(params)});
+    GetAnswer().SetFmtp({"101", *params});
   }
 
   OfferAnswer();
@@ -1670,12 +1651,12 @@ TEST_F(JsepTrackTest, VideoSdpFmtpLine) {
   EXPECT_TRUE((codec = GetVideoCodec(mSendOff, 4, 2)));
   EXPECT_EQ("H264", codec->mName);
   EXPECT_EQ(
-      "profile-level-id=42e00d;level-asymmetry-allowed=1;packetization-mode=1",
+      "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1",
       codec->mSdpFmtpLine.valueOr("nothing"));
   EXPECT_TRUE((codec = GetVideoCodec(mSendAns, 4, 2)));
   EXPECT_EQ("H264", codec->mName);
   EXPECT_EQ(
-      "profile-level-id=42e00d;level-asymmetry-allowed=1;packetization-mode=1",
+      "profile-level-id=42e01f;level-asymmetry-allowed=1;packetization-mode=1",
       codec->mSdpFmtpLine.valueOr("nothing"));
 
   EXPECT_TRUE((codec = GetVideoCodec(mSendOff, 4, 3)));

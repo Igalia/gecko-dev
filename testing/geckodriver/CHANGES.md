@@ -3,6 +3,178 @@
 
 All notable changes to this program are documented in this file.
 
+## 0.33.0  (2023-04-03, `a80e5fd61076`)
+
+### Known problems
+
+- _Startup hang with Firefox running in a container (e.g. snap, flatpak):_
+
+  When Firefox is packaged inside a container (like the default Firefox browser
+  shipped with Ubuntu 22.04), it may see a different filesystem to the host.
+  This can affect access to the generated profile directory, which may result
+  in a hang when starting Firefox. Workarounds are listed in the geckodriver
+  [usage documentation].
+
+- _Potential hang with `moz:debuggerAddress` capability set to `true`:_
+
+  After enabling the site-isolation feature in Firefox with geckodriver 0.32.1
+  some WebDriver clients like Selenium that use the Chrome DevTools Protocol (CDP)
+  by default for logging events could trigger a hang in Firefox's experimental CDP
+  implementation. The fix for this problem will be shipped with Firefox 112.
+  Until then the following Firefox preferences should be set:
+
+  - `fission.bfcacheInParent: false`
+  - `fission.webContentIsolationStrategy: 0`
+
+### Added
+
+- Support for [Get Computed Label] and [Get Computed Role]
+
+  The command [Get Computed Label] returns the accessibility label (sometimes
+  also referred to as Accessible Name), which is a short string that labels the
+  function of the control (e.g. the string "Comment" or "Sign In" on a button).
+
+  The command [Get Computed Role] returns the reserved token value (in ARIA,
+  button, heading, etc.) that describes the type of control or content in the
+  element.
+
+  Note that the minimum required Firefox version is 113.0.
+
+- Support for [Find Element From Shadow Root] and [Find Elements From Shadow Root]
+
+  The commands allow a lookup of individual elements or collections of elements
+  within an open or closed Shadow DOM. All location strategies except `Tag name` and
+  `XPath selector` are currently supported.
+
+  Note that the minimum required Firefox version is 113.0.
+
+### Changed
+
+- The Mozilla specific capability `moz:useNonSpecCompliantPointerOrigin` has been
+  marked as deprecated. Its removal is planned for the Firefox 116.0 release.
+
+## 0.32.2  (2023-02-08, `602aa16c20d4`)
+
+### Known problems
+
+- _Startup hang with Firefox running in a container (e.g. snap, flatpak):_
+
+  When Firefox is packaged inside a container (like the default Firefox browser
+  shipped with Ubuntu 22.04), it may see a different filesystem to the host.
+  This can affect access to the generated profile directory, which may result
+  in a hang when starting Firefox. Workarounds are listed in the geckodriver
+  [usage documentation].
+
+- _Potential hang with `moz:debuggerAddress` capability set to `true`:_
+
+  After enabling the site-isolation feature in Firefox with geckodriver 0.32.1
+  some WebDriver clients like Selenium that use the Chrome DevTools Protocol (CDP)
+  by default for logging events could trigger a hang in Firefox's experimental CDP
+  implementation. The fix for this problem will be shipped with Firefox 112.
+  Until then the following Firefox preferences should be set:
+
+  - `fission.bfcacheInParent: false`
+  - `fission.webContentIsolationStrategy: 0`
+
+### Fixed
+
+- With the release of geckodriver 0.32.1 the marionette crate was inappropriately
+  bumped to a semver incompatible version and caused `cargo install geckodriver`
+  to fail for older releases.
+
+## 0.32.1  (2023-02-02, `b7f075124503`)
+
+### Known problems
+
+- _Startup hang with Firefox running in a container (e.g. snap, flatpak):_
+
+  When Firefox is packaged inside a container (like the default Firefox browser
+  shipped with Ubuntu 22.04), it may see a different filesystem to the host.
+  This can affect access to the generated profile directory, which may result
+  in a hang when starting Firefox. Workarounds are listed in the geckodriver
+  [usage documentation].
+
+- _Potential hang with `moz:debuggerAddress` capability set to `true`:_
+
+  After enabling the site-isolation feature in Firefox with geckodriver 0.32.1
+  some WebDriver clients like Selenium that use the Chrome DevTools Protocol (CDP)
+  by default for logging events could trigger a hang in Firefox's experimental CDP
+  implementation. The fix for this problem will be shipped with Firefox 112.
+  Until then the following Firefox preferences should be set:
+
+  - `fission.bfcacheInParent: false`
+  - `fission.webContentIsolationStrategy: 0`
+
+### Fixed
+
+- When using the boolean capability `moz:debuggerAddress` with a value of `true`
+  the site-isolation feature in Firefox will no longer accidentally be turned off.
+  This behavior affected all users of WebDriver clients especially Selenium, which
+  set this capability by default, and caused Firefox on desktop systems to be
+  launched in an unsupported mode.
+
+## 0.32.0  (2022-10-13, `4563dd583110`)
+
+### Added
+
+- Native aarch64 builds of geckodriver for Linux and Windows are now available.
+
+- Support `wheel` input source for [Actions], which is associated with a
+  wheel-type input device. This endpoint is supported by geckodriver when
+  using Firefox version ≥106.
+
+- Support `touch` as `pointerType` for `pointer` input source for [Actions],
+  which is associated with a touch input device. This also includes the
+  addition of all the remaining properties for `pointer` input sources as
+  specified by WebDriver. This endpoint is supported by geckodriver when using
+  Firefox version ≥104.
+
+### Fixed
+
+- Using geckodriver to launch Firefox inside a sandbox -- for example
+  a Firefox distribution using Snap or Flatpak -- can fail with a
+  "Profile not found" error if the sandbox restricts Firefox's ability
+  to access the system temporary directory. geckodriver uses the
+  temporary directory to store Firefox profiles created during the run.
+
+  This issue can now be worked around by using the `--profile-root`
+  command line option or setting the `TMPDIR` environment variable to
+  a location that both Firefox and geckodriver have read/write access
+  to e.g.:
+
+  ```bash
+  % mkdir $HOME/tmp
+  % geckodriver --profile-root=~/tmp
+  ```
+
+  or
+
+  ```bash
+  % TMPDIR=$HOME/tmp geckodriver
+  ```
+
+  Alternatively, geckodriver may be used with a Firefox install that
+  is not packaged inside a sandbox e.g. from [mozilla.org].
+
+- The sandboxed Firefox binary is now automatically detected when geckodriver
+  is used from within a Snap confinement.
+
+  Implemented by [Olivier Tilloy].
+
+- On MacOS the geckodriver binary is now technically both signed and notarized.
+
+  Note: The actual validation can only be performed if the machine that starts
+  the geckodriver binary for the very first time is online. You can find more
+  details on how to work around this issue in the [macOS notarization] section
+  of the documentation.
+
+- The backup of the original Firefox preferences are now correctly restored
+  on Android when the WebDriver session ends.
+
+### Changed
+
+- Update dependencies
+
 ## 0.31.0  (2022-04-11, `b617178ef491`)
 
 ### Known problems
@@ -15,20 +187,8 @@ All notable changes to this program are documented in this file.
   to access the system temporary directory. geckodriver uses the
   temporary directory to store Firefox profiles created during the run.
 
-  This issue can be worked around by using the `--profile-root`
-  command line option or setting the `TMPDIR` environment variable to
-  a location that both Firefox and geckodriver have read/write access
-  to e.g.:
-
-  % mkdir $HOME/tmp
-  % geckodriver --profile-root=~/tmp
-
-  or
-
-  % TMPDIR=$HOME/tmp geckodriver
-
-  Alternatively, geckodriver may be used with a Firefox install that
-  is not packaged inside a sandboxed e.g. from [mozilla.org].
+  As workaround geckodriver may be used with a Firefox install that
+  is not packaged inside a sandbox e.g. from [mozilla.org].
 
 - _macOS 10.15 (Catalina) and later:_
 
@@ -1580,6 +1740,7 @@ and greater.
 - Squash compile warnings
 
 [README]: https://github.com/mozilla/geckodriver/blob/master/README.md
+[usage documentation]: <https://firefox-source-docs.mozilla.org/testing/geckodriver/Usage.html#Running-Firefox-in-an-container-based-package>
 [Browser Toolbox]: https://developer.mozilla.org/en-US/docs/Tools/Browser_Toolbox
 [WebDriver conformance]: https://wpt.fyi/results/webdriver/tests?label=experimental
 [`webSocketUrl`]: https://developer.mozilla.org/en-US/docs/Web/WebDriver/Capabilities/webSocketUrl
@@ -1635,8 +1796,11 @@ and greater.
 [webdriver crate]: https://crates.io/crates/webdriver
 
 [Actions]: https://w3c.github.io/webdriver/webdriver-spec.html#actions
-[Delete Session]: https://w3c.github.io/webdriver/webdriver-spec.html#delete-session
 [Element Click]: https://w3c.github.io/webdriver/webdriver-spec.html#element-click
+[Find Element From Shadow Root]: https://w3c.github.io/webdriver/#dfn-find-element-from-shadow-root
+[Find Elements From Shadow Root]: https://w3c.github.io/webdriver/#dfn-find-elements-from-shadow-root
+[Get Computed Label]: https://w3c.github.io/webdriver/#get-computed-label
+[Get Computed Role]: https://w3c.github.io/webdriver/#get-computed-role
 [Get Element Shadow Root]: https://w3c.github.io/webdriver/#get-element-shadow-root
 [Get Timeouts]: https://w3c.github.io/webdriver/webdriver-spec.html#get-timeouts
 [Get Window Rect]: https://w3c.github.io/webdriver/webdriver-spec.html#get-window-rect
@@ -1656,7 +1820,6 @@ and greater.
 [David Burns]: https://github.com/AutomatedTester
 [Jason Juang]: https://github.com/juangj
 [Jeremy Lempereur]: https://github.com/o0Ignition0o
-[Joshua Bruning]: https://github.com/joshbruning
 [Kalpesh Krishna]: https://github.com/martiansideofthemoon
 [Kriti Singh]: https://github.com/kritisingh1
 [Mike Pennisi]: https://github.com/jugglinmike
@@ -1665,3 +1828,4 @@ and greater.
 [Shivam Singhal]: https://github.com/championshuttler
 [Sven Jost]: https://github/mythsunwind
 [Vlad Filippov]: https://github.com/vladikoff
+[Olivier Tilloy]: https://github.com/oSoMoN

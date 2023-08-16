@@ -6,29 +6,29 @@ use api::{AlphaType, ClipMode, ImageRendering, ImageBufferKind};
 use api::{FontInstanceFlags, YuvColorSpace, YuvFormat, ColorDepth, ColorRange, PremultipliedColorF};
 use api::units::*;
 use crate::clip::{ClipNodeFlags, ClipNodeRange, ClipItemKind, ClipStore};
+use crate::command_buffer::{PrimitiveCommand, QuadFlags};
 use crate::spatial_tree::{SpatialTree, SpatialNodeIndex, CoordinateSystemId};
-use crate::glyph_rasterizer::{GlyphFormat, SubpixelDirection};
+use glyph_rasterizer::{GlyphFormat, SubpixelDirection};
 use crate::gpu_cache::{GpuBlockData, GpuCache, GpuCacheAddress};
 use crate::gpu_types::{BrushFlags, BrushInstance, PrimitiveHeaders, ZBufferId, ZBufferIdGenerator};
-use crate::gpu_types::{SplitCompositeInstance};
+use crate::gpu_types::{SplitCompositeInstance, QuadInstance};
 use crate::gpu_types::{PrimitiveInstanceData, RasterizationSpace, GlyphInstance};
 use crate::gpu_types::{PrimitiveHeader, PrimitiveHeaderIndex, TransformPaletteId, TransformPalette};
 use crate::gpu_types::{ImageBrushData, get_shader_opacity, BoxShadowData};
 use crate::gpu_types::{ClipMaskInstanceCommon, ClipMaskInstanceImage, ClipMaskInstanceRect, ClipMaskInstanceBoxShadow};
 use crate::internal_types::{FastHashMap, Swizzle, TextureSource, Filter};
-use crate::picture::{Picture3DContext, PictureCompositeMode, TileKey, calculate_screen_uv};
-use crate::prim_store::{PrimitiveInstanceKind, ClipData, PrimitiveInstanceIndex};
+use crate::picture::{Picture3DContext, PictureCompositeMode, calculate_screen_uv};
+use crate::prim_store::{PrimitiveInstanceKind, ClipData};
 use crate::prim_store::{PrimitiveInstance, PrimitiveOpacity, SegmentInstanceIndex};
 use crate::prim_store::{BrushSegment, ClipMaskKind, ClipTaskIndex};
-use crate::prim_store::VECS_PER_SEGMENT;
+use crate::prim_store::{VECS_PER_SEGMENT, PrimitiveInstanceIndex};
 use crate::render_target::RenderTargetContext;
 use crate::render_task_graph::{RenderTaskId, RenderTaskGraph};
 use crate::render_task::{RenderTaskAddress, RenderTaskKind};
 use crate::renderer::{BlendMode, ShaderColorMode};
-use crate::renderer::MAX_VERTEX_TEXTURE_WIDTH;
+use crate::renderer::{MAX_VERTEX_TEXTURE_WIDTH, GpuBufferBuilder, GpuBufferAddress};
 use crate::resource_cache::{GlyphFetchResult, ImageProperties, ImageRequest};
 use crate::space::SpaceMapper;
-use crate::surface::SurfaceTileDescriptor;
 use crate::visibility::{PrimitiveVisibilityFlags, VisibilityState};
 use smallvec::SmallVec;
 use std::{f32, i32, usize};
@@ -40,7 +40,7 @@ use crate::segment::EdgeAaSegmentMask;
 const OPAQUE_TASK_ADDRESS: RenderTaskAddress = RenderTaskAddress(0x7fff);
 
 /// Used to signal there are no segments provided with this primitive.
-const INVALID_SEGMENT_INDEX: i32 = 0xffff;
+pub const INVALID_SEGMENT_INDEX: i32 = 0xffff;
 
 /// Size in device pixels for tiles that clip masks are drawn in.
 const CLIP_RECTANGLE_TILE_SIZE: i32 = 128;
@@ -71,6 +71,7 @@ pub enum BatchKind {
     SplitComposite,
     TextRun(GlyphFormat),
     Brush(BrushBatchKind),
+    Primitive,
 }
 
 /// Input textures for a primitive, without consideration of clip mask
@@ -708,7 +709,6 @@ impl AlphaBatchBuilder {
             BlendMode::Alpha |
             BlendMode::PremultipliedAlpha |
             BlendMode::PremultipliedDestOut |
-            BlendMode::SubpixelConstantTextColor(..) |
             BlendMode::SubpixelWithBgColor |
             BlendMode::SubpixelDualSource |
             BlendMode::Advanced(_) |
@@ -787,7 +787,7 @@ impl BatchBuilder {
         bounding_rect: &PictureRect,
         z_id: ZBufferId,
         prim_header_index: PrimitiveHeaderIndex,
-        polygons_address: GpuCacheAddress,
+        polygons_address: i32,
     ) {
         let render_task_address = self.batcher.render_task_address;
 
@@ -811,14 +811,56 @@ impl BatchBuilder {
         self.batcher.clear();
     }
 
+    /// Add a quad primitive to the batch list, appllying edge AA and tiling
+    /// segments as required.
+    fn add_quad_to_batch(
+        &mut self,
+        prim_instance_index: PrimitiveInstanceIndex,
+        transform_id: TransformPaletteId,
+        gpu_buffer_address: GpuBufferAddress,
+        quad_flags: QuadFlags,
+        edge_flags: EdgeAaSegmentMask,
+        segment_index: u8,
+        task_id: RenderTaskId,
+        z_generator: &mut ZBufferIdGenerator,
+        prim_instances: &[PrimitiveInstance],
+        render_tasks: &RenderTaskGraph,
+    ) {
+        let prim_instance = &prim_instances[prim_instance_index.0 as usize];
+        let prim_info = &prim_instance.vis;
+        let bounding_rect = &prim_info.clip_chain.pic_coverage_rect;
+        let z_id = z_generator.next();
+
+        add_quad_to_batch(
+            self.batcher.render_task_address,
+            transform_id,
+            gpu_buffer_address,
+            quad_flags,
+            edge_flags,
+            segment_index,
+            task_id,
+            z_id,
+            render_tasks,
+            |key, instance| {
+                let batch = self.batcher.set_params_and_get_batch(
+                    key,
+                    BatchFeatures::empty(),
+                    bounding_rect,
+                    z_id,
+                );
+
+                batch.push(instance);
+            }
+        );
+    }
+
     // Adds a primitive to a batch.
     // It can recursively call itself in some situations, for
     // example if it encounters a picture where the items
     // in that picture are being drawn into the same target.
     pub fn add_prim_to_batch(
         &mut self,
-        prim_instance: &PrimitiveInstance,
-        extra_prim_gpu_address: Option<GpuCacheAddress>,
+        cmd: &PrimitiveCommand,
         prim_spatial_node_index: SpatialNodeIndex,
         ctx: &RenderTargetContext,
         gpu_cache: &mut GpuCache,
@@ -828,7 +870,59 @@ impl BatchBuilder {
         root_spatial_node_index: SpatialNodeIndex,
         surface_spatial_node_index: SpatialNodeIndex,
         z_generator: &mut ZBufferIdGenerator,
+        prim_instances: &[PrimitiveInstance],
+        _gpu_buffer_builder: &mut GpuBufferBuilder,
+        segments: &[RenderTaskId],
     ) {
+        let (prim_instance_index, extra_prim_gpu_address) = match cmd {
+            PrimitiveCommand::Simple { prim_instance_index } => {
+                (prim_instance_index, None)
+            }
+            PrimitiveCommand::Complex { prim_instance_index, gpu_address } => {
+                (prim_instance_index, Some(gpu_address.as_int()))
+            }
+            PrimitiveCommand::Instance { prim_instance_index, gpu_buffer_address } => {
+                (prim_instance_index, Some(gpu_buffer_address.as_int()))
+            }
+            PrimitiveCommand::Quad { prim_instance_index, gpu_buffer_address, quad_flags, edge_flags, transform_id } => {
+                if segments.is_empty() {
+                    self.add_quad_to_batch(
+                        *prim_instance_index,
+                        *transform_id,
+                        *gpu_buffer_address,
+                        *quad_flags,
+                        *edge_flags,
+                        INVALID_SEGMENT_INDEX as u8,
+                        RenderTaskId::INVALID,
+                        z_generator,
+                        prim_instances,
+                        render_tasks,
+                    );
+                } else {
+                    for (i, task_id) in segments.iter().enumerate() {
+                        // TODO(gw): edge_flags should be per-segment, when used for more than composites
+                        debug_assert!(edge_flags.is_empty());
+
+                        self.add_quad_to_batch(
+                            *prim_instance_index,
+                            *transform_id,
+                            *gpu_buffer_address,
+                            *quad_flags,
+                            *edge_flags,
+                            i as u8,
+                            *task_id,
+                            z_generator,
+                            prim_instances,
+                            render_tasks,
+                        );
+                    }
+                }
+
+                return;
+            }
+        };
+
+        let prim_instance = &prim_instances[prim_instance_index.0 as usize];
         let is_anti_aliased = ctx.data_stores.prim_has_anti_aliasing(prim_instance);
 
         let brush_flags = if is_anti_aliased {
@@ -1103,15 +1197,11 @@ impl BatchBuilder {
                                         BlendMode::SubpixelWithBgColor,
                                         ShaderColorMode::FromRenderPassMode,
                                     )
-                                } else if ctx.use_dual_source_blending {
+                                } else {
+                                    debug_assert!(ctx.use_dual_source_blending);
                                     (
                                         BlendMode::SubpixelDualSource,
                                         ShaderColorMode::SubpixelDualSource,
-                                    )
-                                } else {
-                                    (
-                                        BlendMode::SubpixelConstantTextColor(run.used_font.color.into()),
-                                        ShaderColorMode::SubpixelConstantTextColor,
                                     )
                                 }
                             }
@@ -2170,7 +2260,8 @@ impl BatchBuilder {
                     render_tasks,
                 );
             }
-            PrimitiveInstanceKind::Rectangle { data_handle, segment_instance_index, .. } => {
+            PrimitiveInstanceKind::Rectangle { data_handle, segment_instance_index, use_legacy_path, .. } => {
+                debug_assert!(use_legacy_path);
                 let prim_data = &ctx.data_stores.prim[data_handle];
 
                 let blend_mode = if !prim_data.opacity.is_opaque ||
@@ -2508,7 +2599,7 @@ impl BatchBuilder {
                     BlendMode::None
                 };
 
-                let user_data = [prim_data.stops_handle.as_int(gpu_cache), 0, 0, 0];
+                let user_data = [extra_prim_gpu_address.unwrap(), 0, 0, 0];
 
                 if visible_tiles_range.is_empty() {
                     let batch_params = BrushBatchParameters::shared(
@@ -3773,239 +3864,137 @@ impl<'a, 'rc> RenderTargetContext<'a, 'rc> {
     }
 }
 
-// A tightly packed command stored in a command buffer
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Copy, Clone)]
-pub struct Command(u32);
+pub fn add_quad_to_batch<F>(
+    render_task_address: RenderTaskAddress,
+    transform_id: TransformPaletteId,
+    gpu_buffer_address: GpuBufferAddress,
+    quad_flags: QuadFlags,
+    edge_flags: EdgeAaSegmentMask,
+    segment_index: u8,
+    task_id: RenderTaskId,
+    z_id: ZBufferId,
+    render_tasks: &RenderTaskGraph,
+    mut f: F,
+) where F: FnMut(BatchKey, PrimitiveInstanceData) {
 
-impl Command {
-    /// Draw a simple primitive that needs prim instance index only
-    const CMD_DRAW_SIMPLE_PRIM: u32 = 0x00000000;
-    /// Change the current spatial node
-    const CMD_SET_SPATIAL_NODE: u32 = 0x10000000;
-    /// Draw a complex (3d-split) primitive, that has multiple GPU cache addresses
-    const CMD_DRAW_COMPLEX_PRIM: u32 = 0x20000000;
-
-    /// Bitmask for command bits of the command
-    const CMD_MASK: u32 = 0xf0000000;
-    /// Bitmask for param bits of the command
-    const PARAM_MASK: u32 = 0x0fffffff;
-
-    /// Encode drawing a simple primitive
-    fn draw_simple_prim(prim_instance_index: PrimitiveInstanceIndex) -> Self {
-        Command(Command::CMD_DRAW_SIMPLE_PRIM | prim_instance_index.0)
+    #[repr(u8)]
+    enum PartIndex {
+        Center = 0,
+        Left = 1,
+        Top = 2,
+        Right = 3,
+        Bottom = 4,
+        All = 5,
     }
 
-    /// Encode changing spatial node
-    fn set_spatial_node(spatial_node_index: SpatialNodeIndex) -> Self {
-        Command(Command::CMD_SET_SPATIAL_NODE | spatial_node_index.0)
-    }
-
-    /// Encode drawing a complex prim
-    fn draw_complex_prim(prim_instance_index: PrimitiveInstanceIndex) -> Self {
-        Command(Command::CMD_DRAW_COMPLEX_PRIM | prim_instance_index.0)
-    }
-
-    /// Encode arbitrary data word
-    fn data(data: u32) -> Self {
-        Command(data)
-    }
-}
-
-// TODO(gw): We should probably move cmd-buffer code to a separate source file, it's
-//           related to batching but not exactly the same.
-
-// Index into a command buffer stored in a `CommandBufferList`
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-#[derive(Debug, Copy, Clone)]
-pub struct CommandBufferIndex(pub u32);
-
-// Container for a list of command buffers that are built for a frame
-pub struct CommandBufferList {
-    cmd_buffers: Vec<CommandBuffer>,
-}
-
-impl CommandBufferList {
-    pub fn new() -> Self {
-        CommandBufferList {
-            cmd_buffers: Vec::new(),
+    let texture = match task_id {
+        RenderTaskId::INVALID => {
+            TextureSource::Invalid
         }
-    }
+        _ => {
+            let texture = render_tasks
+                .resolve_texture(task_id)
+                .expect("bug: valid task id must be resolvable");
 
-    pub fn create_cmd_buffer(
-        &mut self,
-    ) -> CommandBufferIndex {
-        let index = CommandBufferIndex(self.cmd_buffers.len() as u32);
-        self.cmd_buffers.push(CommandBuffer::new());
-        index
-    }
-
-    pub fn get(&self, index: CommandBufferIndex) -> &CommandBuffer {
-        &self.cmd_buffers[index.0 as usize]
-    }
-
-    pub fn get_mut(&mut self, index: CommandBufferIndex) -> &mut CommandBuffer {
-        &mut self.cmd_buffers[index.0 as usize]
-    }
-}
-
-/// A list of commands describing how to draw a primitive list
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct CommandBuffer {
-    /// The encoded drawing commands
-    commands: Vec<Command>,
-    /// Cached current spatial node
-    current_spatial_node_index: SpatialNodeIndex,
-}
-
-impl CommandBuffer {
-    /// Construct a new cmd buffer
-    pub fn new() -> Self {
-        CommandBuffer {
-            commands: Vec::new(),
-            current_spatial_node_index: SpatialNodeIndex::INVALID,
+            texture
         }
-    }
+    };
 
-    /// Add a primitive to the command buffer
-    pub fn add_prim(
-        &mut self,
-        prim_instance_index: PrimitiveInstanceIndex,
-        spatial_node_index: SpatialNodeIndex,
-        gpu_address: Option<GpuCacheAddress>,
-    ) {
-        if self.current_spatial_node_index != spatial_node_index {
-            self.commands.push(Command::set_spatial_node(spatial_node_index));
-            self.current_spatial_node_index = spatial_node_index;
+    let textures = BatchTextures::prim_textured(
+        texture,
+        TextureSource::Invalid,
+    );
+
+    let default_blend_mode = if quad_flags.contains(QuadFlags::IS_OPAQUE) && task_id == RenderTaskId::INVALID {
+        BlendMode::None
+    } else {
+        BlendMode::PremultipliedAlpha
+    };
+
+    let edge_flags_bits = edge_flags.bits();
+
+    let prim_batch_key = BatchKey {
+        blend_mode: default_blend_mode,
+        kind: BatchKind::Primitive,
+        textures,
+    };
+
+    let edge_batch_key = BatchKey {
+        blend_mode: BlendMode::PremultipliedAlpha,
+        kind: BatchKind::Primitive,
+        textures,
+    };
+
+    if edge_flags.is_empty() {
+        let instance = QuadInstance {
+            render_task_address,
+            prim_address: gpu_buffer_address,
+            z_id,
+            transform_id,
+            edge_flags: edge_flags_bits,
+            quad_flags: quad_flags.bits(),
+            part_index: PartIndex::All as u8,
+            segment_index,
+        };
+
+        f(prim_batch_key, instance.into());
+    } else if quad_flags.contains(QuadFlags::USE_AA_SEGMENTS) {
+        let main_instance = QuadInstance {
+            render_task_address,
+            prim_address: gpu_buffer_address,
+            z_id,
+            transform_id,
+            edge_flags: edge_flags_bits,
+            quad_flags: quad_flags.bits(),
+            part_index: PartIndex::Center as u8,
+            segment_index,
+        };
+
+        if edge_flags.contains(EdgeAaSegmentMask::LEFT) {
+            let instance = QuadInstance {
+                part_index: PartIndex::Left as u8,
+                ..main_instance
+            };
+            f(edge_batch_key, instance.into());
+        }
+        if edge_flags.contains(EdgeAaSegmentMask::RIGHT) {
+            let instance = QuadInstance {
+                part_index: PartIndex::Top as u8,
+                ..main_instance
+            };
+            f(edge_batch_key, instance.into());
+        }
+        if edge_flags.contains(EdgeAaSegmentMask::TOP) {
+            let instance = QuadInstance {
+                part_index: PartIndex::Right as u8,
+                ..main_instance
+            };
+            f(edge_batch_key, instance.into());
+        }
+        if edge_flags.contains(EdgeAaSegmentMask::BOTTOM) {
+            let instance = QuadInstance {
+                part_index: PartIndex::Bottom as u8,
+                ..main_instance
+            };
+            f(edge_batch_key, instance.into());
         }
 
-        match gpu_address {
-            Some(gpu_address) => {
-                self.commands.push(Command::draw_complex_prim(prim_instance_index));
-                self.commands.push(Command::data((gpu_address.u as u32) << 16 | gpu_address.v as u32));
-            }
-            None => {
-                self.commands.push(Command::draw_simple_prim(prim_instance_index));
-            }
-        }
-    }
+        let instance = QuadInstance {
+            ..main_instance
+        };
+        f(prim_batch_key, instance.into());
+    } else {
+        let instance = QuadInstance {
+            render_task_address,
+            prim_address: gpu_buffer_address,
+            z_id,
+            transform_id,
+            edge_flags: edge_flags_bits,
+            quad_flags: quad_flags.bits(),
+            part_index: PartIndex::All as u8,
+            segment_index,
+        };
 
-    /// Iterate the command list, calling a provided closure for each primitive draw command
-    pub fn iter_prims<F>(
-        &self,
-        f: &mut F,
-    ) where F: FnMut(PrimitiveInstanceIndex, SpatialNodeIndex, Option<GpuCacheAddress>) {
-        let mut current_spatial_node_index = SpatialNodeIndex::INVALID;
-        let mut cmd_iter = self.commands.iter();
-
-        while let Some(cmd) = cmd_iter.next() {
-            let command = cmd.0 & Command::CMD_MASK;
-            let param = cmd.0 & Command::PARAM_MASK;
-
-            match command {
-                Command::CMD_DRAW_SIMPLE_PRIM => {
-                    let prim_instance_index = PrimitiveInstanceIndex(param);
-                    f(prim_instance_index, current_spatial_node_index, None);
-                }
-                Command::CMD_SET_SPATIAL_NODE => {
-                    current_spatial_node_index = SpatialNodeIndex(param);
-                }
-                Command::CMD_DRAW_COMPLEX_PRIM => {
-                    let prim_instance_index = PrimitiveInstanceIndex(param);
-                    let data = cmd_iter.next().unwrap();
-                    let gpu_address = GpuCacheAddress {
-                        u: (data.0 >> 16) as u16,
-                        v: (data.0 & 0xffff) as u16,
-                    };
-                    f(prim_instance_index, current_spatial_node_index, Some(gpu_address));
-                }
-                _ => {
-                    unreachable!();
-                }
-            }
-        }
-    }
-}
-
-/// Abstracts whether a command buffer is being built for a tiled (picture cache)
-/// or simple (child surface).
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub enum CommandBufferBuilderKind {
-    Tiled {
-        // TODO(gw): It might be worth storing this as a 2d-array instead
-        //           of a hash map if it ever shows up in profiles. This is
-        //           slightly complicated by the sub_slice_index in the
-        //           TileKey structure - could have a 2 level array?
-        tiles: FastHashMap<TileKey, SurfaceTileDescriptor>,
-    },
-    Simple {
-        render_task_id: RenderTaskId,
-        root_task_id: Option<RenderTaskId>,
-    },
-    Invalid,
-}
-
-#[cfg_attr(feature = "capture", derive(Serialize))]
-#[cfg_attr(feature = "replay", derive(Deserialize))]
-pub struct CommandBufferBuilder {
-    pub kind: CommandBufferBuilderKind,
-
-    /// If a command buffer establishes a sub-graph, then at the end of constructing
-    /// the surface, the parent surface is supplied as an input dependency, and the
-    /// parent surface gets a duplicated (existing) task with the same location, and
-    /// with the sub-graph output as an input dependency.
-    pub establishes_sub_graph: bool,
-
-    /// If this surface builds a sub-graph, it will mark a task in the filter sub-graph
-    /// as a resolve source for the input from the parent surface.
-    pub resolve_source: Option<RenderTaskId>,
-
-    /// List of render tasks that depend on the task that will be created for this builder
-    pub extra_dependencies: Vec<RenderTaskId>,
-}
-
-impl CommandBufferBuilder {
-    pub fn empty() -> Self {
-        CommandBufferBuilder {
-            kind: CommandBufferBuilderKind::Invalid,
-            establishes_sub_graph: false,
-            resolve_source: None,
-            extra_dependencies: Vec::new(),
-        }
-    }
-
-    /// Construct a tiled command buffer builder
-    pub fn new_tiled(
-        tiles: FastHashMap<TileKey, SurfaceTileDescriptor>,
-    ) -> Self {
-        CommandBufferBuilder {
-            kind: CommandBufferBuilderKind::Tiled {
-                tiles,
-            },
-            establishes_sub_graph: false,
-            resolve_source: None,
-            extra_dependencies: Vec::new(),
-        }
-    }
-
-    /// Construct a simple command buffer builder
-    pub fn new_simple(
-        render_task_id: RenderTaskId,
-        establishes_sub_graph: bool,
-        root_task_id: Option<RenderTaskId>,
-    ) -> Self {
-        CommandBufferBuilder {
-            kind: CommandBufferBuilderKind::Simple {
-                render_task_id,
-                root_task_id,
-            },
-            establishes_sub_graph,
-            resolve_source: None,
-            extra_dependencies: Vec::new(),
-        }
+        f(edge_batch_key, instance.into());
     }
 }

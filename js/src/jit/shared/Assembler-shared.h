@@ -8,6 +8,7 @@
 #define jit_shared_Assembler_shared_h
 
 #include "mozilla/CheckedInt.h"
+#include "mozilla/DebugOnly.h"
 
 #include <limits.h>
 
@@ -24,15 +25,17 @@
 #include "wasm/WasmCodegenTypes.h"
 #include "wasm/WasmConstants.h"
 
-#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||     \
-    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_WASM32)
+#if defined(JS_CODEGEN_ARM) || defined(JS_CODEGEN_ARM64) ||      \
+    defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) ||  \
+    defined(JS_CODEGEN_LOONG64) || defined(JS_CODEGEN_WASM32) || \
+    defined(JS_CODEGEN_RISCV64)
 // Push return addresses callee-side.
 #  define JS_USE_LINK_REGISTER
 #endif
 
 #if defined(JS_CODEGEN_MIPS32) || defined(JS_CODEGEN_MIPS64) || \
-    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64)
+    defined(JS_CODEGEN_ARM64) || defined(JS_CODEGEN_LOONG64) || \
+    defined(JS_CODEGEN_RISCV64)
 // JS_CODELABEL_LINKMODE gives labels additional metadata
 // describing how Bind() should patch them.
 #  define JS_CODELABEL_LINKMODE
@@ -152,6 +155,11 @@ struct ImmPtr {
   void* value;
 
   struct NoCheckToken {};
+
+  explicit constexpr ImmPtr(std::nullptr_t) : value(nullptr) {
+    // Explicit constructor for nullptr. This ensures ImmPtr(0) can't be called.
+    // Either use ImmPtr(nullptr) or ImmWord(0).
+  }
 
   explicit ImmPtr(void* value, NoCheckToken) : value(value) {
     // A special unchecked variant for contexts where we know it is safe to
@@ -472,7 +480,7 @@ class CodeLocationLabel {
     raw_ = raw;
   }
 
-  ptrdiff_t operator-(const CodeLocationLabel& other) {
+  ptrdiff_t operator-(const CodeLocationLabel& other) const {
     return raw_ - other.raw_;
   }
 
@@ -501,6 +509,7 @@ typedef Vector<SymbolicAccess, 0, SystemAllocPolicy> SymbolicAccessVector;
 // code and metadata.
 
 class MemoryAccessDesc {
+  uint32_t memoryIndex_;
   uint64_t offset64_;
   uint32_t align_;
   Scalar::Type type_;
@@ -508,20 +517,29 @@ class MemoryAccessDesc {
   wasm::BytecodeOffset trapOffset_;
   wasm::SimdOp widenOp_;
   enum { Plain, ZeroExtend, Splat, Widen } loadOp_;
+  // Used for an assertion in MacroAssembler about offset length
+  mozilla::DebugOnly<bool> hugeMemory_;
 
  public:
   explicit MemoryAccessDesc(
-      Scalar::Type type, uint32_t align, uint64_t offset,
-      BytecodeOffset trapOffset,
+      uint32_t memoryIndex, Scalar::Type type, uint32_t align, uint64_t offset,
+      BytecodeOffset trapOffset, mozilla::DebugOnly<bool> hugeMemory,
       const jit::Synchronization& sync = jit::Synchronization::None())
-      : offset64_(offset),
+      : memoryIndex_(memoryIndex),
+        offset64_(offset),
         align_(align),
         type_(type),
         sync_(sync),
         trapOffset_(trapOffset),
         widenOp_(wasm::SimdOp::Limit),
-        loadOp_(Plain) {
+        loadOp_(Plain),
+        hugeMemory_(hugeMemory) {
     MOZ_ASSERT(mozilla::IsPowerOfTwo(align));
+  }
+
+  uint32_t memoryIndex() const {
+    MOZ_ASSERT(memoryIndex_ != UINT32_MAX);
+    return memoryIndex_;
   }
 
   // The offset is a 64-bit value because of memory64.  Almost always, it will
@@ -556,6 +574,13 @@ class MemoryAccessDesc {
   bool isZeroExtendSimd128Load() const { return loadOp_ == ZeroExtend; }
   bool isSplatSimd128Load() const { return loadOp_ == Splat; }
   bool isWidenSimd128Load() const { return loadOp_ == Widen; }
+
+  mozilla::DebugOnly<bool> isHugeMemory() const { return hugeMemory_; }
+#ifdef DEBUG
+  void assertOffsetInGuardPages() const;
+#else
+  void assertOffsetInGuardPages() const {}
+#endif
 
   void setZeroExtendSimd128Load() {
     MOZ_ASSERT(type() == Scalar::Float32 || type() == Scalar::Float64);

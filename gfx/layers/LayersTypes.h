@@ -28,7 +28,7 @@
 
 #define INVALID_OVERLAY -1
 
-//#define ENABLE_FRAME_LATENCY_LOG
+// #define ENABLE_FRAME_LATENCY_LOG
 
 namespace IPC {
 template <typename T>
@@ -246,6 +246,8 @@ enum TextureDumpMode {
   DoNotCompress  // dump texture uncompressed
 };
 
+// Corresponding bit masks for allowed touch behaviors
+// are defined in AllowedTouchBehavior
 typedef uint32_t TouchBehaviorFlags;
 
 // Some specialized typedefs of Matrix4x4Typed.
@@ -326,7 +328,6 @@ class CompositableHandle final {
 enum class CompositableHandleOwner : uint8_t {
   WebRenderBridge,
   ImageBridge,
-  InProcessManager,
 };
 
 struct RemoteTextureId {
@@ -335,6 +336,8 @@ struct RemoteTextureId {
   auto MutTiedFields() { return std::tie(mId); }
 
   static RemoteTextureId GetNext();
+
+  static constexpr RemoteTextureId Max() { return RemoteTextureId{UINT64_MAX}; }
 
   bool IsValid() const { return mId != 0; }
 
@@ -357,6 +360,10 @@ struct RemoteTextureId {
 
   bool operator!=(const RemoteTextureId& aOther) const {
     return !(*this == aOther);
+  }
+
+  bool operator>=(const RemoteTextureId& aOther) const {
+    return mId >= aOther.mId;
   }
 
   // Helper struct that allow this class to be used as a key in
@@ -407,6 +414,36 @@ struct RemoteTextureOwnerId {
   };
 };
 
+// TextureId allocated in GPU process
+struct GpuProcessTextureId {
+  uint64_t mId = 0;
+
+  static GpuProcessTextureId GetNext();
+
+  bool IsValid() const { return mId != 0; }
+
+  // Allow explicit cast to a uint64_t for now
+  explicit operator uint64_t() const { return mId; }
+
+  bool operator==(const GpuProcessTextureId& aOther) const {
+    return mId == aOther.mId;
+  }
+
+  bool operator!=(const GpuProcessTextureId& aOther) const {
+    return !(*this == aOther);
+  }
+
+  // Helper struct that allow this class to be used as a key in
+  // std::unordered_map like so:
+  //   std::unordered_map<GpuProcessTextureId, ValueType,
+  //   GpuProcessTextureId::HashFn> myMap;
+  struct HashFn {
+    std::size_t operator()(const GpuProcessTextureId aKey) const {
+      return std::hash<uint64_t>{}(aKey.mId);
+    }
+  };
+};
+
 // clang-format off
 MOZ_DEFINE_ENUM_CLASS_WITH_BASE(ScrollDirection, uint8_t, (
   eVertical,
@@ -419,6 +456,18 @@ constexpr ScrollDirections EitherScrollDirection(ScrollDirection::eVertical,Scro
 constexpr ScrollDirections HorizontalScrollDirection(ScrollDirection::eHorizontal);
 constexpr ScrollDirections VerticalScrollDirection(ScrollDirection::eVertical);
 
+// Return the scroll directions which have a nonzero component in |aDelta|.
+template <typename Point>
+ScrollDirections DirectionsInDelta(const Point& aDelta) {
+  ScrollDirections result;
+  if (aDelta.x != 0) {
+    result += ScrollDirection::eHorizontal;
+  }
+  if (aDelta.y != 0) {
+    result += ScrollDirection::eVertical;
+  }
+  return result;
+}
 
 MOZ_DEFINE_ENUM_CLASS_WITH_BASE(CompositionPayloadType, uint8_t, (
   /**

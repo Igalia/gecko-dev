@@ -1,9 +1,9 @@
 /* eslint-env webextensions */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
+"use strict";
+
+const { Preferences } = ChromeUtils.importESModule(
+  "resource://gre/modules/Preferences.sys.mjs"
 );
 
 const TP_PREF = "privacy.trackingprotection.enabled";
@@ -14,6 +14,9 @@ const CAT_PREF = "browser.contentblocking.category";
 const FP_PREF = "privacy.trackingprotection.fingerprinting.enabled";
 const STP_PREF = "privacy.trackingprotection.socialtracking.enabled";
 const CM_PREF = "privacy.trackingprotection.cryptomining.enabled";
+const EMAIL_TP_PREF = "privacy.trackingprotection.emailtracking.enabled";
+const EMAIL_TP_PBM_PREF =
+  "privacy.trackingprotection.emailtracking.pbmode.enabled";
 const LEVEL2_PREF = "privacy.annotate_channels.strict_list.enabled";
 const REFERRER_PREF = "network.http.referer.disallowCrossSiteRelaxingDefault";
 const REFERRER_TOP_PREF =
@@ -29,9 +32,10 @@ const ISOLATE_UI_PREF =
   "browser.contentblocking.reject-and-isolate-cookies.preferences.ui.enabled";
 const FPI_PREF = "privacy.firstparty.isolate";
 
-const { EnterprisePolicyTesting, PoliciesPrefTracker } = ChromeUtils.import(
-  "resource://testing-common/EnterprisePolicyTesting.jsm"
-);
+const { EnterprisePolicyTesting, PoliciesPrefTracker } =
+  ChromeUtils.importESModule(
+    "resource://testing-common/EnterprisePolicyTesting.sys.mjs"
+  );
 
 requestLongerTimeout(2);
 
@@ -133,12 +137,12 @@ add_task(async function testContentBlockingMainCategory() {
   let always = doc.querySelector(
     "#trackingProtectionMenu > menupopup > menuitem[value=always]"
   );
-  let private = doc.querySelector(
+  let privateElement = doc.querySelector(
     "#trackingProtectionMenu > menupopup > menuitem[value=private]"
   );
   menu.selectedItem = always;
   ok(
-    !private.selected,
+    !privateElement.selected,
     "The Only in private windows item should not be selected"
   );
   ok(always.selected, "The Always item should be selected");
@@ -172,7 +176,7 @@ add_task(async function testContentBlockingMainCategory() {
     await promise;
     is(tpCheckbox.checked, i % 2 == 0, "The checkbox should now be unchecked");
     is(
-      private.selected,
+      privateElement.selected,
       i % 2 == 0,
       "The Only in private windows item should be selected by default, when the checkbox is checked"
     );
@@ -320,6 +324,8 @@ add_task(async function testContentBlockingStandardCategory() {
     [FP_PREF]: null,
     [STP_PREF]: null,
     [CM_PREF]: null,
+    [EMAIL_TP_PREF]: null,
+    [EMAIL_TP_PBM_PREF]: null,
     [LEVEL2_PREF]: null,
     [REFERRER_PREF]: null,
     [REFERRER_TOP_PREF]: null,
@@ -358,6 +364,14 @@ add_task(async function testContentBlockingStandardCategory() {
   Services.prefs.setBoolPref(STP_PREF, !Services.prefs.getBoolPref(STP_PREF));
   Services.prefs.setBoolPref(FP_PREF, !Services.prefs.getBoolPref(FP_PREF));
   Services.prefs.setBoolPref(CM_PREF, !Services.prefs.getBoolPref(CM_PREF));
+  Services.prefs.setBoolPref(
+    EMAIL_TP_PREF,
+    !Services.prefs.getBoolPref(EMAIL_TP_PREF)
+  );
+  Services.prefs.setBoolPref(
+    EMAIL_TP_PBM_PREF,
+    !Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF)
+  );
   Services.prefs.setBoolPref(
     LEVEL2_PREF,
     !Services.prefs.getBoolPref(LEVEL2_PREF)
@@ -439,6 +453,8 @@ add_task(async function testContentBlockingStandardCategory() {
 add_task(async function testContentBlockingStrictCategory() {
   Services.prefs.setBoolPref(TP_PREF, false);
   Services.prefs.setBoolPref(TP_PBM_PREF, false);
+  Services.prefs.setBoolPref(EMAIL_TP_PREF, false);
+  Services.prefs.setBoolPref(EMAIL_TP_PBM_PREF, false);
   Services.prefs.setBoolPref(LEVEL2_PREF, false);
   Services.prefs.setBoolPref(REFERRER_PREF, false);
   Services.prefs.setBoolPref(REFERRER_TOP_PREF, false);
@@ -537,6 +553,34 @@ add_task(async function testContentBlockingStrictCategory() {
           Services.prefs.getBoolPref(CM_PREF),
           false,
           `${CM_PREF} has been set to false`
+        );
+        break;
+      case "emailTP":
+        is(
+          Services.prefs.getBoolPref(EMAIL_TP_PREF),
+          true,
+          `${EMAIL_TP_PREF} has been set to true`
+        );
+        break;
+      case "-emailTP":
+        is(
+          Services.prefs.getBoolPref(EMAIL_TP_PREF),
+          false,
+          `${EMAIL_TP_PREF} has been set to false`
+        );
+        break;
+      case "emailTPPrivate":
+        is(
+          Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+          true,
+          `${EMAIL_TP_PBM_PREF} has been set to true`
+        );
+        break;
+      case "-emailTPPrivate":
+        is(
+          Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+          false,
+          `${EMAIL_TP_PBM_PREF} has been set to false`
         );
         break;
       case "lvl2":
@@ -903,6 +947,119 @@ add_task(async function testContentBlockingDependentTPControls() {
   gBrowser.removeCurrentTab();
 });
 
+// Checks that disabling tracking protection also disables email tracking protection.
+add_task(async function testDisableTPCheckBoxDisablesEmailTP() {
+  SpecialPowers.pushPrefEnv({
+    set: [
+      [TP_PREF, false],
+      [TP_PBM_PREF, true],
+      [EMAIL_TP_PREF, false],
+      [EMAIL_TP_PBM_PREF, true],
+      [CAT_PREF, "custom"],
+    ],
+  });
+
+  await openPreferencesViaOpenPreferencesAPI("privacy", { leaveOpen: true });
+  let doc = gBrowser.contentDocument;
+
+  // Click the checkbox to disable TP and check if this disables Email TP.
+  let tpCheckbox = doc.getElementById(
+    "contentBlockingTrackingProtectionCheckbox"
+  );
+
+  // Verify the initial check state of the tracking protection checkbox.
+  is(
+    tpCheckbox.getAttribute("checked"),
+    "true",
+    "Tracking protection checkbox is checked initially"
+  );
+
+  tpCheckbox.click();
+
+  // Verify the checkbox is unchecked after clicking.
+  is(
+    tpCheckbox.getAttribute("checked"),
+    "",
+    "Tracking protection checkbox is unchecked"
+  );
+
+  // Verify the pref states.
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PREF),
+    false,
+    `${EMAIL_TP_PREF} has been set to false`
+  );
+
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+    false,
+    `${EMAIL_TP_PBM_PREF} has been set to false`
+  );
+
+  gBrowser.removeCurrentTab();
+});
+
+// Checks that the email tracking prefs set properly with tracking protection
+// drop downs.
+add_task(async function testTPMenuForEmailTP() {
+  SpecialPowers.pushPrefEnv({
+    set: [
+      [TP_PREF, false],
+      [TP_PBM_PREF, true],
+      [EMAIL_TP_PREF, false],
+      [EMAIL_TP_PBM_PREF, true],
+      [CAT_PREF, "custom"],
+    ],
+  });
+
+  await openPreferencesViaOpenPreferencesAPI("privacy", { leaveOpen: true });
+  let doc = gBrowser.contentDocument;
+
+  let menu = doc.querySelector("#trackingProtectionMenu");
+  let always = doc.querySelector(
+    "#trackingProtectionMenu > menupopup > menuitem[value=always]"
+  );
+  let privateElement = doc.querySelector(
+    "#trackingProtectionMenu > menupopup > menuitem[value=private]"
+  );
+
+  // Click the always option on the tracking protection drop down.
+  menu.selectedItem = always;
+  always.click();
+
+  // Verify the pref states.
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PREF),
+    true,
+    `${EMAIL_TP_PREF} has been set to true`
+  );
+
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+    true,
+    `${EMAIL_TP_PBM_PREF} has been set to true`
+  );
+
+  // Click the private-only option on the tracking protection drop down.
+  menu.selectedItem = privateElement;
+  privateElement.click();
+
+  // Verify the pref states.
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PREF),
+    false,
+    `${EMAIL_TP_PREF} has been set to false`
+  );
+
+  is(
+    Services.prefs.getBoolPref(EMAIL_TP_PBM_PREF),
+    true,
+    `${EMAIL_TP_PBM_PREF} has been set to true`
+  );
+
+  gBrowser.removeCurrentTab();
+});
+
 // Checks that social media trackers, cryptomining and fingerprinting visibility
 // can be controlled via pref.
 add_task(async function testCustomOptionsVisibility() {
@@ -1141,7 +1298,7 @@ add_task(async function testContentBlockingReloadWarning() {
 // if it is the only tab.
 add_task(async function testContentBlockingReloadWarningSingleTab() {
   Services.prefs.setStringPref(CAT_PREF, "standard");
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, PRIVACY_PAGE);
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, PRIVACY_PAGE);
   await BrowserTestUtils.browserLoaded(
     gBrowser.selectedBrowser,
     false,
@@ -1168,7 +1325,7 @@ add_task(async function testContentBlockingReloadWarningSingleTab() {
     "all of the warnings to reload tabs are still hidden"
   );
   Services.prefs.setStringPref(CAT_PREF, "standard");
-  BrowserTestUtils.loadURI(gBrowser.selectedBrowser, "about:newtab");
+  BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, "about:newtab");
   await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
 });
 

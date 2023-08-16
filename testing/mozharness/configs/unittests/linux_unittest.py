@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
 import os
 import platform
 
@@ -92,7 +91,6 @@ config = {
                 "--certificate-path=tests/certs",
                 "--setpref=webgl.force-enabled=true",
                 "--quiet",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--use-test-media-devices",
                 "--screenshot-on-fail",
@@ -109,7 +107,6 @@ config = {
                 "--utility-path=tests/bin",
                 "--extra-profile-file=tests/bin/plugins",
                 "--symbols-path=%(symbols_path)s",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--cleanup-crashes",
                 "--marionette-startup-timeout=180",
@@ -122,8 +119,6 @@ config = {
             "options": [
                 "--self-test",
                 "--symbols-path=%(symbols_path)s",
-                "--test-plugin-path=%(test_plugin_path)s",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--utility-path=tests/bin",
             ],
@@ -186,6 +181,7 @@ config = {
             "--timeout=1200",
         ],
         "mochitest-browser-a11y": ["--flavor=browser", "--subsuite=a11y"],
+        "mochitest-browser-media": ["--flavor=browser", "--subsuite=media-bc"],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
         "mochitest-remote": ["--flavor=browser", "--subsuite=remote"],
     },

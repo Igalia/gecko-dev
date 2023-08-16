@@ -9,19 +9,19 @@ Transform the repackage task into an actual task description.
 import copy
 
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.schema import optionally_keyed_by, resolve_keyed_by
+from taskgraph.util.dependencies import get_primary_dependency
+from taskgraph.util.schema import Schema, optionally_keyed_by, resolve_keyed_by
 from taskgraph.util.taskcluster import get_artifact_prefix
-from voluptuous import Required, Optional
+from voluptuous import Optional, Required
 
-from gecko_taskgraph.loader.single_dep import schema
+from gecko_taskgraph.transforms.repackage import (
+    PACKAGE_FORMATS as PACKAGE_FORMATS_VANILLA,
+)
+from gecko_taskgraph.transforms.task import task_description_schema
 from gecko_taskgraph.util.attributes import copy_attributes_from_dependent_job
 from gecko_taskgraph.util.partners import get_partner_config_by_kind
 from gecko_taskgraph.util.platforms import archive_format, executable_extension
 from gecko_taskgraph.util.workertypes import worker_type_implementation
-from gecko_taskgraph.transforms.task import task_description_schema
-from gecko_taskgraph.transforms.repackage import (
-    PACKAGE_FORMATS as PACKAGE_FORMATS_VANILLA,
-)
 
 
 def _by_platform(arg):
@@ -34,7 +34,7 @@ PACKAGE_FORMATS = copy.deepcopy(PACKAGE_FORMATS_VANILLA)
 PACKAGE_FORMATS["installer-stub"]["inputs"]["package"] = "target-stub{archive_format}"
 PACKAGE_FORMATS["installer-stub"]["args"].extend(["--package-name", "{package-name}"])
 
-packaging_description_schema = schema.extend(
+packaging_description_schema = Schema(
     {
         # unique label to describe this repackaging task
         Optional("label"): str,
@@ -59,10 +59,23 @@ packaging_description_schema = schema.extend(
         },
         # Override the default priority for the project
         Optional("priority"): task_description_schema["priority"],
+        Optional("job-from"): task_description_schema["job-from"],
+        Optional("attributes"): task_description_schema["attributes"],
+        Optional("dependencies"): task_description_schema["dependencies"],
     }
 )
 
 transforms = TransformSequence()
+
+
+@transforms.add
+def remove_name(config, jobs):
+    for job in jobs:
+        if "name" in job:
+            del job["name"]
+        yield job
+
+
 transforms.add_validate(packaging_description_schema)
 
 
@@ -70,7 +83,9 @@ transforms.add_validate(packaging_description_schema)
 def copy_in_useful_magic(config, jobs):
     """Copy attributes from upstream task to be used for keyed configuration."""
     for job in jobs:
-        dep = job["primary-dependency"]
+        dep = get_primary_dependency(config, job)
+        assert dep
+
         job["build-platform"] = dep.attributes.get("build_platform")
         yield job
 
@@ -92,7 +107,8 @@ def handle_keyed_by(config, jobs):
 @transforms.add
 def make_repackage_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
 
         label = job.get("label", dep_job.label.replace("signing-", "repackage-"))
         job["label"] = label
@@ -103,7 +119,9 @@ def make_repackage_description(config, jobs):
 @transforms.add
 def make_job_description(config, jobs):
     for job in jobs:
-        dep_job = job["primary-dependency"]
+        dep_job = get_primary_dependency(config, job)
+        assert dep_job
+
         attributes = copy_attributes_from_dependent_job(dep_job)
         build_platform = attributes["build_platform"]
 
@@ -163,7 +181,7 @@ def make_job_description(config, jobs):
 
         worker = {
             "chain-of-trust": True,
-            "max-run-time": 7200 if build_platform.startswith("win") else 3600,
+            "max-run-time": 3600,
             "taskcluster-proxy": True if get_artifact_prefix(dep_job) else False,
             "env": {
                 "REPACK_ID": repack_id,
@@ -172,12 +190,11 @@ def make_job_description(config, jobs):
             "skip-artifacts": True,
         }
 
-        worker_type = "b-linux"
-        worker["docker-image"] = {"in-tree": "debian11-amd64-build"}
+        worker_type = "b-linux-gcp"
 
         worker["artifacts"] = _generate_task_output_files(
             dep_job,
-            worker_type_implementation(config.graph_config, worker_type),
+            worker_type_implementation(config.graph_config, config.params, worker_type),
             repackage_config,
             partner=repack_id,
         )
@@ -246,7 +263,7 @@ def _generate_download_config(
                 },
             ],
         }
-    elif build_platform.startswith("win"):
+    if build_platform.startswith("win"):
         download_config = [
             {
                 "artifact": f"{locale_path}target.zip",

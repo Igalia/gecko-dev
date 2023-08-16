@@ -4,14 +4,14 @@
 
 "use strict";
 
-const flags = require("devtools/shared/flags");
-const { ELLIPSIS } = require("devtools/shared/l10n");
-const EventEmitter = require("devtools/shared/event-emitter");
+const flags = require("resource://devtools/shared/flags.js");
+const { ELLIPSIS } = require("resource://devtools/shared/l10n.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
 loader.lazyRequireGetter(
   this,
   "KeyShortcuts",
-  "devtools/client/shared/key-shortcuts"
+  "resource://devtools/client/shared/key-shortcuts.js"
 );
 
 const MAX_LABEL_LENGTH = 40;
@@ -936,7 +936,7 @@ HTMLBreadcrumbs.prototype = {
       this.setCursor(idx);
     } else {
       // No. Is the breadcrumbs display empty?
-      if (this.nodeHierarchy.length > 0) {
+      if (this.nodeHierarchy.length) {
         // No. We drop all the element that are not direct ancestors
         // of the selection
         const parent = this.selection.nodeFront.parentNode();

@@ -481,6 +481,13 @@ void MacroAssembler::mul32(Imm32 imm, Register srcDest) {
   mul32(scratch, srcDest);
 }
 
+void MacroAssembler::mulHighUnsigned32(Imm32 imm, Register src, Register dest) {
+  ScratchRegisterScope scratch(asMasm());
+  MOZ_ASSERT(src != scratch);
+  move32(imm, scratch);
+  as_mulh_wu(dest, src, scratch);
+}
+
 void MacroAssembler::mulFloat32(FloatRegister src, FloatRegister dest) {
   as_fmul_s(dest, dest, src);
 }
@@ -896,6 +903,37 @@ void MacroAssembler::branch8(Condition cond, const Address& lhs, Imm32 rhs,
   }
 }
 
+void MacroAssembler::branch8(Condition cond, const BaseIndex& lhs, Register rhs,
+                             Label* label) {
+  SecondScratchRegisterScope scratch2(*this);
+  MOZ_ASSERT(scratch2 != lhs.base);
+
+  computeScaledAddress(lhs, scratch2);
+
+  switch (cond) {
+    case Assembler::Equal:
+    case Assembler::NotEqual:
+    case Assembler::Above:
+    case Assembler::AboveOrEqual:
+    case Assembler::Below:
+    case Assembler::BelowOrEqual:
+      load8ZeroExtend(Address(scratch2, lhs.offset), scratch2);
+      branch32(cond, scratch2, rhs, label);
+      break;
+
+    case Assembler::GreaterThan:
+    case Assembler::GreaterThanOrEqual:
+    case Assembler::LessThan:
+    case Assembler::LessThanOrEqual:
+      load8SignExtend(Address(scratch2, lhs.offset), scratch2);
+      branch32(cond, scratch2, rhs, label);
+      break;
+
+    default:
+      MOZ_CRASH("unexpected condition");
+  }
+}
+
 void MacroAssembler::branch16(Condition cond, const Address& lhs, Imm32 rhs,
                               Label* label) {
   SecondScratchRegisterScope scratch2(*this);
@@ -1183,7 +1221,18 @@ void MacroAssembler::branchTruncateDoubleMaybeModUint32(FloatRegister src,
 
 void MacroAssembler::branchTruncateDoubleToInt32(FloatRegister src,
                                                  Register dest, Label* fail) {
-  convertDoubleToInt32(src, dest, fail, false);
+  ScratchRegisterScope scratch(asMasm());
+  ScratchDoubleScope fpscratch(asMasm());
+
+  // Convert scalar to signed 64-bit fixed-point, rounding toward zero.
+  // In the case of overflow, the output is saturated.
+  // In the case of NaN and -0, the output is zero.
+  as_ftintrz_l_d(fpscratch, src);
+  moveFromDouble(fpscratch, dest);
+
+  // Fail on overflow cases.
+  as_slli_w(scratch, dest, 0);
+  ma_b(dest, scratch, fail, Assembler::NotEqual);
 }
 
 template <typename T>

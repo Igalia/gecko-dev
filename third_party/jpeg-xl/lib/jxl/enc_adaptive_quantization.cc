@@ -20,10 +20,8 @@
 #include <hwy/highway.h>
 
 #include "lib/jxl/ac_strategy.h"
-#include "lib/jxl/aux_out.h"
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
-#include "lib/jxl/base/profiler.h"
 #include "lib/jxl/base/status.h"
 #include "lib/jxl/butteraugli/butteraugli.h"
 #include "lib/jxl/coeff_order_fwd.h"
@@ -33,8 +31,10 @@
 #include "lib/jxl/convolve.h"
 #include "lib/jxl/dec_cache.h"
 #include "lib/jxl/dec_group.h"
+#include "lib/jxl/enc_aux_out.h"
 #include "lib/jxl/enc_butteraugli_comparator.h"
 #include "lib/jxl/enc_cache.h"
+#include "lib/jxl/enc_debug_image.h"
 #include "lib/jxl/enc_group.h"
 #include "lib/jxl/enc_modular.h"
 #include "lib/jxl/enc_params.h"
@@ -47,13 +47,25 @@
 #include "lib/jxl/image_ops.h"
 #include "lib/jxl/opsin_params.h"
 #include "lib/jxl/quant_weights.h"
+
+// Set JXL_DEBUG_ADAPTIVE_QUANTIZATION to 1 to enable debugging.
+#ifndef JXL_DEBUG_ADAPTIVE_QUANTIZATION
+#define JXL_DEBUG_ADAPTIVE_QUANTIZATION 0
+#endif
+
 HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
 namespace {
 
 // These templates are not found via ADL.
+using hwy::HWY_NAMESPACE::AbsDiff;
+using hwy::HWY_NAMESPACE::Add;
+using hwy::HWY_NAMESPACE::And;
+using hwy::HWY_NAMESPACE::Max;
 using hwy::HWY_NAMESPACE::Rebind;
+using hwy::HWY_NAMESPACE::Sqrt;
+using hwy::HWY_NAMESPACE::ZeroIfNegative;
 
 // The following functions modulate an exponent (out_val) and return the updated
 // value. Their descriptor is limited to 8 lanes for 8x8 blocks.
@@ -68,46 +80,36 @@ float ComputeMaskForAcStrategyUse(const float out_val) {
 
 template <class D, class V>
 V ComputeMask(const D d, const V out_val) {
-  const auto kBase = Set(d, -0.74174993f);
-  const auto kMul4 = Set(d, 3.2353257320940401f);
-  const auto kMul2 = Set(d, 12.906028311180409f);
-  const auto kOffset2 = Set(d, 305.04035728311436f);
-  const auto kMul3 = Set(d, 5.0220313103171232f);
-  const auto kOffset3 = Set(d, 2.1925739705298404f);
-  const auto kOffset4 = Set(d, 0.25f) * kOffset3;
-  const auto kMul0 = Set(d, 0.74760422233706747f);
+  const auto kBase = Set(d, -0.76471879237038032f);
+  const auto kMul4 = Set(d, 4.4585596705216615f);
+  const auto kMul2 = Set(d, 17.282053892620215f);
+  const auto kOffset2 = Set(d, 302.36961315317848f);
+  const auto kMul3 = Set(d, 7.0561261998705858f);
+  const auto kOffset3 = Set(d, 2.3179635626140773f);
+  const auto kOffset4 = Mul(Set(d, 0.25f), kOffset3);
+  const auto kMul0 = Set(d, 0.80061762862741759f);
   const auto k1 = Set(d, 1.0f);
 
   // Avoid division by zero.
-  const auto v1 = Max(out_val * kMul0, Set(d, 1e-3f));
-  const auto v2 = k1 / (v1 + kOffset2);
-  const auto v3 = k1 / MulAdd(v1, v1, kOffset3);
-  const auto v4 = k1 / MulAdd(v1, v1, kOffset4);
+  const auto v1 = Max(Mul(out_val, kMul0), Set(d, 1e-3f));
+  const auto v2 = Div(k1, Add(v1, kOffset2));
+  const auto v3 = Div(k1, MulAdd(v1, v1, kOffset3));
+  const auto v4 = Div(k1, MulAdd(v1, v1, kOffset4));
   // TODO(jyrki):
   // A log or two here could make sense. In butteraugli we have effectively
   // log(log(x + C)) for this kind of use, as a single log is used in
   // saturating visual masking and here the modulation values are exponential,
   // another log would counter that.
-  return kBase + MulAdd(kMul4, v4, MulAdd(kMul2, v2, kMul3 * v3));
-}
-
-// For converting full vectors to a subset. Assumes `vfull` lanes are identical.
-template <class D, class VFull>
-Vec<D> CapTo(const D d, VFull vfull) {
-  using T = typename D::T;
-  const HWY_FULL(T) dfull;
-  HWY_ALIGN T lanes[MaxLanes(dfull)];
-  Store(vfull, dfull, lanes);
-  return Load(d, lanes);
+  return Add(kBase, MulAdd(kMul4, v4, MulAdd(kMul2, v2, Mul(kMul3, v3))));
 }
 
 // mul and mul2 represent a scaling difference between jxl and butteraugli.
-static const float kSGmul = 226.0480446705883f;
+static const float kSGmul = 226.77216153508914f;
 static const float kSGmul2 = 1.0f / 73.377132366608819f;
 static const float kLog2 = 0.693147181f;
 // Includes correction factor for std::log -> log2.
 static const float kSGRetMul = kSGmul2 * 18.6580932135f * kLog2;
-static const float kSGVOffset = 7.14672470003f;
+static const float kSGVOffset = 7.7825991679894591f;
 
 template <bool invert, typename D, typename V>
 V RatioOfDerivativesOfCubicRootToSimpleGamma(const D d, V v) {
@@ -123,11 +125,11 @@ V RatioOfDerivativesOfCubicRootToSimpleGamma(const D d, V v) {
   const auto kVOffset = Set(d, kSGVOffset * kLog2 + kEpsilon);
   const auto kDenMul = Set(d, kLog2 * kSGmul);
 
-  const auto v2 = v * v;
+  const auto v2 = Mul(v, v);
 
   const auto num = MulAdd(kNumMul, v2, Set(d, kEpsilon));
-  const auto den = MulAdd(kDenMul * v, v2, kVOffset);
-  return invert ? num / den : den / num;
+  const auto den = MulAdd(Mul(kDenMul, v), v2, kVOffset);
+  return invert ? Div(num, den) : Div(den, num);
 }
 
 template <bool invert = false>
@@ -175,21 +177,20 @@ V GammaModulation(const D d, const size_t x, const size_t y,
     const float* const JXL_RESTRICT row_in_x = xyb_x.Row(y + dy);
     const float* const JXL_RESTRICT row_in_y = xyb_y.Row(y + dy);
     for (size_t dx = 0; dx < 8; dx += Lanes(d)) {
-      const auto iny = Load(d, row_in_y + x + dx) + bias;
+      const auto iny = Add(Load(d, row_in_y + x + dx), bias);
       const auto inx = Load(d, row_in_x + x + dx);
-      const auto r = iny - inx;
-      const auto g = iny + inx;
+      const auto r = Sub(iny, inx);
+      const auto g = Add(iny, inx);
       const auto ratio_r =
           RatioOfDerivativesOfCubicRootToSimpleGamma</*invert=*/true>(d, r);
       const auto ratio_g =
           RatioOfDerivativesOfCubicRootToSimpleGamma</*invert=*/true>(d, g);
-      const auto avg_ratio = half * (ratio_r + ratio_g);
+      const auto avg_ratio = Mul(half, Add(ratio_r, ratio_g));
 
-      overall_ratio += avg_ratio;
+      overall_ratio = Add(overall_ratio, avg_ratio);
     }
   }
-  overall_ratio = SumOfLanes(d, overall_ratio);
-  overall_ratio *= Set(d, 1.0f / 64);
+  overall_ratio = Mul(SumOfLanes(d, overall_ratio), Set(d, 1.0f / 64));
   // ideally -1.0, but likely optimal correction adds some entropy, so slightly
   // less than that.
   // ln(2) constant folded in because we want std::log but have FastLog2f.
@@ -201,61 +202,68 @@ template <class D, class V>
 V ColorModulation(const D d, const size_t x, const size_t y,
                   const ImageF& xyb_x, const ImageF& xyb_y, const ImageF& xyb_b,
                   const double butteraugli_target, V out_val) {
-  static const float kStrengthMul = 2.177823400325309;
-  static const float kRedRampStart = 0.0073200141118951231;
-  static const float kRedRampLength = 0.019421555948474039;
-  static const float kBlueRampLength = 0.086890611400405895;
-  static const float kBlueRampStart = 0.26973418507870539;
-  const float strength = kStrengthMul * (1.0f - 0.25f * butteraugli_target);
+  static const float kStrengthMul = 4.2456542701250122f;
+  static const float kRedRampStart = 0.18748564245760829f;
+  static const float kRedRampLength = 0.16701783842516479f;
+  static const float kBlueRampLength = 0.16117602661852037f;
+  static const float kBlueRampStart = 0.47897504338287333f;
+  const float strength = kStrengthMul * (1.0f - 0.15f * butteraugli_target);
   if (strength < 0) {
     return out_val;
   }
   // x values are smaller than y and b values, need to take the difference into
   // account.
-  const float red_strength = strength * 5.992297772961519f;
+  const float red_strength = strength * 6.0f;
   const float blue_strength = strength;
   {
     // Reduce some bits from areas not blue or red.
-    const float offset = strength * -0.009174542291185913f;
-    out_val += Set(d, offset);
+    const float offset = strength * -0.007;  // 9174542291185913f;
+    out_val = Add(out_val, Set(d, offset));
   }
   // Calculate how much of the 8x8 block is covered with blue or red.
   auto blue_coverage = Zero(d);
   auto red_coverage = Zero(d);
+  auto bias_y = Set(d, 0.2f);
+  auto bias_y_add = Set(d, 0.1f);
   for (size_t dy = 0; dy < 8; ++dy) {
     const float* const JXL_RESTRICT row_in_x = xyb_x.Row(y + dy);
     const float* const JXL_RESTRICT row_in_y = xyb_y.Row(y + dy);
     const float* const JXL_RESTRICT row_in_b = xyb_b.Row(y + dy);
     for (size_t dx = 0; dx < 8; dx += Lanes(d)) {
-      const auto pixel_x =
-          Max(Set(d, 0.0f), Load(d, row_in_x + x + dx) - Set(d, kRedRampStart));
       const auto pixel_y = Load(d, row_in_y + x + dx);
+      // Estimate redness-greeness relative to the intensity.
+      const auto pixel_xpy = Div(Abs(Load(d, row_in_x + x + dx)),
+                                 Max(Add(bias_y_add, pixel_y), bias_y));
+      const auto pixel_x =
+          Max(Set(d, 0.0f), Sub(pixel_xpy, Set(d, kRedRampStart)));
       const auto pixel_b =
-          Max(Set(d, 0.0f),
-              Load(d, row_in_b + x + dx) - pixel_y - Set(d, kBlueRampStart));
+          Max(Set(d, 0.0f), Sub(Load(d, row_in_b + x + dx),
+                                Add(pixel_y, Set(d, kBlueRampStart))));
       const auto blue_slope = Min(pixel_b, Set(d, kBlueRampLength));
       const auto red_slope = Min(pixel_x, Set(d, kRedRampLength));
-      red_coverage += red_slope;
-      blue_coverage += blue_slope;
+      red_coverage = Add(red_coverage, red_slope);
+      blue_coverage = Add(blue_coverage, blue_slope);
     }
   }
 
   // Saturate when the high red or high blue coverage is above a level.
   // The idea here is that if a certain fraction of the block is red or
   // blue we consider as if it was fully red or blue.
-  static const float ratio = 30.610615782142737f;  // out of 64 pixels.
+  static const float ratio = 28.0f;  // out of 64 pixels.
 
   auto overall_red_coverage = SumOfLanes(d, red_coverage);
   overall_red_coverage =
       Min(overall_red_coverage, Set(d, ratio * kRedRampLength));
-  overall_red_coverage *= Set(d, red_strength / ratio);
+  overall_red_coverage =
+      Mul(overall_red_coverage, Set(d, red_strength / ratio));
 
   auto overall_blue_coverage = SumOfLanes(d, blue_coverage);
   overall_blue_coverage =
       Min(overall_blue_coverage, Set(d, ratio * kBlueRampLength));
-  overall_blue_coverage *= Set(d, blue_strength / ratio);
+  overall_blue_coverage =
+      Mul(overall_blue_coverage, Set(d, blue_strength / ratio));
 
-  return overall_red_coverage + overall_blue_coverage + out_val;
+  return Add(overall_red_coverage, Add(overall_blue_coverage, out_val));
 }
 
 // Change precision in 8x8 blocks that have high frequency content.
@@ -269,6 +277,8 @@ V HfModulation(const D d, const size_t x, const size_t y, const ImageF& xyb,
 
   auto sum = Zero(d);  // sum of absolute differences with right and below
 
+  static const float valmin = 0.52489909479039587f;
+  auto valminv = Set(d, valmin);
   for (size_t dy = 0; dy < 8; ++dy) {
     const float* JXL_RESTRICT row_in = xyb.Row(y + dy) + x;
     const float* JXL_RESTRICT row_in_next =
@@ -287,15 +297,30 @@ V HfModulation(const D d, const size_t x, const size_t y, const ImageF& xyb,
       const auto p = Load(d, row_in + dx);
       const auto pr = LoadU(d, row_in + dx + 1);
       const auto mask = BitCast(d, Load(du, kMaskRight + dx));
-      sum += And(mask, AbsDiff(p, pr));
+      sum = Add(sum, And(mask, Min(valminv, AbsDiff(p, pr))));
 
       const auto pd = Load(d, row_in_next + dx);
-      sum += AbsDiff(p, pd);
+      sum = Add(sum, Min(valminv, AbsDiff(p, pd)));
     }
+#if HWY_TARGET == HWY_SCALAR
+    const auto p = Load(d, row_in + 7);
+    const auto pd = Load(d, row_in_next + 7);
+    sum = Add(sum, Min(valminv, AbsDiff(p, pd)));
+#endif
   }
+  // more negative value gives more bpp
+  static const float kOffset = -2.6545897672771526;
+  static const float kMul = -0.049868161744916512;
 
   sum = SumOfLanes(d, sum);
-  return MulAdd(sum, Set(d, -2.0052193233688884f / 112), out_val);
+  float scalar_sum = GetLane(sum);
+  static const float maxsum = 7.9076877647025947f;
+  static const float minsum = 0.53640540945659809f;
+  scalar_sum = std::min(maxsum, scalar_sum);
+  scalar_sum = std::max(minsum, scalar_sum);
+  scalar_sum += kOffset;
+  scalar_sum *= kMul;
+  return Add(Set(d, scalar_sum), out_val);
 }
 
 void PerBlockModulations(const float butteraugli_target, const ImageF& xyb_x,
@@ -305,8 +330,8 @@ void PerBlockModulations(const float butteraugli_target, const ImageF& xyb_x,
   JXL_ASSERT(DivCeil(xyb_x.xsize(), kBlockDim) == out->xsize());
   JXL_ASSERT(DivCeil(xyb_x.ysize(), kBlockDim) == out->ysize());
 
-  float base_level = 0.5f * scale;
-  float kDampenRampStart = 7.0f;
+  float base_level = 0.48f * scale;
+  float kDampenRampStart = 2.0f;
   float kDampenRampEnd = 14.0f;
   float dampen = 1.0f;
   if (butteraugli_target >= kDampenRampStart) {
@@ -339,11 +364,11 @@ void PerBlockModulations(const float butteraugli_target, const ImageF& xyb_x,
 
 template <typename D, typename V>
 V MaskingSqrt(const D d, V v) {
-  static const float kLogOffset = 26.481471032459346f;
-  static const float kMul = 211.50759899638012f;
+  static const float kLogOffset = 27.97044946785558f;
+  static const float kMul = 211.53333281566171f;
   const auto mul_v = Set(d, kMul * 1e8);
   const auto offset_v = Set(d, kLogOffset);
-  return Set(d, 0.25f) * Sqrt(MulAdd(v, Sqrt(mul_v), offset_v));
+  return Mul(Set(d, 0.25f), Sqrt(MulAdd(v, Sqrt(mul_v), offset_v)));
 }
 
 float MaskingSqrt(const float v) {
@@ -413,13 +438,11 @@ void FuzzyErosion(const Rect& from_rect, const ImageF& from,
       StoreMin4(rowb[xm1], min0, min1, min2, min3);
       StoreMin4(rowb[x], min0, min1, min2, min3);
       StoreMin4(rowb[xp1], min0, min1, min2, min3);
-      static const float kMulC = 0.05f;
-      static const float kMul0 = 0.05f;
-      static const float kMul1 = 0.05f;
-      static const float kMul2 = 0.05f;
+      static const float kMul0 = 0.125f;
+      static const float kMul1 = 0.075f;
+      static const float kMul2 = 0.06f;
       static const float kMul3 = 0.05f;
-      float v = kMulC * row[x] + kMul0 * min0 + kMul1 * min1 + kMul2 * min2 +
-                kMul3 * min3;
+      float v = kMul0 * min0 + kMul1 * min1 + kMul2 * min2 + kMul3 * min3;
       if (fx % 2 == 0 && fy % 2 == 0) {
         row_out[fx / 2] = v;
       } else {
@@ -447,7 +470,6 @@ struct AdaptiveQuantizationImpl {
 
   void ComputeTile(float butteraugli_target, float scale, const Image3F& xyb,
                    const Rect& rect, const int thread, ImageF* mask) {
-    PROFILER_ZONE("aq DiffPrecompute");
     const size_t xsize = xyb.xsize();
     const size_t ysize = xyb.ysize();
 
@@ -459,8 +481,6 @@ struct AdaptiveQuantizationImpl {
     const float match_gamma_offset = 0.019;
 
     const HWY_FULL(float) df;
-    const float kXMul = 23.426802998210313f;
-    const auto kXMulv = Set(df, kXMul);
 
     size_t y_start = rect.y0() * 8;
     size_t y_end = y_start + rect.ysize() * 8;
@@ -473,6 +493,7 @@ struct AdaptiveQuantizationImpl {
     if (y_end != xyb.ysize()) y_end += 4;
     pre_erosion[thread].ShrinkTo((x1 - x0) / 4, (y_end - y_start) / 4);
 
+    static const float limit = 0.2f;
     // Computes image (padded to multiple of 8x8) of local pixel differences.
     // Subsample both directions by 4.
     for (size_t y = y_start; y < y_end; ++y) {
@@ -482,9 +503,6 @@ struct AdaptiveQuantizationImpl {
       const float* row_in = xyb.PlaneRow(1, y);
       const float* row_in1 = xyb.PlaneRow(1, y1);
       const float* row_in2 = xyb.PlaneRow(1, y2);
-      const float* row_x_in = xyb.PlaneRow(0, y);
-      const float* row_x_in1 = xyb.PlaneRow(0, y1);
-      const float* row_x_in2 = xyb.PlaneRow(0, y2);
       float* JXL_RESTRICT row_out = diff_buffer.Row(thread);
 
       auto scalar_pixel = [&](size_t x) {
@@ -496,11 +514,9 @@ struct AdaptiveQuantizationImpl {
             row_in[x] + match_gamma_offset);
         float diff = gammac * (row_in[x] - base);
         diff *= diff;
-        const float base_x =
-            0.25f * (row_x_in2[x] + row_x_in1[x] + row_x_in[x1] + row_x_in[x2]);
-        float diff_x = gammac * (row_x_in[x] - base_x);
-        diff_x *= diff_x;
-        diff += kXMul * diff_x;
+        if (diff >= limit) {
+          diff = limit;
+        }
         diff = MaskingSqrt(diff);
         if ((y % 4) != 0) {
           row_out[x - x0] += diff;
@@ -524,25 +540,16 @@ struct AdaptiveQuantizationImpl {
         const auto in_l = LoadU(df, row_in + x - 1);
         const auto in_t = LoadU(df, row_in2 + x);
         const auto in_b = LoadU(df, row_in1 + x);
-        auto base = quarter * (in_r + in_l + in_t + in_b);
+        auto base = Mul(quarter, Add(Add(in_r, in_l), Add(in_t, in_b)));
         auto gammacv =
             RatioOfDerivativesOfCubicRootToSimpleGamma</*invert=*/false>(
-                df, in + match_gamma_offset_v);
-        auto diff = gammacv * (in - base);
-        diff *= diff;
-
-        const auto in_x = LoadU(df, row_x_in + x);
-        const auto in_x_r = LoadU(df, row_x_in + x + 1);
-        const auto in_x_l = LoadU(df, row_x_in + x - 1);
-        const auto in_x_t = LoadU(df, row_x_in2 + x);
-        const auto in_x_b = LoadU(df, row_x_in1 + x);
-        auto base_x = quarter * (in_x_r + in_x_l + in_x_t + in_x_b);
-        auto diff_x = gammacv * (in_x - base_x);
-        diff_x *= diff_x;
-        diff += kXMulv * diff_x;
+                df, Add(in, match_gamma_offset_v));
+        auto diff = Mul(gammacv, Sub(in, base));
+        diff = Mul(diff, diff);
+        diff = Min(diff, Set(df, limit));
         diff = MaskingSqrt(df, diff);
         if ((y & 3) != 0) {
-          diff += LoadU(df, row_out + x - x0);
+          diff = Add(diff, LoadU(df, row_out + x - x0));
         }
         StoreU(diff, df, row_out + x - x0);
       }
@@ -581,8 +588,6 @@ ImageF AdaptiveQuantizationMap(const float butteraugli_target,
                                const Image3F& xyb,
                                const FrameDimensions& frame_dim, float scale,
                                ThreadPool* pool, ImageF* mask) {
-  PROFILER_ZONE("aq AdaptiveQuantMap");
-
   AdaptiveQuantizationImpl impl;
   impl.Init(xyb);
   *mask = ImageF(frame_dim.xsize_blocks, frame_dim.ysize_blocks);
@@ -625,43 +630,47 @@ namespace jxl {
 HWY_EXPORT(AdaptiveQuantizationMap);
 
 namespace {
-// If true, prints the quantization maps at each iteration.
-bool FLAGS_dump_quant_state = false;
 
-void DumpHeatmap(const AuxOut* aux_out, const std::string& label,
-                 const ImageF& image, float good_threshold,
-                 float bad_threshold) {
-  Image3F heatmap = CreateHeatMapImage(image, good_threshold, bad_threshold);
-  char filename[200];
-  snprintf(filename, sizeof(filename), "%s%05d", label.c_str(),
-           aux_out->num_butteraugli_iters);
-  aux_out->DumpImage(filename, heatmap);
+// If true, prints the quantization maps at each iteration.
+constexpr bool FLAGS_dump_quant_state = false;
+
+void DumpHeatmap(const CompressParams& cparams, const AuxOut* aux_out,
+                 const std::string& label, const ImageF& image,
+                 float good_threshold, float bad_threshold) {
+  if (JXL_DEBUG_ADAPTIVE_QUANTIZATION) {
+    Image3F heatmap = CreateHeatMapImage(image, good_threshold, bad_threshold);
+    char filename[200];
+    snprintf(filename, sizeof(filename), "%s%05d", label.c_str(),
+             aux_out->num_butteraugli_iters);
+    DumpImage(cparams, filename, heatmap);
+  }
 }
 
-void DumpHeatmaps(const AuxOut* aux_out, float ba_target,
-                  const ImageF& quant_field, const ImageF& tile_heatmap,
-                  const ImageF& bt_diffmap) {
-  if (!WantDebugOutput(aux_out)) return;
-  ImageF inv_qmap(quant_field.xsize(), quant_field.ysize());
-  for (size_t y = 0; y < quant_field.ysize(); ++y) {
-    const float* JXL_RESTRICT row_q = quant_field.ConstRow(y);
-    float* JXL_RESTRICT row_inv_q = inv_qmap.Row(y);
-    for (size_t x = 0; x < quant_field.xsize(); ++x) {
-      row_inv_q[x] = 1.0f / row_q[x];  // never zero
+void DumpHeatmaps(const CompressParams& cparams, const AuxOut* aux_out,
+                  float ba_target, const ImageF& quant_field,
+                  const ImageF& tile_heatmap, const ImageF& bt_diffmap) {
+  if (JXL_DEBUG_ADAPTIVE_QUANTIZATION) {
+    if (!WantDebugOutput(cparams)) return;
+    ImageF inv_qmap(quant_field.xsize(), quant_field.ysize());
+    for (size_t y = 0; y < quant_field.ysize(); ++y) {
+      const float* JXL_RESTRICT row_q = quant_field.ConstRow(y);
+      float* JXL_RESTRICT row_inv_q = inv_qmap.Row(y);
+      for (size_t x = 0; x < quant_field.xsize(); ++x) {
+        row_inv_q[x] = 1.0f / row_q[x];  // never zero
+      }
     }
+    DumpHeatmap(cparams, aux_out, "quant_heatmap", inv_qmap, 4.0f * ba_target,
+                6.0f * ba_target);
+    DumpHeatmap(cparams, aux_out, "tile_heatmap", tile_heatmap, ba_target,
+                1.5f * ba_target);
+    // matches heat maps produced by the command line tool.
+    DumpHeatmap(cparams, aux_out, "bt_diffmap", bt_diffmap,
+                ButteraugliFuzzyInverse(1.5), ButteraugliFuzzyInverse(0.5));
   }
-  DumpHeatmap(aux_out, "quant_heatmap", inv_qmap, 4.0f * ba_target,
-              6.0f * ba_target);
-  DumpHeatmap(aux_out, "tile_heatmap", tile_heatmap, ba_target,
-              1.5f * ba_target);
-  // matches heat maps produced by the command line tool.
-  DumpHeatmap(aux_out, "bt_diffmap", bt_diffmap, ButteraugliFuzzyInverse(1.5),
-              ButteraugliFuzzyInverse(0.5));
 }
 
 ImageF TileDistMap(const ImageF& distmap, int tile_size, int margin,
                    const AcStrategyImage& ac_strategy) {
-  PROFILER_FUNC;
   const int tile_xsize = (distmap.xsize() + tile_size - 1) / tile_size;
   const int tile_ysize = (distmap.ysize() + tile_size - 1) / tile_size;
   ImageF tile_distmap(tile_xsize, tile_ysize);
@@ -725,9 +734,84 @@ ImageF TileDistMap(const ImageF& distmap, int tile_size, int margin,
   return tile_distmap;
 }
 
-constexpr float kDcQuantPow = 0.57f;
-static const float kDcQuant = 1.12f;
-static const float kAcQuant = 0.8294f;
+static const float kDcQuantPow = 0.83;
+static const float kDcQuant = 1.095924047623553f;
+static const float kAcQuant = 0.7784;
+
+// Computes the decoded image for a given set of compression parameters.
+ImageBundle RoundtripImage(const Image3F& opsin, PassesEncoderState* enc_state,
+                           const JxlCmsInterface& cms, ThreadPool* pool) {
+  std::unique_ptr<PassesDecoderState> dec_state =
+      jxl::make_unique<PassesDecoderState>();
+  JXL_CHECK(dec_state->output_encoding_info.SetFromMetadata(
+      *enc_state->shared.metadata));
+  dec_state->shared = &enc_state->shared;
+  JXL_ASSERT(opsin.ysize() % kBlockDim == 0);
+
+  const size_t xsize_groups = DivCeil(opsin.xsize(), kGroupDim);
+  const size_t ysize_groups = DivCeil(opsin.ysize(), kGroupDim);
+  const size_t num_groups = xsize_groups * ysize_groups;
+
+  size_t num_special_frames = enc_state->special_frames.size();
+
+  std::unique_ptr<ModularFrameEncoder> modular_frame_encoder =
+      jxl::make_unique<ModularFrameEncoder>(enc_state->shared.frame_header,
+                                            enc_state->cparams);
+  JXL_CHECK(InitializePassesEncoder(opsin, cms, pool, enc_state,
+                                    modular_frame_encoder.get(), nullptr));
+  JXL_CHECK(dec_state->Init());
+  JXL_CHECK(dec_state->InitForAC(pool));
+
+  ImageBundle decoded(&enc_state->shared.metadata->m);
+  decoded.origin = enc_state->shared.frame_header.frame_origin;
+  decoded.SetFromImage(Image3F(opsin.xsize(), opsin.ysize()),
+                       dec_state->output_encoding_info.color_encoding);
+
+  PassesDecoderState::PipelineOptions options;
+  options.use_slow_render_pipeline = false;
+  options.coalescing = false;
+  options.render_spotcolors = false;
+
+  // Same as dec_state->shared->frame_header.nonserialized_metadata->m
+  const ImageMetadata& metadata = *decoded.metadata();
+
+  JXL_CHECK(dec_state->PreparePipeline(&decoded, options));
+
+  hwy::AlignedUniquePtr<GroupDecCache[]> group_dec_caches;
+  const auto allocate_storage = [&](const size_t num_threads) -> Status {
+    JXL_RETURN_IF_ERROR(
+        dec_state->render_pipeline->PrepareForThreads(num_threads,
+                                                      /*use_group_ids=*/false));
+    group_dec_caches = hwy::MakeUniqueAlignedArray<GroupDecCache>(num_threads);
+    return true;
+  };
+  const auto process_group = [&](const uint32_t group_index,
+                                 const size_t thread) {
+    if (dec_state->shared->frame_header.loop_filter.epf_iters > 0) {
+      ComputeSigma(dec_state->shared->BlockGroupRect(group_index),
+                   dec_state.get());
+    }
+    RenderPipelineInput input =
+        dec_state->render_pipeline->GetInputBuffers(group_index, thread);
+    JXL_CHECK(DecodeGroupForRoundtrip(
+        enc_state->coeffs, group_index, dec_state.get(),
+        &group_dec_caches[thread], thread, input, &decoded, nullptr));
+    for (size_t c = 0; c < metadata.num_extra_channels; c++) {
+      std::pair<ImageF*, Rect> ri = input.GetBuffer(3 + c);
+      FillPlane(0.0f, ri.first, ri.second);
+    }
+    input.Done();
+  };
+  JXL_CHECK(RunOnPool(pool, 0, num_groups, allocate_storage, process_group,
+                      "AQ loop"));
+
+  // Ensure we don't create any new special frames.
+  enc_state->special_frames.resize(num_special_frames);
+
+  return decoded;
+}
+
+constexpr int kMaxButteraugliIters = 4;
 
 void FindBestQuantization(const ImageBundle& linear, const Image3F& opsin,
                           PassesEncoderState* enc_state,
@@ -763,12 +847,12 @@ void FindBestQuantization(const ImageBundle& linear, const Image3F& opsin,
     size_t orig_xsize;
     size_t orig_ysize;
   } t(const_cast<ImageBundle&>(linear),
-      enc_state->shared.frame_header.nonserialized_metadata->xsize(),
-      enc_state->shared.frame_header.nonserialized_metadata->ysize());
+      enc_state->shared.frame_header.frame_size.xsize,
+      enc_state->shared.frame_header.frame_size.ysize);
 
   const float butteraugli_target = cparams.butteraugli_distance;
   const float original_butteraugli = cparams.original_butteraugli_distance;
-  ButteraugliParams params = cparams.ba_params;
+  ButteraugliParams params;
   params.intensity_target = linear.metadata()->IntensityTarget();
   // Hack the default intensity target value to be 80.0, the intensity
   // target of sRGB images and a more reasonable viewing default than
@@ -782,9 +866,10 @@ void FindBestQuantization(const ImageBundle& linear, const Image3F& opsin,
       (comparator.GoodQualityScore() < comparator.BadQualityScore());
   const float initial_quant_dc = InitialQuantDC(butteraugli_target);
   AdjustQuantField(enc_state->shared.ac_strategy, Rect(quant_field),
-                   &quant_field);
+                   original_butteraugli, &quant_field);
   ImageF tile_distmap;
-  ImageF initial_quant_field = CopyImage(quant_field);
+  ImageF initial_quant_field(quant_field.xsize(), quant_field.ysize());
+  CopyImageTo(quant_field, &initial_quant_field);
 
   float initial_qf_min, initial_qf_max;
   ImageMinMax(initial_quant_field, &initial_qf_min, &initial_qf_max);
@@ -798,15 +883,12 @@ void FindBestQuantization(const ImageBundle& linear, const Image3F& opsin,
   JXL_ASSERT(qf_higher / qf_lower < 253);
 
   constexpr int kOriginalComparisonRound = 1;
-  int iters = cparams.max_butteraugli_iters;
-  if (iters > 7) {
-    iters = 7;
-  }
+  int iters = kMaxButteraugliIters;
   if (cparams.speed_tier != SpeedTier::kTortoise) {
     iters = 2;
   }
   for (int i = 0; i < iters + 1; ++i) {
-    if (FLAGS_dump_quant_state) {
+    if (JXL_DEBUG_ADAPTIVE_QUANTIZATION) {
       printf("\nQuantization field:\n");
       for (size_t y = 0; y < quant_field.ysize(); ++y) {
         for (size_t x = 0; x < quant_field.xsize(); ++x) {
@@ -817,26 +899,25 @@ void FindBestQuantization(const ImageBundle& linear, const Image3F& opsin,
     }
     quantizer.SetQuantField(initial_quant_dc, quant_field, &raw_quant_field);
     ImageBundle dec_linear = RoundtripImage(opsin, enc_state, cms, pool);
-    PROFILER_ZONE("enc Butteraugli");
     float score;
     ImageF diffmap;
     JXL_CHECK(comparator.CompareWith(dec_linear, &diffmap, &score));
     if (!lower_is_better) {
       score = -score;
-      diffmap = ScaleImage(-1.0f, diffmap);
+      ScaleImage(-1.0f, &diffmap);
     }
     tile_distmap = TileDistMap(diffmap, 8 * cparams.resampling, 0,
                                enc_state->shared.ac_strategy);
-    if (WantDebugOutput(aux_out)) {
-      aux_out->DumpImage(("dec" + ToString(i)).c_str(), *dec_linear.color());
-      DumpHeatmaps(aux_out, butteraugli_target, quant_field, tile_distmap,
-                   diffmap);
+    if (JXL_DEBUG_ADAPTIVE_QUANTIZATION && WantDebugOutput(cparams)) {
+      DumpImage(cparams, ("dec" + ToString(i)).c_str(), *dec_linear.color());
+      DumpHeatmaps(cparams, aux_out, butteraugli_target, quant_field,
+                   tile_distmap, diffmap);
     }
     if (aux_out != nullptr) ++aux_out->num_butteraugli_iters;
-    if (cparams.log_search_state) {
+    if (JXL_DEBUG_ADAPTIVE_QUANTIZATION) {
       float minval, maxval;
       ImageMinMax(quant_field, &minval, &maxval);
-      printf("\nButteraugli iter: %d/%d\n", i, cparams.max_butteraugli_iters);
+      printf("\nButteraugli iter: %d/%d\n", i, kMaxButteraugliIters);
       printf("Butteraugli distance: %f  (target = %f)\n", score,
              original_butteraugli);
       printf("quant range: %f ... %f  DC quant: %f\n", minval, maxval,
@@ -940,22 +1021,21 @@ void FindBestQuantizationMaxError(const Image3F& opsin,
   const float initial_quant_dc =
       16 * std::sqrt(0.1f / cparams.butteraugli_distance);
   AdjustQuantField(enc_state->shared.ac_strategy, Rect(quant_field),
-                   &quant_field);
+                   cparams.original_butteraugli_distance, &quant_field);
 
   const float inv_max_err[3] = {1.0f / enc_state->cparams.max_error[0],
                                 1.0f / enc_state->cparams.max_error[1],
                                 1.0f / enc_state->cparams.max_error[2]};
 
-  for (int i = 0; i < cparams.max_butteraugli_iters + 1; ++i) {
+  for (int i = 0; i < kMaxButteraugliIters + 1; ++i) {
     quantizer.SetQuantField(initial_quant_dc, quant_field, &raw_quant_field);
-    if (aux_out) {
-      aux_out->DumpXybImage(("ops" + ToString(i)).c_str(), opsin);
+    if (JXL_DEBUG_ADAPTIVE_QUANTIZATION && aux_out) {
+      DumpXybImage(cparams, ("ops" + ToString(i)).c_str(), opsin);
     }
     ImageBundle decoded = RoundtripImage(opsin, enc_state, cms, pool);
-    if (aux_out) {
-      aux_out->DumpXybImage(("dec" + ToString(i)).c_str(), *decoded.color());
+    if (JXL_DEBUG_ADAPTIVE_QUANTIZATION && aux_out) {
+      DumpXybImage(cparams, ("dec" + ToString(i)).c_str(), *decoded.color());
     }
-
     for (size_t by = 0; by < enc_state->shared.frame_dim.ysize_blocks; by++) {
       AcStrategyRow ac_strategy_row =
           enc_state->shared.ac_strategy.ConstRow(by);
@@ -1001,10 +1081,26 @@ void FindBestQuantizationMaxError(const Image3F& opsin,
 }  // namespace
 
 void AdjustQuantField(const AcStrategyImage& ac_strategy, const Rect& rect,
-                      ImageF* quant_field) {
+                      float butteraugli_target, ImageF* quant_field) {
   // Replace the whole quant_field in non-8x8 blocks with the maximum of each
   // 8x8 block.
   size_t stride = quant_field->PixelsPerRow();
+
+  // At low distances it is great to use max, but mean works better
+  // at high distances. We interpolate between them for a distance
+  // range.
+  float mean_max_mixer = 1.0f;
+  {
+    static const float kLimit = 1.54138f;
+    static const float kMul = 0.56391f;
+    static const float kMin = 0.0f;
+    if (butteraugli_target > kLimit) {
+      mean_max_mixer -= (butteraugli_target - kLimit) * kMul;
+      if (mean_max_mixer < kMin) {
+        mean_max_mixer = kMin;
+      }
+    }
+  }
   for (size_t y = 0; y < rect.ysize(); ++y) {
     AcStrategyRow ac_strategy_row = ac_strategy.ConstRow(rect, y);
     float* JXL_RESTRICT quant_row = rect.Row(quant_field, y);
@@ -1014,10 +1110,17 @@ void AdjustQuantField(const AcStrategyImage& ac_strategy, const Rect& rect,
       JXL_ASSERT(x + acs.covered_blocks_x() <= quant_field->xsize());
       JXL_ASSERT(y + acs.covered_blocks_y() <= quant_field->ysize());
       float max = quant_row[x];
+      float mean = 0.0;
       for (size_t iy = 0; iy < acs.covered_blocks_y(); iy++) {
         for (size_t ix = 0; ix < acs.covered_blocks_x(); ix++) {
+          mean += quant_row[x + ix + iy * stride];
           max = std::max(quant_row[x + ix + iy * stride], max);
         }
+      }
+      mean /= acs.covered_blocks_y() * acs.covered_blocks_x();
+      if (acs.covered_blocks_y() * acs.covered_blocks_x() >= 4) {
+        max *= mean_max_mixer;
+        max += (1.0f - mean_max_mixer) * mean;
       }
       for (size_t iy = 0; iy < acs.covered_blocks_y(); iy++) {
         for (size_t ix = 0; ix < acs.covered_blocks_x(); ix++) {
@@ -1029,7 +1132,7 @@ void AdjustQuantField(const AcStrategyImage& ac_strategy, const Rect& rect,
 }
 
 float InitialQuantDC(float butteraugli_target) {
-  const float kDcMul = 2.9;  // Butteraugli target where non-linearity kicks in.
+  const float kDcMul = 0.3;  // Butteraugli target where non-linearity kicks in.
   const float butteraugli_target_dc = std::max<float>(
       0.5f * butteraugli_target,
       std::min<float>(butteraugli_target,
@@ -1045,7 +1148,6 @@ float InitialQuantDC(float butteraugli_target) {
 ImageF InitialQuantField(const float butteraugli_target, const Image3F& opsin,
                          const FrameDimensions& frame_dim, ThreadPool* pool,
                          float rescale, ImageF* mask) {
-  PROFILER_FUNC;
   const float quant_ac = kAcQuant / butteraugli_target;
   return HWY_DYNAMIC_DISPATCH(AdaptiveQuantizationMap)(
       butteraugli_target, opsin, frame_dim, quant_ac * rescale, pool, mask);
@@ -1057,86 +1159,11 @@ void FindBestQuantizer(const ImageBundle* linear, const Image3F& opsin,
                        AuxOut* aux_out, double rescale) {
   const CompressParams& cparams = enc_state->cparams;
   if (cparams.max_error_mode) {
-    PROFILER_ZONE("enc find best maxerr");
     FindBestQuantizationMaxError(opsin, enc_state, cms, pool, aux_out);
   } else if (cparams.speed_tier <= SpeedTier::kKitten) {
     // Normal encoding to a butteraugli score.
-    PROFILER_ZONE("enc find best2");
     FindBestQuantization(*linear, opsin, enc_state, cms, pool, aux_out);
   }
-}
-
-ImageBundle RoundtripImage(const Image3F& opsin, PassesEncoderState* enc_state,
-                           const JxlCmsInterface& cms, ThreadPool* pool) {
-  PROFILER_ZONE("enc roundtrip");
-  std::unique_ptr<PassesDecoderState> dec_state =
-      jxl::make_unique<PassesDecoderState>();
-  JXL_CHECK(dec_state->output_encoding_info.SetFromMetadata(
-      *enc_state->shared.metadata));
-  dec_state->shared = &enc_state->shared;
-  JXL_ASSERT(opsin.ysize() % kBlockDim == 0);
-
-  const size_t xsize_groups = DivCeil(opsin.xsize(), kGroupDim);
-  const size_t ysize_groups = DivCeil(opsin.ysize(), kGroupDim);
-  const size_t num_groups = xsize_groups * ysize_groups;
-
-  size_t num_special_frames = enc_state->special_frames.size();
-
-  std::unique_ptr<ModularFrameEncoder> modular_frame_encoder =
-      jxl::make_unique<ModularFrameEncoder>(enc_state->shared.frame_header,
-                                            enc_state->cparams);
-  JXL_CHECK(InitializePassesEncoder(opsin, cms, pool, enc_state,
-                                    modular_frame_encoder.get(), nullptr));
-  JXL_CHECK(dec_state->Init());
-  JXL_CHECK(dec_state->InitForAC(pool));
-
-  ImageBundle decoded(&enc_state->shared.metadata->m);
-  decoded.origin = enc_state->shared.frame_header.frame_origin;
-  decoded.SetFromImage(Image3F(opsin.xsize(), opsin.ysize()),
-                       dec_state->output_encoding_info.color_encoding);
-
-  PassesDecoderState::PipelineOptions options;
-  options.use_slow_render_pipeline = false;
-  options.coalescing = true;
-  options.render_spotcolors = false;
-
-  // Same as dec_state->shared->frame_header.nonserialized_metadata->m
-  const ImageMetadata& metadata = *decoded.metadata();
-
-  JXL_CHECK(dec_state->PreparePipeline(&decoded, options));
-
-  hwy::AlignedUniquePtr<GroupDecCache[]> group_dec_caches;
-  const auto allocate_storage = [&](const size_t num_threads) -> Status {
-    JXL_RETURN_IF_ERROR(
-        dec_state->render_pipeline->PrepareForThreads(num_threads,
-                                                      /*use_group_ids=*/false));
-    group_dec_caches = hwy::MakeUniqueAlignedArray<GroupDecCache>(num_threads);
-    return true;
-  };
-  const auto process_group = [&](const uint32_t group_index,
-                                 const size_t thread) {
-    if (dec_state->shared->frame_header.loop_filter.epf_iters > 0) {
-      ComputeSigma(dec_state->shared->BlockGroupRect(group_index),
-                   dec_state.get());
-    }
-    RenderPipelineInput input =
-        dec_state->render_pipeline->GetInputBuffers(group_index, thread);
-    JXL_CHECK(DecodeGroupForRoundtrip(
-        enc_state->coeffs, group_index, dec_state.get(),
-        &group_dec_caches[thread], thread, input, &decoded, nullptr));
-    for (size_t c = 0; c < metadata.num_extra_channels; c++) {
-      std::pair<ImageF*, Rect> ri = input.GetBuffer(3 + c);
-      FillPlane(0.0f, ri.first, ri.second);
-    }
-    input.Done();
-  };
-  JXL_CHECK(RunOnPool(pool, 0, num_groups, allocate_storage, process_group,
-                      "AQ loop"));
-
-  // Ensure we don't create any new special frames.
-  enc_state->special_frames.resize(num_special_frames);
-
-  return decoded;
 }
 
 }  // namespace jxl

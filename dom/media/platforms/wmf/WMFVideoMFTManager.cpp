@@ -13,7 +13,6 @@
 #include "GMPUtils.h"  // For SplitAt. TODO: Move SplitAt to a central place.
 #include "IMFYCbCrImage.h"
 #include "ImageContainer.h"
-#include "Layers.h"
 #include "MediaInfo.h"
 #include "MediaTelemetryConstants.h"
 #include "VideoUtils.h"
@@ -29,7 +28,6 @@
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/SyncRunnable.h"
 #include "mozilla/Telemetry.h"
-#include "mozilla/WindowsVersion.h"
 #include "mozilla/gfx/DeviceManagerDx.h"
 #include "mozilla/gfx/gfxVars.h"
 #include "mozilla/layers/LayersTypes.h"
@@ -85,35 +83,6 @@ const GUID MF_SA_D3D11_SHARED_WITHOUT_MUTEX = {
 
 namespace mozilla {
 
-static bool IsWin7H264Decoder4KCapable() {
-  WCHAR systemPath[MAX_PATH + 1];
-  if (!ConstructSystem32Path(L"msmpeg2vdec.dll", systemPath, MAX_PATH + 1)) {
-    // Cannot build path -> Assume it's the old DLL or it's missing.
-    return false;
-  }
-
-  DWORD zero;
-  DWORD infoSize = GetFileVersionInfoSizeW(systemPath, &zero);
-  if (infoSize == 0) {
-    // Can't get file info -> Assume it's the old DLL or it's missing.
-    return false;
-  }
-  auto infoData = MakeUnique<unsigned char[]>(infoSize);
-  VS_FIXEDFILEINFO* vInfo;
-  UINT vInfoLen;
-  if (GetFileVersionInfoW(systemPath, 0, infoSize, infoData.get()) &&
-      VerQueryValueW(infoData.get(), L"\\", (LPVOID*)&vInfo, &vInfoLen)) {
-    uint64_t version = uint64_t(vInfo->dwFileVersionMS) << 32 |
-                       uint64_t(vInfo->dwFileVersionLS);
-    // 12.0.9200.16426 & later allow for >1920x1088 resolutions.
-    const uint64_t minimum =
-        (uint64_t(12) << 48) | (uint64_t(9200) << 16) | uint64_t(16426);
-    return version >= minimum;
-  }
-  // Can't get file version -> Assume it's the old DLL.
-  return false;
-}
-
 LayersBackend GetCompositorBackendType(
     layers::KnowsCompositor* aKnowsCompositor) {
   if (aKnowsCompositor) {
@@ -125,11 +94,13 @@ LayersBackend GetCompositorBackendType(
 WMFVideoMFTManager::WMFVideoMFTManager(
     const VideoInfo& aConfig, layers::KnowsCompositor* aKnowsCompositor,
     layers::ImageContainer* aImageContainer, float aFramerate,
-    const CreateDecoderParams::OptionSet& aOptions, bool aDXVAEnabled)
+    const CreateDecoderParams::OptionSet& aOptions, bool aDXVAEnabled,
+    Maybe<TrackingId> aTrackingId)
     : mVideoInfo(aConfig),
       mImageSize(aConfig.mImage),
       mStreamType(GetStreamTypeFromMimeType(aConfig.mMimeType)),
-      mDecodedImageSize(aConfig.mImage),
+      mSoftwareImageSize(aConfig.mImage),
+      mSoftwarePictureSize(aConfig.mImage),
       mVideoStride(0),
       mColorSpace(aConfig.mColorSpace),
       mColorRange(aConfig.mColorRange),
@@ -140,7 +111,8 @@ WMFVideoMFTManager::WMFVideoMFTManager(
                        CreateDecoderParams::Option::HardwareDecoderNotAllowed)),
       mZeroCopyNV12Texture(false),
       mFramerate(aFramerate),
-      mLowLatency(aOptions.contains(CreateDecoderParams::Option::LowLatency))
+      mLowLatency(aOptions.contains(CreateDecoderParams::Option::LowLatency)),
+      mTrackingId(std::move(aTrackingId))
 // mVideoStride, mVideoWidth, mVideoHeight, mUseHwAccel are initialized in
 // Init().
 {
@@ -149,8 +121,8 @@ WMFVideoMFTManager::WMFVideoMFTManager(
   // The V and U planes are stored 16-row-aligned, so we need to add padding
   // to the row heights to ensure the Y'CbCr planes are referenced properly.
   // This value is only used with software decoder.
-  if (mDecodedImageSize.height % 16 != 0) {
-    mDecodedImageSize.height += 16 - (mDecodedImageSize.height % 16);
+  if (mSoftwareImageSize.height % 16 != 0) {
+    mSoftwareImageSize.height += 16 - (mSoftwareImageSize.height % 16);
   }
 }
 
@@ -203,10 +175,6 @@ bool WMFVideoMFTManager::InitializeDXVA() {
         StaticPrefs::GetPrefName_media_wmf_dxva_d3d11_enabled());
     d3d11 = false;
   }
-  if (!IsWin8OrLater()) {
-    mDXVAFailureReason.AssignLiteral("D3D11: Requires Windows 8 or later");
-    d3d11 = false;
-  }
 
   if (d3d11) {
     mDXVAFailureReason.AppendLiteral("D3D11: ");
@@ -244,10 +212,7 @@ MediaResult WMFVideoMFTManager::ValidateVideoInfo() {
         // have this limitation, but it still might have maximum resolution
         // limitation.
         // https://msdn.microsoft.com/en-us/library/windows/desktop/dd797815(v=vs.85).aspx
-        const bool Is4KCapable =
-            IsWin8OrLater() || IsWin7H264Decoder4KCapable();
-        static const int32_t MAX_H264_PIXEL_COUNT =
-            Is4KCapable ? 4096 * 2304 : 1920 * 1088;
+        static const int32_t MAX_H264_PIXEL_COUNT = 4096 * 2304;
         const CheckedInt32 pixelCount =
             CheckedInt32(mVideoInfo.mImage.width) * mVideoInfo.mImage.height;
 
@@ -322,9 +287,7 @@ MediaResult WMFVideoMFTManager::InitInternal() {
     attr->GetUINT32(MF_SA_D3D_AWARE, &aware);
     attr->SetUINT32(CODECAPI_AVDecNumWorkerThreads,
                     WMFDecoderModule::GetNumDecoderThreads());
-    bool lowLatency =
-        (StaticPrefs::media_wmf_low_latency_enabled() || IsWin10OrLater()) &&
-        !StaticPrefs::media_wmf_low_latency_force_disabled();
+    bool lowLatency = StaticPrefs::media_wmf_low_latency_enabled();
     if (mLowLatency || lowLatency) {
       hr = attr->SetUINT32(CODECAPI_AVLowLatencyMode, TRUE);
       if (SUCCEEDED(hr)) {
@@ -334,7 +297,7 @@ MediaResult WMFVideoMFTManager::InitInternal() {
       }
     }
 
-    if (gfxVars::HwDecodedVideoZeroCopy() && mKnowsCompositor &&
+    if (gfx::gfxVars::HwDecodedVideoZeroCopy() && mKnowsCompositor &&
         mKnowsCompositor->UsingHardwareWebRender() && mDXVA2Manager &&
         mDXVA2Manager->SupportsZeroCopyNV12Texture()) {
       mZeroCopyNV12Texture = true;
@@ -547,6 +510,32 @@ WMFVideoMFTManager::Input(MediaRawData* aSample) {
     return E_FAIL;
   }
 
+  mTrackingId.apply([&](const auto& aId) {
+    MediaInfoFlag flag = MediaInfoFlag::None;
+    flag |= (aSample->mKeyframe ? MediaInfoFlag::KeyFrame
+                                : MediaInfoFlag::NonKeyFrame);
+    flag |= (mUseHwAccel ? MediaInfoFlag::HardwareDecoding
+                         : MediaInfoFlag::SoftwareDecoding);
+    switch (mStreamType) {
+      case WMFStreamType::H264:
+        flag |= MediaInfoFlag::VIDEO_H264;
+        break;
+      case WMFStreamType::VP8:
+        flag |= MediaInfoFlag::VIDEO_VP8;
+        break;
+      case WMFStreamType::VP9:
+        flag |= MediaInfoFlag::VIDEO_VP9;
+        break;
+      case WMFStreamType::AV1:
+        flag |= MediaInfoFlag::VIDEO_AV1;
+        break;
+      default:
+        break;
+    };
+    mPerformanceRecorder.Start(aSample->mTime.ToMicroseconds(),
+                               "WMFVideoDecoder"_ns, aId, flag);
+  });
+
   RefPtr<IMFSample> inputSample;
   HRESULT hr = mDecoder->CreateInputSample(
       aSample->Data(), uint32_t(aSample->Size()),
@@ -664,8 +653,8 @@ WMFVideoMFTManager::CreateBasicVideoFrame(IMFSample* aSample,
   // https://docs.microsoft.com/en-us/windows/desktop/medfound/10-bit-and-16-bit-yuv-video-formats
   VideoData::YCbCrBuffer b;
 
-  uint32_t videoWidth = mImageSize.width;
-  uint32_t videoHeight = mImageSize.height;
+  const uint32_t videoWidth = mSoftwareImageSize.width;
+  const uint32_t videoHeight = mSoftwareImageSize.height;
 
   // Y (Y') plane
   b.mPlanes[0].mData = data;
@@ -674,13 +663,13 @@ WMFVideoMFTManager::CreateBasicVideoFrame(IMFSample* aSample,
   b.mPlanes[0].mWidth = videoWidth;
   b.mPlanes[0].mSkip = 0;
 
-  MOZ_DIAGNOSTIC_ASSERT(mDecodedImageSize.height % 16 == 0,
+  MOZ_DIAGNOSTIC_ASSERT(mSoftwareImageSize.height % 16 == 0,
                         "decoded height must be 16 bytes aligned");
-  uint32_t y_size = stride * mDecodedImageSize.height;
-  uint32_t v_size = stride * mDecodedImageSize.height / 4;
-  uint32_t halfStride = (stride + 1) / 2;
-  uint32_t halfHeight = (videoHeight + 1) / 2;
-  uint32_t halfWidth = (videoWidth + 1) / 2;
+  const uint32_t y_size = stride * mSoftwareImageSize.height;
+  const uint32_t v_size = stride * mSoftwareImageSize.height / 4;
+  const uint32_t halfStride = (stride + 1) / 2;
+  const uint32_t halfHeight = (videoHeight + 1) / 2;
+  const uint32_t halfWidth = (videoWidth + 1) / 2;
 
   if (subType == MFVideoFormat_YV12) {
     // U plane (Cb)
@@ -724,8 +713,8 @@ WMFVideoMFTManager::CreateBasicVideoFrame(IMFSample* aSample,
   NS_ENSURE_TRUE(pts.IsValid(), E_FAIL);
   TimeUnit duration = GetSampleDurationOrLastKnownDuration(aSample);
   NS_ENSURE_TRUE(duration.IsValid(), E_FAIL);
-  gfx::IntRect pictureRegion =
-      mVideoInfo.ScaledImageRect(videoWidth, videoHeight);
+  gfx::IntRect pictureRegion = mVideoInfo.ScaledImageRect(
+      mSoftwarePictureSize.width, mSoftwarePictureSize.height);
 
   if (colorDepth != gfx::ColorDepth::COLOR_8 || !mKnowsCompositor ||
       !mKnowsCompositor->SupportsD3D11() || !mIMFUsable) {
@@ -749,6 +738,22 @@ WMFVideoMFTManager::CreateBasicVideoFrame(IMFSample* aSample,
   RefPtr<VideoData> v = VideoData::CreateFromImage(
       mVideoInfo.mDisplay, aStreamOffset, pts, duration, image.forget(), false,
       TimeUnit::FromMicroseconds(-1));
+
+  mPerformanceRecorder.Record(pts.ToMicroseconds(), [&](DecodeStage& aStage) {
+    aStage.SetColorDepth(b.mColorDepth);
+    aStage.SetColorRange(b.mColorRange);
+    aStage.SetYUVColorSpace(b.mYUVColorSpace);
+    if (subType == MFVideoFormat_NV12) {
+      aStage.SetImageFormat(DecodeStage::NV12);
+    } else if (subType == MFVideoFormat_YV12) {
+      aStage.SetImageFormat(DecodeStage::YV12);
+    } else if (subType == MFVideoFormat_P010) {
+      aStage.SetImageFormat(DecodeStage::P010);
+    } else if (subType == MFVideoFormat_P016) {
+      aStage.SetImageFormat(DecodeStage::P016);
+    }
+    aStage.SetResolution(videoWidth, videoHeight);
+  });
 
   v.forget(aOutVideoData);
   return S_OK;
@@ -779,6 +784,8 @@ WMFVideoMFTManager::CreateD3DVideoFrame(IMFSample* aSample,
   }
   NS_ENSURE_TRUE(image, E_FAIL);
 
+  gfx::IntSize size = image->GetSize();
+
   TimeUnit pts = GetSampleTime(aSample);
   NS_ENSURE_TRUE(pts.IsValid(), E_FAIL);
   TimeUnit duration = GetSampleDurationOrLastKnownDuration(aSample);
@@ -789,6 +796,24 @@ WMFVideoMFTManager::CreateD3DVideoFrame(IMFSample* aSample,
 
   NS_ENSURE_TRUE(v, E_FAIL);
   v.forget(aOutVideoData);
+
+  mPerformanceRecorder.Record(pts.ToMicroseconds(), [&](DecodeStage& aStage) {
+    aStage.SetColorDepth(mVideoInfo.mColorDepth);
+    aStage.SetColorRange(mColorRange);
+    aStage.SetYUVColorSpace(mColorSpace.refOr(
+        DefaultColorSpace({mImageSize.width, mImageSize.height})));
+    const GUID& subType = mDecoder->GetOutputMediaSubType();
+    if (subType == MFVideoFormat_NV12) {
+      aStage.SetImageFormat(DecodeStage::NV12);
+    } else if (subType == MFVideoFormat_YV12) {
+      aStage.SetImageFormat(DecodeStage::YV12);
+    } else if (subType == MFVideoFormat_P010) {
+      aStage.SetImageFormat(DecodeStage::P010);
+    } else if (subType == MFVideoFormat_P016) {
+      aStage.SetImageFormat(DecodeStage::P016);
+    }
+    aStage.SetResolution(size.width, size.height);
+  });
 
   return S_OK;
 }
@@ -852,7 +877,16 @@ WMFVideoMFTManager::Output(int64_t aStreamOffset, RefPtr<MediaData>& aOutData) {
         NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
         NS_ENSURE_TRUE(width <= MAX_VIDEO_WIDTH, E_FAIL);
         NS_ENSURE_TRUE(height <= MAX_VIDEO_HEIGHT, E_FAIL);
-        mDecodedImageSize = gfx::IntSize(width, height);
+        mSoftwareImageSize = gfx::IntSize(width, height);
+
+        gfx::IntRect picture;
+        hr = GetPictureRegion(outputType, picture);
+        NS_ENSURE_TRUE(SUCCEEDED(hr), hr);
+        MOZ_ASSERT(picture.width != 0 && picture.height != 0);
+        mSoftwarePictureSize = gfx::IntSize(picture.width, picture.height);
+        LOG("Output stream change, image size=[%ux%u], picture=[%u,%u]",
+            mSoftwareImageSize.width, mSoftwareImageSize.height,
+            mSoftwarePictureSize.width, mSoftwarePictureSize.height);
       }
       // Catch infinite loops, but some decoders perform at least 2 stream
       // changes on consecutive calls, so be permissive.
@@ -939,6 +973,11 @@ WMFVideoMFTManager::Output(int64_t aStreamOffset, RefPtr<MediaData>& aOutData) {
   return S_OK;
 }
 
+void WMFVideoMFTManager::Flush() {
+  MFTManager::Flush();
+  mPerformanceRecorder.Record(std::numeric_limits<int64_t>::max());
+}
+
 void WMFVideoMFTManager::Shutdown() {
   if (mDXVA2Manager) {
     mDXVA2Manager->BeforeShutdownVideoMFTDecoder();
@@ -999,6 +1038,20 @@ nsCString WMFVideoMFTManager::GetDescriptionName() const {
   return nsPrintfCString("wmf %s codec %s video decoder - %s, %s",
                          StreamTypeToString(mStreamType),
                          hw ? "hardware" : "software", dxvaName, formatName);
+}
+nsCString WMFVideoMFTManager::GetCodecName() const {
+  switch (mStreamType) {
+    case WMFStreamType::H264:
+      return "h264"_ns;
+    case WMFStreamType::VP8:
+      return "vp8"_ns;
+    case WMFStreamType::VP9:
+      return "vp9"_ns;
+    case WMFStreamType::AV1:
+      return "av1"_ns;
+    default:
+      return "unknown"_ns;
+  };
 }
 
 }  // namespace mozilla

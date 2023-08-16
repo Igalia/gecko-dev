@@ -3,13 +3,18 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 # add this directory to the path
-from __future__ import absolute_import
-import sys
 import os
+import sys
 
 sys.path.append(os.path.dirname(__file__))
 
 from session_store_test_case import SessionStoreTestCase
+
+
+def inline(title):
+    return "data:text/html;charset=utf-8,<html><head><title>{}</title></head><body></body></html>".format(
+        title
+    )
 
 
 class TestSessionStoreEnabledAllWindows(SessionStoreTestCase):
@@ -34,7 +39,7 @@ class TestSessionStoreEnabledAllWindows(SessionStoreTestCase):
             self.all_windows, "Not all requested windows have been opened"
         )
 
-        self.marionette.quit(in_app=True)
+        self.marionette.quit()
         self.marionette.start_session()
         self.marionette.set_context("chrome")
 
@@ -56,7 +61,7 @@ class TestSessionStoreDisabled(SessionStoreTestCase):
             self.all_windows, "Not all requested windows have been opened"
         )
 
-        self.marionette.quit(in_app=True)
+        self.marionette.quit()
         self.marionette.start_session()
         self.marionette.set_context("chrome")
 

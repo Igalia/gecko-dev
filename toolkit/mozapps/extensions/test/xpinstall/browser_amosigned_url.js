@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
 AddonTestUtils.initMochitest(this);
@@ -33,7 +33,7 @@ function runTest() {
 
   gBrowser.selectedTab = BrowserTestUtils.addTab(gBrowser, "about:blank");
   BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser).then(() => {
-    BrowserTestUtils.loadURI(gBrowser, TESTROOT + "amosigned.xpi");
+    BrowserTestUtils.loadURIString(gBrowser, TESTROOT + "amosigned.xpi");
   });
 }
 

@@ -8,11 +8,12 @@
 include protocol PCanvasManager;
 include "mozilla/layers/LayersMessageUtils.h";
 
-using mozilla::layers::CompositableHandle from "mozilla/layers/LayersTypes.h";
+[MoveOnly] using class mozilla::ipc::BigBuffer from "mozilla/ipc/BigBuffer.h";
 using mozilla::layers::SurfaceDescriptor from "mozilla/layers/LayersTypes.h";
 using std::string from "string";
 using mozilla::uvec2 from "mozilla/dom/WebGLIpdl.h";
 using mozilla::uvec3 from "mozilla/dom/WebGLIpdl.h";
+using mozilla::void_t from "mozilla/ipc/IPCCore.h";
 using mozilla::webgl::CompileResult from "mozilla/dom/WebGLIpdl.h";
 using mozilla::webgl::ContextLossReason from "mozilla/dom/WebGLIpdl.h";
 using mozilla::webgl::FrontBufferSnapshotIpc from "mozilla/dom/WebGLIpdl.h";
@@ -55,8 +56,9 @@ parent:
 
   // -
 
-  async DispatchCommands(Shmem commands, uint64_t size);
-
+  async DispatchCommands(BigBuffer commands, uint64_t size);
+  async Ping() returns (void_t ok);
+  sync SyncPing();
   async TexImage(uint32_t level, uint32_t respecFormat, uvec3 offset,
                  PackingInfo pi, TexUnpackBlobDesc src);
 

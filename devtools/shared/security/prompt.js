@@ -4,16 +4,15 @@
 
 "use strict";
 
-var Services = require("Services");
-var DevToolsUtils = require("devtools/shared/DevToolsUtils");
+var DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
 loader.lazyRequireGetter(
   this,
   "AuthenticationResult",
-  "devtools/shared/security/auth",
+  "resource://devtools/shared/security/auth.js",
   true
 );
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
+const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
 const L10N = new LocalizationHelper(
   "devtools/shared/locales/debugger.properties"
 );
@@ -64,7 +63,7 @@ Client.defaultSendOOB = ({ authResult, oob }) => {
       const win = xulWindow.docShell.domWindow;
       win.addEventListener(
         "load",
-        function() {
+        function () {
           if (
             win.document.documentElement.getAttribute("id") != "commonDialog"
           ) {
@@ -192,10 +191,7 @@ Server.defaultReceiveOOB = () => {
   // Re-create original object from token
   input = input.value.trim();
   let sha256 = input.substring(0, 64);
-  sha256 = sha256
-    .replace(/\w{2}/g, "$&:")
-    .slice(0, -1)
-    .toUpperCase();
+  sha256 = sha256.replace(/\w{2}/g, "$&:").slice(0, -1).toUpperCase();
   const k = input.substring(64);
   return { sha256, k };
 };

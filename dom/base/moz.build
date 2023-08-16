@@ -93,8 +93,6 @@ EXPORTS += [
     "nsJSEnvironment.h",
     "nsJSUtils.h",
     "nsLineBreaker.h",
-    "nsMappedAttributeElement.h",
-    "nsMappedAttributes.h",
     "nsNameSpaceManager.h",
     "nsNodeInfoManager.h",
     "nsPIDOMWindow.h",
@@ -148,6 +146,7 @@ EXPORTS.mozilla.dom += [
     "!UseCounterWorkerList.h",
     "AbstractRange.h",
     "AncestorIterator.h",
+    "AnchorAreaFormRelValues.h",
     "AnimationFrameProvider.h",
     "AnonymousContent.h",
     "Attr.h",
@@ -156,7 +155,6 @@ EXPORTS.mozilla.dom += [
     "BarProps.h",
     "BindContext.h",
     "BodyConsumer.h",
-    "BodyStream.h",
     "BodyUtil.h",
     "BorrowedAttrInfo.h",
     "CCGCScheduler.h",
@@ -168,9 +166,11 @@ EXPORTS.mozilla.dom += [
     "ChromeNodeList.h",
     "ChromeUtils.h",
     "Comment.h",
+    "CompressionStream.h",
     "ContentFrameMessageManager.h",
     "ContentProcessMessageManager.h",
     "CustomElementRegistry.h",
+    "DecompressionStream.h",
     "DirectionalityUtils.h",
     "DispatcherTrait.h",
     "DocGroup.h",
@@ -202,6 +202,8 @@ EXPORTS.mozilla.dom += [
     "FragmentOrElement.h",
     "FromParser.h",
     "GeneratedImageContent.h",
+    "Highlight.h",
+    "HighlightRegistry.h",
     "IdleDeadline.h",
     "IdleRequest.h",
     "IDTracker.h",
@@ -232,6 +234,7 @@ EXPORTS.mozilla.dom += [
     "PlacesBookmarkAddition.h",
     "PlacesBookmarkChanged.h",
     "PlacesBookmarkGuid.h",
+    "PlacesBookmarkKeyword.h",
     "PlacesBookmarkMoved.h",
     "PlacesBookmarkRemoved.h",
     "PlacesBookmarkTags.h",
@@ -248,6 +251,7 @@ EXPORTS.mozilla.dom += [
     "PlacesVisitRemoved.h",
     "PlacesVisitTitle.h",
     "PlacesWeakCallbackWrapper.h",
+    "PopoverData.h",
     "PopupBlocker.h",
     "Pose.h",
     "PostMessageEvent.h",
@@ -307,6 +311,7 @@ if CONFIG["COMPILE_ENVIRONMENT"]:
 
 UNIFIED_SOURCES += [
     "AbstractRange.cpp",
+    "AnchorAreaFormRelValues.cpp",
     "AnimationFrameProvider.cpp",
     "AnonymousContent.cpp",
     "Attr.cpp",
@@ -314,7 +319,6 @@ UNIFIED_SOURCES += [
     "BarProps.cpp",
     "BindContext.cpp",
     "BodyConsumer.cpp",
-    "BodyStream.cpp",
     "BodyUtil.cpp",
     "BorrowedAttrInfo.cpp",
     "CCGCScheduler.cpp",
@@ -353,6 +357,8 @@ UNIFIED_SOURCES += [
     "FormData.cpp",
     "FragmentOrElement.cpp",
     "GeneratedImageContent.cpp",
+    "Highlight.cpp",
+    "HighlightRegistry.cpp",
     "IdleDeadline.cpp",
     "IdleRequest.cpp",
     "IDTracker.cpp",
@@ -403,8 +409,6 @@ UNIFIED_SOURCES += [
     "nsJSEnvironment.cpp",
     "nsJSUtils.cpp",
     "nsLineBreaker.cpp",
-    "nsMappedAttributeElement.cpp",
-    "nsMappedAttributes.cpp",
     "nsMimeTypeArray.cpp",
     "nsNameSpaceManager.cpp",
     "nsNoDataProtocolContentPolicy.cpp",
@@ -430,6 +434,7 @@ UNIFIED_SOURCES += [
     "nsWrapperCache.cpp",
     "ParentProcessMessageManager.cpp",
     "PointerLockManager.cpp",
+    "PopoverData.cpp",
     "PopupBlocker.cpp",
     "Pose.cpp",
     "PostMessageEvent.cpp",
@@ -494,6 +499,20 @@ if CONFIG["MOZ_PLACES"]:
         "PlacesWeakCallbackWrapper.cpp",
     ]
 
+# on win32 if we add these files to UNIFIED_SOURCES then the compiler generates
+# larger stack frames for some recursive functions that cause us to hit stack
+# overflows (see bug 1824565)
+if CONFIG["OS_ARCH"] == "WINNT" and CONFIG["CPU_ARCH"] == "x86":
+    SOURCES += [
+        "CompressionStream.cpp",
+        "DecompressionStream.cpp",
+    ]
+else:
+    UNIFIED_SOURCES += [
+        "CompressionStream.cpp",
+        "DecompressionStream.cpp",
+    ]
+
 # these files couldn't be in UNIFIED_SOURCES for now for reasons given below:
 SOURCES += [
     # Several conflicts with other bindings.
@@ -528,12 +547,12 @@ if CONFIG["CPU_ARCH"].startswith("ppc"):
     SOURCES["nsTextFragmentVMX.cpp"].flags += CONFIG["PPC_VMX_FLAGS"]
 
 EXTRA_JS_MODULES += [
-    "ContentAreaDropListener.jsm",
-    "DOMRequestHelper.jsm",
-    "IndexedDBHelper.jsm",
-    "LocationHelper.jsm",
-    "ProcessSelector.jsm",
-    "SlowScriptDebug.jsm",
+    "ContentAreaDropListener.sys.mjs",
+    "DOMRequestHelper.sys.mjs",
+    "IndexedDBHelper.sys.mjs",
+    "LocationHelper.sys.mjs",
+    "ProcessSelector.sys.mjs",
+    "SlowScriptDebug.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [
@@ -554,10 +573,10 @@ LOCAL_INCLUDES += [
     "/dom/ipc",
     "/dom/storage",
     "/dom/svg",
-    "/dom/u2f",
     "/dom/xml",
     "/dom/xslt/xpath",
     "/dom/xul",
+    "/extensions/spellcheck/src",
     "/gfx/2d",
     "/image",
     "/js/xpconnect/loader",
@@ -569,9 +588,11 @@ LOCAL_INCLUDES += [
     "/layout/style",
     "/layout/xul",
     "/netwerk/base",
+    "/netwerk/protocol/http",
     "/netwerk/url-classifier",
     "/parser/htmlparser",
     "/security/manager/ssl",
+    "/third_party/xsimd/include",
     "/widget",
     "/xpcom/ds",
 ]

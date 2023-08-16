@@ -107,6 +107,12 @@ void FontFaceSetDocumentImpl::Destroy() {
 
 bool FontFaceSetDocumentImpl::IsOnOwningThread() { return NS_IsMainThread(); }
 
+#ifdef DEBUG
+void FontFaceSetDocumentImpl::AssertIsOnOwningThread() {
+  MOZ_ASSERT(NS_IsMainThread());
+}
+#endif
+
 void FontFaceSetDocumentImpl::DispatchToOwningThread(
     const char* aName, std::function<void()>&& aFunc) {
   class FontFaceSetDocumentRunnable final : public Runnable {
@@ -139,7 +145,7 @@ uint64_t FontFaceSetDocumentImpl::GetInnerWindowID() {
 }
 
 nsPresContext* FontFaceSetDocumentImpl::GetPresContext() const {
-  MOZ_ASSERT(NS_IsMainThread());
+  mozilla::AssertIsMainThreadOrServoFontMetricsLocked();
   if (!mDocument) {
     return nullptr;
   }
@@ -393,7 +399,7 @@ bool FontFaceSetDocumentImpl::UpdateRules(
   mNonRuleFacesDirty = false;
 
   // reuse existing FontFace objects mapped to rules already
-  nsTHashMap<nsPtrHashKey<RawServoFontFaceRule>, FontFaceImpl*> ruleFaceMap;
+  nsTHashMap<nsPtrHashKey<StyleLockedFontFaceRule>, FontFaceImpl*> ruleFaceMap;
   for (size_t i = 0, i_end = mRuleFaces.Length(); i < i_end; ++i) {
     FontFaceImpl* f = mRuleFaces[i].mFontFace;
     if (!f || !f->GetOwner()) {
@@ -423,14 +429,14 @@ bool FontFaceSetDocumentImpl::UpdateRules(
   // that not happen, but in the meantime, don't try to insert the same
   // FontFace object more than once into mRuleFaces.  We track which
   // ones we've handled in this table.
-  nsTHashSet<RawServoFontFaceRule*> handledRules;
+  nsTHashSet<StyleLockedFontFaceRule*> handledRules;
 
   for (size_t i = 0, i_end = aRules.Length(); i < i_end; ++i) {
     // Insert each FontFace objects for each rule into our list, migrating old
     // font entries if possible rather than creating new ones; set  modified  to
     // true if we detect that rule ordering has changed, or if a new entry is
     // created.
-    RawServoFontFaceRule* rule = aRules[i].mRule;
+    StyleLockedFontFaceRule* rule = aRules[i].mRule;
     if (!handledRules.EnsureInserted(rule)) {
       // rule was already present in the hashtable
       continue;
@@ -514,8 +520,8 @@ void FontFaceSetDocumentImpl::InsertRuleFontFace(
     nsTArray<FontFaceRecord>& aOldRecords, bool& aFontSetModified) {
   RecursiveMutexAutoLock lock(mMutex);
 
-  nsAtom* fontFamily = aFontFace->GetFamilyName();
-  if (!fontFamily) {
+  gfxUserFontAttributes attr;
+  if (!aFontFace->GetAttributes(attr)) {
     // If there is no family name, this rule cannot contribute a
     // usable font, so there is no point in processing it further.
     return;
@@ -523,8 +529,6 @@ void FontFaceSetDocumentImpl::InsertRuleFontFace(
 
   bool remove = false;
   size_t removeIndex;
-
-  nsAtomCString family(fontFamily);
 
   // This is a rule backed FontFace.  First, we check in aOldRecords; if
   // the FontFace for the rule exists there, just move it to the new record
@@ -548,7 +552,7 @@ void FontFaceSetDocumentImpl::InsertRuleFontFace(
       gfxUserFontEntry* entry = rec.mFontFace->GetUserFontEntry();
       MOZ_ASSERT(entry, "FontFace should have a gfxUserFontEntry by now");
 
-      AddUserFontEntry(family, entry);
+      AddUserFontEntry(attr.mFamilyName, entry);
 
       MOZ_ASSERT(!HasRuleFontFace(rec.mFontFace),
                  "FontFace should not occur in mRuleFaces twice");
@@ -570,8 +574,9 @@ void FontFaceSetDocumentImpl::InsertRuleFontFace(
   }
 
   // this is a new rule:
-  RefPtr<gfxUserFontEntry> entry =
-      FindOrCreateUserFontEntryFromFontFace(family, aFontFace, aSheetType);
+  nsAutoCString family(attr.mFamilyName);
+  RefPtr<gfxUserFontEntry> entry = FindOrCreateUserFontEntryFromFontFace(
+      aFontFace, std::move(attr), aSheetType);
 
   if (!entry) {
     return;
@@ -613,7 +618,7 @@ void FontFaceSetDocumentImpl::InsertRuleFontFace(
   AddUserFontEntry(family, entry);
 }
 
-RawServoFontFaceRule* FontFaceSetDocumentImpl::FindRuleForEntry(
+StyleLockedFontFaceRule* FontFaceSetDocumentImpl::FindRuleForEntry(
     gfxFontEntry* aFontEntry) {
   NS_ASSERTION(!aFontEntry->mIsUserFontContainer, "only platform font entries");
   for (uint32_t i = 0; i < mRuleFaces.Length(); ++i) {
@@ -626,7 +631,7 @@ RawServoFontFaceRule* FontFaceSetDocumentImpl::FindRuleForEntry(
   return nullptr;
 }
 
-RawServoFontFaceRule* FontFaceSetDocumentImpl::FindRuleForUserFontEntry(
+StyleLockedFontFaceRule* FontFaceSetDocumentImpl::FindRuleForUserFontEntry(
     gfxUserFontEntry* aUserFontEntry) {
   for (uint32_t i = 0; i < mRuleFaces.Length(); ++i) {
     FontFaceImpl* f = mRuleFaces[i].mFontFace;

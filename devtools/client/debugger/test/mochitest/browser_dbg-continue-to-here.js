@@ -4,7 +4,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   const dbg = await initDebugger("doc-pause-points.html", "pause-points.js");
   await selectSource(dbg, "pause-points.js");
   await waitForSelectedSource(dbg, "pause-points.js");
@@ -28,7 +28,7 @@ add_task(async function() {
   await waitForPaused(dbg);
   await waitForInlinePreviews(dbg);
 
-  await continueToColumn(dbg, { line: 31, ch: 7 });
+  await continueToColumn(dbg, { line: 31, column: 8 });
   assertPausedAtSourceAndLine(
     dbg,
     findSource(dbg, "pause-points.js").id,

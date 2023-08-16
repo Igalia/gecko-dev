@@ -5,14 +5,7 @@
 
 #include "BaseAccessibles.h"
 
-#include "LocalAccessible-inl.h"
-#include "HyperTextAccessibleWrap.h"
-#include "nsAccessibilityService.h"
-#include "nsAccUtils.h"
-#include "nsCoreUtils.h"
-#include "Role.h"
 #include "States.h"
-#include "nsIURI.h"
 
 using namespace mozilla::a11y;
 
@@ -133,24 +126,6 @@ KeyBinding LinkableAccessible::AccessKey() const {
   }
 
   return LocalAccessible::AccessKey();
-}
-
-////////////////////////////////////////////////////////////////////////////////
-// LinkableAccessible: HyperLinkAccessible
-
-already_AddRefed<nsIURI> LinkableAccessible::AnchorURIAt(
-    uint32_t aAnchorIndex) const {
-  bool isLink;
-  const LocalAccessible* actionAcc = ActionWalk(&isLink);
-  if (isLink) {
-    NS_ASSERTION(actionAcc->IsLink(), "HyperLink isn't implemented.");
-
-    if (actionAcc->IsLink()) {
-      return actionAcc->AnchorURIAt(aAnchorIndex);
-    }
-  }
-
-  return nullptr;
 }
 
 ////////////////////////////////////////////////////////////////////////////////

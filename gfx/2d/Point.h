@@ -16,6 +16,7 @@
 #include "BasePoint4D.h"
 #include "BaseSize.h"
 #include "mozilla/Maybe.h"
+#include "mozilla/gfx/NumericTools.h"
 
 #include <cmath>
 #include <type_traits>
@@ -24,13 +25,6 @@ namespace mozilla {
 
 template <typename>
 struct IsPixel;
-
-namespace gfx {
-
-// This should only be used by the typedefs below.
-struct UnknownUnits {};
-
-}  // namespace gfx
 
 template <>
 struct IsPixel<gfx::UnknownUnits> : std::true_type {};
@@ -87,38 +81,43 @@ struct MOZ_EMPTY_BASES IntPointTyped
   constexpr IntPointTyped(ToInt aX, ToInt aY)
       : Super(Coord(aX.value), Coord(aY.value)) {}
 
-  static IntPointTyped<Units> Round(float aX, float aY) {
+  static IntPointTyped Round(float aX, float aY) {
     return IntPointTyped(int32_t(floorf(aX + 0.5f)),
                          int32_t(floorf(aY + 0.5f)));
   }
 
-  static IntPointTyped<Units> Ceil(float aX, float aY) {
+  static IntPointTyped Ceil(float aX, float aY) {
     return IntPointTyped(int32_t(ceilf(aX)), int32_t(ceilf(aY)));
   }
 
-  static IntPointTyped<Units> Floor(float aX, float aY) {
+  static IntPointTyped Floor(float aX, float aY) {
     return IntPointTyped(int32_t(floorf(aX)), int32_t(floorf(aY)));
   }
 
-  static IntPointTyped<Units> Truncate(float aX, float aY) {
+  static IntPointTyped Truncate(float aX, float aY) {
     return IntPointTyped(int32_t(aX), int32_t(aY));
   }
 
-  static IntPointTyped<Units> Round(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped<Units> Ceil(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped<Units> Floor(const PointTyped<Units, float>& aPoint);
-  static IntPointTyped<Units> Truncate(const PointTyped<Units, float>& aPoint);
+  static IntPointTyped Round(const PointTyped<Units, float>& aPoint);
+  static IntPointTyped Ceil(const PointTyped<Units, float>& aPoint);
+  static IntPointTyped Floor(const PointTyped<Units, float>& aPoint);
+  static IntPointTyped Truncate(const PointTyped<Units, float>& aPoint);
 
   // XXX When all of the code is ported, the following functions to convert to
   // and from unknown types should be removed.
 
-  static IntPointTyped<Units> FromUnknownPoint(
+  static IntPointTyped FromUnknownPoint(
       const IntPointTyped<UnknownUnits>& aPoint) {
     return IntPointTyped<Units>(aPoint.x, aPoint.y);
   }
 
   IntPointTyped<UnknownUnits> ToUnknownPoint() const {
     return IntPointTyped<UnknownUnits>(this->x, this->y);
+  }
+
+  IntPointTyped RoundedToMultiple(int32_t aMultiplier) const {
+    return {RoundToMultiple(this->x, aMultiplier),
+            RoundToMultiple(this->y, aMultiplier)};
   }
 };
 typedef IntPointTyped<UnknownUnits> IntPoint;
@@ -270,49 +269,64 @@ typedef Point4DTyped<UnknownUnits, double> PointDouble4D;
 
 template <class Units>
 struct MOZ_EMPTY_BASES IntSizeTyped
-    : public BaseSize<int32_t, IntSizeTyped<Units> >,
+    : public BaseSize<int32_t, IntSizeTyped<Units>, IntCoordTyped<Units> >,
       public Units {
   static_assert(IsPixel<Units>::value,
                 "'Units' must be a coordinate system tag");
 
-  typedef IntParam<int32_t> ToInt;
-  typedef BaseSize<int32_t, IntSizeTyped<Units> > Super;
+  typedef IntCoordTyped<Units> Coord;
+  typedef BaseSize<int32_t, IntSizeTyped<Units>, Coord> Super;
 
   constexpr IntSizeTyped() : Super() {
     static_assert(sizeof(IntSizeTyped) == sizeof(int32_t) * 2,
                   "Would be unfortunate otherwise!");
   }
-  constexpr IntSizeTyped(ToInt aWidth, ToInt aHeight)
+  constexpr IntSizeTyped(Coord aWidth, Coord aHeight)
       : Super(aWidth.value, aHeight.value) {}
 
-  static IntSizeTyped<Units> Round(float aWidth, float aHeight) {
+  static IntSizeTyped Round(float aWidth, float aHeight) {
     return IntSizeTyped(int32_t(floorf(aWidth + 0.5)),
                         int32_t(floorf(aHeight + 0.5)));
   }
 
-  static IntSizeTyped<Units> Truncate(float aWidth, float aHeight) {
+  static IntSizeTyped Truncate(float aWidth, float aHeight) {
     return IntSizeTyped(int32_t(aWidth), int32_t(aHeight));
   }
 
-  static IntSizeTyped<Units> Ceil(float aWidth, float aHeight) {
+  static IntSizeTyped Ceil(float aWidth, float aHeight) {
     return IntSizeTyped(int32_t(ceil(aWidth)), int32_t(ceil(aHeight)));
   }
 
-  static IntSizeTyped<Units> Floor(float aWidth, float aHeight) {
+  static IntSizeTyped Floor(float aWidth, float aHeight) {
     return IntSizeTyped(int32_t(floorf(aWidth)), int32_t(floorf(aHeight)));
   }
 
-  static IntSizeTyped<Units> Round(const SizeTyped<Units, float>& aSize);
-  static IntSizeTyped<Units> Ceil(const SizeTyped<Units, float>& aSize);
-  static IntSizeTyped<Units> Floor(const SizeTyped<Units, float>& aSize);
-  static IntSizeTyped<Units> Truncate(const SizeTyped<Units, float>& aSize);
+  static IntSizeTyped Round(const SizeTyped<Units, float>& aSize);
+  static IntSizeTyped Ceil(const SizeTyped<Units, float>& aSize);
+  static IntSizeTyped Floor(const SizeTyped<Units, float>& aSize);
+  static IntSizeTyped Truncate(const SizeTyped<Units, float>& aSize);
+
+  IntSizeTyped TruncatedToMultiple(int32_t aMultiplier) const {
+    if (aMultiplier == 1) {
+      return *this;
+    }
+    return {RoundDownToMultiple(this->width, aMultiplier),
+            RoundDownToMultiple(this->height, aMultiplier)};
+  }
+
+  IntSizeTyped CeiledToMultiple(int32_t aMultiplier) const {
+    if (aMultiplier == 1) {
+      return *this;
+    }
+    return {RoundUpToMultiple(this->width, aMultiplier),
+            RoundUpToMultiple(this->height, aMultiplier)};
+  }
 
   // XXX When all of the code is ported, the following functions to convert to
   // and from unknown types should be removed.
 
-  static IntSizeTyped<Units> FromUnknownSize(
-      const IntSizeTyped<UnknownUnits>& aSize) {
-    return IntSizeTyped<Units>(aSize.width, aSize.height);
+  static IntSizeTyped FromUnknownSize(const IntSizeTyped<UnknownUnits>& aSize) {
+    return IntSizeTyped(aSize.width, aSize.height);
   }
 
   IntSizeTyped<UnknownUnits> ToUnknownSize() const {
@@ -323,18 +337,20 @@ typedef IntSizeTyped<UnknownUnits> IntSize;
 typedef Maybe<IntSize> MaybeIntSize;
 
 template <class Units, class F = Float>
-struct MOZ_EMPTY_BASES SizeTyped : public BaseSize<F, SizeTyped<Units, F> >,
-                                   public Units {
+struct MOZ_EMPTY_BASES SizeTyped
+    : public BaseSize<F, SizeTyped<Units, F>, CoordTyped<Units, F> >,
+      public Units {
   static_assert(IsPixel<Units>::value,
                 "'Units' must be a coordinate system tag");
 
-  typedef BaseSize<F, SizeTyped<Units, F> > Super;
+  typedef CoordTyped<Units, F> Coord;
+  typedef BaseSize<F, SizeTyped<Units, F>, Coord> Super;
 
   constexpr SizeTyped() : Super() {
     static_assert(sizeof(SizeTyped) == sizeof(F) * 2,
                   "Would be unfortunate otherwise!");
   }
-  constexpr SizeTyped(F aWidth, F aHeight) : Super(aWidth, aHeight) {}
+  constexpr SizeTyped(Coord aWidth, Coord aHeight) : Super(aWidth, aHeight) {}
   explicit SizeTyped(const IntSizeTyped<Units>& size)
       : Super(F(size.width), F(size.height)) {}
 

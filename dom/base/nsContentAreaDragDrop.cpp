@@ -150,9 +150,9 @@ nsresult nsContentAreaDragDropDataProvider::SaveURIToFile(
       nsIWebBrowserPersist::PERSIST_FLAGS_AUTODETECT_APPLY_CONVERSION);
 
   // referrer policy can be anything since the referrer is nullptr
-  return persist->SavePrivacyAwareURI(
-      inSourceURI, inTriggeringPrincipal, 0, nullptr, inCookieJarSettings,
-      nullptr, nullptr, inDestFile, inContentPolicyType, isPrivate);
+  return persist->SaveURI(inSourceURI, inTriggeringPrincipal, 0, nullptr,
+                          inCookieJarSettings, nullptr, nullptr, inDestFile,
+                          inContentPolicyType, isPrivate);
 }
 
 /*
@@ -332,16 +332,6 @@ static nsIContent* FindDragTarget(nsIContent* aContent) {
   return nullptr;
 }
 
-static nsIContent* FindParentLinkNode(nsIContent* aContent) {
-  for (nsIContent* content = aContent; content;
-       content = content->GetFlattenedTreeParent()) {
-    if (nsContentUtils::IsDraggableLink(content)) {
-      return content;
-    }
-  }
-  return nullptr;
-}
-
 //
 // GetAnchorURL
 //
@@ -359,6 +349,9 @@ nsresult DragDataProducer::GetAnchorURL(nsIContent* aContent, nsAString& aURL) {
 
   nsAutoCString spec;
   nsresult rv = linkURI->GetSpec(spec);
+  NS_ENSURE_SUCCESS(rv, rv);
+  nsIScriptSecurityManager* secMan = nsContentUtils::GetSecurityManager();
+  rv = secMan->CheckLoadURIStrWithPrincipal(aContent->NodePrincipal(), spec, 0);
   NS_ENSURE_SUCCESS(rv, rv);
   CopyUTF8toUTF16(spec, aURL);
   return NS_OK;
@@ -384,8 +377,7 @@ void DragDataProducer::CreateLinkText(const nsAString& inURL,
 
 nsresult DragDataProducer::GetImageData(imgIContainer* aImage,
                                         imgIRequest* aRequest) {
-  nsCOMPtr<nsIURI> imgUri;
-  aRequest->GetURI(getter_AddRefs(imgUri));
+  nsCOMPtr<nsIURI> imgUri = aRequest->GetURI();
 
   nsCOMPtr<nsIURL> imgUrl(do_QueryInterface(imgUri));
   if (imgUrl) {
@@ -549,7 +541,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
       //
       // if the alt key is down, don't start a drag if we're in an
       // anchor because we want to do selection.
-      parentLink = FindParentLinkNode(draggedNode);
+      parentLink = nsContentUtils::GetClosestLinkInFlatTree(draggedNode);
       if (parentLink && mIsAltKeyPressed) {
         *aCanDrag = false;
         return NS_OK;
@@ -568,12 +560,12 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
           areaElem->GetAttr(nsGkAtoms::href, mTitleString);
         }
 
-        // we'll generate HTML like <a href="absurl">alt text</a>
-        mIsAnchor = true;
-
         // gives an absolute link
         nsresult rv = GetAnchorURL(draggedNode, mUrlString);
         NS_ENSURE_SUCCESS(rv, rv);
+
+        // we'll generate HTML like <a href="absurl">alt text</a>
+        mIsAnchor = true;
 
         mHtmlString.AssignLiteral("<a href=\"");
         mHtmlString.Append(mUrlString);
@@ -583,20 +575,25 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
 
         dragNode = draggedNode;
       } else if (image) {
-        mIsAnchor = true;
         // grab the href as the url, use alt text as the title of the
         // area if it's there.  the drag data is the image tag and src
         // attribute.
         nsCOMPtr<nsIURI> imageURI;
         image->GetCurrentURI(getter_AddRefs(imageURI));
+        nsCOMPtr<Element> imageElement(do_QueryInterface(image));
         if (imageURI) {
           nsAutoCString spec;
           rv = imageURI->GetSpec(spec);
           NS_ENSURE_SUCCESS(rv, rv);
+          nsIScriptSecurityManager* secMan =
+              nsContentUtils::GetSecurityManager();
+          rv = secMan->CheckLoadURIStrWithPrincipal(
+              imageElement->NodePrincipal(), spec, 0);
+          NS_ENSURE_SUCCESS(rv, rv);
+          mIsAnchor = true;
           CopyUTF8toUTF16(spec, mUrlString);
         }
 
-        nsCOMPtr<Element> imageElement(do_QueryInterface(image));
         // XXXbz Shouldn't we use the "title" attr for title?  Using
         // "alt" seems very wrong....
         // XXXbz Also, what if this is an nsIImageLoadingContent
@@ -638,9 +635,9 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
       }
 
       if (linkNode) {
-        mIsAnchor = true;
         rv = GetAnchorURL(linkNode, mUrlString);
         NS_ENSURE_SUCCESS(rv, rv);
+        mIsAnchor = true;
         dragNode = linkNode;
       }
     }
@@ -693,7 +690,7 @@ nsresult DragDataProducer::Produce(DataTransfer* aDataTransfer, bool* aCanDrag,
     if (NS_SUCCEEDED(rv)) {
       data->GetData(mInfoString);
     }
-    rv = transferable->GetTransferData(kUnicodeMime, getter_AddRefs(supports));
+    rv = transferable->GetTransferData(kTextMime, getter_AddRefs(supports));
     data = do_QueryInterface(supports);
     NS_ENSURE_SUCCESS(rv, rv);  // require plain text at a minimum
     data->GetData(mTitleString);

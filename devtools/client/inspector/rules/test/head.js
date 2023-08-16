@@ -1,8 +1,7 @@
 /* Any copyright is dedicated to the Public Domain.
  http://creativecommons.org/publicdomain/zero/1.0/ */
 /* eslint no-unused-vars: [2, {"vars": "local"}] */
-/* import-globals-from ../../../shared/test/telemetry-test-helpers.js */
-/* import-globals-from ../../test/head.js */
+
 "use strict";
 
 // Import the inspector's head.js first (which itself imports shared-head.js).
@@ -17,11 +16,11 @@ registerCleanupFunction(() => {
 
 var {
   getInplaceEditorForSpan: inplaceEditor,
-} = require("devtools/client/shared/inplace-editor");
+} = require("resource://devtools/client/shared/inplace-editor.js");
 
 const {
   COMPATIBILITY_TOOLTIP_MESSAGE,
-} = require("devtools/client/inspector/rules/constants");
+} = require("resource://devtools/client/inspector/rules/constants.js");
 
 const ROOT_TEST_DIR = getRootDirectory(gTestPath);
 
@@ -63,7 +62,7 @@ async function hideTooltipAndWaitForRuleViewChanged(editorTooltip, view) {
  * @return a promise that resolves when the function returned true or rejects
  * if the timeout is reached
  */
-var waitForSuccess = async function(validatorFn, desc = "untitled") {
+var waitForSuccess = async function (validatorFn, desc = "untitled") {
   let i = 0;
   while (true) {
     info("Checking: " + desc);
@@ -99,7 +98,7 @@ var waitForSuccess = async function(validatorFn, desc = "untitled") {
  *          - {String} value The expected style value
  * The style will be checked like so: getComputedStyle(element)[name] === value
  */
-var simulateColorPickerChange = async function(
+var simulateColorPickerChange = async function (
   ruleView,
   colorPicker,
   newRgba,
@@ -153,7 +152,7 @@ var simulateColorPickerChange = async function(
  *          - {String} value The expected style value
  * The style will be checked like so: getComputedStyle(element)[name] === value
  */
-var openColorPickerAndSelectColor = async function(
+var openColorPickerAndSelectColor = async function (
   view,
   ruleIndex,
   propIndex,
@@ -196,7 +195,7 @@ var openColorPickerAndSelectColor = async function(
  *          - {String} value The expected style value
  * The style will be checked like so: getComputedStyle(element)[name] === value
  */
-var openCubicBezierAndChangeCoords = async function(
+var openCubicBezierAndChangeCoords = async function (
   view,
   ruleIndex,
   propIndex,
@@ -251,7 +250,7 @@ var openCubicBezierAndChangeCoords = async function(
  *        property to be blurred. Set to false if you don't want this.
  * @return {TextProperty} The instance of the TextProperty that was added
  */
-var addProperty = async function(
+var addProperty = async function (
   view,
   ruleIndex,
   name,
@@ -280,21 +279,22 @@ var addProperty = async function(
     // This leads to odd values in the style attribute and might change in the
     // future. See https://bugzilla.mozilla.org/show_bug.cgi?id=1765943
     const expectedAttributeValue = `${CSS.escape(name)}: ${value}`;
-    view.inspector.walker.on("mutations", function onWalkerMutations(
-      mutations
-    ) {
-      // Wait until we receive a mutation which updates the style attribute
-      // with the expected value.
-      const receivedLastMutation = mutations.some(
-        mut =>
-          mut.attributeName === "style" &&
-          mut.newValue.includes(expectedAttributeValue)
-      );
-      if (receivedLastMutation) {
-        view.inspector.walker.off("mutations", onWalkerMutations);
-        r();
+    view.inspector.walker.on(
+      "mutations",
+      function onWalkerMutations(mutations) {
+        // Wait until we receive a mutation which updates the style attribute
+        // with the expected value.
+        const receivedLastMutation = mutations.some(
+          mut =>
+            mut.attributeName === "style" &&
+            mut.newValue.includes(expectedAttributeValue)
+        );
+        if (receivedLastMutation) {
+          view.inspector.walker.off("mutations", onWalkerMutations);
+          r();
+        }
       }
-    });
+    );
   });
 
   info("Adding name " + name);
@@ -363,7 +363,7 @@ var addProperty = async function(
  *        only updated after several flush. Allow tests to trigger several flushes
  *        if necessary. Defaults to 1.
  */
-var setProperty = async function(
+var setProperty = async function (
   view,
   textProp,
   value,
@@ -372,7 +372,19 @@ var setProperty = async function(
   info("Set property to: " + value);
   await focusEditableField(view, textProp.editor.valueSpan);
 
-  const onPreview = view.once("ruleview-changed");
+  // Because of the manual flush approach used for tests, we might have an
+  // unknown number of debounced "preview" requests . Each preview should
+  // synchronously emit "start-preview-property-value".
+  // Listen to both this event and "ruleview-changed" which is emitted at the
+  // end of a preview and make sure each preview completes successfully.
+  let previewStartedCounter = 0;
+  const onStartPreview = () => previewStartedCounter++;
+  view.on("start-preview-property-value", onStartPreview);
+
+  let previewCounter = 0;
+  const onPreviewApplied = () => previewCounter++;
+  view.on("ruleview-changed", onPreviewApplied);
+
   if (value === null) {
     const onPopupOpened = once(view.popup, "popup-opened");
     EventUtils.synthesizeKey("VK_DELETE", {}, view.styleWindow);
@@ -381,19 +393,26 @@ var setProperty = async function(
     EventUtils.sendString(value, view.styleWindow);
   }
 
-  info("Waiting for ruleview-changed after updating property");
+  info(`Flush debounced ruleview methods (remaining: ${flushCount})`);
   view.debounce.flush();
+  await waitFor(() => previewCounter >= previewStartedCounter);
+
   flushCount--;
 
   while (flushCount > 0) {
     // Wait for some time before triggering a new flush to let new debounced
     // functions queue in-between.
     await wait(100);
+
+    info(`Flush debounced ruleview methods (remaining: ${flushCount})`);
     view.debounce.flush();
+    await waitFor(() => previewCounter >= previewStartedCounter);
+
     flushCount--;
   }
 
-  await onPreview;
+  view.off("start-preview-property-value", onStartPreview);
+  view.off("ruleview-changed", onPreviewApplied);
 
   const onValueDone = view.once("ruleview-changed");
   EventUtils.synthesizeKey("VK_RETURN", {}, view.styleWindow);
@@ -417,7 +436,7 @@ var setProperty = async function(
  * @param {String} name
  *        The new property name.
  */
-var renameProperty = async function(view, textProp, name) {
+var renameProperty = async function (view, textProp, name) {
   await focusEditableField(view, textProp.editor.nameSpan);
 
   const onNameDone = view.once("ruleview-changed");
@@ -447,7 +466,7 @@ var renameProperty = async function(view, textProp, name) {
  *        focused. This parameter is true by default, and that causes the new
  *        property to be blurred. Set to false if you don't want this.
  */
-var removeProperty = async function(view, textProp, blurNewProperty = true) {
+var removeProperty = async function (view, textProp, blurNewProperty = true) {
   await focusEditableField(view, textProp.editor.nameSpan);
 
   const onModifications = view.once("ruleview-changed");
@@ -469,7 +488,7 @@ var removeProperty = async function(view, textProp, blurNewProperty = true) {
  * @param {TextProperty} textProp
  *        The instance of the TextProperty to be enabled/disabled
  */
-var togglePropStatus = async function(view, textProp) {
+var togglePropStatus = async function (view, textProp) {
   const onRuleViewRefreshed = view.once("ruleview-changed");
   textProp.editor.enable.click();
   await onRuleViewRefreshed;
@@ -561,7 +580,7 @@ async function sendKeysAndWaitForFocus(view, element, keys) {
  * @return {Promise}
  */
 function waitForStyleModification(inspector) {
-  return new Promise(function(resolve) {
+  return new Promise(function (resolve) {
     function checkForStyleModification(mutations) {
       for (const mutation of mutations) {
         if (
@@ -595,8 +614,6 @@ async function clickSelectorIcon(view, selectorText, index = 0) {
   const { inspector } = view;
   const rule = getRuleViewRule(view, selectorText, index);
 
-  // The icon element is created in response to an async operation.
-  // Wait until the expected node shows up in the DOM. (Bug 1664511)
   info(`Waiting for icon to be available for selector: ${selectorText}`);
   const icon = await waitFor(() => {
     return rule.querySelector(".js-toggle-selector-highlighter");
@@ -607,12 +624,10 @@ async function clickSelectorIcon(view, selectorText, index = 0) {
   // a generated unique selector, for example: "div:nth-child(1)".
   // The selector highlighter is invoked with this unique selector.
   // Continuing to use selectorText ("element") would fail some of the checks below.
-  const selector = icon.dataset.selector;
+  const selector = icon.dataset.computedSelector;
 
-  const {
-    waitForHighlighterTypeShown,
-    waitForHighlighterTypeHidden,
-  } = getHighlighterTestHelpers(inspector);
+  const { waitForHighlighterTypeShown, waitForHighlighterTypeHidden } =
+    getHighlighterTestHelpers(inspector);
 
   // If there is an active selector highlighter, get its configuration options.
   // Will be undefined if there isn't an active selector highlighter.
@@ -631,6 +646,7 @@ async function clickSelectorIcon(view, selectorText, index = 0) {
   const waitedForShown = options?.selector !== selector;
 
   info(`Click the icon for selector: ${selectorText}`);
+  icon.scrollIntoView();
   EventUtils.synthesizeMouseAtCenter(icon, {}, view.styleWindow);
 
   // Promise resolves with event data from either highlighter shown or hidden event.
@@ -875,16 +891,19 @@ function getTextProperty(view, ruleIndex, declaration) {
  *        The index we expect the rule to have in the rule-view.
  * @param {Object} declaration
  *        An object representing the declaration e.g. { color: "red" }.
- * @param {string | undefined} expected
+ * @param {Object} options
+ * @param {string | undefined} options.expected
  *        Expected message ID for the given incompatible property.
  * If the expected message is not specified (undefined), the given declaration
  * is inferred as cross-browser compatible and is tested for same.
+ * @param {string | null | undefined} options.expectedLearnMoreUrl
+ *        Expected learn more link. Pass `null` to check that no "Learn more" link is displayed.
  */
 async function checkDeclarationCompatibility(
   view,
   ruleIndex,
   declaration,
-  expected
+  { expected, expectedLearnMoreUrl }
 ) {
   const declarations = await getPropertiesForRuleIndex(view, ruleIndex, true);
   const [[name, value]] = Object.entries(declaration);
@@ -906,6 +925,35 @@ async function checkDeclarationCompatibility(
       ruleIndex,
       declaration
     );
+  }
+
+  if (expectedLearnMoreUrl !== undefined) {
+    // Show the tooltip
+    const tooltip = view.tooltips.getTooltip("interactiveTooltip");
+    const onTooltipReady = tooltip.once("shown");
+    const { compatibilityIcon } = declarations.get(dec);
+    await view.tooltips.onInteractiveTooltipTargetHover(compatibilityIcon);
+    tooltip.show(compatibilityIcon);
+    await onTooltipReady;
+
+    const learnMoreEl = tooltip.panel.querySelector(".link");
+    if (expectedLearnMoreUrl === null) {
+      ok(!learnMoreEl, `"${dec}" has no "Learn more" link`);
+    } else {
+      ok(learnMoreEl, `"${dec}" has a "Learn more" link`);
+
+      const { link } = await simulateLinkClick(learnMoreEl);
+      is(
+        link,
+        expectedLearnMoreUrl,
+        `Click on ${dec} "Learn more" link navigates user to expected url`
+      );
+    }
+
+    // Hide the tooltip.
+    const onTooltipHidden = tooltip.once("hidden");
+    tooltip.hide();
+    await onTooltipHidden;
   }
 }
 
@@ -1055,6 +1103,7 @@ async function checkInteractiveTooltip(view, type, ruleIndex, declaration) {
  *                  {
  *                    value: "grab",
  *                    expected: INCOMPATIBILITY_TOOLTIP_MESSAGE.default,
+ *                    expectedLearnMoreUrl: "https://developer.mozilla.org/en-US/docs/Web/CSS/cursor",
  *                  },
  *                },
  *              ],
@@ -1076,7 +1125,10 @@ async function runCSSCompatibilityTests(view, inspector, tests) {
           {
             [rule]: rules[rule].value,
           },
-          rules[rule].expected
+          {
+            expected: rules[rule].expected,
+            expectedLearnMoreUrl: rules[rule].expectedLearnMoreUrl,
+          }
         );
       }
     }
@@ -1214,9 +1266,9 @@ function checkCSSVariableOutput(
  * @returns {HTMLElement}
  */
 function getRuleViewAncestorRulesDataElementByIndex(view, ruleIndex) {
-  return view.styleDocument.querySelector(
-    `.ruleview-rule:nth-of-type(${ruleIndex + 1}) .ruleview-rule-ancestor-data`
-  );
+  return view.styleDocument
+    .querySelectorAll(`.ruleview-rule`)
+    [ruleIndex]?.querySelector(`.ruleview-rule-ancestor-data`);
 }
 
 /**

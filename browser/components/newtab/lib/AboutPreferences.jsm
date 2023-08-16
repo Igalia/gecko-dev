@@ -3,11 +3,8 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 "use strict";
 
-const { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-const { actionTypes: at, actionCreators: ac } = ChromeUtils.import(
-  "resource://activity-stream/common/Actions.jsm"
+const { actionTypes: at, actionCreators: ac } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/Actions.sys.mjs"
 );
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -15,8 +12,8 @@ const PREFERENCES_LOADED_EVENT = "home-pane-loaded";
 
 const lazy = {};
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  NimbusFeatures: "resource://nimbus/ExperimentAPI.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  NimbusFeatures: "resource://nimbus/ExperimentAPI.sys.mjs",
 });
 
 // These "section" objects are formatted in a way to be similar to the ones from
@@ -193,8 +190,12 @@ class AboutPreferences {
         shouldHidePref,
         eventSource,
       } = sectionData;
-      const { feed: name, titleString = {}, descString, nestedPrefs = [] } =
-        prefData || {};
+      const {
+        feed: name,
+        titleString = {},
+        descString,
+        nestedPrefs = [],
+      } = prefData || {};
 
       // Don't show any sections that we don't want to expose in preferences UI
       if (shouldHidePref) {

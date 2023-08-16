@@ -14,7 +14,9 @@
 #include "mozilla/a11y/DocAccessibleParent.h"
 #include "mozilla/a11y/RemoteAccessible.h"
 #include "mozilla/dom/BrowserParent.h"
+#include "nsAccessibilityService.h"
 
+using namespace mozilla;
 using namespace mozilla::a11y;
 
 extern "C" {
@@ -76,13 +78,6 @@ AtkObject* refAccessibleAtPointHelper(AtkObject* aAtkObj, gint aX, gint aY,
                                       AtkCoordType aCoordType) {
   Accessible* acc = GetInternalObj(aAtkObj);
   if (!acc) {
-    // This might be an ATK Socket.
-    acc = GetAccessibleWrap(aAtkObj);
-    if (!acc) {
-      return nullptr;
-    }
-  }
-  if (acc->IsLocal() && acc->AsLocal()->IsDefunct()) {
     return nullptr;
   }
 
@@ -114,34 +109,29 @@ AtkObject* refAccessibleAtPointHelper(AtkObject* aAtkObj, gint aX, gint aY,
 
 void getExtentsHelper(AtkObject* aAtkObj, gint* aX, gint* aY, gint* aWidth,
                       gint* aHeight, AtkCoordType aCoordType) {
-  AccessibleWrap* accWrap = GetAccessibleWrap(aAtkObj);
   *aX = *aY = *aWidth = *aHeight = -1;
 
-  if (accWrap) {
-    if (accWrap->IsDefunct()) {
-      return;
-    }
-
-    mozilla::LayoutDeviceIntRect screenRect = accWrap->Bounds();
-    if (screenRect.IsEmpty()) return;
-
-    if (aCoordType == ATK_XY_WINDOW) {
-      mozilla::LayoutDeviceIntPoint winCoords =
-          nsAccUtils::GetScreenCoordsForWindow(accWrap);
-      screenRect.x -= winCoords.x;
-      screenRect.y -= winCoords.y;
-    }
-
-    *aX = screenRect.x;
-    *aY = screenRect.y;
-    *aWidth = screenRect.width;
-    *aHeight = screenRect.height;
+  Accessible* acc = GetInternalObj(aAtkObj);
+  if (!acc) {
     return;
   }
 
-  if (RemoteAccessible* proxy = GetProxy(aAtkObj)) {
-    proxy->Extents(aCoordType == ATK_XY_WINDOW, aX, aY, aWidth, aHeight);
+  mozilla::LayoutDeviceIntRect screenRect = acc->Bounds();
+  if (screenRect.IsEmpty()) {
+    return;
   }
+
+  if (aCoordType == ATK_XY_WINDOW) {
+    mozilla::LayoutDeviceIntPoint winCoords =
+        nsAccUtils::GetScreenCoordsForWindow(acc);
+    screenRect.x -= winCoords.x;
+    screenRect.y -= winCoords.y;
+  }
+
+  *aX = screenRect.x;
+  *aY = screenRect.y;
+  *aWidth = screenRect.width;
+  *aHeight = screenRect.height;
 }
 
 void componentInterfaceInitCB(AtkComponentIface* aIface) {

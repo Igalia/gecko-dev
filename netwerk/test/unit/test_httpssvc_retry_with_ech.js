@@ -4,21 +4,33 @@
 
 "use strict";
 
-ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-var { setTimeout } = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+var { setTimeout } = ChromeUtils.importESModule(
+  "resource://gre/modules/Timer.sys.mjs"
+);
 
 let trrServer;
 let h3Port;
 let h3EchConfig;
 
-const dns = Cc["@mozilla.org/network/dns-service;1"].getService(
-  Ci.nsIDNSService
-);
 const certOverrideService = Cc[
   "@mozilla.org/security/certoverride;1"
 ].getService(Ci.nsICertOverrideService);
 
-function setup() {
+function checkSecurityInfo(chan, expectPrivateDNS, expectAcceptedECH) {
+  let securityInfo = chan.securityInfo;
+  Assert.equal(
+    securityInfo.isAcceptedEch,
+    expectAcceptedECH,
+    "ECH Status == Expected Status"
+  );
+  Assert.equal(
+    securityInfo.usedPrivateDNS,
+    expectPrivateDNS,
+    "Private DNS Status == Expected Status"
+  );
+}
+
+add_setup(async function setup() {
   // Allow telemetry probes which may otherwise be disabled for some
   // applications (e.g. Thunderbird).
   Services.prefs.setBoolPref(
@@ -35,24 +47,20 @@ function setup() {
   Services.prefs.setIntPref("network.http.speculative-parallel-limit", 0);
   Services.prefs.setIntPref("network.trr.mode", Ci.nsIDNSService.MODE_TRRONLY);
 
-  add_tls_server_setup(
+  await asyncStartTLSTestServer(
     "EncryptedClientHelloServer",
     "../../../security/manager/ssl/tests/unit/test_encrypted_client_hello"
   );
 
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  h3Port = env.get("MOZHTTP3_PORT_ECH");
+  h3Port = Services.env.get("MOZHTTP3_PORT_ECH");
   Assert.notEqual(h3Port, null);
   Assert.notEqual(h3Port, "");
 
-  h3EchConfig = env.get("MOZHTTP3_ECH");
+  h3EchConfig = Services.env.get("MOZHTTP3_ECH");
   Assert.notEqual(h3EchConfig, null);
   Assert.notEqual(h3EchConfig, "");
-}
+});
 
-setup();
 registerCleanupFunction(async () => {
   trr_clear_prefs();
   Services.prefs.clearUserPref("network.trr.mode");
@@ -61,9 +69,13 @@ registerCleanupFunction(async () => {
   Services.prefs.clearUserPref("network.dns.use_https_rr_as_altsvc");
   Services.prefs.clearUserPref("network.dns.echconfig.enabled");
   Services.prefs.clearUserPref("network.dns.http3_echconfig.enabled");
-  Services.prefs.clearUserPref("network.dns.echconfig.fallback_to_origin");
+  Services.prefs.clearUserPref(
+    "network.dns.echconfig.fallback_to_origin_when_all_failed"
+  );
   Services.prefs.clearUserPref("network.http.speculative-parallel-limit");
   Services.prefs.clearUserPref("network.dns.port_prefixed_qname_https_rr");
+  Services.prefs.clearUserPref("security.tls.ech.grease_http3");
+  Services.prefs.clearUserPref("security.tls.ech.grease_probability");
   if (trrServer) {
     await trrServer.stop();
   }
@@ -123,7 +135,7 @@ ActivityObserver.prototype = {
   },
 };
 
-function checkHttpActivities(activites) {
+function checkHttpActivities(activites, expectECH) {
   let foundDNSAndSocket = false;
   let foundSettingECH = false;
   let foundConnectionCreated = false;
@@ -146,7 +158,7 @@ function checkHttpActivities(activites) {
   }
 
   Assert.equal(foundDNSAndSocket, true, "Should have one DnsAndSock created");
-  Assert.equal(foundSettingECH, true, "Should have echConfig");
+  Assert.equal(foundSettingECH, expectECH, "Should have echConfig");
   Assert.equal(
     foundConnectionCreated,
     true,
@@ -216,11 +228,7 @@ add_task(async function testConnectWithECH() {
   HandshakeTelemetryHelpers.resetHistograms();
   let chan = makeChan(`https://ech-private.example.com`);
   await channelOpenPromise(chan, CL_ALLOW_UNKNOWN_CL);
-  let securityInfo = chan.securityInfo.QueryInterface(
-    Ci.nsITransportSecurityInfo
-  );
-  Assert.ok(securityInfo.isAcceptedEch, "This host should have accepted ECH");
-
+  checkSecurityInfo(chan, true, true);
   // Only check telemetry if network process is disabled.
   if (!mozinfo.socketprocess_networking) {
     HandshakeTelemetryHelpers.checkSuccess(["", "_ECH", "_FIRST_TRY"]);
@@ -234,14 +242,15 @@ add_task(async function testConnectWithECH() {
   let filtered = observer.activites.filter(
     activity => activity.host === "ech-private.example.com"
   );
-  checkHttpActivities(filtered);
+  checkHttpActivities(filtered, true);
 });
 
 add_task(async function testEchRetry() {
   Services.obs.notifyObservers(null, "net:cancel-all-connections");
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
 
-  dns.clearCache(true);
+  Services.dns.clearCache(true);
 
   const ECH_CONFIG_TRUSTED_RETRY =
     "AEn+DQBFTQAgACCKB1Y5SfrGIyk27W82xPpzWTDs3q72c04xSurDWlb9CgAEAAMAA2QWZWNoLXB1YmxpYy5leGFtcGxlLmNvbQAA";
@@ -300,15 +309,13 @@ add_task(async function testEchRetry() {
   HandshakeTelemetryHelpers.resetHistograms();
   let chan = makeChan(`https://ech-private.example.com`);
   await channelOpenPromise(chan, CL_ALLOW_UNKNOWN_CL);
-  let securityInfo = chan.securityInfo.QueryInterface(
-    Ci.nsITransportSecurityInfo
-  );
+  checkSecurityInfo(chan, true, true);
   // Only check telemetry if network process is disabled.
   if (!mozinfo.socketprocess_networking) {
     for (let hName of ["SSL_HANDSHAKE_RESULT", "SSL_HANDSHAKE_RESULT_ECH"]) {
       let h = Services.telemetry.getHistogramById(hName);
       HandshakeTelemetryHelpers.assertHistogramMap(
-        h,
+        h.snapshot(),
         new Map([
           ["0", 1],
           ["188", 1],
@@ -318,12 +325,21 @@ add_task(async function testEchRetry() {
     HandshakeTelemetryHelpers.checkEntry(["_FIRST_TRY"], 188, 1);
     HandshakeTelemetryHelpers.checkEmpty(["_CONSERVATIVE", "_ECH_GREASE"]);
   }
-  Assert.ok(securityInfo.isAcceptedEch, "This host should have accepted ECH");
 
   await trrServer.stop();
 });
 
-async function H3ECHTest(echConfig) {
+async function H3ECHTest(
+  echConfig,
+  expectedHistKey,
+  expectedHistEntries,
+  advertiseECH
+) {
+  Services.dns.clearCache(true);
+  Services.obs.notifyObservers(null, "net:cancel-all-connections");
+  /* eslint-disable mozilla/no-arbitrary-setTimeout */
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  resetEchTelemetry();
   trrServer = new TRRServer();
   await trrServer.start();
 
@@ -336,12 +352,27 @@ async function H3ECHTest(echConfig) {
   let observerService = Cc[
     "@mozilla.org/network/http-activity-distributor;1"
   ].getService(Ci.nsIHttpActivityDistributor);
+  Services.obs.notifyObservers(null, "net:cancel-all-connections");
   let observer = new ActivityObserver();
   observerService.addObserver(observer);
   observerService.observeConnection = true;
+  // Clear activities for past connections
+  observer.activites = [];
 
   let portPrefixedName = `_${h3Port}._https.public.example.com`;
+  let vals = [
+    { key: "alpn", value: "h3-29" },
+    { key: "port", value: h3Port },
+  ];
+  if (advertiseECH) {
+    vals.push({
+      key: "echconfig",
+      value: echConfig,
+      needBase64Decode: true,
+    });
+  }
   // Only the last record is valid to use.
+
   await trrServer.registerDoHAnswers(portPrefixedName, "HTTPS", {
     answers: [
       {
@@ -352,15 +383,7 @@ async function H3ECHTest(echConfig) {
         data: {
           priority: 1,
           name: ".",
-          values: [
-            { key: "alpn", value: "h3-29" },
-            { key: "port", value: h3Port },
-            {
-              key: "echconfig",
-              value: echConfig,
-              needBase64Decode: true,
-            },
-          ],
+          values: vals,
         },
       },
     ],
@@ -387,10 +410,7 @@ async function H3ECHTest(echConfig) {
   let [req] = await channelOpenPromise(chan, CL_ALLOW_UNKNOWN_CL);
   req.QueryInterface(Ci.nsIHttpChannel);
   Assert.equal(req.protocolVersion, "h3-29");
-  let securityInfo = chan.securityInfo.QueryInterface(
-    Ci.nsITransportSecurityInfo
-  );
-  Assert.ok(securityInfo.isAcceptedEch, "This host should have accepted ECH");
+  checkSecurityInfo(chan, true, advertiseECH);
 
   await trrServer.stop();
 
@@ -400,16 +420,70 @@ async function H3ECHTest(echConfig) {
   let filtered = observer.activites.filter(
     activity => activity.host === "public.example.com"
   );
-  checkHttpActivities(filtered);
+  checkHttpActivities(filtered, advertiseECH);
+  await checkEchTelemetry(expectedHistKey, expectedHistEntries);
 }
 
-add_task(async function testH3ConnectWithECH() {
-  await H3ECHTest(h3EchConfig);
+function resetEchTelemetry() {
+  Services.telemetry.getKeyedHistogramById("HTTP3_ECH_OUTCOME").clear();
+}
+
+async function checkEchTelemetry(histKey, histEntries) {
+  Services.obs.notifyObservers(null, "net:cancel-all-connections");
+  /* eslint-disable mozilla/no-arbitrary-setTimeout */
+  await new Promise(resolve => setTimeout(resolve, 1000));
+  let values = Services.telemetry
+    .getKeyedHistogramById("HTTP3_ECH_OUTCOME")
+    .snapshot()[histKey];
+  if (!mozinfo.socketprocess_networking) {
+    HandshakeTelemetryHelpers.assertHistogramMap(values, histEntries);
+  }
+}
+
+add_task(async function testH3WithNoEch() {
+  Services.prefs.setBoolPref("security.tls.ech.grease_http3", false);
+  Services.prefs.setIntPref("security.tls.ech.grease_probability", 0);
+  await H3ECHTest(
+    h3EchConfig,
+    "NONE",
+    new Map([
+      ["0", 1],
+      ["1", 0],
+    ]),
+    false
+  );
 });
 
-add_task(async function testH3ConnectWithECHRetry() {
-  dns.clearCache(true);
+add_task(async function testH3WithECH() {
+  await H3ECHTest(
+    h3EchConfig,
+    "REAL",
+    new Map([
+      ["0", 1],
+      ["1", 0],
+    ]),
+    true
+  );
+});
+
+add_task(async function testH3WithGreaseEch() {
+  Services.prefs.setBoolPref("security.tls.ech.grease_http3", true);
+  Services.prefs.setIntPref("security.tls.ech.grease_probability", 100);
+  await H3ECHTest(
+    h3EchConfig,
+    "GREASE",
+    new Map([
+      ["0", 1],
+      ["1", 0],
+    ]),
+    false
+  );
+});
+
+add_task(async function testH3WithECHRetry() {
+  Services.dns.clearCache(true);
   Services.obs.notifyObservers(null, "net:cancel-all-connections");
+  // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
   await new Promise(resolve => setTimeout(resolve, 1000));
 
   function base64ToArray(base64) {
@@ -425,5 +499,13 @@ add_task(async function testH3ConnectWithECHRetry() {
   let decodedConfig = base64ToArray(h3EchConfig);
   decodedConfig[6] ^= 0x94;
   let encoded = btoa(String.fromCharCode.apply(null, decodedConfig));
-  await H3ECHTest(encoded);
+  await H3ECHTest(
+    encoded,
+    "REAL",
+    new Map([
+      ["0", 1],
+      ["1", 1],
+    ]),
+    true
+  );
 });

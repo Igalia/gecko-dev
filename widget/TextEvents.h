@@ -22,6 +22,7 @@
 #include "mozilla/dom/KeyboardEventBinding.h"
 #include "mozilla/dom/StaticRange.h"
 #include "mozilla/widget/IMEData.h"
+#include "mozilla/ipc/IPCForwards.h"
 #include "nsCOMPtr.h"
 #include "nsHashtablesFwd.h"
 #include "nsISelectionListener.h"
@@ -79,12 +80,21 @@ enum class AccessKeyType {
  ******************************************************************************/
 
 struct AlternativeCharCode {
-  AlternativeCharCode() : mUnshiftedCharCode(0), mShiftedCharCode(0) {}
+  AlternativeCharCode() = default;
   AlternativeCharCode(uint32_t aUnshiftedCharCode, uint32_t aShiftedCharCode)
       : mUnshiftedCharCode(aUnshiftedCharCode),
         mShiftedCharCode(aShiftedCharCode) {}
-  uint32_t mUnshiftedCharCode;
-  uint32_t mShiftedCharCode;
+
+  uint32_t mUnshiftedCharCode = 0u;
+  uint32_t mShiftedCharCode = 0u;
+
+  bool operator==(const AlternativeCharCode& aOther) const {
+    return mUnshiftedCharCode == aOther.mUnshiftedCharCode &&
+           mShiftedCharCode == aOther.mShiftedCharCode;
+  }
+  bool operator!=(const AlternativeCharCode& aOther) const {
+    return !(*this == aOther);
+  }
 };
 
 /******************************************************************************
@@ -124,11 +134,12 @@ struct IgnoreModifierState {
  * mozilla::WidgetKeyboardEvent
  ******************************************************************************/
 
-class WidgetKeyboardEvent : public WidgetInputEvent {
+class WidgetKeyboardEvent final : public WidgetInputEvent {
  private:
   friend class dom::PBrowserParent;
   friend class dom::PBrowserChild;
   friend struct IPC::ParamTraits<WidgetKeyboardEvent>;
+  ALLOW_DEPRECATED_READPARAM
 
  protected:
   WidgetKeyboardEvent()
@@ -150,7 +161,7 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
         mEditCommandsForRichTextEditorInitialized(false) {}
 
  public:
-  virtual WidgetKeyboardEvent* AsKeyboardEvent() override { return this; }
+  WidgetKeyboardEvent* AsKeyboardEvent() override { return this; }
 
   WidgetKeyboardEvent(bool aIsTrusted, EventMessage aMessage,
                       nsIWidget* aWidget,
@@ -252,7 +263,7 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
              (MODIFIER_ALT | MODIFIER_META | MODIFIER_OS | MODIFIER_SHIFT));
   }
 
-  virtual WidgetEvent* Duplicate() const override {
+  WidgetEvent* Duplicate() const override {
     MOZ_ASSERT(mClass == eKeyboardEventClass,
                "Duplicate() must be overridden by sub class");
     // Not copying widget, it is a weak reference.
@@ -292,6 +303,18 @@ class WidgetKeyboardEvent : public WidgetInputEvent {
               mKeyCode == dom::KeyboardEvent_Binding::DOM_VK_V ||
               mKeyCode == dom::KeyboardEvent_Binding::DOM_VK_X) &&
              IsAccel()));
+  }
+
+  [[nodiscard]] bool ShouldWorkAsSpaceKey() const {
+    if (mKeyCode == NS_VK_SPACE) {
+      return true;
+    }
+    // Additionally, if the code value is "Space" and the key is not mapped to
+    // a function key (i.e., not a printable key), we should treat it as space
+    // key because the active keyboard layout may input different character
+    // from the ASCII white space (U+0020).  For example, NBSP (U+00A0).
+    return mKeyNameIndex == KEY_NAME_INDEX_USE_STRING &&
+           mCodeNameIndex == CODE_NAME_INDEX_Space;
   }
 
   /**
@@ -832,6 +855,7 @@ class WidgetCompositionEvent : public WidgetGUIEvent {
  private:
   friend class mozilla::dom::PBrowserParent;
   friend class mozilla::dom::PBrowserChild;
+  ALLOW_DEPRECATED_READPARAM
 
   WidgetCompositionEvent() : mOriginalMessage(eVoidEvent) {}
 
@@ -869,6 +893,11 @@ class WidgetCompositionEvent : public WidgetGUIEvent {
   // If the instance is a clone of another event, mOriginalMessage stores
   // the another event's mMessage.
   EventMessage mOriginalMessage;
+
+  // Composition ID considered by TextComposition.  If the event has not been
+  // handled by TextComposition yet, this is 0.  And also if the event is for
+  // a composition synthesized in a content process, this is always 0.
+  uint32_t mCompositionId = 0;
 
   void AssignCompositionEventData(const WidgetCompositionEvent& aEvent,
                                   bool aCopyTargets) {
@@ -926,6 +955,7 @@ class WidgetQueryContentEvent : public WidgetGUIEvent {
  private:
   friend class dom::PBrowserParent;
   friend class dom::PBrowserChild;
+  ALLOW_DEPRECATED_READPARAM
 
   WidgetQueryContentEvent()
       : mUseNativeLineBreak(true),
@@ -1312,6 +1342,7 @@ class WidgetSelectionEvent : public WidgetGUIEvent {
  private:
   friend class mozilla::dom::PBrowserParent;
   friend class mozilla::dom::PBrowserChild;
+  ALLOW_DEPRECATED_READPARAM
 
   WidgetSelectionEvent()
       : mOffset(0),

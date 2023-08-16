@@ -15,18 +15,17 @@ const MAX_RESULT_COUNT = UrlbarPrefs.get("maxRichResults");
 let suggestionsEngine;
 let expectedFormHistoryResults = [];
 
-add_setup(async function() {
-  suggestionsEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + SUGGESTIONS_ENGINE_NAME
-  );
-
-  let oldDefaultEngine = await Services.search.getDefault();
-  await SearchTestUtils.installSearchExtension({
-    name: DEFAULT_ENGINE_NAME,
-    keyword: "@test",
+add_setup(async function () {
+  suggestionsEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + SUGGESTIONS_ENGINE_NAME,
   });
-  await Services.search.setDefault(
-    Services.search.getEngineByName(DEFAULT_ENGINE_NAME)
+
+  await SearchTestUtils.installSearchExtension(
+    {
+      name: DEFAULT_ENGINE_NAME,
+      keyword: "@test",
+    },
+    { setAsDefault: true }
   );
   await Services.search.moveEngine(suggestionsEngine, 0);
 
@@ -61,7 +60,6 @@ add_setup(async function() {
   ]);
 
   registerCleanupFunction(async () => {
-    await Services.search.setDefault(oldDefaultEngine);
     await UrlbarTestUtils.formHistory.clear();
   });
 
@@ -74,7 +72,7 @@ add_setup(async function() {
 });
 
 add_task(async function emptySearch() {
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.update2.emptySearchBehavior", 2]],
     });
@@ -109,7 +107,7 @@ add_task(async function emptySearch_withRestyledHistory() {
     // Can be restyled but does not dupe form history.
     "http://mochi.test:8888/?terms=ciao",
   ]);
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.update2.emptySearchBehavior", 2]],
     });
@@ -136,13 +134,13 @@ add_task(async function emptySearch_withRestyledHistory() {
         heuristic: false,
         type: UrlbarUtils.RESULT_TYPE.URL,
         source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        url: `http://mochi.test/redirect`,
+        url: `http://mochi.test/`,
       },
       {
         heuristic: false,
         type: UrlbarUtils.RESULT_TYPE.URL,
         source: UrlbarUtils.RESULT_SOURCE.HISTORY,
-        url: `http://mochi.test/`,
+        url: `http://mochi.test/redirect`,
       },
     ]);
 
@@ -162,7 +160,7 @@ add_task(async function emptySearch_withRestyledHistory_noSearchHistory() {
     // Can be restyled but does not dupe form history.
     "http://mochi.test:8888/?terms=ciao",
   ]);
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [
         ["browser.urlbar.update2.emptySearchBehavior", 2],
@@ -204,7 +202,7 @@ add_task(async function emptySearch_behavior() {
   // URLs with the same host as the search engine.
   await PlacesTestUtils.addVisits([`http://mochi.test/`]);
 
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.update2.emptySearchBehavior", 0]],
     });
@@ -245,7 +243,7 @@ add_task(async function emptySearch_behavior() {
     await SpecialPowers.popPrefEnv();
   });
 
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.update2.emptySearchBehavior", 1]],
     });
@@ -269,7 +267,7 @@ add_task(async function emptySearch_behavior() {
 add_task(async function emptySearch_local() {
   await PlacesTestUtils.addVisits([`http://mochi.test/`]);
 
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await SpecialPowers.pushPrefEnv({
       set: [["browser.urlbar.update2.emptySearchBehavior", 0]],
     });
@@ -300,7 +298,7 @@ add_task(async function emptySearch_local() {
 });
 
 add_task(async function nonEmptySearch() {
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     let query = "hello";
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window,
@@ -348,7 +346,7 @@ add_task(async function nonEmptySearch() {
 });
 
 add_task(async function nonEmptySearch_nonMatching() {
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     let query = "ciao";
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window,
@@ -396,9 +394,9 @@ add_task(async function nonEmptySearch_nonMatching() {
 });
 
 add_task(async function nonEmptySearch_withHistory() {
-  let manySuggestionsEngine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + MANY_SUGGESTIONS_ENGINE_NAME
-  );
+  let manySuggestionsEngine = await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + MANY_SUGGESTIONS_ENGINE_NAME,
+  });
   // URLs with the same host as the search engine.
   let query = "ciao";
   await PlacesTestUtils.addVisits([
@@ -422,7 +420,7 @@ add_task(async function nonEmptySearch_withHistory() {
     };
   }
 
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window,
       value: query,
@@ -520,7 +518,7 @@ add_task(async function nonEmptySearch_withHistory() {
 });
 
 add_task(async function nonEmptySearch_url() {
-  await BrowserTestUtils.withNewTab("about:robots", async function(browser) {
+  await BrowserTestUtils.withNewTab("about:robots", async function (browser) {
     let query = "http://www.example.com/";
     await UrlbarTestUtils.promiseAutocompleteResultPopup({
       window,

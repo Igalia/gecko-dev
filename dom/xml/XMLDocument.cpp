@@ -151,7 +151,7 @@ nsresult NS_NewDOMDocument(Document** aInstancePtrResult,
   if (!aQualifiedName.IsEmpty()) {
     ErrorResult result;
     ElementCreationOptionsOrString options;
-    options.SetAsString();
+    Unused << options.SetAsString();
 
     nsCOMPtr<Element> root =
         d->CreateElementNS(aNamespaceURI, aQualifiedName, options, result);
@@ -219,7 +219,8 @@ void XMLDocument::ResetToURI(nsIURI* aURI, nsILoadGroup* aLoadGroup,
                              nsIPrincipal* aPartitionedPrincipal) {
   if (mChannelIsPending) {
     StopDocumentLoad();
-    mChannel->Cancel(NS_BINDING_ABORTED);
+    mChannel->CancelWithReason(NS_BINDING_ABORTED,
+                               "XMLDocument::ResetToURI"_ns);
     mChannelIsPending = false;
   }
 

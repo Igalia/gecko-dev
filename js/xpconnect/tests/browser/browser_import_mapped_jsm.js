@@ -28,16 +28,11 @@ const JSMs = [
   "resource://gre/modules/PrivateBrowsingUtils.jsm",
   "resource://gre/modules/Timer.jsm",
   "resource://gre/modules/XPCOMUtils.jsm",
-  "resource://gre/modules/osfile.jsm",
   "resource://gre/modules/addons/XPIDatabase.jsm",
   "resource://gre/modules/addons/XPIProvider.jsm",
   "resource://gre/modules/addons/XPIInstall.jsm",
   "resource:///modules/BrowserWindowTracker.jsm",
 ];
-
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
 
 if (AppConstants.platform === "win") {
   JSMs.push("resource:///modules/WindowsJumpLists.jsm");
@@ -57,6 +52,7 @@ add_task(async function test_chrome_utils_import() {
 add_task(async function test_cu_import() {
   for (const file of JSMs) {
     try {
+      // eslint-disable-next-line mozilla/use-chromeutils-import
       Cu.import(file, {});
       ok(true, `Imported ${file}`);
     } catch (e) {

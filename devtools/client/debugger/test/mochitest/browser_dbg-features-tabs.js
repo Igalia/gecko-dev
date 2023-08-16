@@ -13,7 +13,7 @@ const testServer = createVersionizedHttpTestServer(
 );
 const TEST_URL = testServer.urlFor("index.html");
 
-add_task(async function() {
+add_task(async function () {
   // We open against a blank page and only then navigate to the test page
   // so that sources aren't GC-ed before opening the debugger.
   // When we (re)load a page while the debugger is opened, the debugger
@@ -32,7 +32,7 @@ add_task(async function() {
   // Open each visible source in tabs
   const uniqueUrls = new Set();
   for (const source of displayedSources) {
-    info(`Opening '${source.url}' from ${source.thread}`);
+    info(`Opening '${source.url}'`);
     await selectSource(dbg, source);
     uniqueUrls.add(source.url);
   }
@@ -40,8 +40,35 @@ add_task(async function() {
   // Some sources are loaded from the same URL and only one tab will be opened for them
   is(countTabs(dbg), uniqueUrls.size, "Got a tab for each distinct source URL");
 
+  await reload(dbg, ...INTEGRATION_TEST_PAGE_SOURCES);
+
+  await waitFor(
+    () => countTabs(dbg) == uniqueUrls.size,
+    "Wait for tab count to be fully restored"
+  );
+
+  is(
+    countTabs(dbg),
+    uniqueUrls.size,
+    "Still get the same number of tabs after reload"
+  );
+
+  await selectSource(dbg, "query.js?x=1");
+  // Ensure focusing the window, otherwise copyToTheClipboard doesn't emit "copy" event.
+  dbg.panel.panelWin.focus();
+
+  info("Open the current active tab context menu");
+  const waitForOpen = waitForContextMenu(dbg);
+  rightClickElement(dbg, "activeTab");
+  await waitForOpen;
+  info("Trigger copy to source context menu");
+  await waitForClipboardPromise(
+    () => selectContextMenuItem(dbg, `#node-menu-copy-source`),
+    `function query() {console.log("query x=1");}\n`
+  );
+
   for (const source of displayedSources) {
-    info(`Closing '${source.url}' from ${source.thread}`);
+    info(`Closing '${source.url}'`);
     await closeTab(dbg, source);
   }
 

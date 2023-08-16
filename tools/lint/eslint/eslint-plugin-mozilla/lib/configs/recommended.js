@@ -16,29 +16,12 @@ module.exports = {
     browser: true,
     es2021: true,
     "mozilla/privileged": true,
+    "mozilla/specific": true,
   },
 
-  extends: ["eslint:recommended", "plugin:prettier/recommended"],
-
-  globals: {
-    // These are all specific to Firefox unless otherwise stated.
-    Cc: false,
-    ChromeUtils: false,
-    Ci: false,
-    Components: false,
-    Cr: false,
-    Cu: false,
-    Debugger: false,
-    InstallTrigger: false,
-    // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/InternalError
-    InternalError: true,
-    Services: false,
-    // https://developer.mozilla.org/docs/Web/API/Window/dump
-    dump: true,
-    openDialog: false,
-    // https://developer.mozilla.org/docs/Web/JavaScript/Reference/Global_Objects/uneval
-    uneval: false,
-  },
+  // The prettier configuration here comes from eslint-config-prettier and
+  // turns off all of ESLint's rules related to formatting.
+  extends: ["eslint:recommended", "prettier"],
 
   overrides: [
     {
@@ -80,11 +63,27 @@ module.exports = {
       },
     },
     {
+      files: ["**/*.sys.mjs"],
+      rules: {
+        "mozilla/use-static-import": "error",
+      },
+    },
+    {
       excludedFiles: ["**/*.sys.mjs"],
       files: ["**/*.mjs"],
       rules: {
         "mozilla/reject-import-system-module-from-non-system": "error",
         "mozilla/reject-lazy-imports-into-globals": "error",
+        "no-shadow": ["error", { allow: ["event"], builtinGlobals: true }],
+      },
+    },
+    {
+      files: ["**/*.mjs"],
+      rules: {
+        "mozilla/use-static-import": "error",
+        // This rule defaults to not allowing "use strict" in module files since
+        // they are always loaded in strict mode.
+        strict: "error",
       },
     },
     {
@@ -119,6 +118,9 @@ module.exports = {
   // When adding items to this file please check for effects on all of toolkit
   // and browser
   rules: {
+    // This may conflict with prettier, so we turn it off.
+    "arrow-body-style": "off",
+
     // Warn about cyclomatic complexity in functions.
     // XXX Get this down to 20?
     complexity: ["error", 34],
@@ -156,6 +158,7 @@ module.exports = {
     "mozilla/import-browser-window-globals": "error",
     "mozilla/import-globals": "error",
     "mozilla/no-compare-against-boolean-literals": "error",
+    "mozilla/no-cu-reportError": "error",
     "mozilla/no-define-cc-etc": "error",
     "mozilla/no-throw-cr-literal": "error",
     "mozilla/no-useless-parameters": "error",
@@ -166,7 +169,6 @@ module.exports = {
     "mozilla/reject-chromeutils-import-params": "error",
     "mozilla/reject-importGlobalProperties": ["error", "allownonwebidl"],
     "mozilla/reject-multiple-getters-calls": "error",
-    "mozilla/reject-osfile": "warn",
     "mozilla/reject-scriptableunicodeconverter": "warn",
     "mozilla/rejects-requires-await": "error",
     "mozilla/use-cc-etc": "error",
@@ -332,6 +334,9 @@ module.exports = {
 
     // Require object-literal shorthand with ES6 method syntax
     "object-shorthand": ["error", "always", { avoidQuotes: true }],
+
+    // This may conflict with prettier, so turn it off.
+    "prefer-arrow-callback": "off",
 
     // This generates too many false positives that are not easy to work around,
     // and false positives seem to be inherent in the rule.

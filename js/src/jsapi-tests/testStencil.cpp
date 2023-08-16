@@ -11,6 +11,7 @@
 
 #include "frontend/CompilationStencil.h"
 #include "js/CompilationAndEvaluation.h"
+#include "js/experimental/CompileScript.h"
 #include "js/experimental/JSStencil.h"
 #include "js/Modules.h"
 #include "js/OffThreadScriptCompilation.h"
@@ -248,6 +249,16 @@ BEGIN_TEST(testStencil_Transcode) {
       CHECK(res == JS::TranscodeResult::Ok);
     }
 
+    {
+      JS::FrontendContext* fc = JS::NewFrontendContext();
+      JS::DecodeOptions decodeOptions;
+      JS::TranscodeRange range(buffer.begin(), buffer.length());
+      JS::TranscodeResult res =
+          JS::DecodeStencil(fc, decodeOptions, range, getter_AddRefs(stencil));
+      CHECK(res == JS::TranscodeResult::Ok);
+      JS::DestroyFrontendContext(fc);
+    }
+
     // Delete the buffer to verify that the decoded stencil has no dependency
     // to the buffer.
     memset(buffer.begin(), 0, buffer.length());
@@ -351,7 +362,7 @@ BEGIN_TEST(testStencil_OffThread) {
     lock.wait();
   }
 
-  RefPtr<JS::Stencil> stencil = JS::FinishCompileToStencilOffThread(cx, token);
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
   CHECK(stencil);
 
   JS::InstantiateOptions instantiateOptions(options);
@@ -400,15 +411,13 @@ BEGIN_TEST(testStencil_OffThreadWithInstantiationStorage) {
     lock.wait();
   }
 
-  JS::Rooted<JS::InstantiationStorage> storage(cx);
-  RefPtr<JS::Stencil> stencil =
-      JS::FinishCompileToStencilOffThread(cx, token, storage.address());
+  JS::InstantiationStorage storage;
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token, &storage);
   CHECK(stencil);
 
   JS::InstantiateOptions instantiateOptions(options);
-  JS::RootedScript script(
-      cx, JS::InstantiateGlobalStencil(cx, instantiateOptions, stencil,
-                                       storage.address()));
+  JS::RootedScript script(cx, JS::InstantiateGlobalStencil(
+                                  cx, instantiateOptions, stencil, &storage));
   CHECK(script);
 
   JS::RootedValue rval(cx);
@@ -450,8 +459,7 @@ BEGIN_TEST(testStencil_OffThreadModule) {
     lock.wait();
   }
 
-  RefPtr<JS::Stencil> stencil =
-      JS::FinishCompileModuleToStencilOffThread(cx, token);
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
   CHECK(stencil);
 
   JS::InstantiateOptions instantiateOptions(options);
@@ -504,15 +512,14 @@ BEGIN_TEST(testStencil_OffThreadModuleWithInstantiationStorage) {
     lock.wait();
   }
 
-  JS::Rooted<JS::InstantiationStorage> storage(cx);
-  RefPtr<JS::Stencil> stencil =
-      JS::FinishCompileModuleToStencilOffThread(cx, token, storage.address());
+  JS::InstantiationStorage storage;
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token, &storage);
   CHECK(stencil);
 
   JS::InstantiateOptions instantiateOptions(options);
   JS::RootedObject moduleObject(
-      cx, JS::InstantiateModuleStencil(cx, instantiateOptions, stencil,
-                                       storage.address()));
+      cx,
+      JS::InstantiateModuleStencil(cx, instantiateOptions, stencil, &storage));
   CHECK(moduleObject);
 
   JS::RootedValue rval(cx);
@@ -586,7 +593,7 @@ BEGIN_TEST(testStencil_OffThreadDecode) {
     }
   }
 
-  RefPtr<JS::Stencil> stencil = JS::FinishDecodeStencilOffThread(cx, token);
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
   CHECK(stencil);
 
   CHECK(!JS::StencilIsBorrowed(stencil));
@@ -667,17 +674,15 @@ BEGIN_TEST(testStencil_OffThreadDecodeWithInstantiationStorage) {
     }
   }
 
-  JS::Rooted<JS::InstantiationStorage> storage(cx);
-  RefPtr<JS::Stencil> stencil =
-      JS::FinishDecodeStencilOffThread(cx, token, storage.address());
+  JS::InstantiationStorage storage;
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token, &storage);
   CHECK(stencil);
 
   CHECK(!JS::StencilIsBorrowed(stencil));
 
   JS::InstantiateOptions instantiateOptions;
-  JS::RootedScript script(
-      cx, JS::InstantiateGlobalStencil(cx, instantiateOptions, stencil,
-                                       storage.address()));
+  JS::RootedScript script(cx, JS::InstantiateGlobalStencil(
+                                  cx, instantiateOptions, stencil, &storage));
   CHECK(script);
 
   JS::RootedValue rval(cx);
@@ -751,7 +756,7 @@ BEGIN_TEST(testStencil_OffThreadDecodeBorrow) {
     }
   }
 
-  RefPtr<JS::Stencil> stencil = JS::FinishDecodeStencilOffThread(cx, token);
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
   CHECK(stencil);
 
   CHECK(JS::StencilIsBorrowed(stencil));
@@ -842,7 +847,7 @@ BEGIN_TEST(testStencil_OffThreadDecodePinned) {
     }
   }
 
-  RefPtr<JS::Stencil> stencil = JS::FinishDecodeStencilOffThread(cx, token);
+  RefPtr<JS::Stencil> stencil = JS::FinishOffThreadStencil(cx, token);
   CHECK(stencil);
 
   CHECK(JS::StencilIsBorrowed(stencil));

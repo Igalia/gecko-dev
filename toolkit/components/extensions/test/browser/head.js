@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { ClientEnvironmentBase } = ChromeUtils.import(
-  "resource://gre/modules/components-utils/ClientEnvironment.jsm"
+const { ClientEnvironmentBase } = ChromeUtils.importESModule(
+  "resource://gre/modules/components-utils/ClientEnvironment.sys.mjs"
 );
 
 const BACKGROUND =
@@ -113,7 +113,7 @@ function loadTestSubscript(filePath) {
  *
  * @returns {boolean} True if the window's background-color is set on :root
  *   rather than #navigator-toolbox.
- **/
+ */
 function backgroundColorSetOnRoot() {
   const os = ClientEnvironmentBase.os;
   if (!os.isWindows) {

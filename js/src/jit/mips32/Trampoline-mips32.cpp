@@ -13,9 +13,7 @@
 #include "jit/JitRuntime.h"
 #include "jit/JitSpewer.h"
 #include "jit/mips-shared/SharedICHelpers-mips-shared.h"
-#ifdef JS_ION_PERF
-#  include "jit/PerfSpewer.h"
-#endif
+#include "jit/PerfSpewer.h"
 #include "jit/VMFunctions.h"
 #include "vm/JitActivation.h"  // js::jit::JitActivation
 #include "vm/JSContext.h"
@@ -264,7 +262,7 @@ void JitRuntime::generateEnterJIT(JSContext* cx, MacroAssembler& masm) {
                   Address(StackPointer, sizeof(uintptr_t)));  // BaselineFrame
     masm.storePtr(reg_code, Address(StackPointer, 0));        // jitcode
 
-    using Fn = bool (*)(BaselineFrame * frame, InterpreterFrame * interpFrame,
+    using Fn = bool (*)(BaselineFrame* frame, InterpreterFrame* interpFrame,
                         uint32_t numStackValues);
     masm.setupUnalignedABICall(scratch);
     masm.passABIArg(FramePointer);  // BaselineFrame
@@ -396,8 +394,8 @@ void JitRuntime::generateInvalidator(MacroAssembler& masm, Label* bailoutTail) {
   // Pass pointer to BailoutInfo
   masm.movePtr(StackPointer, a2);
 
-  using Fn = bool (*)(InvalidationBailoutStack * sp, size_t * frameSizeOut,
-                      BaselineBailoutInfo * *info);
+  using Fn = bool (*)(InvalidationBailoutStack* sp, size_t* frameSizeOut,
+                      BaselineBailoutInfo** info);
   masm.setupAlignedABICall();
   masm.passABIArg(a0);
   masm.passABIArg(a1);
@@ -627,7 +625,7 @@ static void GenerateBailoutThunk(MacroAssembler& masm, Label* bailoutTail) {
   masm.storePtr(ImmPtr(nullptr), Address(StackPointer, 0));
   masm.movePtr(StackPointer, a1);
 
-  using Fn = bool (*)(BailoutStack * sp, BaselineBailoutInfo * *info);
+  using Fn = bool (*)(BailoutStack* sp, BaselineBailoutInfo** info);
   masm.setupAlignedABICall();
   masm.passABIArg(a0);
   masm.passABIArg(a1);
@@ -699,10 +697,11 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
   Register cxreg = a0;
   regs.take(cxreg);
 
-  // If it isn't a tail call, then the return address needs to be saved
-  if (f.expectTailCall == NonTailCall) {
-    masm.pushReturnAddress();
-  }
+  // On link-register platforms, it is the responsibility of the VM *callee* to
+  // push the return address, while the caller must ensure that the address
+  // is stored in ra on entry. This allows the VM wrapper to work with both
+  // direct calls and tail calls.
+  masm.pushReturnAddress();
 
   // We're aligned to an exit frame, so link it up.
   masm.loadJSContext(cxreg);
@@ -788,7 +787,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
         break;
       case VMFunctionData::WordByRef:
         masm.passABIArg(
-            MoveOperand(argsBase, argDisp, MoveOperand::EFFECTIVE_ADDRESS),
+            MoveOperand(argsBase, argDisp, MoveOperand::Kind::EffectiveAddress),
             MoveOp::GENERAL);
         argDisp += sizeof(uint32_t);
         break;
@@ -797,7 +796,7 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
         masm.ma_ldc1WordAligned(ScratchDoubleReg, argsBase, argDisp);
         masm.as_sdc1(ScratchDoubleReg, doubleArgs, doubleArgDisp);
         masm.passABIArg(MoveOperand(doubleArgs, doubleArgDisp,
-                                    MoveOperand::EFFECTIVE_ADDRESS),
+                                    MoveOperand::Kind::EffectiveAddress),
                         MoveOp::GENERAL);
         doubleArgDisp += sizeof(double);
         argDisp += sizeof(double);
@@ -810,9 +809,9 @@ bool JitRuntime::generateVMWrapper(JSContext* cx, MacroAssembler& masm,
 
   // Copy the implicit outparam, if any.
   if (f.outParam != Type_Void) {
-    masm.passABIArg(
-        MoveOperand(doubleArgs, outParamOffset, MoveOperand::EFFECTIVE_ADDRESS),
-        MoveOp::GENERAL);
+    masm.passABIArg(MoveOperand(doubleArgs, outParamOffset,
+                                MoveOperand::Kind::EffectiveAddress),
+                    MoveOp::GENERAL);
   }
 
   masm.callWithABI(nativeFun, MoveOp::GENERAL,

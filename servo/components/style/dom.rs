@@ -12,15 +12,14 @@ use crate::context::SharedStyleContext;
 #[cfg(feature = "gecko")]
 use crate::context::{PostAnimationTasks, UpdateAnimationsTasks};
 use crate::data::ElementData;
-use crate::font_metrics::FontMetricsProvider;
 use crate::media_queries::Device;
 use crate::properties::{AnimationDeclarations, ComputedValues, PropertyDeclarationBlock};
 use crate::selector_parser::{AttrValue, Lang, PseudoElement, SelectorImpl};
 use crate::shared_lock::{Locked, SharedRwLock};
 use crate::stylist::CascadeData;
-use crate::traversal_flags::TraversalFlags;
+use crate::values::computed::Display;
 use crate::values::AtomIdent;
-use crate::{LocalName, Namespace, WeakAtom};
+use crate::WeakAtom;
 use atomic_refcell::{AtomicRef, AtomicRefMut};
 use dom::ElementState;
 use selectors::matching::{QuirksMode, VisitedHandlingMode};
@@ -96,7 +95,7 @@ where
     #[inline]
     fn next(&mut self) -> Option<N> {
         let prev = self.previous.take()?;
-        self.previous = prev.next_in_preorder(Some(self.scope));
+        self.previous = prev.next_in_preorder(self.scope);
         self.previous
     }
 }
@@ -165,6 +164,7 @@ pub trait TNode: Sized + Copy + Clone + Debug + NodeInfo + PartialEq {
     fn owner_doc(&self) -> Self::ConcreteDocument;
 
     /// Iterate over the DOM children of a node.
+    #[inline(always)]
     fn dom_children(&self) -> DomChildren<Self> {
         DomChildren(self.first_child())
     }
@@ -173,6 +173,7 @@ pub trait TNode: Sized + Copy + Clone + Debug + NodeInfo + PartialEq {
     fn is_in_document(&self) -> bool;
 
     /// Iterate over the DOM children of a node, in preorder.
+    #[inline(always)]
     fn dom_descendants(&self) -> DomDescendants<Self> {
         DomDescendants {
             previous: Some(*self),
@@ -180,26 +181,29 @@ pub trait TNode: Sized + Copy + Clone + Debug + NodeInfo + PartialEq {
         }
     }
 
-    /// Returns the next children in pre-order, optionally scoped to a subtree
-    /// root.
+    /// Returns the next node after this one, in a pre-order tree-traversal of
+    /// the subtree rooted at scoped_to.
     #[inline]
-    fn next_in_preorder(&self, scoped_to: Option<Self>) -> Option<Self> {
+    fn next_in_preorder(&self, scoped_to: Self) -> Option<Self> {
         if let Some(c) = self.first_child() {
             return Some(c);
         }
 
-        let mut current = Some(*self);
+        let mut current = *self;
         loop {
             if current == scoped_to {
                 return None;
             }
 
-            debug_assert!(current.is_some(), "not a descendant of the scope?");
-            if let Some(s) = current?.next_sibling() {
+            if let Some(s) = current.next_sibling() {
                 return Some(s);
             }
 
-            current = current?.parent_node();
+            debug_assert!(
+                current.parent_node().is_some(),
+                "Not a descendant of the scope?"
+            );
+            current = current.parent_node()?;
         }
     }
 
@@ -210,6 +214,18 @@ pub trait TNode: Sized + Copy + Clone + Debug + NodeInfo + PartialEq {
     /// Get this node's parent element if present.
     fn parent_element(&self) -> Option<Self::ConcreteElement> {
         self.parent_node().and_then(|n| n.as_element())
+    }
+
+    /// Get this node's parent element, or shadow host if it's a shadow root.
+    fn parent_element_or_host(&self) -> Option<Self::ConcreteElement> {
+        let parent = self.parent_node()?;
+        if let Some(e) = parent.as_element() {
+            return Some(e);
+        }
+        if let Some(root) = parent.as_shadow_root() {
+            return Some(root.host());
+        }
+        None
     }
 
     /// Converts self into an `OpaqueNode`.
@@ -363,12 +379,6 @@ pub trait TElement:
     /// syntax.
     type TraversalChildrenIterator: Iterator<Item = Self::ConcreteNode>;
 
-    /// Type of the font metrics provider
-    ///
-    /// XXXManishearth It would be better to make this a type parameter on
-    /// ThreadLocalStyleContext and StyleContext
-    type FontMetricsProvider: FontMetricsProvider + Send;
-
     /// Get this element as a node.
     fn as_node(&self) -> Self::ConcreteNode;
 
@@ -381,10 +391,10 @@ pub trait TElement:
         true
     }
 
-    /// Whether this element should match user and author rules.
+    /// Whether this element should match user and content rules.
     ///
     /// We use this for Native Anonymous Content in Gecko.
-    fn matches_user_and_author_rules(&self) -> bool {
+    fn matches_user_and_content_rules(&self) -> bool {
         true
     }
 
@@ -502,9 +512,6 @@ pub trait TElement:
     /// Get this element's state, for non-tree-structural pseudos.
     fn state(&self) -> ElementState;
 
-    /// Whether this element has an attribute with a given namespace.
-    fn has_attr(&self, namespace: &Namespace, attr: &LocalName) -> bool;
-
     /// Returns whether this element has a `part` attribute.
     fn has_part_attr(&self) -> bool;
 
@@ -579,51 +586,6 @@ pub trait TElement:
     /// Flags this element as having handled already its snapshot.
     unsafe fn set_handled_snapshot(&self);
 
-    /// Returns whether the element's styles are up-to-date for |traversal_flags|.
-    fn has_current_styles_for_traversal(
-        &self,
-        data: &ElementData,
-        traversal_flags: TraversalFlags,
-    ) -> bool {
-        if traversal_flags.for_animation_only() {
-            // In animation-only restyle we never touch snapshots and don't care
-            // about them. But we can't assert '!self.handled_snapshot()'
-            // here since there are some cases that a second animation-only
-            // restyle which is a result of normal restyle (e.g. setting
-            // animation-name in normal restyle and creating a new CSS
-            // animation in a SequentialTask) is processed after the normal
-            // traversal in that we had elements that handled snapshot.
-            if !data.has_styles() {
-                return false;
-            }
-
-            if !data.hint.has_animation_hint_or_recascade() {
-                return true;
-            }
-
-            // FIXME: This should ideally always return false, but it is a hack
-            // to work around our weird animation-only traversal
-            // stuff: If we're display: none and the rules we could match could
-            // change, we consider our style up-to-date. This is because
-            // re-cascading with and old style doesn't guarantee returning the
-            // correct animation style (that's bug 1393323). So if our display
-            // changed, and it changed from display: none, we would incorrectly
-            // forget about it and wouldn't be able to correctly style our
-            // descendants later.
-            if data.styles.is_display_none() && data.hint.match_self() {
-                return true;
-            }
-
-            return false;
-        }
-
-        if self.has_snapshot() && !self.handled_snapshot() {
-            return false;
-        }
-
-        data.has_styles() && !data.hint.has_non_animation_invalidations()
-    }
-
     /// Returns whether the element's styles are up-to-date after traversal
     /// (i.e. in post traversal).
     fn has_current_styles(&self, data: &ElementData) -> bool {
@@ -686,11 +648,6 @@ pub trait TElement:
     ///
     /// Servo doesn't support visited styles yet.
     fn is_visited_link(&self) -> bool {
-        false
-    }
-
-    /// Returns true if this element is in a native anonymous subtree.
-    fn is_in_native_anonymous_subtree(&self) -> bool {
         false
     }
 
@@ -829,11 +786,8 @@ pub trait TElement:
         use crate::rule_collector::containing_shadow_ignoring_svg_use;
 
         let target = self.rule_hash_target();
-        if !target.matches_user_and_author_rules() {
-            return false;
-        }
-
-        let mut doc_rules_apply = true;
+        let matches_user_and_content_rules = target.matches_user_and_content_rules();
+        let mut doc_rules_apply = matches_user_and_content_rules;
 
         // Use the same rules to look for the containing host as we do for rule
         // collection.
@@ -881,9 +835,9 @@ pub trait TElement:
                         },
                         None => {
                             // TODO(emilio): Should probably distinguish with
-                            // MatchesDocumentRules::{No,Yes,IfPart} or
-                            // something so that we could skip some work.
-                            doc_rules_apply = true;
+                            // MatchesDocumentRules::{No,Yes,IfPart} or something so that we could
+                            // skip some work.
+                            doc_rules_apply = matches_user_and_content_rules;
                             break;
                         },
                     }
@@ -936,8 +890,13 @@ pub trait TElement:
     fn namespace(&self)
         -> &<SelectorImpl as selectors::parser::SelectorImpl>::BorrowedNamespaceUrl;
 
-    /// Returns the size of the primary box of the element.
-    fn primary_box_size(&self) -> euclid::default::Size2D<app_units::Au>;
+    /// Returns the size of the element to be used in container size queries.
+    /// This will usually be the size of the content area of the primary box,
+    /// but can be None if there is no box or if some axis lacks size containment.
+    fn query_container_size(
+        &self,
+        display: &Display,
+    ) -> euclid::default::Size2D<Option<app_units::Au>>;
 }
 
 /// TNode and TElement aren't Send because we want to be careful and explicit

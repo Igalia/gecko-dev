@@ -34,7 +34,7 @@ function do_state_written(aSubject, aTopic, aData) {
 
   let foundLegitSite = false;
   for (let line of lines) {
-    if (line.startsWith("frequentlyused.example.com:HSTS")) {
+    if (line.startsWith("frequentlyused.example.com")) {
       foundLegitSite = true;
       break;
     }
@@ -56,12 +56,9 @@ function do_state_read(aSubject, aTopic, aData) {
       Services.io.newURI("https://frequentlyused.example.com")
     )
   );
-  let secInfo = Cc[
-    "@mozilla.org/security/transportsecurityinfo;1"
-  ].createInstance(Ci.nsITransportSecurityInfo);
   for (let i = 0; i < 2000; i++) {
     let uri = Services.io.newURI("http://bad" + i + ".example.com");
-    gSSService.processHeader(uri, "max-age=1000", secInfo);
+    gSSService.processHeader(uri, "max-age=1000");
   }
   do_test_pending();
   Services.obs.addObserver(do_state_written, "data-storage-written");
@@ -78,8 +75,7 @@ function run_test() {
   ok(!stateFile.exists());
   let outputStream = FileUtils.openFileOutputStream(stateFile);
   let now = new Date().getTime();
-  let line =
-    "frequentlyused.example.com:HSTS\t4\t0\t" + (now + 100000) + ",1,0\n";
+  let line = "frequentlyused.example.com\t4\t0\t" + (now + 100000) + ",1,0\n";
   outputStream.write(line, line.length);
   outputStream.close();
   Services.obs.addObserver(do_state_read, "data-storage-ready");

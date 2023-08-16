@@ -25,6 +25,10 @@ enum PlacesEventType {
    */
   "bookmark-guid-changed",
   /**
+   * data: PlacesBookmarkKeyword. Fired whenever a bookmark keyword changes.
+   */
+  "bookmark-keyword-changed",
+  /**
    * data: PlacesBookmarkTags. Fired whenever tags of bookmark changes.
    */
   "bookmark-tags-changed",
@@ -114,6 +118,11 @@ interface PlacesVisit : PlacesEvent {
   readonly attribute ByteString pageGuid;
 
   /**
+   * The frecency of the this page.
+   */
+  readonly attribute long long frecency;
+
+  /**
    * Whether the visited page is marked as hidden.
    */
   readonly attribute boolean hidden;
@@ -195,8 +204,13 @@ dictionary PlacesBookmarkAdditionInit {
   required unsigned short source;
   required long index;
   required DOMString title;
+  required DOMString? tags;
   required unsigned long long dateAdded;
   required boolean isTagging;
+  required long long frecency;
+  required boolean hidden;
+  required unsigned long visitCount;
+  required unsigned long long? lastVisitDate;
 };
 
 [ChromeOnly, Exposed=Window]
@@ -214,9 +228,34 @@ interface PlacesBookmarkAddition : PlacesBookmark {
   readonly attribute DOMString title;
 
   /**
+   * The tags of the added item.
+   */
+  readonly attribute DOMString tags;
+
+  /**
    * The time that the item was added, in milliseconds from the epoch.
    */
   readonly attribute unsigned long long dateAdded;
+
+  /**
+   * The frecency of the page of this bookmark.
+   */
+  readonly attribute long long frecency;
+
+  /**
+   * Whether the visited page is marked as hidden.
+   */
+  readonly attribute boolean hidden;
+
+  /**
+   * Number of visits (including this one) for this URL.
+   */
+  readonly attribute unsigned long visitCount;
+
+  /**
+   * Date of the last visit, in milliseconds since epoch.
+   */
+  readonly attribute unsigned long long? lastVisitDate;
 };
 
 dictionary PlacesBookmarkRemovedInit {
@@ -263,6 +302,12 @@ dictionary PlacesBookmarkMovedInit {
   required long oldIndex;
   required unsigned short source;
   required boolean isTagging;
+  required DOMString title;
+  required DOMString? tags;
+  required long long frecency;
+  required boolean hidden;
+  required unsigned long visitCount;
+  required unsigned long long? lastVisitDate;
 };
 
 [ChromeOnly, Exposed=Window]
@@ -286,6 +331,36 @@ interface PlacesBookmarkMoved : PlacesBookmark {
    * The item's old index in the folder.
    */
   readonly attribute long oldIndex;
+
+  /**
+   * The title of the added item.
+   */
+  readonly attribute DOMString title;
+
+  /**
+   * The tags of the added item.
+   */
+  readonly attribute DOMString tags;
+
+  /**
+   * The frecency of the page of this bookmark.
+   */
+  readonly attribute long long frecency;
+
+  /**
+   * Whether the visited page is marked as hidden.
+   */
+  readonly attribute boolean hidden;
+
+  /**
+   * Number of visits (including this one) for this URL.
+   */
+  readonly attribute unsigned long visitCount;
+
+  /**
+   * Date of the last visit, in milliseconds since epoch.
+   */
+  readonly attribute unsigned long long? lastVisitDate;
 };
 
 [ChromeOnly, Exposed=Window]
@@ -310,6 +385,29 @@ dictionary PlacesBookmarkGuidInit {
 [ChromeOnly, Exposed=Window]
 interface PlacesBookmarkGuid : PlacesBookmarkChanged {
   constructor(PlacesBookmarkGuidInit initDict);
+};
+
+dictionary PlacesBookmarkKeywordInit {
+  required long long id;
+  required unsigned short itemType;
+  DOMString? url = null;
+  required ByteString guid;
+  required ByteString parentGuid;
+  required ByteString keyword;
+  required long long lastModified;
+  required unsigned short source;
+  required boolean isTagging;
+};
+
+[ChromeOnly, Exposed=Window]
+interface PlacesBookmarkKeyword : PlacesBookmarkChanged {
+  constructor(PlacesBookmarkKeywordInit initDict);
+
+  /**
+   * Keyword the bookmark has currently.
+   */
+  [Constant,Cached]
+  readonly attribute ByteString keyword;
 };
 
 dictionary PlacesBookmarkTagsInit {

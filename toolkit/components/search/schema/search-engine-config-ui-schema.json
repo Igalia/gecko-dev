@@ -8,7 +8,7 @@
     "telemetryId",
     "params",
     "extraParams",
-    "regionParams",
+    "suggestExtraParams",
     "appliesTo"
   ]
 }

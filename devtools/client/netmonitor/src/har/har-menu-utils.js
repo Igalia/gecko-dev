@@ -4,17 +4,21 @@
 
 "use strict";
 
-const { L10N } = require("devtools/client/netmonitor/src/utils/l10n");
+const {
+  L10N,
+} = require("resource://devtools/client/netmonitor/src/utils/l10n.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 
 loader.lazyRequireGetter(
   this,
   "HarExporter",
-  "devtools/client/netmonitor/src/har/har-exporter",
+  "resource://devtools/client/netmonitor/src/har/har-exporter.js",
   true
 );
 
-loader.lazyGetter(this, "HarImporter", function() {
-  return require("devtools/client/netmonitor/src/har/har-importer").HarImporter;
+loader.lazyGetter(this, "HarImporter", function () {
+  return require("resource://devtools/client/netmonitor/src/har/har-importer.js")
+    .HarImporter;
 });
 
 /**
@@ -24,8 +28,16 @@ var HarMenuUtils = {
   /**
    * Copy HAR from the network panel content to the clipboard.
    */
-  copyAllAsHar(requests, connector) {
-    return HarExporter.copy(this.getDefaultHarOptions(requests, connector));
+  async copyAllAsHar(requests, connector) {
+    const har = await HarExporter.copy(
+      this.getDefaultHarOptions(requests, connector)
+    );
+
+    // We cannot easily expect the clipboard content from tests, instead we emit
+    // a test event.
+    HarMenuUtils.emitForTests("copy-all-as-har-done", har);
+
+    return har;
   },
 
   /**
@@ -99,6 +111,8 @@ function readFile(file) {
     });
   });
 }
+
+EventEmitter.decorate(HarMenuUtils);
 
 // Exports from this module
 exports.HarMenuUtils = HarMenuUtils;

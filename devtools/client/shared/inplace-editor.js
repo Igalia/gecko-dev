@@ -21,20 +21,17 @@
 
 "use strict";
 
-const Services = require("Services");
 const focusManager = Services.focus;
-const { KeyCodes } = require("devtools/client/shared/keycodes");
-const EventEmitter = require("devtools/shared/event-emitter");
+const { KeyCodes } = require("resource://devtools/client/shared/keycodes.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
 const {
   findMostRelevantCssPropertyIndex,
-} = require("devtools/client/shared/suggestion-picker");
+} = require("resource://devtools/client/shared/suggestion-picker.js");
 
-loader.lazyRequireGetter(
-  this,
-  "AppConstants",
-  "resource://gre/modules/AppConstants.jsm",
-  true
-);
+const lazy = {};
+ChromeUtils.defineESModuleGetters(lazy, {
+  AppConstants: "resource://gre/modules/AppConstants.sys.mjs",
+});
 
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 const CONTENT_TYPES = {
@@ -52,7 +49,7 @@ const FOCUS_FORWARD = focusManager.MOVEFOCUS_FORWARD;
 const FOCUS_BACKWARD = focusManager.MOVEFOCUS_BACKWARD;
 
 const WORD_REGEXP = /\w/;
-const isWordChar = function(str) {
+const isWordChar = function (str) {
   return str && WORD_REGEXP.test(str);
 };
 
@@ -166,7 +163,7 @@ function isKeyIn(key, ...keys) {
  *       Defaults to false.
  */
 function editableField(options) {
-  return editableItem(options, function(element, event) {
+  return editableItem(options, function (element, event) {
     if (!options.element.inplaceEditor) {
       new InplaceEditor(options, event);
     }
@@ -192,7 +189,7 @@ exports.editableField = editableField;
 function editableItem(options, callback) {
   const trigger = options.trigger || "click";
   const element = options.element;
-  element.addEventListener(trigger, function(evt) {
+  element.addEventListener(trigger, function (evt) {
     if (evt.target.nodeName !== "a") {
       const win = this.ownerDocument.defaultView;
       const selection = win.getSelection();
@@ -207,7 +204,7 @@ function editableItem(options, callback) {
   // pressing enter or space.
   element.addEventListener(
     "keypress",
-    function(evt) {
+    function (evt) {
       if (evt.target.nodeName === "button") {
         return;
       }
@@ -223,9 +220,9 @@ function editableItem(options, callback) {
   // the editor is activated on click/mouseup.  This leads
   // to an ugly flash of the focus ring before showing the editor.
   // So hide the focus ring while the mouse is down.
-  element.addEventListener("mousedown", function(evt) {
+  element.addEventListener("mousedown", function (evt) {
     if (evt.target.nodeName !== "a") {
-      const cleanup = function() {
+      const cleanup = function () {
         element.style.removeProperty("outline-style");
         element.removeEventListener("mouseup", cleanup);
         element.removeEventListener("mouseout", cleanup);
@@ -722,7 +719,8 @@ InplaceEditor.prototype = {
    */
   _parseCSSValue(value, offset) {
     /* eslint-disable max-len */
-    const reSplitCSS = /(?<url>url\("?[^"\)]+"?\)?)|(?<rgb>rgba?\([^)]*\)?)|(?<hsl>hsla?\([^)]*\)?)|(?<hwb>hwb\([^)]*\)?)|(?<hex>#[\dA-Fa-f]+)|(?<number>-?\d*\.?\d+(%|[a-z]{1,4})?)|"([^"]*)"?|'([^']*)'?|([^,\s\/!\(\)]+)|(!(.*)?)/;
+    const reSplitCSS =
+      /(?<url>url\("?[^"\)]+"?\)?)|(?<rgb>rgba?\([^)]*\)?)|(?<hsl>hsla?\([^)]*\)?)|(?<hwb>hwb\([^)]*\)?)|(?<hex>#[\dA-Fa-f]+)|(?<number>-?\d*\.?\d+(%|[a-z]{1,4})?)|"([^"]*)"?|'([^']*)'?|([^,\s\/!\(\)]+)|(!(.*)?)/;
     /* eslint-enable */
     let start = 0;
     let m;
@@ -1369,7 +1367,7 @@ InplaceEditor.prototype = {
    */
   _getIncrement(event) {
     const getSmallIncrementKey = evt => {
-      if (AppConstants.platform === "macosx") {
+      if (lazy.AppConstants.platform === "macosx") {
         return evt.altKey;
       }
       return evt.ctrlKey;

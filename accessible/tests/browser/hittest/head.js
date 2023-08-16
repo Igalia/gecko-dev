@@ -4,11 +4,9 @@
 
 "use strict";
 
+/* exported CommonUtils, testChildAtPoint, Layout, hitTest, testOffsetAtPoint */
+
 // Load the shared-head file first.
-/* import-globals-from ../shared-head.js */
-
-/* exported CommonUtils, testChildAtPoint, Layout, hitTest */
-
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/accessible/tests/browser/shared-head.js",
   this
@@ -21,12 +19,12 @@ loadScripts(
   { name: "promisified-events.js", dir: MOCHITESTS_DIR }
 );
 
-const { CommonUtils } = ChromeUtils.import(
-  "chrome://mochitests/content/browser/accessible/tests/browser/Common.jsm"
+const { CommonUtils } = ChromeUtils.importESModule(
+  "chrome://mochitests/content/browser/accessible/tests/browser/Common.sys.mjs"
 );
 
-const { Layout } = ChromeUtils.import(
-  "chrome://mochitests/content/browser/accessible/tests/browser/Layout.jsm"
+const { Layout } = ChromeUtils.importESModule(
+  "chrome://mochitests/content/browser/accessible/tests/browser/Layout.sys.mjs"
 );
 
 function getChildAtPoint(container, x, y, findDeepestChild) {
@@ -37,7 +35,7 @@ function getChildAtPoint(container, x, y, findDeepestChild) {
   } catch (e) {
     // Failed to get child at point.
   }
-
+  info("could not get child at point");
   return null;
 }
 
@@ -45,19 +43,33 @@ async function testChildAtPoint(dpr, x, y, container, child, grandChild) {
   const [containerX, containerY] = Layout.getBounds(container, dpr);
   x += containerX;
   y += containerY;
+  let actual = null;
   await untilCacheIs(
-    () => getChildAtPoint(container, x, y, false),
+    () => {
+      actual = getChildAtPoint(container, x, y, false);
+      info(`Got direct child match of ${CommonUtils.prettyName(actual)}`);
+      return actual;
+    },
     child,
     `Wrong direct child accessible at the point (${x}, ${y}) of ${CommonUtils.prettyName(
       container
-    )}, sought ${child ? roleToString(child.role) : "unknown"}`
+    )}, sought ${CommonUtils.prettyName(
+      child
+    )} and got ${CommonUtils.prettyName(actual)}`
   );
+  actual = null;
   await untilCacheIs(
-    () => getChildAtPoint(container, x, y, true),
+    () => {
+      actual = getChildAtPoint(container, x, y, true);
+      info(`Got deepest child match of ${CommonUtils.prettyName(actual)}`);
+      return actual;
+    },
     grandChild,
     `Wrong deepest child accessible at the point (${x}, ${y}) of ${CommonUtils.prettyName(
       container
-    )}, sought ${grandChild ? roleToString(grandChild.role) : "unknown"}`
+    )}, sought ${CommonUtils.prettyName(
+      grandChild
+    )} and got ${CommonUtils.prettyName(actual)}`
   );
 }
 
@@ -78,13 +90,24 @@ async function hitTest(browser, container, child, grandChild) {
     child,
     `Wrong direct child accessible at the point (${x}, ${y}) of ${CommonUtils.prettyName(
       container
-    )}, sought ${child ? roleToString(child.role) : "unknown"}`
+    )}, sought ${CommonUtils.prettyName(child)}`
   );
   await untilCacheIs(
     () => getChildAtPoint(container, x, y, true),
     grandChild,
     `Wrong deepest child accessible at the point (${x}, ${y}) of ${CommonUtils.prettyName(
       container
-    )}, sought ${grandChild ? roleToString(grandChild.role) : "unknown"}`
+    )}, sought ${CommonUtils.prettyName(grandChild)}`
+  );
+}
+
+/**
+ * Test if getOffsetAtPoint returns the given text offset at given coordinates.
+ */
+async function testOffsetAtPoint(hyperText, x, y, coordType, expectedOffset) {
+  await untilCacheIs(
+    () => hyperText.getOffsetAtPoint(x, y, coordType),
+    expectedOffset,
+    `Wrong offset at given point (${x}, ${y}) for ${prettyName(hyperText)}`
   );
 }

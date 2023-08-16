@@ -1,58 +1,41 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2020 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
 /*---
 esid: sec-temporal.now.plaindatetime
 description: Observable interactions with the provided calendar-like object
-includes: [compareArray.js]
+includes: [compareArray.js, temporalHelpers.js]
 features: [Proxy, Temporal]
 ---*/
 
 const actual = [];
-const expectedWithout = [
-  'has calendar.calendar',
-  'get calendar.calendar',
-  'has nestedCalendar.calendar'
+const expected = [
+  "has calendar.dateAdd",
+  "has calendar.dateFromFields",
+  "has calendar.dateUntil",
+  "has calendar.day",
+  "has calendar.dayOfWeek",
+  "has calendar.dayOfYear",
+  "has calendar.daysInMonth",
+  "has calendar.daysInWeek",
+  "has calendar.daysInYear",
+  "has calendar.fields",
+  "has calendar.id",
+  "has calendar.inLeapYear",
+  "has calendar.mergeFields",
+  "has calendar.month",
+  "has calendar.monthCode",
+  "has calendar.monthDayFromFields",
+  "has calendar.monthsInYear",
+  "has calendar.weekOfYear",
+  "has calendar.year",
+  "has calendar.yearMonthFromFields",
+  "has calendar.yearOfWeek",
 ];
-const expectedWith = [
-  'has calendar.calendar',
-  'get calendar.calendar',
-  'has nestedCalendar.calendar',
-  'get nestedCalendar.Symbol(Symbol.toPrimitive)',
-  'get nestedCalendar.toString',
-  'call nestedCalendar.toString'
-];
-const nestedCalendar = new Proxy({
-  toString: function() {
-    actual.push('call nestedCalendar.toString');
-    return 'iso8601';
-  }
-}, {
-  has(target, property) {
-    actual.push(`has nestedCalendar.${String(property)}`);
-    return property in target;
-  },
-  get(target, property) {
-    actual.push(`get nestedCalendar.${String(property)}`);
-    return target[property];
-  },
-});
-const calendar = new Proxy({
-  calendar: nestedCalendar,
-  toString: function() {
-    actual.push('call calendar.toString');
-    return 'iso8601';
-  },
-}, {
-  has(target, property) {
-    actual.push(`has calendar.${String(property)}`);
-    return property in target;
-  },
-  get(target, property) {
-    actual.push(`get calendar.${String(property)}`);
-    return target[property];
-  },
+
+const calendar = TemporalHelpers.calendarObserver(actual, "calendar", {
+  toString: "iso8601",
 });
 
 Object.defineProperty(Temporal.Calendar, 'from', {
@@ -64,13 +47,6 @@ Object.defineProperty(Temporal.Calendar, 'from', {
 
 Temporal.Now.plainDateTime(calendar);
 
-assert.compareArray(actual, expectedWithout, 'Observable interactions without `calendar` property');
-
-actual.length = 0;
-nestedCalendar.calendar = null;
-
-Temporal.Now.plainDateTime(calendar);
-
-assert.compareArray(actual, expectedWith, 'Observable interactions with `calendar` property');
+assert.compareArray(actual, expected, 'order of observable operations');
 
 reportCompare(0, 0);

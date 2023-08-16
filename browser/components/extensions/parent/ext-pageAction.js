@@ -6,34 +6,20 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionTelemetry",
-  "resource://gre/modules/ExtensionTelemetry.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PageActions",
-  "resource:///modules/PageActions.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PanelPopup",
-  "resource:///modules/ExtensionPopups.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserUsageTelemetry",
-  "resource:///modules/BrowserUsageTelemetry.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  BrowserUsageTelemetry: "resource:///modules/BrowserUsageTelemetry.sys.mjs",
+  ExtensionTelemetry: "resource://gre/modules/ExtensionTelemetry.sys.mjs",
+  PageActions: "resource:///modules/PageActions.sys.mjs",
+  PanelPopup: "resource:///modules/ExtensionPopups.sys.mjs",
+});
 
 var { DefaultWeakMap } = ExtensionUtils;
 
-var { ExtensionParent } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionParent.jsm"
+var { ExtensionParent } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionParent.sys.mjs"
 );
-var { PageActionBase } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionActions.jsm"
+var { PageActionBase } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionActions.sys.mjs"
 );
 
 // WeakMap[Extension -> PageAction]
@@ -131,7 +117,7 @@ this.pageAction = class extends ExtensionAPIPersistent {
           id: widgetId,
           extensionID: extension.id,
           title: this.action.getProperty(null, "title"),
-          iconURL: this.action.getProperty(null, "title"),
+          iconURL: this.action.getProperty(null, "icon"),
           pinnedToUrlbar: this.action.getPinned(),
           disabled: !this.action.getProperty(null, "enabled"),
           onCommand: (event, buttonNode) => {

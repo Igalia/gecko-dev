@@ -3,26 +3,23 @@
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
-const { Ci } = require("chrome");
-const Services = require("Services");
 
-loader.lazyRequireGetter(this, "ChromeUtils");
 loader.lazyRequireGetter(
   this,
   "isRemoteBrowserElement",
-  "devtools/shared/layout/utils",
+  "resource://devtools/shared/layout/utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "HighlighterEnvironment",
-  "devtools/server/actors/highlighters",
+  "resource://devtools/server/actors/highlighters.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "RemoteNodePickerNotice",
-  "devtools/server/actors/highlighters/remote-node-picker-notice.js",
+  "resource://devtools/server/actors/highlighters/remote-node-picker-notice.js",
   true
 );
 
@@ -68,14 +65,6 @@ class NodePicker {
     // get events for  (e.g. elements with `pointer-events: none`).
     if (event.shiftKey) {
       node = this._findNodeAtMouseEventPosition(event) || node;
-    }
-
-    // The node picker should only surface elements valid for the current walker
-    // configuration. UserAgent shadow DOM should only be visible if
-    // showAllAnonymousContent is set to true. Otherwise, fallback to the host.
-    const shadowRoot = node.containingShadowRoot;
-    if (shadowRoot?.isUAWidget() && !this._walker.showAllAnonymousContent) {
-      node = shadowRoot.host;
     }
 
     return this._walker.attachElement(node);
@@ -140,7 +129,7 @@ class NodePicker {
   _isEventAllowed({ view }) {
     // Allow "non multiprocess" browser toolbox to inspect documents loaded in the parent
     // process (e.g. about:robots)
-    if (this._targetActor.window instanceof Ci.nsIDOMChromeWindow) {
+    if (this._targetActor.window.isChromeWindow) {
       return true;
     }
 

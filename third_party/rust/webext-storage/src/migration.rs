@@ -153,7 +153,7 @@ pub fn migrate(tx: &Transaction<'_>, filename: &Path) -> Result<MigrationInfo> {
 
 fn read_rows(filename: &Path) -> (Vec<LegacyRow>, MigrationInfo) {
     let flags = OpenFlags::SQLITE_OPEN_NO_MUTEX | OpenFlags::SQLITE_OPEN_READ_ONLY;
-    let src_conn = match Connection::open_with_flags(&filename, flags) {
+    let src_conn = match Connection::open_with_flags(filename, flags) {
         Ok(conn) => conn,
         Err(e) => {
             log::warn!("Failed to open the source DB: {}", e);
@@ -224,7 +224,7 @@ fn do_insert(tx: &Transaction<'_>, ext_id: &str, vals: Vec<(String, Value)>) -> 
     Ok(num_entries)
 }
 
-#[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct MigrationInfo {
     /// The number of entries (rows in the original table) we attempted to
     /// migrate. Zero if there was some error in computing this number.
@@ -295,7 +295,11 @@ impl MigrationInfo {
                     // Force test failure, but just log an error otherwise so that
                     // we commit the transaction that wil.
                     debug_assert!(false, "Failed to read migration JSON: {:?}", e);
-                    log::error!("Failed to read migration JSON: {}", e);
+                    error_support::report_error!(
+                        "webext-storage-migration-json",
+                        "Failed to read migration JSON: {}",
+                        e
+                    );
                     Ok(None)
                 }
             }
@@ -339,7 +343,7 @@ mod tests {
     {
         let tmpdir = tempdir().unwrap();
         let path = tmpdir.path().join("source.db");
-        init_source_db(&path, f);
+        init_source_db(path, f);
 
         // now migrate
         let mut db = new_mem_db();

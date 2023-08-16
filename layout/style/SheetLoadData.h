@@ -18,8 +18,9 @@
 #include "nsProxyRelease.h"
 
 namespace mozilla {
+class AsyncEventDispatcher;
 class StyleSheet;
-}
+}  // namespace mozilla
 class nsICSSLoaderObserver;
 class nsINode;
 class nsIPrincipal;
@@ -37,11 +38,11 @@ static_assert(eAuthorSheetFeatures == 0 && eUserSheetFeatures == 1 &&
               "sheet parsing mode constants won't fit "
               "in SheetLoadData::mParsingMode");
 
+enum class SyncLoad : bool { No, Yes };
+
 class SheetLoadData final
     : public PreloaderBase,
-      public SharedSubResourceCacheLoadingValueBase<SheetLoadData>,
-      public nsIRunnable,
-      public nsIThreadObserver {
+      public SharedSubResourceCacheLoadingValueBase<SheetLoadData> {
   using MediaMatched = dom::LinkStyle::MediaMatched;
   using IsAlternate = dom::LinkStyle::IsAlternate;
   using UseSystemPrincipal = css::Loader::UseSystemPrincipal;
@@ -58,30 +59,26 @@ class SheetLoadData final
   void StartPendingLoad();
 
   // Data for loading a sheet linked from a document
-  SheetLoadData(css::Loader* aLoader, const nsAString& aTitle, nsIURI* aURI,
-                StyleSheet* aSheet, bool aSyncLoad, nsINode* aOwningNode,
-                IsAlternate aIsAlternate, MediaMatched aMediaMatched,
-                StylePreloadKind aPreloadKind, nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+  SheetLoadData(css::Loader*, const nsAString& aTitle, nsIURI*, StyleSheet*,
+                SyncLoad, nsINode* aOwningNode, IsAlternate, MediaMatched,
+                StylePreloadKind, nsICSSLoaderObserver* aObserver,
+                nsIPrincipal* aTriggeringPrincipal, nsIReferrerInfo*);
 
   // Data for loading a sheet linked from an @import rule
-  SheetLoadData(css::Loader* aLoader, nsIURI* aURI, StyleSheet* aSheet,
-                SheetLoadData* aParentData, nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+  SheetLoadData(css::Loader*, nsIURI*, StyleSheet*, SheetLoadData* aParentData,
+                nsICSSLoaderObserver* aObserver,
+                nsIPrincipal* aTriggeringPrincipal, nsIReferrerInfo*);
 
   // Data for loading a non-document sheet
-  SheetLoadData(css::Loader* aLoader, nsIURI* aURI, StyleSheet* aSheet,
-                bool aSyncLoad, UseSystemPrincipal, StylePreloadKind,
+  SheetLoadData(css::Loader*, nsIURI*, StyleSheet*, SyncLoad,
+                UseSystemPrincipal, StylePreloadKind,
                 const Encoding* aPreloadEncoding,
                 nsICSSLoaderObserver* aObserver,
-                nsIPrincipal* aTriggeringPrincipal,
-                nsIReferrerInfo* aReferrerInfo);
+                nsIPrincipal* aTriggeringPrincipal, nsIReferrerInfo*);
 
   nsIReferrerInfo* ReferrerInfo() const { return mReferrerInfo; }
 
-  void ScheduleLoadEventIfNeeded();
+  already_AddRefed<AsyncEventDispatcher> PrepareLoadEventIfNeeded();
 
   NotNull<const Encoding*> DetermineNonBOMEncoding(const nsACString& aSegment,
                                                    nsIChannel*) const;
@@ -93,8 +90,6 @@ class SheetLoadData final
                                    nsIChannel* aChannel);
 
   NS_DECL_ISUPPORTS
-  NS_DECL_NSIRUNNABLE
-  NS_DECL_NSITHREADOBSERVER
 
   css::Loader& Loader() { return *mLoader; }
 
@@ -148,6 +143,11 @@ class SheetLoadData final
   // mIsBeingParsed is true if this stylesheet is currently being parsed.
   bool mIsBeingParsed : 1;
 
+  // mIsLoading is set to true when a sheet load is initiated. This field is
+  // also used by the SharedSubResourceCache to avoid having multiple loads for
+  // the same resource.
+  bool mIsLoading : 1;
+
   // mIsCancelled is set to true when a sheet load is stopped by
   // Stop() or StopLoadingSheet() (which was removed in Bug 556446).
   // SheetLoadData::OnStreamComplete() checks this to avoid parsing
@@ -158,7 +158,8 @@ class SheetLoadData final
   // the original function call that started the load has returned.
   // This applies only to observer notifications; load/error events
   // are fired for any SheetLoadData that has a non-null
-  // mOwningNodeBeforeLoadEvent.
+  // mOwningNodeBeforeLoadEvent (though mMustNotify is used to avoid an event
+  // loop round-trip in that case).
   bool mMustNotify : 1;
 
   // mWasAlternate is true if the sheet was an alternate when the load data was
@@ -226,13 +227,11 @@ class SheetLoadData final
   // The quirks mode of the loader at the time the load was triggered.
   const nsCompatibility mCompatMode;
 
-#ifdef MOZ_DIAGNOSTIC_ASSERT_ENABLED
   // Whether SheetComplete was called.
   bool mSheetCompleteCalled = false;
   // Whether we intentionally are not calling SheetComplete because nobody is
   // listening for the load.
   bool mIntentionallyDropped = false;
-#endif
 
   bool ShouldDefer() const { return mWasAlternate || !mMediaMatched; }
 
@@ -253,30 +252,31 @@ class SheetLoadData final
   bool IsPreload() const { return mPreloadKind != StylePreloadKind::None; }
   bool IsLinkRelPreload() const { return css::IsLinkRelPreload(mPreloadKind); }
 
-  bool BlocksLoadEvent() const { return !RootLoadData().IsLinkRelPreload(); }
+  bool BlocksLoadEvent() const {
+    const auto& root = RootLoadData();
+    return !root.IsLinkRelPreload() && !root.IsSyncLoad();
+  }
+
+  bool IsSyncLoad() const override { return mSyncLoad; }
+  bool IsLoading() const override { return mIsLoading; }
+  bool IsCancelled() const override { return mIsCancelled; }
+
+  void StartLoading() override { mIsLoading = true; }
+  void SetLoadCompleted() override { mIsLoading = false; }
+  void Cancel() override { mIsCancelled = true; }
 
  private:
   const SheetLoadData& RootLoadData() const {
-    auto* top = this;
+    const auto* top = this;
     while (top->mParentData) {
       top = top->mParentData;
     }
     return *top;
   }
-
-  void FireLoadEvent(nsIThreadInternal* aThread);
 };
 
 using SheetLoadDataHolder = nsMainThreadPtrHolder<SheetLoadData>;
 
 }  // namespace mozilla::css
-
-/**
- * Casting SheetLoadData to nsISupports is ambiguous.
- * This method handles that.
- */
-inline nsISupports* ToSupports(mozilla::css::SheetLoadData* p) {
-  return NS_ISUPPORTS_CAST(nsIRunnable*, p);
-}
 
 #endif  // mozilla_css_SheetLoadData_h

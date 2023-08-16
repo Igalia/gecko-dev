@@ -22,9 +22,11 @@
 #include "nsWindowGfx.h"
 #include "nsAppRunner.h"
 #include <windows.h>
+#include <shellapi.h>
 #include "gfxEnv.h"
 #include "gfxImageSurface.h"
 #include "gfxUtils.h"
+#include "gfxConfig.h"
 #include "gfxWindowsSurface.h"
 #include "gfxWindowsPlatform.h"
 #include "gfxDWriteFonts.h"
@@ -40,6 +42,8 @@
 #include "nsIWidgetListener.h"
 #include "mozilla/Unused.h"
 #include "nsDebug.h"
+#include "WindowRenderer.h"
+#include "mozilla/layers/WebRenderLayerManager.h"
 
 #include "mozilla/gfx/GPUProcessManager.h"
 #include "mozilla/layers/CompositorBridgeParent.h"
@@ -71,9 +75,6 @@ extern mozilla::LazyLogModule gWindowsLog;
  * SECTION: nsWindow statics
  *
  **************************************************************/
-
-static UniquePtr<uint8_t[]> sSharedSurfaceData;
-static IntSize sSharedSurfaceSize;
 
 struct IconMetrics {
   int32_t xMetric;
@@ -174,18 +175,35 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
   KnowsCompositor* knowsCompositor = renderer->AsKnowsCompositor();
   WebRenderLayerManager* layerManager = renderer->AsWebRender();
 
-  // Clear window by transparent black when compositor window is used in GPU
-  // process and non-client area rendering by DWM is enabled.
-  // It is for showing non-client area rendering. See nsWindow::UpdateGlass().
-  if (HasGlass() && knowsCompositor && knowsCompositor->GetUseCompositorWnd()) {
+  if (mClearNCEdge) {
+    // We need to clear this edge of the non-client region to black (once).
     HDC hdc;
     RECT rect;
     hdc = ::GetWindowDC(mWnd);
     ::GetWindowRect(mWnd, &rect);
     ::MapWindowPoints(nullptr, mWnd, (LPPOINT)&rect, 2);
+    switch (mClearNCEdge.value()) {
+      case ABE_TOP:
+        rect.bottom = rect.top + kHiddenTaskbarSize;
+        break;
+      case ABE_LEFT:
+        rect.right = rect.left + kHiddenTaskbarSize;
+        break;
+      case ABE_BOTTOM:
+        rect.top = rect.bottom - kHiddenTaskbarSize;
+        break;
+      case ABE_RIGHT:
+        rect.left = rect.right - kHiddenTaskbarSize;
+        break;
+      default:
+        MOZ_ASSERT_UNREACHABLE("Invalid edge value");
+        break;
+    }
     ::FillRect(hdc, &rect,
-               reinterpret_cast<HBRUSH>(GetStockObject(BLACK_BRUSH)));
-    ReleaseDC(mWnd, hdc);
+               reinterpret_cast<HBRUSH>(::GetStockObject(BLACK_BRUSH)));
+    ::ReleaseDC(mWnd, hdc);
+
+    mClearNCEdge.reset();
   }
 
   if (knowsCompositor && layerManager &&
@@ -197,7 +215,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
   mLastPaintBounds = mBounds;
 
   if (!aDC && (renderer->GetBackendType() == LayersBackend::LAYERS_NONE) &&
-      (eTransparencyTransparent == mTransparencyMode)) {
+      (TransparencyMode::Transparent == mTransparencyMode)) {
     // For layered translucent windows all drawing should go to memory DC and no
     // WM_PAINT messages are normally generated. To support asynchronous
     // painting we force generation of WM_PAINT messages by invalidating window
@@ -216,7 +234,8 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
   HDC hDC = aDC ? aDC : (::BeginPaint(mWnd, &ps));
   mPaintDC = hDC;
 
-  bool forceRepaint = aDC || (eTransparencyTransparent == mTransparencyMode);
+  bool forceRepaint =
+      aDC || (TransparencyMode::Transparent == mTransparencyMode);
   LayoutDeviceIntRegion region = GetRegionToPaint(forceRepaint, ps, hDC);
 
   if (knowsCompositor && layerManager) {
@@ -258,7 +277,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
         RefPtr<gfxASurface> targetSurface;
 
         // don't support transparency for non-GDI rendering, for now
-        if (eTransparencyTransparent == mTransparencyMode) {
+        if (TransparencyMode::Transparent == mTransparencyMode) {
           // This mutex needs to be held when EnsureTransparentSurface is
           // called.
           MutexAutoLock lock(mBasicLayersSurface->GetTransparentSurfaceLock());
@@ -267,7 +286,7 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
 
         RefPtr<gfxWindowsSurface> targetSurfaceWin;
         if (!targetSurface) {
-          uint32_t flags = (mTransparencyMode == eTransparencyOpaque)
+          uint32_t flags = (mTransparencyMode == TransparencyMode::Opaque)
                                ? 0
                                : gfxWindowsSurface::FLAG_IS_TRANSPARENT;
           targetSurfaceWin = new gfxWindowsSurface(hDC, flags);
@@ -293,30 +312,27 @@ bool nsWindow::OnPaint(HDC aDC, uint32_t aNestingLevel) {
         // don't need to double buffer with anything but GDI
         BufferMode doubleBuffering = mozilla::layers::BufferMode::BUFFER_NONE;
         switch (mTransparencyMode) {
-          case eTransparencyGlass:
-          case eTransparencyBorderlessGlass:
-          default:
-            // If we're not doing translucency, then double buffer
-            doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
-            break;
-          case eTransparencyTransparent:
+          case TransparencyMode::Transparent:
             // If we're rendering with translucency, we're going to be
             // rendering the whole window; make sure we clear it first
             dt->ClearRect(
                 Rect(0.f, 0.f, dt->GetSize().width, dt->GetSize().height));
             break;
+          default:
+            // If we're not doing translucency, then double buffer
+            doubleBuffering = mozilla::layers::BufferMode::BUFFERED;
+            break;
         }
 
-        RefPtr<gfxContext> thebesContext = gfxContext::CreateOrNull(dt);
-        MOZ_ASSERT(thebesContext);  // already checked draw target above
+        gfxContext thebesContext(dt);
 
         {
-          AutoLayerManagerSetup setupLayerManager(this, thebesContext,
+          AutoLayerManagerSetup setupLayerManager(this, &thebesContext,
                                                   doubleBuffering);
           result = listener->PaintWindow(this, region);
         }
 
-        if (eTransparencyTransparent == mTransparencyMode) {
+        if (TransparencyMode::Transparent == mTransparencyMode) {
           // Data from offscreen drawing surface was copied to memory bitmap of
           // transparent bitmap. Now it can be read from memory bitmap to apply
           // alpha channel and after that displayed on the screen.
@@ -361,7 +377,7 @@ bool nsWindow::NeedsToTrackWindowOcclusionState() {
     return false;
   }
 
-  if (mCompositorSession && mWindowType == eWindowType_toplevel) {
+  if (mCompositorSession && mWindowType == WindowType::TopLevel) {
     return true;
   }
 
@@ -404,6 +420,12 @@ void nsWindow::NotifyOcclusionState(mozilla::widget::OcclusionState aState) {
 }
 
 void nsWindow::MaybeEnableWindowOcclusion(bool aEnable) {
+  // WindowOcclusion is enabled/disabled only when compositor session exists.
+  // See nsWindow::NeedsToTrackWindowOcclusionState().
+  if (!mCompositorSession) {
+    return;
+  }
+
   bool enabled = gfxConfig::IsEnabled(gfx::Feature::WINDOW_OCCLUSION);
 
   if (aEnable) {

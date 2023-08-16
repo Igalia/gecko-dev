@@ -138,7 +138,7 @@ addAccessibleTask(
   <img id="click" src="http://example.com/a11y/accessible/tests/mochitest/moz.png"
        alt="A third image of Mozilla logo" onclick="alert('Clicked, too!');"/>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     // Test non-linked image
     await testCoordinates(docAcc, "nonLinkedImage", 89, 38);
 
@@ -170,7 +170,7 @@ addAccessibleTask(
   <br>Linked image:<br>
   <a href="http://www.mozilla.org"><img id="linkedImage" src="http://example.com/a11y/accessible/tests/mochitest/moz.png"></a>
   `,
-  async function(browser, docAcc) {
+  async function (browser, docAcc) {
     const imgAcc = findAccessibleChildByID(docAcc, "linkedImage", [
       Ci.nsIAccessibleImage,
     ]);
@@ -181,14 +181,14 @@ addAccessibleTask(
       imgNode.style = "margin-left: 1000px; margin-top: 500px;";
     });
 
-    untilCacheOk(() => {
+    await untilCacheOk(() => {
       return origCachedBounds != getCachedBounds(imgAcc);
     }, "Cached bounds update after mutation");
   },
   {
     // We can only access the `cache` attribute of an accessible when
     // the cache is enabled and we're in a remote browser.
-    topLevel: isCacheEnabled,
-    iframe: isCacheEnabled,
+    topLevel: true,
+    iframe: true,
   }
 );

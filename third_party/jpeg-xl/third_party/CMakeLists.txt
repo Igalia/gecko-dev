@@ -21,6 +21,7 @@ set(HWY_SYSTEM_GTEST ON CACHE INTERNAL "")
 set(HWY_FORCE_STATIC_LIBS ON CACHE INTERNAL "")
 set(HWY_ENABLE_CONTRIB OFF CACHE INTERNAL "")
 set(HWY_ENABLE_EXAMPLES OFF CACHE INTERNAL "")
+set(HWY_ENABLE_TESTS OFF CACHE INTERNAL "")
 if((SANITIZER STREQUAL "asan") OR (SANITIZER STREQUAL "msan"))
   set(HWY_ENABLE_INSTALL OFF CACHE INTERNAL "")
 endif()
@@ -30,7 +31,7 @@ if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/highway/CMakeLists.txt" AND
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/highway/LICENSE"
                  ${PROJECT_BINARY_DIR}/LICENSE.highway COPYONLY)
 else()
-  find_package(HWY 0.15.0)
+  find_package(HWY 1.0.0)
   if (NOT HWY_FOUND)
     message(FATAL_ERROR
         "Highway library (hwy) not found. Install libhwy-dev or download it "
@@ -61,19 +62,40 @@ if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/brotli/c/include/brotli/decode.h" OR
 else()
   # Compile brotli from sources.
   set(BROTLI_DISABLE_TESTS ON CACHE STRING "Disable Brotli tests")
-  add_subdirectory(brotli EXCLUDE_FROM_ALL)
+  # Override default "no-install" policy.
+  if((NOT SANITIZER STREQUAL "asan") AND (NOT SANITIZER STREQUAL "msan"))
+    set(BROTLI_BUNDLED_MODE OFF CACHE INTERNAL "")
+  endif()
+  add_subdirectory(brotli)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/brotli/LICENSE"
                  ${PROJECT_BINARY_DIR}/LICENSE.brotli COPYONLY)
-  if(BROTLI_EMSCRIPTEN)
-    # Brotli only defines the -static targets when using emscripten.
-    foreach(brlib IN ITEMS brotlienc brotlidec brotlicommon)
-      add_library(${brlib} ALIAS ${brlib}-static)
-    endforeach()
-  endif()  # BROTLI_EMSCRIPTEN
+  if(APPLE)
+    if(NOT DEFINED CMAKE_MACOSX_RPATH)
+      # Use @rpath in install_name when CMAKE_MACOSX_RPATH is not set.
+      set_property(TARGET brotlienc PROPERTY MACOSX_RPATH TRUE)
+      set_property(TARGET brotlidec PROPERTY MACOSX_RPATH TRUE)
+      set_property(TARGET brotlicommon PROPERTY MACOSX_RPATH TRUE)
+    endif()
+    if((NOT DEFINED CMAKE_MACOSX_RPATH) OR CMAKE_MACOSX_RPATH)
+      # Set library search path when @rpath is used.
+      if(NOT DEFINED CMAKE_INSTALL_RPATH)
+        set_property(TARGET brotlienc PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+        set_property(TARGET brotlidec PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+        set_property(TARGET brotlicommon PROPERTY INSTALL_RPATH "${CMAKE_INSTALL_PREFIX}/lib")
+      endif()
+    else()
+      # Set conventional install_name when @rpath is not used.
+      if(NOT DEFINED CMAKE_INSTALL_NAME_DIR)
+        set_property(TARGET brotlienc PROPERTY INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib")
+        set_property(TARGET brotlidec PROPERTY INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib")
+        set_property(TARGET brotlicommon PROPERTY INSTALL_NAME_DIR "${CMAKE_INSTALL_PREFIX}/lib")
+      endif()
+    endif()
+  endif()  # APPLE
 endif()
 
 # *cms
-if (JPEGXL_ENABLE_SKCMS OR JPEGXL_ENABLE_PLUGINS)
+if (JPEGXL_ENABLE_SKCMS)
   if( NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/skcms/skcms.h" )
     message(FATAL_ERROR "Please run ${PROJECT_SOURCE_DIR}/deps.sh to fetch the "
             "build dependencies.")
@@ -82,7 +104,7 @@ if (JPEGXL_ENABLE_SKCMS OR JPEGXL_ENABLE_PLUGINS)
   configure_file("${CMAKE_CURRENT_SOURCE_DIR}/skcms/LICENSE"
                  ${PROJECT_BINARY_DIR}/LICENSE.skcms COPYONLY)
 endif ()
-if (JPEGXL_ENABLE_VIEWERS OR NOT JPEGXL_ENABLE_SKCMS)
+if (JPEGXL_ENABLE_VIEWERS OR NOT JPEGXL_ENABLE_SKCMS OR JPEGXL_ENABLE_PLUGINS)
   if( NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/lcms/.git" OR JPEGXL_FORCE_SYSTEM_LCMS2 )
     find_package(LCMS2 2.13)
     if ( NOT LCMS2_FOUND )
@@ -96,7 +118,7 @@ if (JPEGXL_ENABLE_VIEWERS OR NOT JPEGXL_ENABLE_SKCMS)
 endif()
 
 # libpng
-if (JPEGXL_EMSCRIPTEN)
+if (JPEGXL_BUNDLE_LIBPNG AND JPEGXL_EMSCRIPTEN)
   if (NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/libpng/CMakeLists.txt")
   message(FATAL_ERROR "Please run ${PROJECT_SOURCE_DIR}/deps.sh to fetch the "
           "build dependencies.")

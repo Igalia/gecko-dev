@@ -6,8 +6,6 @@ const SplitBox = require("devtools/client/shared/components/splitter/SplitBox");
 
 import React, { Component } from "react";
 import PropTypes from "prop-types";
-import classnames from "classnames";
-import { isGeneratedId } from "devtools-source-map";
 import { connect } from "../../utils/connect";
 
 import actions from "../../actions";
@@ -21,16 +19,14 @@ import {
   getShouldPauseOnCaughtExceptions,
   getThreads,
   getCurrentThread,
-  getThreadContext,
   getPauseReason,
   getShouldBreakpointsPaneOpenOnPause,
-  getLocationSource,
   getSkipPausing,
   shouldLogEventBreakpoints,
 } from "../../selectors";
 
 import AccessibleImage from "../shared/AccessibleImage";
-import { prefs, features } from "../../utils/prefs";
+import { prefs } from "../../utils/prefs";
 
 import Breakpoints from "./Breakpoints";
 import Expressions from "./Expressions";
@@ -44,6 +40,8 @@ import DOMMutationBreakpoints from "./DOMMutationBreakpoints";
 import WhyPaused from "./WhyPaused";
 
 import Scopes from "./Scopes";
+
+const classnames = require("devtools/client/shared/classnames.js");
 
 import "./SecondaryPanes.css";
 
@@ -75,8 +73,7 @@ class SecondaryPanes extends Component {
 
   static get propTypes() {
     return {
-      cx: PropTypes.object.isRequired,
-      evaluateExpressions: PropTypes.func.isRequired,
+      evaluateExpressionsForCurrentContext: PropTypes.func.isRequired,
       expressions: PropTypes.array.isRequired,
       hasFrames: PropTypes.bool.isRequired,
       horizontal: PropTypes.bool.isRequired,
@@ -95,7 +92,7 @@ class SecondaryPanes extends Component {
       toggleEventLogging: PropTypes.func.isRequired,
       resetBreakpointsPaneState: PropTypes.func.isRequired,
       toggleMapScopes: PropTypes.func.isRequired,
-      workers: PropTypes.array.isRequired,
+      threads: PropTypes.array.isRequired,
       removeAllBreakpoints: PropTypes.func.isRequired,
       removeAllXHRBreakpoints: PropTypes.func.isRequired,
     };
@@ -118,7 +115,7 @@ class SecondaryPanes extends Component {
         debugBtn(
           evt => {
             evt.stopPropagation();
-            this.props.evaluateExpressions(this.props.cx);
+            this.props.evaluateExpressionsForCurrentContext();
           },
           "refresh",
           "active",
@@ -173,7 +170,7 @@ class SecondaryPanes extends Component {
       debugBtn(
         evt => {
           evt.stopPropagation();
-          this.props.removeAllBreakpoints(this.props.cx);
+          this.props.removeAllBreakpoints();
         },
         "removeAll",
         "active",
@@ -200,7 +197,7 @@ class SecondaryPanes extends Component {
 
     if (
       !selectedFrame ||
-      isGeneratedId(selectedFrame.location.sourceId) ||
+      !selectedFrame.location.source.isOriginal ||
       source?.isPrettyPrinted
     ) {
       return null;
@@ -309,9 +306,9 @@ class SecondaryPanes extends Component {
       header: L10N.getStr("threadsHeader"),
       className: "threads-pane",
       component: <Threads />,
-      opened: prefs.workersVisible,
+      opened: prefs.threadsVisible,
       onToggle: opened => {
-        prefs.workersVisible = opened;
+        prefs.threadsVisible = opened;
       },
     };
   }
@@ -388,7 +385,7 @@ class SecondaryPanes extends Component {
     const { horizontal, hasFrames } = this.props;
 
     if (horizontal) {
-      if (features.workers && this.props.workers.length > 0) {
+      if (this.props.threads.length) {
         items.push(this.getThreadsItem());
       }
 
@@ -404,17 +401,11 @@ class SecondaryPanes extends Component {
       }
     }
 
-    if (features.xhrBreakpoints) {
-      items.push(this.getXHRItem());
-    }
+    items.push(this.getXHRItem());
 
-    if (features.eventListenersBreakpoints) {
-      items.push(this.getEventListenersItem());
-    }
+    items.push(this.getEventListenersItem());
 
-    if (features.domMutationBreakpoints) {
-      items.push(this.getDOMMutationsItem());
-    }
+    items.push(this.getDOMMutationsItem());
 
     return items;
   }
@@ -425,7 +416,7 @@ class SecondaryPanes extends Component {
     }
 
     const items = [];
-    if (features.workers && this.props.workers.length > 0) {
+    if (this.props.threads.length) {
       items.push(this.getThreadsItem());
     }
 
@@ -513,7 +504,6 @@ const mapStateToProps = state => {
   );
 
   return {
-    cx: getThreadContext(state),
     expressions: getExpressions(state),
     hasFrames: !!getTopFrame(state, thread),
     renderWhyPauseDelay: getRenderWhyPauseDelay(state, thread),
@@ -521,10 +511,10 @@ const mapStateToProps = state => {
     mapScopesEnabled: isMapScopesEnabled(state),
     shouldPauseOnExceptions: getShouldPauseOnExceptions(state),
     shouldPauseOnCaughtExceptions: getShouldPauseOnCaughtExceptions(state),
-    workers: getThreads(state),
+    threads: getThreads(state),
     skipPausing: getSkipPausing(state),
     logEventBreakpoints: shouldLogEventBreakpoints(state),
-    source: selectedFrame && getLocationSource(state, selectedFrame.location),
+    source: selectedFrame && selectedFrame.location.source,
     pauseReason: pauseReason?.type ?? "",
     shouldBreakpointsPaneOpenOnPause,
     thread,
@@ -532,7 +522,8 @@ const mapStateToProps = state => {
 };
 
 export default connect(mapStateToProps, {
-  evaluateExpressions: actions.evaluateExpressions,
+  evaluateExpressionsForCurrentContext:
+    actions.evaluateExpressionsForCurrentContext,
   pauseOnExceptions: actions.pauseOnExceptions,
   toggleMapScopes: actions.toggleMapScopes,
   breakOnNext: actions.breakOnNext,

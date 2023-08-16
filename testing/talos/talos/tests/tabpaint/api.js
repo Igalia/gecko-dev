@@ -20,16 +20,10 @@
  *    for certain types of links (_blank links for example) to open new tabs.
  */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "TalosParentProfiler",
-  "resource://talos-powers/TalosParentProfiler.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  TalosParentProfiler: "resource://talos-powers/TalosParentProfiler.sys.mjs",
+});
 
 const REDUCE_MOTION_PREF = "ui.prefersReducedMotion";
 const MULTI_OPT_OUT_PREF = "dom.ipc.multiOptOut";
@@ -137,10 +131,12 @@ this.tabpaint = class extends ExtensionAPI {
 
     gBrowser.selectedTab = gBrowser.addTab(
       //win.performance.now() + win.performance.timing.navigationStart gives the UNIX timestamp.
-      `${target}?${win.performance.now() +
-        win.performance.timing.navigationStart}`,
+      `${target}?${
+        win.performance.now() + win.performance.timing.navigationStart
+      }`,
       {
-        triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(),
+        triggeringPrincipal:
+          Services.scriptSecurityManager.getSystemPrincipal(),
       }
     );
 

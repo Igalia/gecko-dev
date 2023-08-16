@@ -23,18 +23,23 @@
 namespace mozilla {
 namespace net {
 
+Http3StreamBase::Http3StreamBase(nsAHttpTransaction* trans,
+                                 Http3Session* session)
+    : mTransaction(trans), mSession(session) {}
+
+Http3StreamBase::~Http3StreamBase() = default;
+
 Http3Stream::Http3Stream(nsAHttpTransaction* httpTransaction,
                          Http3Session* session, const ClassOfService& cos,
-                         uint64_t bcId)
-    : mSession(session),
-      mTransaction(httpTransaction),
-      mCurrentTopBrowsingContextId(bcId) {
+                         uint64_t currentBrowserId)
+    : Http3StreamBase(httpTransaction, session),
+      mCurrentBrowserId(currentBrowserId) {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG3(("Http3Stream::Http3Stream [this=%p]", this));
 
   nsHttpTransaction* trans = mTransaction->QueryHttpTransaction();
   if (trans) {
-    mTransactionTabId = trans->TopBrowsingContextId();
+    mTransactionBrowserId = trans->BrowserId();
   }
 
   SetPriority(cos.Flags());
@@ -44,6 +49,8 @@ Http3Stream::Http3Stream(nsAHttpTransaction* httpTransaction,
 void Http3Stream::Close(nsresult aResult) {
   mRecvState = RECV_DONE;
   mTransaction->Close(aResult);
+  // Clear the mSession to break the cycle.
+  mSession = nullptr;
 }
 
 bool Http3Stream::GetHeadersString(const char* buf, uint32_t avail,
@@ -135,12 +142,12 @@ nsresult Http3Stream::TryActivating() {
                                  mFlatHttpRequestHeaders, &mStreamId, this);
 }
 
-void Http3Stream::TopBrowsingContextIdChanged(uint64_t id) {
+void Http3Stream::CurrentBrowserIdChanged(uint64_t id) {
   MOZ_ASSERT(gHttpHandler->ActiveTabPriority());
 
-  bool previouslyFocused = (mCurrentTopBrowsingContextId == mTransactionTabId);
-  mCurrentTopBrowsingContextId = id;
-  bool nowFocused = (mCurrentTopBrowsingContextId == mTransactionTabId);
+  bool previouslyFocused = (mCurrentBrowserId == mTransactionBrowserId);
+  mCurrentBrowserId = id;
+  bool nowFocused = (mCurrentBrowserId == mTransactionBrowserId);
 
   if (!StaticPrefs::
           network_http_http3_send_background_tabs_deprioritization() ||
@@ -331,7 +338,7 @@ nsresult Http3Stream::OnWriteSegment(char* buf, uint32_t count,
   return rv;
 }
 
-nsresult Http3Stream::ReadSegments(nsAHttpSegmentReader* reader) {
+nsresult Http3Stream::ReadSegments() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
 
   if (mRecvState == RECV_DONE) {
@@ -421,8 +428,7 @@ nsresult Http3Stream::ReadSegments(nsAHttpSegmentReader* reader) {
   return rv;
 }
 
-nsresult Http3Stream::WriteSegments(nsAHttpSegmentWriter* writer,
-                                    uint32_t count, uint32_t* countWritten) {
+nsresult Http3Stream::WriteSegments() {
   MOZ_ASSERT(OnSocketThread(), "not on socket thread");
   LOG(("Http3Stream::WriteSegments [this=%p]", this));
   nsresult rv = NS_OK;
@@ -431,9 +437,9 @@ nsresult Http3Stream::WriteSegments(nsAHttpSegmentWriter* writer,
 
   do {
     mSocketInCondition = NS_OK;
-    rv = mTransaction->WriteSegmentsAgain(this, count, &countWrittenSingle,
-                                          &again);
-    *countWritten += countWrittenSingle;
+    countWrittenSingle = 0;
+    rv = mTransaction->WriteSegmentsAgain(
+        this, nsIOService::gDefaultSegmentSize, &countWrittenSingle, &again);
     LOG(("Http3Stream::WriteSegments rv=0x%" PRIx32
          " countWrittenSingle=%" PRIu32 " socketin=%" PRIx32 " [this=%p]",
          static_cast<uint32_t>(rv), countWrittenSingle,
@@ -508,7 +514,7 @@ uint8_t Http3Stream::PriorityUrgency() {
   }
 
   if (StaticPrefs::network_http_http3_send_background_tabs_deprioritization() &&
-      mCurrentTopBrowsingContextId != mTransactionTabId) {
+      mCurrentBrowserId != mTransactionBrowserId) {
     // Low priority
     return 6;
   }

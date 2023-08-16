@@ -8,12 +8,14 @@
 #include <shlwapi.h>
 #include <objbase.h>
 #include <string.h>
+#include <iostream>
 
 #include "nsAutoRef.h"
 #include "nsWindowsHelpers.h"
 #include "mozilla/WinHeaderOnlyUtils.h"
 
 #include "common.h"
+#include "Policy.h"
 #include "DefaultBrowser.h"
 #include "DefaultPDF.h"
 #include "EventLog.h"
@@ -353,6 +355,10 @@ int wmain(int argc, wchar_t** argv) {
     if (argc < 3 || !argv[2]) {
       return E_INVALIDARG;
     }
+
+    bool force = (argc > 3) && ((0 == wcscmp(argv[3], L"--force")) ||
+                                (0 == wcscmp(argv[3], L"-force")));
+
     // Acquire() has a short timeout. Since this runs in the background, we
     // could use a longer timeout in this situation. However, if another
     // installation's agent is already running, it will update CurrentDefault,
@@ -374,7 +380,7 @@ int wmain(int argc, wchar_t** argv) {
     // Also stop if no timestamp was found, which most likely indicates
     // that Firefox was not yet run.
     bool ranRecently = false;
-    if (!CheckIfAppRanRecently(&ranRecently) || !ranRecently) {
+    if (!force && (!CheckIfAppRanRecently(&ranRecently) || !ranRecently)) {
       return SCHED_E_TASK_ATTEMPTED;
     }
 
@@ -397,7 +403,7 @@ int wmain(int argc, wchar_t** argv) {
     DefaultPdfInfo pdfInfo = defaultPdfResult.unwrap();
 
     NotificationActivities activitiesPerformed =
-        MaybeShowNotification(browserInfo, argv[2]);
+        MaybeShowNotification(browserInfo, argv[2], force);
 
     return SendDefaultBrowserPing(browserInfo, pdfInfo, activitiesPerformed);
   } else if (!wcscmp(argv[1], L"set-default-browser-user-choice")) {
@@ -408,6 +414,14 @@ int wmain(int argc, wchar_t** argv) {
     // `argv` is itself null-terminated, so we can safely pass the tail of the
     // array here.
     return SetDefaultBrowserUserChoice(argv[2], &argv[3]);
+  } else if (!wcscmp(argv[1], L"set-default-extension-handlers-user-choice")) {
+    if (argc < 3 || !argv[2]) {
+      return E_INVALIDARG;
+    }
+
+    // `argv` is itself null-terminated, so we can safely pass the tail of the
+    // array here.
+    return SetDefaultExtensionHandlersUserChoice(argv[2], &argv[3]);
   } else {
     return E_INVALIDARG;
   }

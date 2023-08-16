@@ -66,6 +66,7 @@ struct MOZ_STACK_CLASS MediaFormatReaderInit {
   already_AddRefed<GMPCrashHelper> mCrashHelper;
   // Used in bug 1393399 for temporary telemetry.
   MediaDecoderOwnerID mMediaDecoderOwnerID = nullptr;
+  Maybe<TrackingId> mTrackingId;
 };
 
 DDLoggedTypeDeclName(MediaFormatReader);
@@ -193,6 +194,8 @@ class MediaFormatReader final
   RefPtr<GenericPromise> RequestDebugInfo(
       dom::MediaFormatReaderDebugInfo& aInfo);
 
+  Maybe<nsCString> GetAudioProcessPerCodec();
+
   // Switch the video decoder to NullDecoderModule. It might takes effective
   // since a few samples later depends on how much demuxed samples are already
   // queued in the original video decoder.
@@ -244,6 +247,10 @@ class MediaFormatReader final
 
   MediaEventSource<VideoInfo>& OnStoreDecoderBenchmark() {
     return mOnStoreDecoderBenchmark;
+  }
+
+  MediaEventProducer<VideoInfo, AudioInfo>& OnTrackInfoUpdatedEvent() {
+    return mTrackInfoUpdatedEvent;
   }
 
  private:
@@ -335,6 +342,8 @@ class MediaFormatReader final
   // This is called only on TaskQueue.
   void NotifyDecoderBenchmarkStore();
 
+  void NotifyTrackInfoUpdated();
+
   enum class DrainState {
     None,
     DrainRequested,
@@ -356,7 +365,9 @@ class MediaFormatReader final
         : mOwner(aOwner),
           mType(aType),
           mMutex("DecoderData"),
-          mDescription("shutdown"),
+          mDescription("uninitialized"),
+          mProcessName(""),
+          mCodecName(""),
           mUpdateScheduled(false),
           mDemuxEOS(false),
           mWaitingForData(false),
@@ -370,6 +381,9 @@ class MediaFormatReader final
           mNumOfConsecutiveRDDOrGPUCrashes(0),
           mMaxConsecutiveRDDOrGPUCrashes(
               StaticPrefs::media_rdd_process_max_crashes()),
+          mNumOfConsecutiveUtilityCrashes(0),
+          mMaxConsecutiveUtilityCrashes(
+              StaticPrefs::media_utility_process_max_crashes()),
           mFirstFrameTime(Some(media::TimeUnit::Zero())),
           mNumSamplesInput(0),
           mNumSamplesOutput(0),
@@ -397,14 +411,16 @@ class MediaFormatReader final
     // Only non-null up until the decoder is created.
     RefPtr<TaskQueue> mTaskQueue;
 
-    // Mutex protecting mDescription, mDecoder, mTrackDemuxer and mWorkingInfo
-    // as those can be read outside the TaskQueue.
+    // Mutex protecting mDescription, mDecoder, mTrackDemuxer, mWorkingInfo,
+    // mProcessName and mCodecName as those can be read outside the TaskQueue.
     // They are only written on the TaskQueue however, as such mMutex doesn't
     // need to be held when those members are read on the TaskQueue.
     Mutex mMutex MOZ_UNANNOTATED;
     // The platform decoder.
     RefPtr<MediaDataDecoder> mDecoder;
     nsCString mDescription;
+    nsCString mProcessName;
+    nsCString mCodecName;
     void ShutdownDecoder();
 
     // Only accessed from reader's task queue.
@@ -461,9 +477,13 @@ class MediaFormatReader final
     uint32_t mNumOfConsecutiveDecodingError;
     uint32_t mMaxConsecutiveDecodingError;
 
-    // Track RDD process crashes and fail when we hit the limit.
+    // Track RDD or GPU process crashes and fail when we hit the limit.
     uint32_t mNumOfConsecutiveRDDOrGPUCrashes;
     uint32_t mMaxConsecutiveRDDOrGPUCrashes;
+
+    // Track Utility process crashes and fail when we hit the limit.
+    uint32_t mNumOfConsecutiveUtilityCrashes;
+    uint32_t mMaxConsecutiveUtilityCrashes;
 
     // Set when we haven't yet decoded the first frame.
     // Cleared once the first frame has been decoded.
@@ -492,6 +512,16 @@ class MediaFormatReader final
         return mNumOfConsecutiveRDDOrGPUCrashes >
                    mMaxConsecutiveRDDOrGPUCrashes ||
                StaticPrefs::media_playback_warnings_as_errors();
+      } else if (mError.ref() ==
+                 NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR) {
+        bool tooManyConsecutiveCrashes =
+            mNumOfConsecutiveUtilityCrashes > mMaxConsecutiveUtilityCrashes;
+        // TODO: Telemetry?
+        return tooManyConsecutiveCrashes ||
+               StaticPrefs::media_playback_warnings_as_errors();
+      } else if (mError.ref() ==
+                 NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_MF_CDM_ERR) {
+        return false;
       } else {
         // All other error types are fatal
         return true;
@@ -683,6 +713,10 @@ class MediaFormatReader final
   DecoderDataWithPromise<AudioData> mAudio;
   DecoderDataWithPromise<VideoData> mVideo;
 
+  Watchable<bool> mWorkingInfoChanged;
+  WatchManager<MediaFormatReader> mWatchManager;
+  bool mIsWatchingWorkingInfo;
+
   // Returns true when the decoder for this track needs input.
   bool NeedInput(DecoderData& aDecoder);
 
@@ -743,8 +777,11 @@ class MediaFormatReader final
   // Seeking objects.
   void SetSeekTarget(const SeekTarget& aTarget);
   bool IsSeeking() const { return mPendingSeekTime.isSome(); }
-  bool IsVideoSeeking() const {
+  bool IsVideoOnlySeeking() const {
     return IsSeeking() && mOriginalSeekTarget.IsVideoOnly();
+  }
+  bool IsAudioOnlySeeking() const {
+    return IsSeeking() && mOriginalSeekTarget.IsAudioOnly();
   }
   void ScheduleSeek();
   void AttemptSeek();
@@ -822,6 +859,8 @@ class MediaFormatReader final
 
   MediaEventProducer<VideoInfo> mOnStoreDecoderBenchmark;
 
+  MediaEventProducer<VideoInfo, AudioInfo> mTrackInfoUpdatedEvent;
+
   RefPtr<FrameStatistics> mFrameStats;
 
   // Used in bug 1393399 for telemetry.
@@ -837,6 +876,8 @@ class MediaFormatReader final
 
   // Only be used on Windows when the media engine playback is enabled.
   Maybe<uint64_t> mMediaEngineId;
+
+  const Maybe<TrackingId> mTrackingId;
 };
 
 }  // namespace mozilla

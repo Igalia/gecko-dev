@@ -115,7 +115,6 @@ class nsContentSink : public nsICSSLoaderObserver,
   virtual void UpdateChildCounts() = 0;
 
   bool IsTimeToNotify();
-  bool LinkContextIsOurDocument(const nsAString& aAnchor);
 
  protected:
   nsContentSink();
@@ -125,7 +124,9 @@ class nsContentSink : public nsICSSLoaderObserver,
                 nsIChannel* aChannel);
 
   nsresult ProcessHTTPHeaders(nsIChannel* aChannel);
-  nsresult ProcessLinkFromHeader(const mozilla::net::LinkHeader& aHeader);
+  // aEarlyHintPreloaderId zero means no early hint channel to connect back
+  nsresult ProcessLinkFromHeader(const mozilla::net::LinkHeader& aHeader,
+                                 uint64_t aEarlyHintPreloaderId);
 
   virtual nsresult ProcessStyleLinkFromHeader(
       const nsAString& aHref, bool aAlternate, const nsAString& aTitle,
@@ -138,7 +139,13 @@ class nsContentSink : public nsICSSLoaderObserver,
                    const nsAString& aType, const nsAString& aMedia,
                    const nsAString& aIntegrity, const nsAString& aSrcset,
                    const nsAString& aSizes, const nsAString& aCORS,
-                   const nsAString& aReferrerPolicy);
+                   const nsAString& aReferrerPolicy,
+                   uint64_t aEarlyHintPreloaderId);
+
+  void PreloadModule(const nsAString& aHref, const nsAString& aAs,
+                     const nsAString& aMedia, const nsAString& aIntegrity,
+                     const nsAString& aCORS, const nsAString& aReferrerPolicy,
+                     uint64_t aEarlyHintPreloaderId);
 
   // For PrefetchDNS() aHref can either be the usual
   // URI format or of the form "//www.hostname.com" without a scheme.
@@ -167,9 +174,11 @@ class nsContentSink : public nsICSSLoaderObserver,
 
   Document* GetDocument() { return mDocument; }
 
- protected:
-  void FavorPerformanceHint(bool perfOverStarvation, uint32_t starvationDelay);
+  // Later on we might want to make this more involved somehow
+  // (e.g. stop waiting after some timeout or whatnot).
+  bool WaitForPendingSheets() { return mPendingSheetCount > 0; }
 
+ protected:
   inline int32_t GetNotificationInterval() {
     if (mDynamicLowerValue) {
       return 1000;
@@ -179,10 +188,6 @@ class nsContentSink : public nsICSSLoaderObserver,
   }
 
   virtual nsresult FlushTags() = 0;
-
-  // Later on we might want to make this more involved somehow
-  // (e.g. stop waiting after some timeout or whatnot).
-  bool WaitForPendingSheets() { return mPendingSheetCount > 0; }
 
   void DoProcessLinkHeader();
 

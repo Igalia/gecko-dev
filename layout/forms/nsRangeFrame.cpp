@@ -6,6 +6,8 @@
 
 #include "nsRangeFrame.h"
 
+#include "ListMutationObserver.h"
+#include "mozilla/Assertions.h"
 #include "mozilla/PresShell.h"
 #include "mozilla/TouchEvents.h"
 
@@ -19,13 +21,17 @@
 #include "mozilla/dom/Document.h"
 #include "nsNameSpaceManager.h"
 #include "nsGkAtoms.h"
+#include "mozilla/dom/HTMLDataListElement.h"
 #include "mozilla/dom/HTMLInputElement.h"
+#include "mozilla/dom/HTMLOptionElement.h"
+#include "mozilla/dom/MutationEventBinding.h"
 #include "nsPresContext.h"
 #include "nsPresContextInlines.h"
 #include "nsNodeInfoManager.h"
 #include "mozilla/dom/Element.h"
 #include "mozilla/ServoStyleSet.h"
 #include "nsStyleConsts.h"
+#include "nsTArray.h"
 
 #ifdef ACCESSIBILITY
 #  include "nsAccessibilityService.h"
@@ -46,6 +52,14 @@ nsIFrame* NS_NewRangeFrame(PresShell* aPresShell, ComputedStyle* aStyle) {
 nsRangeFrame::nsRangeFrame(ComputedStyle* aStyle, nsPresContext* aPresContext)
     : nsContainerFrame(aStyle, aPresContext, kClassID) {}
 
+void nsRangeFrame::Init(nsIContent* aContent, nsContainerFrame* aParent,
+                        nsIFrame* aPrevInFlow) {
+  nsContainerFrame::Init(aContent, aParent, aPrevInFlow);
+  if (InputElement().HasAttr(nsGkAtoms::list_)) {
+    mListMutationObserver = new ListMutationObserver(*this);
+  }
+}
+
 nsRangeFrame::~nsRangeFrame() = default;
 
 NS_IMPL_FRAMEARENA_HELPERS(nsRangeFrame)
@@ -61,6 +75,9 @@ void nsRangeFrame::DestroyFrom(nsIFrame* aDestructRoot,
                "nsRangeFrame should not have continuations; if it does we "
                "need to call RegUnregAccessKey only for the first.");
 
+  if (mListMutationObserver) {
+    mListMutationObserver->Detach();
+  }
   aPostDestroyData.AddAnonymousContent(mTrackDiv.forget());
   aPostDestroyData.AddAnonymousContent(mProgressDiv.forget());
   aPostDestroyData.AddAnonymousContent(mThumbDiv.forget());
@@ -307,28 +324,29 @@ a11y::AccType nsRangeFrame::AccessibleType() { return a11y::eHTMLRangeType; }
 #endif
 
 double nsRangeFrame::GetValueAsFractionOfRange() {
-  MOZ_ASSERT(mContent->IsHTMLElement(nsGkAtoms::input), "bad cast");
-  auto* input = static_cast<dom::HTMLInputElement*>(GetContent());
-  MOZ_ASSERT(input->ControlType() == FormControlType::InputRange);
+  return GetDoubleAsFractionOfRange(InputElement().GetValueAsDecimal());
+}
 
-  Decimal value = input->GetValueAsDecimal();
-  Decimal minimum = input->GetMinimum();
-  Decimal maximum = input->GetMaximum();
+double nsRangeFrame::GetDoubleAsFractionOfRange(const Decimal& aValue) {
+  auto& input = InputElement();
 
-  MOZ_ASSERT(value.isFinite() && minimum.isFinite() && maximum.isFinite(),
+  Decimal minimum = input.GetMinimum();
+  Decimal maximum = input.GetMaximum();
+
+  MOZ_ASSERT(aValue.isFinite() && minimum.isFinite() && maximum.isFinite(),
              "type=range should have a default maximum/minimum");
 
   if (maximum <= minimum) {
     // Avoid rounding triggering the assert by checking against an epsilon.
-    MOZ_ASSERT((value - minimum).abs().toDouble() <
+    MOZ_ASSERT((aValue - minimum).abs().toDouble() <
                    std::numeric_limits<float>::epsilon(),
                "Unsanitized value");
     return 0.0;
   }
 
-  MOZ_ASSERT(value >= minimum && value <= maximum, "Unsanitized value");
+  MOZ_ASSERT(aValue >= minimum && aValue <= maximum, "Unsanitized value");
 
-  return ((value - minimum) / (maximum - minimum)).toDouble();
+  return ((aValue - minimum) / (maximum - minimum)).toDouble();
 }
 
 Decimal nsRangeFrame::GetValueAtEventPoint(WidgetGUIEvent* aEvent) {
@@ -373,14 +391,11 @@ Decimal nsRangeFrame::GetValueAtEventPoint(WidgetGUIEvent* aEvent) {
 
   if (IsThemed()) {
     // We need to get the size of the thumb from the theme.
-    nsPresContext* presContext = PresContext();
-    bool notUsedCanOverride;
-    LayoutDeviceIntSize size;
-    presContext->Theme()->GetMinimumWidgetSize(presContext, this,
-                                               StyleAppearance::RangeThumb,
-                                               &size, &notUsedCanOverride);
-    thumbSize.width = presContext->DevPixelsToAppUnits(size.width);
-    thumbSize.height = presContext->DevPixelsToAppUnits(size.height);
+    nsPresContext* pc = PresContext();
+    LayoutDeviceIntSize size = pc->Theme()->GetMinimumWidgetSize(
+        pc, this, StyleAppearance::RangeThumb);
+    thumbSize =
+        LayoutDeviceIntSize::ToAppUnits(size, pc->AppUnitsPerDevPixel());
     // For GTK, GetMinimumWidgetSize returns zero for the thumb dimension
     // perpendicular to the orientation of the slider.  That's okay since we
     // only care about the dimension in the direction of the slider when using
@@ -419,8 +434,10 @@ Decimal nsRangeFrame::GetValueAtEventPoint(WidgetGUIEvent* aEvent) {
     nscoord posOfPoint = mozilla::clamped(point.y, posAtStart, posAtEnd);
     // For a vertical range, the top (posAtStart) is the highest value, so we
     // subtract the fraction from 1.0 to get that polarity correct.
-    fraction = Decimal(1) -
-               Decimal(posOfPoint - posAtStart) / Decimal(traversableDistance);
+    fraction = Decimal(posOfPoint - posAtStart) / Decimal(traversableDistance);
+    if (IsUpwards()) {
+      fraction = Decimal(1) - fraction;
+    }
   }
 
   MOZ_ASSERT(fraction >= Decimal(0) && fraction <= Decimal(1));
@@ -449,13 +466,74 @@ void nsRangeFrame::UpdateForValueChange() {
   }
 
 #ifdef ACCESSIBILITY
-  if (nsAccessibilityService* accService =
-          PresShell::GetAccessibilityService()) {
+  if (nsAccessibilityService* accService = GetAccService()) {
     accService->RangeValueChanged(PresShell(), mContent);
   }
 #endif
 
   SchedulePaint();
+}
+
+nsTArray<Decimal> nsRangeFrame::TickMarks() {
+  nsTArray<Decimal> tickMarks;
+  auto& input = InputElement();
+  auto* list = input.GetList();
+  if (!list) {
+    return tickMarks;
+  }
+  auto min = input.GetMinimum();
+  auto max = input.GetMaximum();
+  auto* options = list->Options();
+  nsAutoString label;
+  for (uint32_t i = 0; i < options->Length(); ++i) {
+    auto* item = options->Item(i);
+    auto* option = HTMLOptionElement::FromNode(item);
+    MOZ_ASSERT(option);
+    if (option->Disabled()) {
+      continue;
+    }
+    nsAutoString str;
+    option->GetValue(str);
+    auto tickMark = HTMLInputElement::StringToDecimal(str);
+    if (tickMark.isNaN() || tickMark < min || tickMark > max ||
+        input.ValueIsStepMismatch(tickMark)) {
+      continue;
+    }
+    tickMarks.AppendElement(tickMark);
+  }
+  tickMarks.Sort();
+  return tickMarks;
+}
+
+Decimal nsRangeFrame::NearestTickMark(const Decimal& aValue) {
+  auto tickMarks = TickMarks();
+  if (tickMarks.IsEmpty() || aValue.isNaN()) {
+    return Decimal::nan();
+  }
+  size_t index;
+  if (BinarySearch(tickMarks, 0, tickMarks.Length(), aValue, &index)) {
+    return tickMarks[index];
+  }
+  if (index == tickMarks.Length()) {
+    return tickMarks.LastElement();
+  }
+  if (index == 0) {
+    return tickMarks[0];
+  }
+  const auto& smallerTickMark = tickMarks[index - 1];
+  const auto& largerTickMark = tickMarks[index];
+  MOZ_ASSERT(smallerTickMark < aValue);
+  MOZ_ASSERT(largerTickMark > aValue);
+  return (aValue - smallerTickMark).abs() < (aValue - largerTickMark).abs()
+             ? smallerTickMark
+             : largerTickMark;
+}
+
+mozilla::dom::HTMLInputElement& nsRangeFrame::InputElement() const {
+  MOZ_ASSERT(mContent->IsHTMLElement(nsGkAtoms::input), "bad cast");
+  auto& input = *static_cast<dom::HTMLInputElement*>(GetContent());
+  MOZ_ASSERT(input.ControlType() == FormControlType::InputRange);
+  return input;
 }
 
 void nsRangeFrame::DoUpdateThumbPosition(nsIFrame* aThumbFrame,
@@ -496,7 +574,11 @@ void nsRangeFrame::DoUpdateThumbPosition(nsIFrame* aThumbFrame,
       nscoord traversableDistance =
           rangeContentBoxSize.height - thumbSize.height;
       newPosition.x += (rangeContentBoxSize.width - thumbSize.width) / 2;
-      newPosition.y += NSToCoordRound((1.0 - fraction) * traversableDistance);
+      if (IsUpwards()) {
+        newPosition.y += NSToCoordRound((1.0 - fraction) * traversableDistance);
+      } else {
+        newPosition.y += NSToCoordRound(fraction * traversableDistance);
+      }
     }
   }
   aThumbFrame->SetPosition(newPosition);
@@ -537,7 +619,9 @@ void nsRangeFrame::DoUpdateRangeProgressFrame(nsIFrame* aRangeProgressFrame,
   } else {
     nscoord progLength = NSToCoordRound(fraction * rangeContentBoxSize.height);
     progRect.x += (rangeContentBoxSize.width - progSize.width) / 2;
-    progRect.y += rangeContentBoxSize.height - progLength;
+    if (IsUpwards()) {
+      progRect.y += rangeContentBoxSize.height - progLength;
+    }
     progRect.height = progLength;
   }
   aRangeProgressFrame->SetRect(progRect);
@@ -571,8 +655,20 @@ nsresult nsRangeFrame::AttributeChanged(int32_t aNameSpaceID,
         UpdateForValueChange();
       }
     } else if (aAttribute == nsGkAtoms::orient) {
-      PresShell()->FrameNeedsReflow(this, IntrinsicDirty::Resize,
+      PresShell()->FrameNeedsReflow(this, IntrinsicDirty::None,
                                     NS_FRAME_IS_DIRTY);
+    } else if (aAttribute == nsGkAtoms::list_) {
+      const bool isRemoval = aModType == MutationEvent_Binding::REMOVAL;
+      if (mListMutationObserver) {
+        mListMutationObserver->Detach();
+        if (isRemoval) {
+          mListMutationObserver = nullptr;
+        } else {
+          mListMutationObserver->Attach();
+        }
+      } else if (!isRemoval) {
+        mListMutationObserver = new ListMutationObserver(*this, true);
+      }
     }
   }
 
@@ -582,11 +678,9 @@ nsresult nsRangeFrame::AttributeChanged(int32_t aNameSpaceID,
 nscoord nsRangeFrame::AutoCrossSize(Length aEm) {
   nscoord minCrossSize(0);
   if (IsThemed()) {
-    bool unused;
-    LayoutDeviceIntSize size;
     nsPresContext* pc = PresContext();
-    pc->Theme()->GetMinimumWidgetSize(pc, this, StyleAppearance::RangeThumb,
-                                      &size, &unused);
+    LayoutDeviceIntSize size = pc->Theme()->GetMinimumWidgetSize(
+        pc, this, StyleAppearance::RangeThumb);
     minCrossSize =
         pc->DevPixelsToAppUnits(IsHorizontal() ? size.height : size.width);
   }

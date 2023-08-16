@@ -7,29 +7,18 @@
 #include "nsNSSModule.h"
 
 #include "ContentSignatureVerifier.h"
-#include "NSSErrorsService.h"
 #include "OSKeyStore.h"
 #include "OSReauthenticator.h"
 #include "PKCS11ModuleDB.h"
 #include "SecretDecoderRing.h"
-#include "TransportSecurityInfo.h"
 #include "mozilla/MacroArgs.h"
 #include "mozilla/ModuleUtils.h"
 #include "mozilla/SyncRunnable.h"
-#include "nsCURILoader.h"
-#include "nsCryptoHash.h"
-#include "nsNSSCertificate.h"
-#include "nsNSSCertificateDB.h"
-#include "nsNSSComponent.h"
-#include "nsNSSVersion.h"
-#include "nsNetCID.h"
-#include "nsPK11TokenDB.h"
-#include "nsPKCS11Slot.h"
-#include "nsRandomGenerator.h"
-#include "nsSecureBrowserUI.h"
-#include "nsXULAppAPI.h"
-
 #include "nsCertTree.h"
+#include "nsNSSCertificateDB.h"
+#include "nsPK11TokenDB.h"
+#include "nsRandomGenerator.h"
+#include "nsXULAppAPI.h"
 
 namespace mozilla {
 namespace psm {
@@ -104,13 +93,10 @@ static nsresult Constructor(REFNSIID aIID, void** aResult) {
 IMPL(SecretDecoderRing, nullptr)
 IMPL(nsPK11TokenDB, nullptr)
 IMPL(PKCS11ModuleDB, nullptr)
-IMPL(nsNSSCertificate, nullptr, ProcessRestriction::AnyProcess)
 IMPL(nsNSSCertificateDB, nullptr)
 IMPL(nsCertTree, nullptr)
-IMPL(nsCryptoHash, nullptr, ProcessRestriction::AnyProcess)
 IMPL(ContentSignatureVerifier, nullptr)
 IMPL(nsRandomGenerator, nullptr, ProcessRestriction::AnyProcess)
-IMPL(TransportSecurityInfo, nullptr, ProcessRestriction::AnyProcess)
 IMPL(OSKeyStore, nullptr, ProcessRestriction::ParentProcessOnly,
      ThreadRestriction::MainThreadOnly)
 IMPL(OSReauthenticator, nullptr, ProcessRestriction::ParentProcessOnly,

@@ -1,4 +1,4 @@
-{%- let cbi = ci.get_callback_interface_definition(name).unwrap() %}
+{%- let cbi = ci|get_callback_interface_definition(name) %}
 {%- let type_name = cbi|type_name %}
 {%- let foreign_callback = format!("ForeignCallback{}", canonical_type_name) %}
 
@@ -22,69 +22,97 @@ public interface {{ type_name }} {
 // The ForeignCallback that is passed to Rust.
 internal class {{ foreign_callback }} : ForeignCallback {
     @Suppress("TooGenericExceptionCaught")
-    override fun invoke(handle: Handle, method: Int, args: RustBuffer.ByValue, outBuf: RustBufferByReference): Int {
+    override fun invoke(handle: Handle, method: Int, argsData: Pointer, argsLen: Int, outBuf: RustBufferByReference): Int {
         val cb = {{ ffi_converter_name }}.lift(handle)
         return when (method) {
             IDX_CALLBACK_FREE -> {
                 {{ ffi_converter_name }}.drop(handle)
-                // No return value.
-                // See docs of ForeignCallback in `uniffi/src/ffi/foreigncallbacks.rs`
-                0
+                // Successful return
+                // See docs of ForeignCallback in `uniffi_core/src/ffi/foreigncallbacks.rs`
+                UNIFFI_CALLBACK_SUCCESS
             }
             {% for meth in cbi.methods() -%}
             {% let method_name = format!("invoke_{}", meth.name())|fn_name -%}
             {{ loop.index }} -> {
-                val buffer = this.{{ method_name }}(cb, args)
-                outBuf.setValue(buffer)
-                // Value written to out buffer.
-                // See docs of ForeignCallback in `uniffi/src/ffi/foreigncallbacks.rs`
-                1
+                // Call the method, write to outBuf and return a status code
+                // See docs of ForeignCallback in `uniffi_core/src/ffi/foreigncallbacks.rs` for info
+                try {
+                    this.{{ method_name }}(cb, argsData, argsLen, outBuf)
+                } catch (e: Throwable) {
+                    // Unexpected error
+                    try {
+                        // Try to serialize the error into a string
+                        outBuf.setValue({{ Type::String.borrow()|ffi_converter_name }}.lower(e.toString()))
+                    } catch (e: Throwable) {
+                        // If that fails, then it's time to give up and just return
+                    }
+                    UNIFFI_CALLBACK_UNEXPECTED_ERROR
+                }
             }
             {% endfor %}
-            // This should never happen, because an out of bounds method index won't
-            // ever be used. Once we can catch errors, we should return an InternalException.
-            // https://github.com/mozilla/uniffi-rs/issues/351
             else -> {
                 // An unexpected error happened.
-                // See docs of ForeignCallback in `uniffi/src/ffi/foreigncallbacks.rs`
-                -1
+                // See docs of ForeignCallback in `uniffi_core/src/ffi/foreigncallbacks.rs`
+                try {
+                    // Try to serialize the error into a string
+                    outBuf.setValue({{ Type::String.borrow()|ffi_converter_name }}.lower("Invalid Callback index"))
+                } catch (e: Throwable) {
+                    // If that fails, then it's time to give up and just return
+                }
+                UNIFFI_CALLBACK_UNEXPECTED_ERROR
             }
         }
     }
 
     {% for meth in cbi.methods() -%}
     {% let method_name = format!("invoke_{}", meth.name())|fn_name %}
-    private fun {{ method_name }}(kotlinCallbackInterface: {{ type_name }}, args: RustBuffer.ByValue): RustBuffer.ByValue =
-        try {
-        {#- Unpacking args from the RustBuffer #}
-            {%- if meth.arguments().len() != 0 -%}
-            {#- Calling the concrete callback object #}
-            val buf = args.asByteBuffer() ?: throw InternalException("No ByteBuffer in RustBuffer; this is a Uniffi bug")
-            kotlinCallbackInterface.{{ meth.name()|fn_name }}(
-                    {% for arg in meth.arguments() -%}
-                    {{ arg|read_fn }}(buf)
-                    {%- if !loop.last %}, {% endif %}
-                    {% endfor -%}
-                )
-            {% else %}
-            kotlinCallbackInterface.{{ meth.name()|fn_name }}()
-            {% endif -%}
-
-        {#- Packing up the return value into a RustBuffer #}
-                {%- match meth.return_type() -%}
-                {%- when Some with (return_type) -%}
-                .let {
-                    {{ return_type|ffi_converter_name }}.lowerIntoRustBuffer(it)
-                }
-                {%- else -%}
-                .let { RustBuffer.ByValue() }
-                {% endmatch -%}
-                // TODO catch errors and report them back to Rust.
-                // https://github.com/mozilla/uniffi-rs/issues/351
-        } finally {
-            RustBuffer.free(args)
+    @Suppress("UNUSED_PARAMETER")
+    private fun {{ method_name }}(kotlinCallbackInterface: {{ type_name }}, argsData: Pointer, argsLen: Int, outBuf: RustBufferByReference): Int {
+        {%- if meth.arguments().len() > 0 %}
+        val argsBuf = argsData.getByteBuffer(0, argsLen.toLong()).also {
+            it.order(ByteOrder.BIG_ENDIAN)
         }
+        {%- endif %}
 
+        {%- match meth.return_type() %}
+        {%- when Some with (return_type) %}
+        fun makeCall() : Int {
+            val returnValue = kotlinCallbackInterface.{{ meth.name()|fn_name }}(
+                {%- for arg in meth.arguments() %}
+                {{ arg|read_fn }}(argsBuf)
+                {% if !loop.last %}, {% endif %}
+                {%- endfor %}
+            )
+            outBuf.setValue({{ return_type|ffi_converter_name }}.lowerIntoRustBuffer(returnValue))
+            return UNIFFI_CALLBACK_SUCCESS
+        }
+        {%- when None %}
+        fun makeCall() : Int {
+            kotlinCallbackInterface.{{ meth.name()|fn_name }}(
+                {%- for arg in meth.arguments() %}
+                {{ arg|read_fn }}(argsBuf)
+                {%- if !loop.last %}, {% endif %}
+                {%- endfor %}
+            )
+            return UNIFFI_CALLBACK_SUCCESS
+        }
+        {%- endmatch %}
+
+        {%- match meth.throws_type() %}
+        {%- when None %}
+        fun makeCallAndHandleError() : Int = makeCall()
+        {%- when Some(error_type) %}
+        fun makeCallAndHandleError()  : Int = try {
+            makeCall()
+        } catch (e: {{ error_type|error_type_name }}) {
+            // Expected error, serialize it into outBuf
+            outBuf.setValue({{ error_type|ffi_converter_name }}.lowerIntoRustBuffer(e))
+            UNIFFI_CALLBACK_ERROR
+        }
+        {%- endmatch %}
+
+        return makeCallAndHandleError()
+    }
     {% endfor %}
 }
 

@@ -46,24 +46,25 @@ function V128StoreExpr(addr, v) {
             SimdPrefix, V128StoreCode, 4, varU32(0)];
 }
 
-// FMA/FMS, https://github.com/WebAssembly/relaxed-simd/issues/27
+// FMA/FNMA, https://github.com/WebAssembly/relaxed-simd/issues/27 and
+// https://github.com/WebAssembly/relaxed-simd/pull/81
 
-function fma(a, x, y) { return a + (x * y) }
-function fms(a, x, y) { return a - (x * y) }
+function fma(x, y, a) { return (x * y) + a; }
+function fnma(x, y, a) { return - (x * y) + a; }
 
-var fas = [0, 100, 500, 700];
 var fxs = [10, 20, 30, 40];
 var fys = [-2, -3, -4, -5];
-var das = [0, 100];
+var fas = [0, 100, 500, 700];
 var dxs = [10, 20];
 var dys = [-2, -3];
+var das = [0, 100];
 
-for ( let [opcode, as, xs, ys, operator] of [[F32x4RelaxedFmaCode, fas, fxs, fys, fma],
-                                             [F32x4RelaxedFmsCode, fas, fxs, fys, fms],
-                                             [F64x2RelaxedFmaCode, das, dxs, dys, fma],
-                                             [F64x2RelaxedFmsCode, das, dxs, dys, fms]] ) {
+for ( let [opcode, xs, ys, as, operator] of [[F32x4RelaxedMaddCode, fxs, fys, fas, fma],
+                                             [F32x4RelaxedNmaddCode, fxs, fys, fas, fnma],
+                                             [F64x2RelaxedMaddCode, dxs, dys, das, fma],
+                                             [F64x2RelaxedNmaddCode, dxs, dys, das, fnma]] ) {
     var k = xs.length;
-    var ans = iota(k).map((i) => operator(as[i], xs[i], ys[i]))
+    var ans = iota(k).map((i) => operator(xs[i], ys[i], as[i]))
 
     var ins = wasmValidateAndEval(moduleWithSections([
         sigSection([v2vSig]),
@@ -79,9 +80,9 @@ for ( let [opcode, as, xs, ys, operator] of [[F32x4RelaxedFmaCode, fas, fxs, fys
                                                   SimdPrefix, varU32(opcode)])]})])]));
 
     var mem = new (k == 4 ? Float32Array : Float64Array)(ins.exports.mem.buffer);
-    set(mem, k, as);
-    set(mem, 2*k, xs);
-    set(mem, 3*k, ys);
+    set(mem, k, xs);
+    set(mem, 2*k, ys);
+    set(mem, 3*k, as);
     ins.exports.run();
     var result = get(mem, 0, k);
     assertSame(result, ans);
@@ -98,7 +99,6 @@ for ( let [opcode, as, xs, ys, operator] of [[F32x4RelaxedFmaCode, fas, fxs, fys
                                                   ...V128Load(0),
                                                   SimdPrefix, varU32(opcode)])]})])])));    
 }
-
 
 // Relaxed swizzle, https://github.com/WebAssembly/relaxed-simd/issues/22
 
@@ -325,7 +325,7 @@ var ins = wasmValidateAndEval(moduleWithSections([
         funcBody({locals:[],
                     body: [...V128StoreExpr(0, [...V128Load(16),
                                                 ...V128Load(32),
-                                                SimdPrefix, varU32(I16x8RelaxedQ15MulrS)])]})])]));
+                                                SimdPrefix, varU32(I16x8RelaxedQ15MulrSCode)])]})])]));
 
 var mem16 = new Int16Array(ins.exports.mem.buffer);
 for (let [as, bs] of cross([
@@ -355,7 +355,7 @@ var ins = wasmValidateAndEval(moduleWithSections([
         funcBody({locals:[],
                     body: [...V128StoreExpr(0, [...V128Load(16),
                                                 ...V128Load(32),
-                                                SimdPrefix, varU32(I16x8DotI8x16I7x16S)])]})])]));
+                                                SimdPrefix, varU32(I16x8DotI8x16I7x16SCode)])]})])]));
 var mem8 = new Int8Array(ins.exports.mem.buffer);
 var mem16 = new Int16Array(ins.exports.mem.buffer);
 var test7bit = [1, 2, 3, 4, 5, 64, 65, 127, 127, 0, 0,
@@ -385,7 +385,7 @@ var ins = wasmValidateAndEval(moduleWithSections([
                     body: [...V128StoreExpr(0, [...V128Load(16),
                                                 ...V128Load(32),
                                                 ...V128Load(48),
-                                                SimdPrefix, varU32(I32x4DotI8x16I7x16AddS)])]})])]));
+                                                SimdPrefix, varU32(I32x4DotI8x16I7x16AddSCode)])]})])]));
 var mem8 = new Int8Array(ins.exports.mem.buffer);
 var mem32 = new Int32Array(ins.exports.mem.buffer);
 var test7bit = [1, 2, 3, 4, 5, 64, 65, 127, 127, 0, 0,

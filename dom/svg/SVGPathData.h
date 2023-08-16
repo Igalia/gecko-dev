@@ -101,6 +101,15 @@ class SVGPathData {
   SVGPathData() = default;
   ~SVGPathData() = default;
 
+  SVGPathData& operator=(const SVGPathData& aOther) {
+    mData.ClearAndRetainStorage();
+    // Best-effort, really.
+    Unused << mData.AppendElements(aOther.mData, fallible);
+    return *this;
+  }
+
+  SVGPathData(const SVGPathData& aOther) { *this = aOther; }
+
   // Only methods that don't make/permit modification to this list are public.
   // Only our friend classes can access methods that may change us.
 
@@ -213,6 +222,7 @@ class SVGPathData {
    * which case the list will be left unmodified.
    */
   nsresult CopyFrom(const SVGPathData& rhs);
+  void SwapWith(SVGPathData& aRhs) { mData.SwapElements(aRhs.mData); }
 
   float& operator[](uint32_t aIndex) { return mData[aIndex]; }
 

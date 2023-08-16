@@ -1,4 +1,4 @@
-// |reftest| skip -- Temporal is not supported
+// |reftest| skip-if(!this.hasOwnProperty('Temporal')) -- Temporal is not enabled unconditionally
 // Copyright (C) 2021 Igalia, S.L. All rights reserved.
 // This code is governed by the BSD license found in the LICENSE file.
 
@@ -33,7 +33,7 @@ assert.compareArray(actual, expected1, "operations");
 // There is a second path, through BalanceDurationRelative, that calls
 // dateUntil() in a loop for each year in the duration plus one extra time
 
-actual.splice(0, actual.length); // reset calls for next test
+actual.splice(0); // reset calls for next test
 const expected2 = [
   "call dateUntil",
   "call dateUntil",

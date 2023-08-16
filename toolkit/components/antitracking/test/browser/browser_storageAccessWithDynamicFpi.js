@@ -3,12 +3,10 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-/* import-globals-from head.js */
-
 "use strict";
 
-const { RemoteSettings } = ChromeUtils.import(
-  "resource://services-settings/remote-settings.js"
+const { RemoteSettings } = ChromeUtils.importESModule(
+  "resource://services-settings/remote-settings.sys.mjs"
 );
 
 XPCOMUtils.defineLazyServiceGetter(
@@ -35,7 +33,7 @@ async function cleanup() {
   });
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.flushPrefEnv();
   await SpecialPowers.pushPrefEnv({
     set: [
@@ -271,7 +269,7 @@ add_task(async function testRedirectHeuristicDisabled() {
 
 class UpdateEvent extends EventTarget {}
 function waitForEvent(element, eventName) {
-  return new Promise(function(resolve) {
+  return new Promise(function (resolve) {
     element.addEventListener(eventName, e => resolve(e.detail), { once: true });
   });
 }

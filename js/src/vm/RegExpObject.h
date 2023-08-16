@@ -9,14 +9,10 @@
 #ifndef vm_RegExpObject_h
 #define vm_RegExpObject_h
 
-#include "mozilla/MemoryReporting.h"
-
 #include "builtin/SelfHostingDefines.h"
-#include "gc/Marking.h"
-#include "js/GCHashTable.h"
 #include "js/RegExpFlags.h"
 #include "proxy/Proxy.h"
-#include "vm/ArrayObject.h"
+#include "vm/JSAtomState.h"
 #include "vm/JSContext.h"
 #include "vm/RegExpShared.h"
 #include "vm/Shape.h"
@@ -35,10 +31,6 @@
  *     Owns all RegExpShared instances in a zone.
  */
 namespace js {
-
-struct MatchPair;
-class MatchPairs;
-class RegExpStatics;
 
 extern RegExpObject* RegExpAlloc(JSContext* cx, NewObjectKind newKind,
                                  HandleObject proto = nullptr);
@@ -86,35 +78,37 @@ class RegExpObject : public NativeObject {
    * encoding their initial properties. Return the shape after
    * changing |obj|'s last property to it.
    */
-  static Shape* assignInitialShape(JSContext* cx, Handle<RegExpObject*> obj);
+  static SharedShape* assignInitialShape(JSContext* cx,
+                                         Handle<RegExpObject*> obj);
 
   /* Accessors. */
 
-  static unsigned lastIndexSlot() { return LAST_INDEX_SLOT; }
+  static constexpr size_t lastIndexSlot() { return LAST_INDEX_SLOT; }
+
+  static constexpr size_t offsetOfLastIndex() {
+    return getFixedSlotOffset(lastIndexSlot());
+  }
 
   static bool isInitialShape(RegExpObject* rx) {
-    ShapePropertyIter<NoGC> iter(rx->shape());
-    if (iter.done() || !iter->isDataProperty()) {
-      return false;
-    }
-    if (iter->slot() != LAST_INDEX_SLOT) {
-      return false;
-    }
-    return true;
+    // RegExpObject has a non-configurable lastIndex property, so there must be
+    // at least one property. Even though lastIndex is non-configurable, it can
+    // be made non-writable, so we have to check if it's still writable.
+    MOZ_ASSERT(!rx->empty());
+    PropertyInfoWithKey prop = rx->getLastProperty();
+    return prop.isDataProperty() && prop.slot() == LAST_INDEX_SLOT &&
+           prop.writable();
   }
 
   const Value& getLastIndex() const { return getReservedSlot(LAST_INDEX_SLOT); }
 
-  void setLastIndex(double d) {
-    setReservedSlot(LAST_INDEX_SLOT, NumberValue(d));
-  }
-
-  void zeroLastIndex(JSContext* cx) {
+  void setLastIndex(JSContext* cx, int32_t lastIndex) {
+    MOZ_ASSERT(lastIndex >= 0);
     MOZ_ASSERT(lookupPure(cx->names().lastIndex)->writable(),
-               "can't infallibly zero a non-writable lastIndex on a "
+               "can't infallibly set a non-writable lastIndex on a "
                "RegExp that's been exposed to script");
-    setReservedSlot(LAST_INDEX_SLOT, Int32Value(0));
+    setReservedSlot(LAST_INDEX_SLOT, Int32Value(lastIndex));
   }
+  void zeroLastIndex(JSContext* cx) { setLastIndex(cx, 0); }
 
   static JSLinearString* toString(JSContext* cx, Handle<RegExpObject*> obj);
 
@@ -128,7 +122,11 @@ class RegExpObject : public NativeObject {
 
   /* Flags. */
 
-  static unsigned flagsSlot() { return FLAGS_SLOT; }
+  static constexpr size_t flagsSlot() { return FLAGS_SLOT; }
+
+  static constexpr size_t offsetOfFlags() {
+    return getFixedSlotOffset(flagsSlot());
+  }
 
   JS::RegExpFlags getFlags() const {
     return JS::RegExpFlags(getFixedSlot(FLAGS_SLOT).toInt32());
@@ -143,7 +141,13 @@ class RegExpObject : public NativeObject {
   bool multiline() const { return getFlags().multiline(); }
   bool dotAll() const { return getFlags().dotAll(); }
   bool unicode() const { return getFlags().unicode(); }
+  bool unicodeSets() const { return getFlags().unicodeSets(); }
   bool sticky() const { return getFlags().sticky(); }
+
+  bool isGlobalOrSticky() const {
+    JS::RegExpFlags flags = getFlags();
+    return flags.global() || flags.sticky();
+  }
 
   static bool isOriginalFlagGetter(JSNative native, JS::RegExpFlags* mask);
 

@@ -15,7 +15,7 @@ interoperability.
 The [`uniffi-bindgen-gecko-js`](https://searchfox.org/mozilla-central/source/toolkit/components/uniffi-bindgen-gecko-js)
 tool, which lives in the Firefox source tree, generates 2 things:
   - A JS interface for the scaffolding code, which uses [WebIDL](/dom/bindings/webidl/index.rst)
-  - A JSM module that uses the scaffolding to provide the bindings API.
+  - A module that uses the scaffolding to provide the bindings API.
 
 Currently, this generated code gets checked in to source control.  We are working on a system to avoid this and
 auto-generate it at build time instead (see [bugzilla 1756214](https://bugzilla.mozilla.org/show_bug.cgi?id=1756214)).
@@ -38,17 +38,33 @@ your project:
 
 ## Creating new bindings with UniFFI
 
+You can see an example of this feature in use: [when application-services swapped the tabs js sync engine with rust](https://bugzilla.mozilla.org/show_bug.cgi?id=1791851)
+
 Here's how you can create a new set of bindings using UniFFI:
-  - UniFFI your crate (if it isn't already):
-    - [Create a UDL file to describe your interface](https://mozilla.github.io/uniffi-rs/udl_file_spec.html)
-    - [Set up your Rust crate to generate scaffolding](https://mozilla.github.io/uniffi-rs/tutorial/Rust_scaffolding.html)
-  - Add your crate as a Firefox dependency (if it isn't already)
-    - If the code will exist in the mozilla-central repo:
-      - Create a new directory for the Rust crate
-      - Edit `toolkit/library/rust/shared/Cargo.toml` and add a dependency to your library path
-    - If the code exists in an external repo:
-      - Edit `toolkit/library/rust/shared/Cargo.toml` and add a dependency to your library URL
-      - Run `mach vendor rust` to vendor in your Rust code
-  - Generate bindings code for your crate
-    - TODO: create a system for this and document it here.  I think we can do something like we do for the test
-      fixtures, where devs don't need to touch that many moz.build files.
+
+  1. UniFFI your crate (if it isn't already):
+      - [Create a UDL file to describe your interface](https://mozilla.github.io/uniffi-rs/udl_file_spec.html)
+      - [Set up your Rust crate to generate scaffolding](https://mozilla.github.io/uniffi-rs/tutorial/Rust_scaffolding.html)
+  2. Add your crate as a Firefox dependency (if it isn't already)
+      - **If the code will exist in the mozilla-central repo:**
+        - Create a new directory for the Rust crate
+        - Edit `toolkit/library/rust/shared/Cargo.toml` and add a dependency to your library path
+      - **If the code exists in an external repo:**
+        - Edit `toolkit/library/rust/shared/Cargo.toml` and add a dependency to your library URL
+        - Run `mach vendor rust` to vendor in your Rust code
+  3. Generate bindings code for your crate
+      - Add the path of your UDL (that you made in step 1) in `toolkit/components/uniffi-bindgen-gecko-js/mach_commands.py`
+      - Run `./mach uniffi generate`
+          - add your newly generated `Rust{udl-name}.sys.mjs` file to `toolkit/components/uniffi-bindgen-gecko-js/components/moz.build`
+      - Then simply import your module to the file you want to use it in and start using your APIs!
+
+        Example from tabs module:
+
+        ``` js
+        ChromeUtils.defineESModuleGetters(lazy, {
+          ...
+          TabsStore: "resource://gre/modules/RustTabs.sys.mjs",
+        });
+        ...
+        this._rustStore = await lazy.TabsStore.init(path);
+        ```

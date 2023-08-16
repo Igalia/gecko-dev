@@ -6,7 +6,11 @@
 
 TEST_DIRS += ["httpserver", "gtest", "http3server"]
 
-BROWSER_CHROME_MANIFESTS += ["browser/browser.ini"]
+BROWSER_CHROME_MANIFESTS += [
+    "browser/browser.ini",
+    "useragent/browser_nonsnap.ini",
+    "useragent/browser_snap.ini",
+]
 MOCHITEST_MANIFESTS += ["mochitests/mochitest.ini"]
 
 XPCSHELL_TESTS_MANIFESTS += [
@@ -15,11 +19,16 @@ XPCSHELL_TESTS_MANIFESTS += [
 ]
 
 TESTING_JS_MODULES += [
-    "browser/early_hint_preload_test_helper.jsm",
+    "browser/cookie_filtering_helper.sys.mjs",
+    "browser/early_hint_preload_test_helper.sys.mjs",
     "unit/test_http3_prio_helpers.js",
 ]
 
 PERFTESTS_MANIFESTS += ["perf/perftest.ini", "unit/perftest.ini"]
+
+MARIONETTE_UNIT_MANIFESTS += [
+    "marionette/manifest.ini",
+]
 
 if CONFIG["FUZZING_INTERFACES"]:
     TEST_DIRS += ["fuzz"]

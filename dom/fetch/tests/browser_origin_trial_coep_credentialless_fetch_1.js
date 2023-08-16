@@ -7,9 +7,6 @@ const TOP_LEVEL_URL =
 const SAME_ORIGIN = "https://example.com";
 const CROSS_ORIGIN = "https://test1.example.com";
 
-const USE_CREDENTIALLESS = true;
-const NO_CREDENTIALLESS = false;
-
 const GET_STATE_URL =
   getRootDirectory(gTestPath).replace(
     "chrome://mochitests/content",
@@ -26,7 +23,7 @@ async function addCookieToOrigin(origin) {
     fetchRequestURL
   );
 
-  await SpecialPowers.spawn(addcookieTab.linkedBrowser, [], async function() {
+  await SpecialPowers.spawn(addcookieTab.linkedBrowser, [], async function () {
     content.document.cookie = "coep=credentialless; SameSite=None; Secure";
   });
   await BrowserTestUtils.removeTab(addcookieTab);
@@ -35,13 +32,22 @@ async function addCookieToOrigin(origin) {
 async function testOrigin(
   fetchOrigin,
   isCredentialless,
+  useMetaTag,
   fetchRequestMode,
   fetchRequestCrendentials,
   expectedCookieResult
 ) {
-  let topLevelUrl = TOP_LEVEL_URL;
+  let params = [];
   if (isCredentialless) {
-    topLevelUrl += "?credentialless";
+    params.push("credentialless");
+  }
+  if (useMetaTag) {
+    params.push("meta");
+  }
+
+  let topLevelUrl = TOP_LEVEL_URL;
+  if (params.length) {
+    topLevelUrl += "?" + params.join("&");
   }
 
   const noCredentiallessTab = await BrowserTestUtils.openNewForegroundTab(
@@ -58,19 +64,24 @@ async function testOrigin(
   await SpecialPowers.spawn(
     noCredentiallessTab.linkedBrowser,
     [
+      !useMetaTag && isCredentialless,
       fetchRequestURL,
       fetchRequestMode,
       fetchRequestCrendentials,
       GET_STATE_URL,
       expectedCookieResult,
     ],
-    async function(
+    async function (
+      sharedArrayBufferEnabled,
       fetchRequestURL,
       fetchRequestMode,
       fetchRequestCrendentials,
       getStateURL,
       expectedCookieResult
     ) {
+      if (sharedArrayBufferEnabled) {
+        ok(content.crossOriginIsolated);
+      }
       // When store_header.sjs receives this request, it will store
       // whether it has received the cookie as a shared state.
       await content.fetch(fetchRequestURL, {
@@ -98,23 +109,23 @@ async function doTest(
   expectedCookieResultForNoCredentialless,
   expectedCookieResultForCredentialless
 ) {
-  await testOrigin(
-    origin,
-    USE_CREDENTIALLESS,
-    fetchRequestMode,
-    fetchRequestCrendentials,
-    expectedCookieResultForCredentialless
-  );
-  await testOrigin(
-    origin,
-    NO_CREDENTIALLESS,
-    fetchRequestMode,
-    fetchRequestCrendentials,
-    expectedCookieResultForNoCredentialless
-  );
+  for (let credentialless of [true, false]) {
+    for (let meta of [true, false]) {
+      await testOrigin(
+        origin,
+        credentialless,
+        meta,
+        fetchRequestMode,
+        fetchRequestCrendentials,
+        credentialless
+          ? expectedCookieResultForCredentialless
+          : expectedCookieResultForNoCredentialless
+      );
+    }
+  }
 }
 
-add_task(async function() {
+add_task(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.tabs.remote.coep.credentialless", false],

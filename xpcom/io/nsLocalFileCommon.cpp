@@ -25,6 +25,8 @@
 // other warnings. PLEASE read the longer comment in
 // toolkit/components/reputationservice/ApplicationReputation.cpp
 // before modifying this list!
+// If you update this list, make sure to update the length of sExecutableExts
+// in nsLocalFileCommmon.h.
 /* static */
 const char* const sExecutableExts[] = {
     // clang-format off
@@ -35,10 +37,13 @@ const char* const sExecutableExts[] = {
   ".ad",
   ".ade",         // access project extension
   ".adp",
+  ".afploc",      // Apple Filing Protocol Location
   ".air",         // Adobe AIR installer
   ".app",         // executable application
   ".application", // from bug 348763
+  ".appref-ms",   // ClickOnce link
   ".asp",
+  ".atloc",       // Appletalk Location
   ".bas",
   ".bat",
   ".cer",         // Signed certificate file
@@ -48,8 +53,10 @@ const char* const sExecutableExts[] = {
   ".cpl",
   ".crt",
   ".der",
+  ".diagcab",     // Windows archive
   ".exe",
   ".fileloc",     // Apple finder internet location data file
+  ".ftploc",      // Apple FTP Location
   ".fxp",         // FoxPro compiled app
   ".hlp",
   ".hta",
@@ -58,7 +65,9 @@ const char* const sExecutableExts[] = {
   ".ins",
   ".isp",
   ".jar",         // java application bundle
+#ifndef MOZ_ESR
   ".jnlp",
+#endif
   ".js",
   ".jse",
   ".lnk",
@@ -125,7 +134,8 @@ const char* const sExecutableExts[] = {
   ".ws",
   ".wsc",
   ".wsf",
-  ".wsh"
+  ".wsh",
+  ".xll"         // MS Excel dynamic link library
     // clang-format on
 };
 

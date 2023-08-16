@@ -11,16 +11,11 @@ var gChecking;
 var gBroken;
 var gNeedReset;
 
-const { PrivateBrowsingUtils } = ChromeUtils.import(
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
+const { PrivateBrowsingUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/PrivateBrowsingUtils.sys.mjs"
 );
 
 function initExceptionDialog() {
-  Services.telemetry.keyedScalarSet(
-    "security.psm_ui_interaction",
-    "add_cert_exception_dialog",
-    true
-  );
   gNeedReset = false;
   gDialog = document.getElementById("exceptiondialog");
   let warningText = document.getElementById("warningText");
@@ -93,9 +88,7 @@ function initExceptionDialog() {
  */
 function grabCert(req, evt) {
   if (req.channel && req.channel.securityInfo) {
-    gSecInfo = req.channel.securityInfo.QueryInterface(
-      Ci.nsITransportSecurityInfo
-    );
+    gSecInfo = req.channel.securityInfo;
     gCert = gSecInfo ? gSecInfo.serverCert : null;
   }
   gBroken = evt.type == "error";
@@ -120,11 +113,6 @@ async function checkCert() {
   let uri = getURI();
 
   if (uri) {
-    Services.telemetry.keyedScalarSet(
-      "security.psm_ui_interaction",
-      "add_cert_exception_dialog_get",
-      true
-    );
     let req = new XMLHttpRequest();
     req.open("GET", uri.prePath);
     req.onerror = grabCert.bind(this, req);
@@ -198,10 +186,6 @@ function handleTextChange() {
 
 function updateCertStatus() {
   var shortDesc, longDesc;
-  var shortDesc2, longDesc2;
-  var shortDesc3, longDesc3;
-  var use2 = false;
-  var use3 = false;
   let l10nUpdatedElements = [];
   if (gCert) {
     if (gBroken) {
@@ -211,37 +195,24 @@ function updateCertStatus() {
       var exl = "add-exception-expired-long";
       var uts = "add-exception-unverified-or-bad-signature-short";
       var utl = "add-exception-unverified-or-bad-signature-long";
-      var use1 = false;
-      if (gSecInfo.isDomainMismatch) {
-        use1 = true;
+      if (
+        gSecInfo.overridableErrorCategory ==
+        Ci.nsITransportSecurityInfo.ERROR_TRUST
+      ) {
+        shortDesc = uts;
+        longDesc = utl;
+      } else if (
+        gSecInfo.overridableErrorCategory ==
+        Ci.nsITransportSecurityInfo.ERROR_DOMAIN
+      ) {
         shortDesc = mms;
         longDesc = mml;
-      }
-      if (gSecInfo.isNotValidAtThisTime) {
-        if (!use1) {
-          use1 = true;
-          shortDesc = exs;
-          longDesc = exl;
-        } else {
-          use2 = true;
-          shortDesc2 = exs;
-          longDesc2 = exl;
-        }
-      }
-      if (gSecInfo.isUntrusted) {
-        if (!use1) {
-          use1 = true;
-          shortDesc = uts;
-          longDesc = utl;
-        } else if (!use2) {
-          use2 = true;
-          shortDesc2 = uts;
-          longDesc2 = utl;
-        } else {
-          use3 = true;
-          shortDesc3 = uts;
-          longDesc3 = utl;
-        }
+      } else if (
+        gSecInfo.overridableErrorCategory ==
+        Ci.nsITransportSecurityInfo.ERROR_TIME
+      ) {
+        shortDesc = exs;
+        longDesc = exl;
       }
       // In these cases, we do want to enable the "Add Exception" button
       gDialog.getButton("extra1").disabled = false;
@@ -299,28 +270,6 @@ function updateCertStatus() {
   l10nUpdatedElements.push(statusDescription);
   l10nUpdatedElements.push(statusLongDescription);
 
-  if (use2) {
-    let status2Description = document.getElementById("status2Description");
-    let status2LongDescription = document.getElementById(
-      "status2LongDescription"
-    );
-    document.l10n.setAttributes(status2Description, shortDesc2);
-    document.l10n.setAttributes(status2LongDescription, longDesc2);
-    l10nUpdatedElements.push(status2Description);
-    l10nUpdatedElements.push(status2LongDescription);
-  }
-
-  if (use3) {
-    let status3Description = document.getElementById("status3Description");
-    let status3LongDescription = document.getElementById(
-      "status3LongDescription"
-    );
-    document.l10n.setAttributes(status3Description, shortDesc3);
-    document.l10n.setAttributes(status3LongDescription, longDesc3);
-    l10nUpdatedElements.push(status3Description);
-    l10nUpdatedElements.push(status3LongDescription);
-  }
-
   gNeedReset = true;
   return l10nUpdatedElements;
 }
@@ -330,11 +279,6 @@ function updateCertStatus() {
  */
 function viewCertButtonClick() {
   if (gCert) {
-    Services.telemetry.keyedScalarSet(
-      "security.psm_ui_interaction",
-      "add_cert_exception_dialog_view",
-      true
-    );
     viewCertHelper(this, gCert);
   }
 }
@@ -346,12 +290,6 @@ function addException() {
   if (!gCert || !gSecInfo) {
     return;
   }
-
-  Services.telemetry.keyedScalarSet(
-    "security.psm_ui_interaction",
-    "add_cert_exception_dialog_confirm",
-    true
-  );
 
   var overrideService = Cc["@mozilla.org/security/certoverride;1"].getService(
     Ci.nsICertOverrideService
@@ -389,7 +327,7 @@ function addException() {
 }
 
 /**
- * @returns {Boolean} Whether this dialog is in private browsing mode.
+ * @returns {boolean} Whether this dialog is in private browsing mode.
  */
 function inPrivateBrowsingMode() {
   return PrivateBrowsingUtils.isWindowPrivate(window);

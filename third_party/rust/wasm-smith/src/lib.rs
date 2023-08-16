@@ -11,11 +11,8 @@
 //!
 //! Next, add `wasm-smith` to your dependencies:
 //!
-//! ```toml
-//! # fuzz/Cargo.toml
-//!
-//! [dependencies]
-//! wasm-smith = "0.4.0"
+//! ```shell
+//! $ cargo add wasm-smith
 //! ```
 //!
 //! Then, define your fuzz target so that it takes arbitrary
@@ -67,8 +64,8 @@ pub use crate::core::{
 use arbitrary::{Result, Unstructured};
 pub use component::{Component, ConfiguredComponent};
 pub use config::{Config, DefaultConfig, SwarmConfig};
-
-use std::{collections::HashSet, str};
+use std::{collections::HashSet, fmt::Write, str};
+use wasmparser::names::{KebabStr, KebabString};
 
 /// Do something an arbitrary number of times.
 ///
@@ -131,22 +128,66 @@ pub(crate) fn unique_string(
 ) -> Result<String> {
     let mut name = limited_string(max_size, u)?;
     while names.contains(&name) {
-        name.push_str(&format!("{}", names.len()));
+        write!(&mut name, "{}", names.len()).unwrap();
     }
     names.insert(name.clone());
     Ok(name)
 }
 
-pub(crate) fn unique_non_empty_string(
+pub(crate) fn unique_kebab_string(
     max_size: usize,
-    names: &mut HashSet<String>,
+    names: &mut HashSet<KebabString>,
+    u: &mut Unstructured,
+) -> Result<KebabString> {
+    let size = std::cmp::min(u.arbitrary_len::<u8>()?, max_size);
+    let mut name = String::with_capacity(size);
+    let mut require_alpha = true;
+    for _ in 0..size {
+        name.push(match u.int_in_range::<u8>(0..=36)? {
+            x if (0..26).contains(&x) => {
+                require_alpha = false;
+                (b'a' + x) as char
+            }
+            x if (26..36).contains(&x) => {
+                if require_alpha {
+                    require_alpha = false;
+                    (b'a' + (x - 26)) as char
+                } else {
+                    (b'0' + (x - 26)) as char
+                }
+            }
+            x if x == 36 => {
+                if require_alpha {
+                    require_alpha = false;
+                    'a'
+                } else {
+                    require_alpha = true;
+                    '-'
+                }
+            }
+            _ => unreachable!(),
+        });
+    }
+
+    if name.is_empty() || name.ends_with('-') {
+        name.push('a');
+    }
+
+    while names.contains(KebabStr::new(&name).unwrap()) {
+        write!(&mut name, "{}", names.len()).unwrap();
+    }
+
+    let name = KebabString::new(name).unwrap();
+    names.insert(name.clone());
+
+    Ok(name)
+}
+
+pub(crate) fn unique_url(
+    max_size: usize,
+    names: &mut HashSet<KebabString>,
     u: &mut Unstructured,
 ) -> Result<String> {
-    let mut s = unique_string(max_size, names, u)?;
-    while s.is_empty() || names.contains(&s) {
-        use std::fmt::Write;
-        write!(&mut s, "{}", names.len()).unwrap();
-    }
-    names.insert(s.clone());
-    Ok(s)
+    let path = unique_kebab_string(max_size, names, u)?;
+    Ok(format!("https://example.com/{path}"))
 }

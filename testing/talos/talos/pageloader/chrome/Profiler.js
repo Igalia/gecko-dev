@@ -18,7 +18,7 @@
 // relevant parts of our tests.
 var Profiler;
 
-(function() {
+(function () {
   var _profiler;
 
   // If this script is loaded in a framescript context, there won't be a
@@ -128,11 +128,11 @@ var Profiler;
           profile => {
             let profileFile = profiler_dir + "/" + currentTest + ".profile";
 
-            const { NetUtil } = ChromeUtils.import(
-              "resource://gre/modules/NetUtil.jsm"
+            const { NetUtil } = ChromeUtils.importESModule(
+              "resource://gre/modules/NetUtil.sys.mjs"
             );
-            const { FileUtils } = ChromeUtils.import(
-              "resource://gre/modules/FileUtils.jsm"
+            const { FileUtils } = ChromeUtils.importESModule(
+              "resource://gre/modules/FileUtils.sys.mjs"
             );
 
             var file = Cc["@mozilla.org/file/local;1"].createInstance(
@@ -151,7 +151,7 @@ var Profiler;
             );
 
             // The last argument (the callback) is optional.
-            NetUtil.asyncCopy(istream, ostream, function(status) {
+            NetUtil.asyncCopy(istream, ostream, function (status) {
               if (!Components.isSuccessCode(status)) {
                 reject();
                 return;
@@ -161,7 +161,7 @@ var Profiler;
             });
           },
           error => {
-            Cu.reportError("Failed to gather profile: " + error);
+            console.error("Failed to gather profile:", error);
             reject();
           }
         );
@@ -180,14 +180,16 @@ var Profiler;
           _profiler.ResumeSampling();
         }
         ChromeUtils.addProfilerMarker(
-          explicit ? name : 'Start of test "' + (name || test_name) + '"'
+          explicit ? name : 'Start of test "' + (name || test_name) + '"',
+          { category: "Test" }
         );
       }
     },
     pause: function Profiler__pause(name, explicit) {
       if (_profiler) {
         ChromeUtils.addProfilerMarker(
-          explicit ? name : 'End of test "' + (name || test_name) + '"'
+          explicit ? name : 'End of test "' + (name || test_name) + '"',
+          { category: "Test" }
         );
         _profiler.PauseSampling();
       }
@@ -195,7 +197,8 @@ var Profiler;
     mark: function Profiler__mark(marker, explicit) {
       if (_profiler) {
         ChromeUtils.addProfilerMarker(
-          explicit ? marker : 'Profiler: "' + (marker || test_name) + '"'
+          explicit ? marker : 'Profiler: "' + (marker || test_name) + '"',
+          { category: "Test" }
         );
       }
     },

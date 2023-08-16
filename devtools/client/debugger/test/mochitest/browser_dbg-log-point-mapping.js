@@ -8,7 +8,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   Services.prefs.setBoolPref("devtools.toolbox.splitconsoleEnabled", true);
 
   const dbg = await initDebugger("doc-sourcemaps3.html", "test.js");
@@ -22,11 +22,10 @@ add_task(async function() {
   await addBreakpoint(dbg, "test.js", 6);
   await waitForBreakpoint(dbg, "test.js", 6);
 
-  await dbg.actions.addBreakpoint(
-    getContext(dbg),
-    { line: 5, sourceId: source.id },
-    { logValue: "`value: ${JSON.stringify(test)}`", requiresMapping: true }
-  );
+  await dbg.actions.addBreakpoint(createLocation({ line: 5, source }), {
+    logValue: "`value: ${JSON.stringify(test)}`",
+    requiresMapping: true,
+  });
   await waitForBreakpoint(dbg, "test.js", 5);
 
   invokeInTab("test");

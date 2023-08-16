@@ -47,16 +47,16 @@ use api::{ClipMode, PrimitiveKeyKind, TransformStyle, YuvColorSpace, ColorRange,
 use api::{ReferenceTransformBinding, Rotation, FillRule, SpatialTreeItem, ReferenceFrameDescriptor};
 use api::units::*;
 use crate::image_tiling::simplify_repeated_primitive;
-use crate::clip::{ClipItemKey, ClipStore, ClipItemKeyKind};
+use crate::clip::{ClipItemKey, ClipStore, ClipItemKeyKind, ClipIntern};
 use crate::clip::{ClipInternData, ClipNodeId, ClipLeafId};
 use crate::clip::{PolygonDataHandle, ClipTreeBuilder};
 use crate::segment::EdgeAaSegmentMask;
 use crate::spatial_tree::{SceneSpatialTree, SpatialNodeContainer, SpatialNodeIndex, get_external_scroll_offset};
 use crate::frame_builder::{FrameBuilderConfig};
-use crate::glyph_rasterizer::{FontInstance, SharedFontResources};
+use glyph_rasterizer::{FontInstance, SharedFontResources};
 use crate::hit_test::HitTestingScene;
 use crate::intern::Interner;
-use crate::internal_types::{FastHashMap, LayoutPrimitiveInfo, Filter, PlaneSplitter, PlaneSplitterIndex, PipelineInstanceId};
+use crate::internal_types::{FastHashMap, LayoutPrimitiveInfo, Filter, PlaneSplitterIndex, PipelineInstanceId};
 use crate::picture::{Picture3DContext, PictureCompositeMode, PicturePrimitive};
 use crate::picture::{BlitReason, OrderedPictureChild, PrimitiveList, SurfaceInfo, PictureFlags};
 use crate::picture_graph::PictureGraph;
@@ -88,7 +88,7 @@ use euclid::approxeq::ApproxEq;
 use std::{f32, mem, usize};
 use std::collections::vec_deque::VecDeque;
 use std::sync::Arc;
-use crate::util::{VecHelper};
+use crate::util::{VecHelper, MaxRect};
 use crate::filterdata::{SFilterDataComponent, SFilterData, SFilterDataKey};
 
 /// Offsets primitives (and clips) by the external scroll offset
@@ -502,12 +502,14 @@ pub struct SceneBuilder<'a> {
     /// dependencies, without relying on recursion for those passes.
     picture_graph: PictureGraph,
 
-    /// A list of all the allocated plane splitters for this scene. A plane
+    /// Keep track of allocated plane splitters for this scene. A plane
     /// splitter is allocated whenever we encounter a new 3d rendering context.
     /// They are stored outside the picture since it makes it easier for them
     /// to be referenced by both the owning 3d rendering context and the child
     /// pictures that contribute to the splitter.
-    plane_splitters: Vec<PlaneSplitter>,
+    /// During scene building "allocating" a splitter is just incrementing an index.
+    /// Splitter objects themselves are allocated and recycled in the frame builder.
+    next_plane_splitter_index: usize,
 
     /// A list of all primitive instances in the scene. We store them as a single
     /// array so that multiple different systems (e.g. tile-cache, visibility, property
@@ -542,11 +544,6 @@ impl<'a> SceneBuilder<'a> {
         // We checked that the root pipeline is available on the render backend.
         let root_pipeline_id = scene.root_pipeline_id.unwrap();
         let root_pipeline = scene.pipelines.get(&root_pipeline_id).unwrap();
-
-        let background_color = root_pipeline
-            .background_color
-            .and_then(|color| if color.a > 0.0 { Some(color) } else { None });
-
         let root_reference_frame_index = spatial_tree.root_reference_frame_index();
 
         // During scene building, we assume a 1:1 picture -> raster pixel scale
@@ -580,14 +577,17 @@ impl<'a> SceneBuilder<'a> {
             ),
             snap_to_device,
             picture_graph: PictureGraph::new(),
-            plane_splitters: Vec::new(),
+            next_plane_splitter_index: 0,
             prim_instances: Vec::new(),
             pipeline_instance_ids: FastHashMap::default(),
             surfaces: Vec::new(),
             clip_tree_builder: ClipTreeBuilder::new(),
         };
 
-        builder.build_all(&root_pipeline);
+        builder.build_all(
+            root_pipeline_id,
+            &root_pipeline,
+        );
 
         // Construct the picture cache primitive instance(s) from the tile cache builder
         let (tile_cache_config, tile_cache_pictures) = builder.tile_cache_builder.build(
@@ -603,8 +603,12 @@ impl<'a> SceneBuilder<'a> {
             builder.picture_graph.add_root(*pic_index);
             SceneBuilder::finalize_picture(
                 *pic_index,
+                None,
                 &mut builder.prim_store.pictures,
                 None,
+                &builder.clip_tree_builder,
+                &builder.prim_instances,
+                &builder.interners.clip,
             );
         }
 
@@ -614,7 +618,6 @@ impl<'a> SceneBuilder<'a> {
             has_root_pipeline: scene.has_root_pipeline(),
             pipeline_epochs: scene.pipeline_epochs.clone(),
             output_rect: view.device_rect.size().into(),
-            background_color,
             hit_testing_scene: Arc::new(builder.hit_testing_scene),
             prim_store: builder.prim_store,
             clip_store: builder.clip_store,
@@ -622,22 +625,28 @@ impl<'a> SceneBuilder<'a> {
             tile_cache_config,
             tile_cache_pictures,
             picture_graph: builder.picture_graph,
-            plane_splitters: builder.plane_splitters,
+            num_plane_splitters: builder.next_plane_splitter_index,
             prim_instances: builder.prim_instances,
             surfaces: builder.surfaces,
             clip_tree,
         }
     }
 
-    /// Traverse the picture prim list and update any late-set spatial nodes
+    /// Traverse the picture prim list and update any late-set spatial nodes.
+    /// Also, for each picture primitive, store the lowest-common-ancestor
+    /// of all of the contained primitives' clips.
     // TODO(gw): This is somewhat hacky - it's unfortunate we need to do this, but it's
     //           because we can't determine the scroll root until we have checked all the
     //           primitives in the slice. Perhaps we could simplify this by doing some
     //           work earlier in the DL builder, so we know what scroll root will be picked?
     fn finalize_picture(
         pic_index: PictureIndex,
+        prim_index: Option<usize>,
         pictures: &mut [PicturePrimitive],
         parent_spatial_node_index: Option<SpatialNodeIndex>,
+        clip_tree_builder: &ClipTreeBuilder,
+        prim_instances: &[PrimitiveInstance],
+        clip_interner: &Interner<ClipIntern>,
     ) {
         // Extract the prim_list (borrow check) and select the spatial node to
         // assign to unknown clusters
@@ -668,23 +677,92 @@ impl<'a> SceneBuilder<'a> {
             }
         }
 
-        // Update the spatial node of any child pictures
-        for child_pic_index in &prim_list.child_pictures {
-            let child_pic = &mut pictures[child_pic_index.0];
+        // Work out the lowest common clip which is shared by all the
+        // primitives in this picture.  If it is the same as the picture clip
+        // then store it as the clip tree root for the picture so that it is
+        // applied later as part of picture compositing.  Gecko gives every
+        // primitive a viewport clip which, if applied within the picture,
+        // will mess up tile caching and mean we have to redraw on every
+        // scroll event (for tile caching to work usefully we specifically
+        // want to draw things even if they are outside the viewport).
+        let mut shared_clip_node_id = None;
+        for cluster in &prim_list.clusters {
+            for prim_instance in &prim_instances[cluster.prim_range()] {
+                let leaf = clip_tree_builder.get_leaf(prim_instance.clip_leaf_id);
 
-            if child_pic.spatial_node_index == SpatialNodeIndex::UNKNOWN {
-                child_pic.spatial_node_index = spatial_node_index;
+                shared_clip_node_id = match shared_clip_node_id {
+                    Some(current) => {
+                        Some(clip_tree_builder.find_lowest_common_ancestor(
+                            current,
+                            leaf.node_id,
+                        ))
+                    }
+                    None => Some(leaf.node_id)
+                };
             }
+        }
 
-            // Recurse into child pictures which may also have unknown spatial nodes
-            SceneBuilder::finalize_picture(
-                *child_pic_index,
-                pictures,
-                Some(spatial_node_index),
-            );
+        let lca_node = shared_clip_node_id
+            .and_then(|node_id| (node_id != ClipNodeId::NONE).then_some(node_id))
+            .map(|node_id| clip_tree_builder.get_node(node_id))
+            .map(|tree_node| &clip_interner[tree_node.handle]);
+        let pic_node = prim_index
+            .map(|prim_index| clip_tree_builder.get_leaf(prim_instances[prim_index].clip_leaf_id).node_id)
+            .and_then(|node_id| (node_id != ClipNodeId::NONE).then_some(node_id))
+            .map(|node_id| clip_tree_builder.get_node(node_id))
+            .map(|tree_node| &clip_interner[tree_node.handle]);
 
-            if pictures[child_pic_index.0].flags.contains(PictureFlags::DISABLE_SNAPPING) {
-                pictures[pic_index.0].flags |= PictureFlags::DISABLE_SNAPPING;
+        // The logic behind this optimisation is that there's no need to clip
+        // the contents of a picture when the crop will be applied anyway as
+        // part of compositing the picture.  However, this is not true if the
+        // picture includes a blur filter as the blur result depends on the
+        // offscreen pixels which may or may not be cropped away.
+        let has_blur = match &pictures[pic_index.0].composite_mode {
+            Some(PictureCompositeMode::Filter(Filter::Blur { .. })) => true,
+            Some(PictureCompositeMode::Filter(Filter::DropShadows { .. })) => true,
+            Some(PictureCompositeMode::SvgFilter( .. )) => true,
+            _ => false,
+        };
+
+        if let Some((lca_node, pic_node)) = lca_node.zip(pic_node) {
+            // It is only safe to ignore the LCA clip (by making it the clip
+            // root) if it is equal to or larger than the picture clip. But
+            // this comparison also needs to take into account spatial nodes
+            // as the two clips may in general be on different spatial nodes.
+            // For this specific Gecko optimisation we expect the the two
+            // clips to be identical and have the same spatial node so it's
+            // simplest to just test for ClipItemKey equality (which includes
+            // both spatial node and the actual clip).
+            if lca_node.key == pic_node.key && !has_blur {
+                pictures[pic_index.0].clip_root = shared_clip_node_id;
+            }
+        }
+
+        // Update the spatial node of any child pictures
+        for cluster in &prim_list.clusters {
+            for prim_instance_index in cluster.prim_range() {
+                if let PrimitiveInstanceKind::Picture { pic_index: child_pic_index, .. } = prim_instances[prim_instance_index].kind {
+                    let child_pic = &mut pictures[child_pic_index.0];
+
+                    if child_pic.spatial_node_index == SpatialNodeIndex::UNKNOWN {
+                        child_pic.spatial_node_index = spatial_node_index;
+                    }
+
+                    // Recurse into child pictures which may also have unknown spatial nodes
+                    SceneBuilder::finalize_picture(
+                        child_pic_index,
+                        Some(prim_instance_index),
+                        pictures,
+                        Some(spatial_node_index),
+                        clip_tree_builder,
+                        prim_instances,
+                        clip_interner,
+                    );
+
+                    if pictures[child_pic_index.0].flags.contains(PictureFlags::DISABLE_SNAPPING) {
+                        pictures[pic_index.0].flags |= PictureFlags::DISABLE_SNAPPING;
+                    }
+                }
             }
         }
 
@@ -755,7 +833,11 @@ impl<'a> SceneBuilder<'a> {
         });
     }
 
-    fn build_all(&mut self, root_pipeline: &ScenePipeline) {
+    fn build_all(
+        &mut self,
+        root_pipeline_id: PipelineId,
+        root_pipeline: &ScenePipeline,
+    ) {
         enum ContextKind<'a> {
             Root,
             StackingContext {
@@ -773,21 +855,20 @@ impl<'a> SceneBuilder<'a> {
 
         self.id_to_index_mapper_stack.push(NodeIdToIndexMapper::default());
 
-        let instance_id = self.get_next_instance_id_for_pipeline(root_pipeline.pipeline_id);
+        let instance_id = self.get_next_instance_id_for_pipeline(root_pipeline_id);
 
         self.push_root(
-            root_pipeline.pipeline_id,
-            &root_pipeline.viewport_size,
+            root_pipeline_id,
             instance_id,
         );
         self.build_spatial_tree_for_display_list(
             &root_pipeline.display_list.display_list,
-            root_pipeline.pipeline_id,
+            root_pipeline_id,
             instance_id,
         );
 
         let mut stack = vec![BuildContext {
-            pipeline_id: root_pipeline.pipeline_id,
+            pipeline_id: root_pipeline_id,
             kind: ContextKind::Root,
         }];
         let mut traversal = root_pipeline.display_list.iter();
@@ -1000,8 +1081,12 @@ impl<'a> SceneBuilder<'a> {
 
                 if vertical_flip {
                     let content_size = &self.iframe_size.last().unwrap();
+                    let content_height = match rotation {
+                        Rotation::Degree0 | Rotation::Degree180 => content_size.height,
+                        Rotation::Degree90 | Rotation::Degree270 => content_size.width,
+                    };
                     transform = transform
-                        .then_translate(LayoutVector3D::new(0.0, content_size.height, 0.0))
+                        .then_translate(LayoutVector3D::new(0.0, content_height, 0.0))
                         .pre_scale(1.0, -1.0, 1.0);
                 }
 
@@ -2087,8 +2172,8 @@ impl<'a> SceneBuilder<'a> {
                 .unwrap_or(self.spatial_tree.root_reference_frame_index());
 
             let plane_splitter_index = plane_splitter_index.unwrap_or_else(|| {
-                let index = self.plane_splitters.len();
-                self.plane_splitters.push(PlaneSplitter::new());
+                let index = self.next_plane_splitter_index;
+                self.next_plane_splitter_index += 1;
                 PlaneSplitterIndex(index)
             });
 
@@ -2111,18 +2196,6 @@ impl<'a> SceneBuilder<'a> {
         // clip node doesn't affect the stacking context rect.
         let mut blit_reason = BlitReason::empty();
 
-        if flags.contains(StackingContextFlags::IS_BLEND_CONTAINER) {
-            blit_reason |= BlitReason::ISOLATE;
-        }
-
-        // If backface visibility is explicitly set, we force a surface. This
-        // simplifies handling this grouping as an atomic primitive that can
-        // be culled if the transform changes. It also allows us to cache
-        // this as a regular child surface in future.
-        if !prim_flags.contains(PrimitiveFlags::IS_BACKFACE_VISIBLE) {
-            blit_reason |= BlitReason::ISOLATE;
-        }
-
         // If this stacking context has any complex clips, we need to draw it
         // to an off-screen surface.
         if let Some(clip_chain_id) = clip_chain_id {
@@ -2131,13 +2204,50 @@ impl<'a> SceneBuilder<'a> {
             }
         }
 
-        let is_redundant = FlattenedStackingContext::is_redundant(
-            flags,
+        // Check if we know this stacking context is redundant (doesn't need a surface)
+        // The check for blend-container redundancy is more involved so it's handled below.
+        let mut is_redundant = FlattenedStackingContext::is_redundant(
             &context_3d,
             &composite_ops,
             blit_reason,
             self.sc_stack.last(),
+            prim_flags,
         );
+
+        // If the stacking context is a blend container, and if we're at the top level
+        // of the stacking context tree, we may be able to make this blend container into a tile
+        // cache. This means that we get caching and correct scrolling invalidation for
+        // root level blend containers. For these cases, the readbacks of the backdrop
+        // are handled by doing partial reads of the picture cache tiles during rendering.
+        if flags.contains(StackingContextFlags::IS_BLEND_CONTAINER) {
+            // Check if we're inside a stacking context hierarchy with an existing surface
+            match self.sc_stack.last() {
+                Some(_) => {
+                    // If we are already inside a stacking context hierarchy with a surface, then we
+                    // need to do the normal isolate of this blend container as a regular surface
+                    blit_reason |= BlitReason::ISOLATE;
+                    is_redundant = false;
+                }
+                None => {
+                    // If the current slice is empty, then we can just mark the slice as
+                    // atomic (so that compositor surfaces don't get promoted within it)
+                    // and use that slice as the backing surface for the blend container
+                    if self.tile_cache_builder.is_current_slice_empty() &&
+                       self.spatial_tree.is_root_coord_system(spatial_node_index) &&
+                       !self.clip_tree_builder.clip_node_has_complex_clips(clip_node_id, &self.interners)
+                    {
+                        self.add_tile_cache_barrier_if_needed(SliceFlags::IS_ATOMIC);
+                        self.tile_cache_builder.make_current_slice_atomic();
+                    } else {
+                        // If the slice wasn't empty, we need to isolate a separate surface
+                        // to ensure that the content already in the slice is not used as
+                        // an input to the mix-blend composite
+                        blit_reason |= BlitReason::ISOLATE;
+                        is_redundant = false;
+                    }
+                }
+            }
+        }
 
         // If stacking context is a scrollbar, force a new slice for the primitives
         // within. The stacking context will be redundant and removed by above check.
@@ -2208,31 +2318,6 @@ impl<'a> SceneBuilder<'a> {
         }
 
         let stacking_context = self.sc_stack.pop().unwrap();
-
-        // If the stacking context is a blend container, and if we're at the top level
-        // of the stacking context tree, we can make this blend container into a tile
-        // cache. This means that we get caching and correct scrolling invalidation for
-        // root level blend containers. For these cases, the readbacks of the backdrop
-        // are handled by doing partial reads of the picture cache tiles during rendering.
-        if stacking_context.flags.intersects(StackingContextFlags::IS_BLEND_CONTAINER) &&
-           self.sc_stack.is_empty() &&
-           self.spatial_tree.is_root_coord_system(stacking_context.spatial_node_index) &&
-           !self.clip_tree_builder.clip_node_has_complex_clips(stacking_context.clip_node_id, &self.interners)
-        {
-            self.tile_cache_builder.add_tile_cache(
-                stacking_context.prim_list,
-                self.root_iframe_clip,
-            );
-
-            return;
-        }
-
-        let parent_is_empty = match self.sc_stack.last() {
-            Some(parent_sc) => {
-                parent_sc.prim_list.is_empty()
-            },
-            None => true,
-        };
 
         let mut source = match stacking_context.context_3d {
             // TODO(gw): For now, as soon as this picture is in
@@ -2449,29 +2534,18 @@ impl<'a> SceneBuilder<'a> {
         // If we're the first primitive within a stacking context, then we can guarantee that the
         // backdrop alpha will be 0, and then the blend equation collapses to just
         // Cs = Cs, and the blend mode isn't taken into account at all.
-        if let (Some(mix_blend_mode), false) = (stacking_context.composite_ops.mix_blend_mode, parent_is_empty) {
-            let parent_is_isolated = match self.sc_stack.last() {
-                Some(parent_sc) => parent_sc.blit_reason.contains(BlitReason::ISOLATE),
-                None => false,
-            };
-            if parent_is_isolated {
-                let composite_mode = PictureCompositeMode::MixBlend(mix_blend_mode);
+        if let Some(mix_blend_mode) = stacking_context.composite_ops.mix_blend_mode {
+            let composite_mode = PictureCompositeMode::MixBlend(mix_blend_mode);
 
-                source = source.add_picture(
-                    composite_mode,
-                    stacking_context.clip_node_id,
-                    Picture3DContext::Out,
-                    &mut self.interners,
-                    &mut self.prim_store,
-                    &mut self.prim_instances,
-                    &mut self.clip_tree_builder,
-                );
-            } else {
-                // If we have a mix-blend-mode, the stacking context needs to be isolated
-                // to blend correctly as per the CSS spec.
-                // If not already isolated, we can't correctly blend.
-                warn!("found a mix-blend-mode outside a blend container, ignoring");
-            }
+            source = source.add_picture(
+                composite_mode,
+                stacking_context.clip_node_id,
+                Picture3DContext::Out,
+                &mut self.interners,
+                &mut self.prim_store,
+                &mut self.prim_instances,
+                &mut self.clip_tree_builder,
+            );
         }
 
         // Set the stacking context clip on the outermost picture in the chain,
@@ -2559,7 +2633,6 @@ impl<'a> SceneBuilder<'a> {
     fn push_root(
         &mut self,
         pipeline_id: PipelineId,
-        viewport_size: &LayoutSize,
         instance: PipelineInstanceId,
     ) {
         let spatial_node_index = self.push_reference_frame(
@@ -2577,10 +2650,7 @@ impl<'a> SceneBuilder<'a> {
             SpatialNodeUid::root_reference_frame(pipeline_id, instance),
         );
 
-        let viewport_rect = self.snap_rect(
-            &LayoutRect::from_size(*viewport_size),
-            spatial_node_index,
-        );
+        let viewport_rect = LayoutRect::max_rect();
 
         self.add_scroll_frame(
             SpatialId::root_scroll_node(pipeline_id),
@@ -3098,7 +3168,6 @@ impl<'a> SceneBuilder<'a> {
                     fill: border.fill,
                     repeat_horizontal: border.repeat_horizontal,
                     repeat_vertical: border.repeat_vertical,
-                    outset: border.outset.into(),
                     widths: border_item.widths.into(),
                 };
 
@@ -3877,17 +3946,12 @@ impl FlattenedStackingContext {
 
     /// Return true if the stacking context isn't needed.
     pub fn is_redundant(
-        sc_flags: StackingContextFlags,
         context_3d: &Picture3DContext<ExtendedPrimitiveInstance>,
         composite_ops: &CompositeOps,
         blit_reason: BlitReason,
         parent: Option<&FlattenedStackingContext>,
+        prim_flags: PrimitiveFlags,
     ) -> bool {
-        // If this is a blend container, it's needed
-        if sc_flags.intersects(StackingContextFlags::IS_BLEND_CONTAINER) {
-            return false;
-        }
-
         // Any 3d context is required
         if let Picture3DContext::In { .. } = context_3d {
             return false;
@@ -3898,11 +3962,20 @@ impl FlattenedStackingContext {
             return false;
         }
 
-        // We can skip mix-blend modes if they are the first primitive in a stacking context,
-        // see pop_stacking_context for a full explanation.
+        // If a mix-blend is active, we'll need to apply it in most cases
         if composite_ops.mix_blend_mode.is_some() {
-            if let Some(parent) = parent {
-                if !parent.prim_list.is_empty() {
+            match parent {
+                Some(ref parent) => {
+                    // However, if the parent stacking context is empty, then the mix-blend
+                    // is a no-op, and we can skip it
+                    if !parent.prim_list.is_empty() {
+                        return false;
+                    }
+                }
+                None => {
+                    // TODO(gw): For now, we apply mix-blend ops that may be no-ops on a root
+                    //           level picture cache slice. We could apply a similar optimization
+                    //           to above with a few extra checks here, but it's probably quite rare.
                     return false;
                 }
             }
@@ -3910,6 +3983,11 @@ impl FlattenedStackingContext {
 
         // If need to isolate in surface due to clipping / mix-blend-mode
         if !blit_reason.is_empty() {
+            return false;
+        }
+
+        // If backface visibility is explicitly set.
+        if !prim_flags.contains(PrimitiveFlags::IS_BACKFACE_VISIBLE) {
             return false;
         }
 

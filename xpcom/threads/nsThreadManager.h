@@ -12,13 +12,12 @@
 #include "mozilla/ShutdownPhase.h"
 
 class nsIRunnable;
-class nsIEventTarget;
-class nsISerialEventTarget;
 class nsIThread;
 
 namespace mozilla {
 class IdleTaskManager;
 class SynchronizedEventQueue;
+class TaskQueue;
 }  // namespace mozilla
 
 class BackgroundEventTarget;
@@ -37,8 +36,13 @@ class nsThreadManager : public nsIThreadManager {
   void ShutdownNonMainThreads();
 
   // Finish shutting down all threads. This function must be called after
-  // ShutdownNonMainThreads and will take the main thread out of commission.
+  // ShutdownNonMainThreads and will delete the BackgroundEventTarget and
+  // take the main thread event target out of commission, but without
+  // releasing the underlying nsThread object.
   void ShutdownMainThread();
+
+  // Release the underlying main thread nsThread object.
+  void ReleaseMainThread();
 
   // Called by nsThread to inform the ThreadManager it exists.  This method
   // must be called when the given thread is the current thread.
@@ -68,7 +72,7 @@ class nsThreadManager : public nsIThreadManager {
   nsresult DispatchToBackgroundThread(nsIRunnable* aEvent,
                                       uint32_t aDispatchFlags);
 
-  already_AddRefed<nsISerialEventTarget> CreateBackgroundTaskQueue(
+  already_AddRefed<mozilla::TaskQueue> CreateBackgroundTaskQueue(
       const char* aName);
 
   ~nsThreadManager();

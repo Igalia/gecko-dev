@@ -3,17 +3,17 @@ import os
 import re
 import struct
 from collections import defaultdict
-
 from uuid import UUID
 
+import buildconfig
 from mozbuild.util import FileAvoidWrite
 from perfecthash import PerfectHash
-import buildconfig
-
 
 NO_CONTRACT_ID = 0xFFFFFFFF
 
 PHF_SIZE = 512
+
+TINY_PHF_SIZE = 16
 
 # In tests, we might not have a (complete) buildconfig.
 ENDIAN = (
@@ -290,6 +290,8 @@ class ModuleEntry(object):
         self.singleton = data.get("singleton", False)
         self.overridable = data.get("overridable", False)
 
+        self.protocol_config = data.get("protocol_config", None)
+
         if "name" in data:
             self.anonymous = False
             self.name = data["name"]
@@ -521,6 +523,57 @@ static inline ::mozilla::xpcom::CreateInstanceHelper Create(nsresult* aRv = null
 
         return res
 
+    # Generates the rust code for the `xpcom::components::<name>` entry
+    # corresponding to this component. This may not be called for modules
+    # without an explicit `name` (in which cases, `self.anonymous` will be
+    # true).
+    def lower_getters_rust(self):
+        assert not self.anonymous
+
+        substs = {
+            "name": self.name,
+            "id": "super::ModuleID::%s" % self.name,
+        }
+
+        res = (
+            """
+#[allow(non_snake_case)]
+pub mod %(name)s {
+    /// Get the singleton service instance for this component.
+    pub fn service<T: crate::XpCom>() -> Result<crate::RefPtr<T>, nserror::nsresult> {
+        let mut ga = crate::GetterAddrefs::<T>::new();
+        let rv = unsafe { super::Gecko_GetServiceByModuleID(%(id)s, &T::IID, ga.void_ptr()) };
+        if rv.failed() {
+            return Err(rv);
+        }
+        ga.refptr().ok_or(nserror::NS_ERROR_NO_INTERFACE)
+    }
+"""
+            % substs
+        )
+
+        if not self.singleton:
+            res += (
+                """
+    /// Create a new instance of this component.
+    pub fn create<T: crate::XpCom>() -> Result<crate::RefPtr<T>, nserror::nsresult> {
+        let mut ga = crate::GetterAddrefs::<T>::new();
+        let rv = unsafe { super::Gecko_CreateInstanceByModuleID(%(id)s, &T::IID, ga.void_ptr()) };
+        if rv.failed() {
+            return Err(rv);
+        }
+        ga.refptr().ok_or(nserror::NS_ERROR_NO_INTERFACE)
+    }
+"""
+                % substs
+            )
+
+        res += """\
+}
+"""
+
+        return res
+
 
 # Returns a quoted string literal representing the given raw string, with
 # certain special characters replaced so that it can be used in a C++-style
@@ -544,6 +597,44 @@ class ContractEntry(object):
         }}""".format(
             contract=strings.entry_to_cxx(self.contract),
             module_id=lower_module_id(self.module),
+        )
+
+
+# Represents a static ProtocolHandler entry, corresponding to a C++
+# ProtocolEntry struct, mapping a scheme to a static module entry and metadata.
+class ProtocolHandler(object):
+    def __init__(self, config, module):
+        def error(str_):
+            raise Exception(
+                "Error defining protocol handler %s (%s): %s"
+                % (str(module.cid), ", ".join(map(repr, module.contract_ids)), str_)
+            )
+
+        self.module = module
+        self.scheme = config.get("scheme", None)
+        if self.scheme is None:
+            error("No scheme defined for protocol component")
+        self.flags = config.get("flags", None)
+        if self.flags is None:
+            error("No flags defined for protocol component")
+        self.default_port = config.get("default_port", -1)
+        self.has_dynamic_flags = config.get("has_dynamic_flags", False)
+
+    def to_cxx(self):
+        return """
+        {{
+          .mScheme = {scheme},
+          .mProtocolFlags = {flags},
+          .mDefaultPort = {default_port},
+          .mModuleID = {module_id},
+          .mHasDynamicFlags = {has_dynamic_flags},
+        }}
+        """.format(
+            scheme=strings.entry_to_cxx(self.scheme),
+            module_id=lower_module_id(self.module),
+            flags=" | ".join("nsIProtocolHandler::%s" % flag for flag in self.flags),
+            default_port=self.default_port,
+            has_dynamic_flags="true" if self.has_dynamic_flags else "false",
         )
 
 
@@ -678,6 +769,17 @@ def gen_getters(entries):
     return "".join(entry.lower_getters() for entry in entries if not entry.anonymous)
 
 
+# Generates the rust getter code for each named component entry in the
+# `xpcom::components::` module.
+def gen_getters_rust(entries):
+    entries = list(entries)
+    entries.sort(key=lambda e: e.name)
+
+    return "".join(
+        entry.lower_getters_rust() for entry in entries if not entry.anonymous
+    )
+
+
 def gen_includes(substs, all_headers):
     headers = set()
     absolute_headers = set()
@@ -760,6 +862,7 @@ def gen_substs(manifests):
     contracts = []
     contract_map = {}
     js_services = {}
+    protocol_handlers = {}
 
     jsms = set()
     esModules = set()
@@ -795,6 +898,12 @@ def gen_substs(manifests):
                 raise Exception("Duplicate JS service name: %s" % mod.js_name)
             js_services[mod.js_name] = mod
 
+        if mod.protocol_config:
+            handler = ProtocolHandler(mod.protocol_config, mod)
+            if handler.scheme in protocol_handlers:
+                raise Exception("Duplicate protocol handler: %s" % handler.scheme)
+            protocol_handlers[handler.scheme] = handler
+
         if str(mod.cid) in cids:
             raise Exception("Duplicate cid: %s" % str(mod.cid))
         cids.add(str(mod.cid))
@@ -805,6 +914,10 @@ def gen_substs(manifests):
 
     js_services_phf = PerfectHash(
         list(js_services.values()), PHF_SIZE, key=lambda entry: entry.js_name
+    )
+
+    protocol_handlers_phf = PerfectHash(
+        list(protocol_handlers.values()), TINY_PHF_SIZE, key=lambda entry: entry.scheme
     )
 
     js_services_json = {}
@@ -820,6 +933,9 @@ def gen_substs(manifests):
 
     substs["module_count"] = len(modules)
     substs["contract_count"] = len(contracts)
+    substs["protocol_handler_count"] = len(protocol_handlers)
+
+    substs["default_protocol_handler_idx"] = protocol_handlers_phf.get_index("default")
 
     gen_module_funcs(substs, module_funcs)
 
@@ -842,6 +958,8 @@ def gen_substs(manifests):
     substs["constructors"] = gen_constructors(cid_phf.entries)
 
     substs["component_getters"] = gen_getters(cid_phf.entries)
+
+    substs["component_getters_rust"] = gen_getters_rust(cid_phf.entries)
 
     substs["module_cid_table"] = cid_phf.cxx_codegen(
         name="ModuleByCID",
@@ -876,6 +994,18 @@ def gen_substs(manifests):
         lower_entry=lambda entry: entry.lower_js_service(),
         return_type="const JSServiceEntry*",
         return_entry="return entry.Name() == aKey ? &entry : nullptr;",
+        key_type="const nsACString&",
+        key_bytes="aKey.BeginReading()",
+        key_length="aKey.Length()",
+    )
+
+    substs["protocol_handlers_table"] = protocol_handlers_phf.cxx_codegen(
+        name="LookupProtocolHandler",
+        entry_type="StaticProtocolHandler",
+        entries_name="gStaticProtocolHandlers",
+        lower_entry=lambda entry: entry.to_cxx(),
+        return_type="const StaticProtocolHandler*",
+        return_entry="return entry.Scheme() == aKey ? &entry : nullptr;",
         key_type="const nsACString&",
         key_bytes="aKey.BeginReading()",
         key_length="aKey.Length()",
@@ -960,10 +1090,28 @@ static constexpr size_t kStaticCategoryCount = %(category_count)d;
 
 static constexpr size_t kModuleInitCount = %(init_count)d;
 
+static constexpr size_t kStaticProtocolHandlerCount = %(protocol_handler_count)d;
+
+static constexpr size_t kDefaultProtocolHandlerIndex = %(default_protocol_handler_idx)d;
+
 }  // namespace xpcom
 }  // namespace mozilla
 
 #endif
+"""
+            % substs
+        )
+
+    with open_output("components.rs") as fh:
+        fh.write(
+            """\
+/// Unique IDs for each statically-registered module.
+#[repr(u16)]
+pub enum ModuleID {
+%(module_ids)s
+}
+
+%(component_getters_rust)s
 """
             % substs
         )

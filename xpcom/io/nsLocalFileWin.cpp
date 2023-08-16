@@ -13,7 +13,6 @@
 #include "mozilla/WinHeaderOnlyUtils.h"
 
 #include "nsCOMPtr.h"
-#include "nsMemory.h"
 
 #include "nsLocalFile.h"
 #include "nsLocalFileCommon.h"
@@ -77,14 +76,6 @@ using mozilla::FilePreferences::kPathSeparator;
 
 #ifndef DRIVE_REMOTE
 #  define DRIVE_REMOTE 4
-#endif
-
-// MinGW does not know about this error, ensure we do.
-#ifndef ERROR_DEVICE_HARDWARE_ERROR
-#  define ERROR_DEVICE_HARDWARE_ERROR 483L
-#endif
-#ifndef ERROR_CONTENT_BLOCKED
-#  define ERROR_CONTENT_BLOCKED 1296L
 #endif
 
 namespace {
@@ -192,7 +183,7 @@ nsresult nsLocalFile::RevealFile(const nsString& aResolvedPath) {
 }
 
 // static
-void nsLocalFile::CheckForReservedFileName(nsString& aFileName) {
+bool nsLocalFile::CheckForReservedFileName(const nsString& aFileName) {
   static const nsLiteralString forbiddenNames[] = {
       u"COM1"_ns, u"COM2"_ns, u"COM3"_ns, u"COM4"_ns, u"COM5"_ns,  u"COM6"_ns,
       u"COM7"_ns, u"COM8"_ns, u"COM9"_ns, u"LPT1"_ns, u"LPT2"_ns,  u"LPT3"_ns,
@@ -205,10 +196,12 @@ void nsLocalFile::CheckForReservedFileName(nsString& aFileName) {
       // invalid name is either the entire string, or a prefix with a period
       if (aFileName.Length() == forbiddenName.Length() ||
           aFileName.CharAt(forbiddenName.Length()) == char16_t('.')) {
-        aFileName.Truncate();
+        return true;
       }
     }
   }
+
+  return false;
 }
 
 class nsDriveEnumerator : public nsSimpleEnumerator,
@@ -608,7 +601,8 @@ static void FileTimeToPRTime(const FILETIME* aFiletime, PRTime* aPrtm) {
 
 // copied from nsprpub/pr/src/{io/prfile.c | md/windows/w95io.c} with some
 // changes : PR_GetFileInfo64, _PR_MD_GETFILEINFO64
-static nsresult GetFileInfo(const nsString& aName, PRFileInfo64* aInfo) {
+static nsresult GetFileInfo(const nsString& aName,
+                            nsLocalFile::FileInfo* aInfo) {
   if (aName.IsEmpty()) {
     return NS_ERROR_INVALID_ARG;
   }
@@ -639,14 +633,15 @@ static nsresult GetFileInfo(const nsString& aName, PRFileInfo64* aInfo) {
   aInfo->size = fileData.nFileSizeHigh;
   aInfo->size = (aInfo->size << 32) + fileData.nFileSizeLow;
 
-  FileTimeToPRTime(&fileData.ftLastWriteTime, &aInfo->modifyTime);
-
   if (0 == fileData.ftCreationTime.dwLowDateTime &&
       0 == fileData.ftCreationTime.dwHighDateTime) {
     aInfo->creationTime = aInfo->modifyTime;
   } else {
     FileTimeToPRTime(&fileData.ftCreationTime, &aInfo->creationTime);
   }
+
+  FileTimeToPRTime(&fileData.ftLastAccessTime, &aInfo->accessTime);
+  FileTimeToPRTime(&fileData.ftLastWriteTime, &aInfo->modifyTime);
 
   return NS_OK;
 }
@@ -925,7 +920,7 @@ nsresult nsLocalFile::ResolveSymlink() {
 }
 
 // Resolve any shortcuts and stat the resolved path. After a successful return
-// the path is guaranteed valid and the members of mFileInfo64 can be used.
+// the path is guaranteed valid and the members of mFileInfo can be used.
 nsresult nsLocalFile::ResolveAndStat() {
   // if we aren't dirty then we are already done
   if (!mDirty) {
@@ -949,12 +944,12 @@ nsresult nsLocalFile::ResolveAndStat() {
 
   // first we will see if the working path exists. If it doesn't then
   // there is nothing more that can be done
-  nsresult rv = GetFileInfo(nsprPath, &mFileInfo64);
+  nsresult rv = GetFileInfo(nsprPath, &mFileInfo);
   if (NS_FAILED(rv)) {
     return rv;
   }
 
-  if (mFileInfo64.type != PR_FILE_OTHER) {
+  if (mFileInfo.type != PR_FILE_OTHER) {
     mResolveDirty = false;
     mDirty = false;
     return NS_OK;
@@ -971,7 +966,7 @@ nsresult nsLocalFile::ResolveAndStat() {
 
   mResolveDirty = false;
   // get the details of the resolved path
-  rv = GetFileInfo(mResolvedPath, &mFileInfo64);
+  rv = GetFileInfo(mResolvedPath, &mFileInfo);
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -1863,13 +1858,27 @@ nsresult nsLocalFile::CopySingleFile(nsIFile* aSourceFile, nsIFile* aDestParent,
     ::GetNamedSecurityInfoW((LPWSTR)destPath.get(), SE_FILE_OBJECT,
                             DACL_SECURITY_INFORMATION, nullptr, nullptr,
                             &pOldDACL, nullptr, &pSD);
-    if (pOldDACL)
-      ::SetNamedSecurityInfoW(
-          (LPWSTR)destPath.get(), SE_FILE_OBJECT,
-          DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
-          nullptr, nullptr, pOldDACL, nullptr);
-    if (pSD) {
-      LocalFree((HLOCAL)pSD);
+    UniquePtr<VOID, LocalFreeDeleter> autoFreeSecDesc(pSD);
+    if (pOldDACL) {
+      // Test the current DACL, if we find one that is inherited then we can
+      // skip the reset. This avoids a request for SeTcbPrivilege, which can
+      // cause a lot of audit events if enabled (Bug 1816694).
+      bool inherited = false;
+      for (DWORD i = 0; i < pOldDACL->AceCount; ++i) {
+        VOID* pAce = nullptr;
+        if (::GetAce(pOldDACL, i, &pAce) &&
+            static_cast<PACE_HEADER>(pAce)->AceFlags & INHERITED_ACE) {
+          inherited = true;
+          break;
+        }
+      }
+
+      if (!inherited) {
+        ::SetNamedSecurityInfoW(
+            (LPWSTR)destPath.get(), SE_FILE_OBJECT,
+            DACL_SECURITY_INFORMATION | UNPROTECTED_DACL_SECURITY_INFORMATION,
+            nullptr, nullptr, pOldDACL, nullptr);
+      }
     }
   }
 
@@ -2286,7 +2295,7 @@ nsLocalFile::Load(PRLibrary** aResult) {
 }
 
 NS_IMETHODIMP
-nsLocalFile::Remove(bool aRecursive) {
+nsLocalFile::Remove(bool aRecursive, uint32_t* aRemoveCount) {
   // NOTE:
   //
   // if the working path points to a shortcut, then we will only
@@ -2339,9 +2348,11 @@ nsLocalFile::Remove(bool aRecursive) {
         return rv;
       }
 
+      // XXX: We are ignoring the result of the removal here while
+      // nsLocalFileUnix does not. We should align the behavior. (bug 1779696)
       nsCOMPtr<nsIFile> file;
       while (NS_SUCCEEDED(dirEnum->GetNextFile(getter_AddRefs(file))) && file) {
-        file->Remove(aRecursive);
+        file->Remove(aRecursive, aRemoveCount);
       }
     }
     if (RemoveDirectoryW(mWorkingPath.get()) == 0) {
@@ -2353,68 +2364,94 @@ nsLocalFile::Remove(bool aRecursive) {
     }
   }
 
+  if (aRemoveCount) {
+    *aRemoveCount += 1;
+  }
+
   MakeDirty();
   return rv;
 }
 
-NS_IMETHODIMP
-nsLocalFile::GetLastModifiedTime(PRTime* aLastModifiedTime) {
+nsresult nsLocalFile::GetDateImpl(PRTime* aTime,
+                                  nsLocalFile::TimeField aTimeField,
+                                  bool aFollowLinks) {
   // Check we are correctly initialized.
   CHECK_mWorkingPath();
 
-  if (NS_WARN_IF(!aLastModifiedTime)) {
+  if (NS_WARN_IF(!aTime)) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  // get the modified time of the target as determined by mFollowSymlinks
-  // If true, then this will be for the target of the shortcut file,
-  // otherwise it will be for the shortcut file itself (i.e. the same
-  // results as GetLastModifiedTimeOfLink)
+  FileInfo symlinkInfo{};
+  FileInfo* pInfo;
 
-  nsresult rv = ResolveAndStat();
-  if (NS_FAILED(rv)) {
-    return rv;
+  if (aFollowLinks) {
+    if (nsresult rv = GetFileInfo(mWorkingPath, &symlinkInfo); NS_FAILED(rv)) {
+      return rv;
+    }
+
+    pInfo = &symlinkInfo;
+  } else {
+    if (nsresult rv = ResolveAndStat(); NS_FAILED(rv)) {
+      return rv;
+    }
+
+    pInfo = &mFileInfo;
   }
 
-  // microseconds -> milliseconds
-  *aLastModifiedTime = mFileInfo64.modifyTime / PR_USEC_PER_MSEC;
+  switch (aTimeField) {
+    case TimeField::AccessedTime:
+      *aTime = pInfo->accessTime / PR_USEC_PER_MSEC;
+      break;
+
+    case TimeField::ModifiedTime:
+      *aTime = pInfo->modifyTime / PR_USEC_PER_MSEC;
+      break;
+
+    default:
+      MOZ_CRASH("Unknown time field");
+  }
+
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsLocalFile::GetLastAccessedTime(PRTime* aLastAccessedTime) {
+  return GetDateImpl(aLastAccessedTime, TimeField::AccessedTime,
+                     /* aFollowSymlinks = */ true);
+}
+
+NS_IMETHODIMP
+nsLocalFile::GetLastAccessedTimeOfLink(PRTime* aLastAccessedTime) {
+  return GetDateImpl(aLastAccessedTime, TimeField::AccessedTime,
+                     /* aFollowSymlinks = */ false);
+}
+
+NS_IMETHODIMP
+nsLocalFile::SetLastAccessedTime(PRTime aLastAccessedTime) {
+  return SetDateImpl(aLastAccessedTime, TimeField::AccessedTime);
+}
+
+NS_IMETHODIMP
+nsLocalFile::SetLastAccessedTimeOfLink(PRTime aLastAccessedTime) {
+  return SetLastAccessedTime(aLastAccessedTime);
+}
+
+NS_IMETHODIMP
+nsLocalFile::GetLastModifiedTime(PRTime* aLastModifiedTime) {
+  return GetDateImpl(aLastModifiedTime, TimeField::ModifiedTime,
+                     /* aFollowSymlinks = */ true);
 }
 
 NS_IMETHODIMP
 nsLocalFile::GetLastModifiedTimeOfLink(PRTime* aLastModifiedTime) {
-  // Check we are correctly initialized.
-  CHECK_mWorkingPath();
-
-  if (NS_WARN_IF(!aLastModifiedTime)) {
-    return NS_ERROR_INVALID_ARG;
-  }
-
-  // The caller is assumed to have already called IsSymlink
-  // and to have found that this file is a link.
-
-  PRFileInfo64 info;
-  nsresult rv = GetFileInfo(mWorkingPath, &info);
-  if (NS_FAILED(rv)) {
-    return rv;
-  }
-
-  // microseconds -> milliseconds
-  *aLastModifiedTime = info.modifyTime / PR_USEC_PER_MSEC;
-  return NS_OK;
+  return GetDateImpl(aLastModifiedTime, TimeField::ModifiedTime,
+                     /* aFollowSymlinks = */ false);
 }
 
 NS_IMETHODIMP
 nsLocalFile::SetLastModifiedTime(PRTime aLastModifiedTime) {
-  // Check we are correctly initialized.
-  CHECK_mWorkingPath();
-
-  nsresult rv = SetModDate(aLastModifiedTime, mWorkingPath.get());
-  if (NS_SUCCEEDED(rv)) {
-    MakeDirty();
-  }
-
-  return rv;
+  return SetDateImpl(aLastModifiedTime, TimeField::ModifiedTime);
 }
 
 NS_IMETHODIMP
@@ -2433,7 +2470,7 @@ nsLocalFile::GetCreationTime(PRTime* aCreationTime) {
   nsresult rv = ResolveAndStat();
   NS_ENSURE_SUCCESS(rv, rv);
 
-  *aCreationTime = mFileInfo64.creationTime / PR_USEC_PER_MSEC;
+  *aCreationTime = mFileInfo.creationTime / PR_USEC_PER_MSEC;
 
   return NS_OK;
 }
@@ -2446,7 +2483,7 @@ nsLocalFile::GetCreationTimeOfLink(PRTime* aCreationTime) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  PRFileInfo64 info;
+  FileInfo info;
   nsresult rv = GetFileInfo(mWorkingPath, &info);
   NS_ENSURE_SUCCESS(rv, rv);
 
@@ -2455,17 +2492,21 @@ nsLocalFile::GetCreationTimeOfLink(PRTime* aCreationTime) {
   return NS_OK;
 }
 
-nsresult nsLocalFile::SetModDate(PRTime aLastModifiedTime,
-                                 const wchar_t* aFilePath) {
+nsresult nsLocalFile::SetDateImpl(PRTime aTime,
+                                  nsLocalFile::TimeField aTimeField) {
+  // Check we are correctly initialized.
+  CHECK_mWorkingPath();
+
   // The FILE_FLAG_BACKUP_SEMANTICS is required in order to change the
   // modification time for directories.
-  HANDLE file = ::CreateFileW(aFilePath,      // pointer to name of the file
-                              GENERIC_WRITE,  // access (write) mode
-                              0,              // share mode
-                              nullptr,        // pointer to security attributes
-                              OPEN_EXISTING,  // how to create
-                              FILE_FLAG_BACKUP_SEMANTICS,  // file attributes
-                              nullptr);
+  HANDLE file =
+      ::CreateFileW(mWorkingPath.get(),  // pointer to name of the file
+                    GENERIC_WRITE,       // access (write) mode
+                    0,                   // share mode
+                    nullptr,             // pointer to security attributes
+                    OPEN_EXISTING,       // how to create
+                    FILE_FLAG_BACKUP_SEMANTICS,  // file attributes
+                    nullptr);
 
   if (file == INVALID_HANDLE_VALUE) {
     return ConvertWinError(GetLastError());
@@ -2475,8 +2516,12 @@ nsresult nsLocalFile::SetModDate(PRTime aLastModifiedTime,
   SYSTEMTIME st;
   PRExplodedTime pret;
 
+  if (aTime == 0) {
+    aTime = PR_Now() / PR_USEC_PER_MSEC;
+  }
+
   // PR_ExplodeTime expects usecs...
-  PR_ExplodeTime(aLastModifiedTime * PR_USEC_PER_MSEC, PR_GMTParameters, &pret);
+  PR_ExplodeTime(aTime * PR_USEC_PER_MSEC, PR_GMTParameters, &pret);
   st.wYear = pret.tm_year;
   st.wMonth =
       pret.tm_month + 1;  // Convert start offset -- Win32: Jan=1; NSPR: Jan=0
@@ -2487,14 +2532,25 @@ nsresult nsLocalFile::SetModDate(PRTime aLastModifiedTime,
   st.wSecond = pret.tm_sec;
   st.wMilliseconds = pret.tm_usec / 1000;
 
+  const FILETIME* accessTime = nullptr;
+  const FILETIME* modifiedTime = nullptr;
+
+  if (aTimeField == TimeField::AccessedTime) {
+    accessTime = &ft;
+  } else {
+    modifiedTime = &ft;
+  }
+
   nsresult rv = NS_OK;
+
   // if at least one of these fails...
   if (!(SystemTimeToFileTime(&st, &ft) != 0 &&
-        SetFileTime(file, nullptr, &ft, &ft) != 0)) {
+        SetFileTime(file, nullptr, accessTime, modifiedTime) != 0)) {
     rv = ConvertWinError(GetLastError());
   }
 
   CloseHandle(file);
+
   return rv;
 }
 
@@ -2625,7 +2681,7 @@ nsLocalFile::GetFileSize(int64_t* aFileSize) {
     return rv;
   }
 
-  *aFileSize = mFileInfo64.size;
+  *aFileSize = mFileInfo.size;
   return NS_OK;
 }
 
@@ -2641,7 +2697,7 @@ nsLocalFile::GetFileSizeOfLink(int64_t* aFileSize) {
   // The caller is assumed to have already called IsSymlink
   // and to have found that this file is a link.
 
-  PRFileInfo64 info;
+  FileInfo info{};
   if (NS_FAILED(GetFileInfo(mWorkingPath, &info))) {
     return NS_ERROR_FILE_INVALID_PATH;
   }
@@ -2714,7 +2770,7 @@ nsLocalFile::GetDiskSpaceAvailable(int64_t* aDiskSpaceAvailable) {
     return rv;
   }
 
-  if (mFileInfo64.type == PR_FILE_FILE) {
+  if (mFileInfo.type == PR_FILE_FILE) {
     // Since GetDiskFreeSpaceExW works only on directories, use the parent.
     nsCOMPtr<nsIFile> parent;
     if (NS_SUCCEEDED(GetParent(getter_AddRefs(parent))) && parent) {
@@ -2735,14 +2791,12 @@ nsLocalFile::GetDiskCapacity(int64_t* aDiskCapacity) {
     return NS_ERROR_INVALID_ARG;
   }
 
-  *aDiskCapacity = 0;
-
   nsresult rv = ResolveAndStat();
   if (NS_FAILED(rv)) {
     return rv;
   }
 
-  if (mFileInfo64.type == PR_FILE_FILE) {
+  if (mFileInfo.type == PR_FILE_FILE) {
     // Since GetDiskFreeSpaceExW works only on directories, use the parent.
     nsCOMPtr<nsIFile> parent;
     if (NS_SUCCEEDED(GetParent(getter_AddRefs(parent))) && parent) {

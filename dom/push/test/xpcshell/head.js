@@ -8,20 +8,18 @@ var { XPCOMUtils } = ChromeUtils.importESModule(
 );
 
 ChromeUtils.defineESModuleGetters(this, {
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
+  PermissionTestUtils: "resource://testing-common/PermissionTestUtils.sys.mjs",
   PlacesTestUtils: "resource://testing-common/PlacesTestUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+  PushCrypto: "resource://gre/modules/PushCrypto.sys.mjs",
+  PushService: "resource://gre/modules/PushService.sys.mjs",
+  PushServiceHttp2: "resource://gre/modules/PushService.sys.mjs",
+  PushServiceWebSocket: "resource://gre/modules/PushService.sys.mjs",
+  pushBroadcastService: "resource://gre/modules/PushBroadcastService.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-  PermissionTestUtils: "resource://testing-common/PermissionTestUtils.jsm",
-  pushBroadcastService: "resource://gre/modules/PushBroadcastService.jsm",
-  Preferences: "resource://gre/modules/Preferences.jsm",
-  PushCrypto: "resource://gre/modules/PushCrypto.jsm",
-  PushService: "resource://gre/modules/PushService.jsm",
-  PushServiceHttp2: "resource://gre/modules/PushService.jsm",
-  PushServiceWebSocket: "resource://gre/modules/PushService.jsm",
-});
 var {
   clearInterval,
   clearTimeout,
@@ -29,7 +27,7 @@ var {
   setIntervalWithTarget,
   setTimeout,
   setTimeoutWithTarget,
-} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
+} = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
 
 XPCOMUtils.defineLazyServiceGetter(
   this,
@@ -62,7 +60,7 @@ Services.obs.addObserver(function observe(subject, topic, data) {
     try {
       thread.processNextEvent(true);
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
     }
   }
 }, "profile-change-net-teardown");
@@ -99,7 +97,7 @@ function waterfall(...callbacks) {
         }),
       Promise.resolve()
     )
-    .catch(Cu.reportError);
+    .catch(console.error);
 }
 
 /**
@@ -350,7 +348,7 @@ MockWebSocket.prototype = {
   },
 };
 
-var setUpServiceInParent = async function(service, db) {
+var setUpServiceInParent = async function (service, db) {
   if (!isParent) {
     return;
   }
@@ -458,7 +456,7 @@ var setUpServiceInParent = async function(service, db) {
   });
 };
 
-var tearDownServiceInParent = async function(db) {
+var tearDownServiceInParent = async function (db) {
   if (!isParent) {
     return;
   }

@@ -7,19 +7,24 @@
 
 "use strict";
 
-var { require } = ChromeUtils.import(
-  "resource://devtools/shared/loader/Loader.jsm"
+var { require } = ChromeUtils.importESModule(
+  "resource://devtools/shared/loader/Loader.sys.mjs"
 );
-var { Assert } = require("resource://testing-common/Assert.jsm");
-var { gDevTools } = require("devtools/client/framework/devtools");
+var { Assert } = ChromeUtils.importESModule(
+  "resource://testing-common/Assert.sys.mjs"
+);
+var { gDevTools } = require("resource://devtools/client/framework/devtools.js");
 var { BrowserLoader } = ChromeUtils.import(
   "resource://devtools/shared/loader/browser-loader.js"
 );
-var Services = require("Services");
-var { DevToolsServer } = require("devtools/server/devtools-server");
-var { DevToolsClient } = require("devtools/client/devtools-client");
-var DevToolsUtils = require("devtools/shared/DevToolsUtils");
-var { Toolbox } = require("devtools/client/framework/toolbox");
+var {
+  DevToolsServer,
+} = require("resource://devtools/server/devtools-server.js");
+var {
+  DevToolsClient,
+} = require("resource://devtools/client/devtools-client.js");
+var DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
+var { Toolbox } = require("resource://devtools/client/framework/toolbox.js");
 
 var { require: browserRequire } = BrowserLoader({
   baseURI: "resource://devtools/client/shared/",
@@ -104,7 +109,7 @@ TEST_TREE_VIEW.children = {
 const TEST_TREE_VIEW_INTERFACE = {
   provider: {
     getChildren: x => TEST_TREE_VIEW.children[x.label],
-    hasChildren: x => TEST_TREE_VIEW.children[x.label].length > 0,
+    hasChildren: x => !!TEST_TREE_VIEW.children[x.label].length,
     getLabel: x => x.label,
     getValue: x => x.value,
     getKey: x => x.label,

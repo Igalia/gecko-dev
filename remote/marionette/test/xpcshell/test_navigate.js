@@ -2,8 +2,8 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-const { navigate } = ChromeUtils.import(
-  "chrome://remote/content/marionette/navigate.js"
+const { navigate } = ChromeUtils.importESModule(
+  "chrome://remote/content/marionette/navigate.sys.mjs"
 );
 
 const mockTopContext = {
@@ -22,18 +22,16 @@ const mockNestedContext = {
   top: mockTopContext,
 };
 
-add_test(function test_isLoadEventExpectedForCurrent() {
+add_task(function test_isLoadEventExpectedForCurrent() {
   Assert.throws(
     () => navigate.isLoadEventExpected(undefined),
     /Expected at least one URL/
   );
 
   ok(navigate.isLoadEventExpected(new URL("http://a/")));
-
-  run_next_test();
 });
 
-add_test(function test_isLoadEventExpectedForFuture() {
+add_task(function test_isLoadEventExpectedForFuture() {
   const data = [
     { current: "http://a/", future: undefined, expected: true },
     { current: "http://a/", future: "http://a/", expected: true },
@@ -49,11 +47,9 @@ add_test(function test_isLoadEventExpectedForFuture() {
     const future = entry.future ? new URL(entry.future) : undefined;
     equal(navigate.isLoadEventExpected(current, { future }), entry.expected);
   }
-
-  run_next_test();
 });
 
-add_test(function test_isLoadEventExpectedForTarget() {
+add_task(function test_isLoadEventExpectedForTarget() {
   for (const target of ["_parent", "_top"]) {
     Assert.throws(
       () => navigate.isLoadEventExpected(new URL("http://a"), { target }),
@@ -91,6 +87,4 @@ add_test(function test_isLoadEventExpectedForTarget() {
       entry.expected
     );
   }
-
-  run_next_test();
 });

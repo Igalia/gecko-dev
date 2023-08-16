@@ -2,26 +2,18 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, print_function, unicode_literals
-
-from argparse import Namespace
-from collections import defaultdict
 import functools
 import logging
 import os
-import six
 import sys
 import warnings
+from argparse import Namespace
+from collections import defaultdict
 
-from mozbuild.base import (
-    MachCommandConditions as conditions,
-    MozbuildObject,
-)
-
-from mach.decorators import (
-    CommandArgument,
-    Command,
-)
+import six
+from mach.decorators import Command, CommandArgument
+from mozbuild.base import MachCommandConditions as conditions
+from mozbuild.base import MozbuildObject
 
 here = os.path.abspath(os.path.dirname(__file__))
 
@@ -174,11 +166,6 @@ class MochitestRunner(MozbuildObject):
             options.e10s = False
             print("using e10s=False for non-geckoview app")
 
-        # Disable fission until geckoview supports fission by default.
-        setattr(options, "disable_fission", True)
-        if "fission.autostart=true" in options.extraPrefs:
-            setattr(options, "disable_fission", False)
-
         return runtestsremote.run_test_harness(parser, options)
 
     def run_geckoview_junit_test(self, context, **kwargs):
@@ -189,11 +176,6 @@ class MochitestRunner(MozbuildObject):
         import runjunit
 
         options = Namespace(**kwargs)
-
-        # Disable fission until geckoview supports fission by default.
-        setattr(options, "disable_fission", True)
-        if "fission.autostart=true" in options.extra_prefs:
-            setattr(options, "disable_fission", False)
 
         return runjunit.run_test_harness(parser, options)
 
@@ -230,8 +212,8 @@ def setup_argument_parser():
         # be done in this admittedly awkward place because
         # MochitestArgumentParser initialization fails if no device is found.
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
 
         # verify device and xre
@@ -265,10 +247,9 @@ def setup_junit_argument_parser():
             imp.load_module("mochitest", fh, path, (".py", "r", imp.PY_SOURCE))
 
         import runjunit
-
         from mozrunner.devices.android_device import (
-            verify_android_device,
             InstallIntent,
+            verify_android_device,
         )
 
         verify_android_device(
@@ -463,9 +444,9 @@ def run_mochitest_general(
 
     if buildapp == "android":
         from mozrunner.devices.android_device import (
+            InstallIntent,
             get_adb_path,
             verify_android_device,
-            InstallIntent,
         )
 
         app = kwargs.get("app")
@@ -542,9 +523,9 @@ def run_junit(command_context, no_install, **kwargs):
     command_context._ensure_state_subdir_exists(".")
 
     from mozrunner.devices.android_device import (
+        InstallIntent,
         get_adb_path,
         verify_android_device,
-        InstallIntent,
     )
 
     # verify installation

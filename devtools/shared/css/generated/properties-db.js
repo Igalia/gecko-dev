@@ -59,7 +59,8 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
-      "unset"
+      "unset",
+      "view"
     ]
   },
   "-moz-animation-delay": {
@@ -211,21 +212,11 @@ exports.CSS_PROPERTIES = {
       "-moz-mac-source-list",
       "-moz-mac-source-list-selection",
       "-moz-menulist-arrow-button",
-      "-moz-win-borderless-glass",
-      "-moz-win-browsertabbar-toolbox",
-      "-moz-win-communications-toolbox",
-      "-moz-win-exclude-glass",
-      "-moz-win-glass",
-      "-moz-win-media-toolbox",
       "-moz-window-button-box",
-      "-moz-window-button-box-maximized",
       "-moz-window-button-close",
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -240,38 +231,25 @@ exports.CSS_PROPERTIES = {
       "checkmenuitem",
       "dialog",
       "dualbutton",
-      "groupbox",
       "inherit",
       "initial",
       "listbox",
       "menuarrow",
-      "menubar",
-      "menucheckbox",
-      "menuimage",
       "menuitem",
-      "menuitemtext",
       "menulist",
       "menulist-button",
-      "menulist-text",
       "menupopup",
-      "menuradio",
-      "menuseparator",
       "meter",
-      "meterbar",
       "meterchunk",
       "none",
       "number-input",
       "progress-bar",
-      "progressbar",
       "progresschunk",
       "radio",
       "radio-container",
       "radio-label",
-      "radiomenuitem",
       "range",
       "range-thumb",
-      "resizer",
-      "resizerpanel",
       "revert",
       "revert-layer",
       "scrollbar-horizontal",
@@ -293,7 +271,6 @@ exports.CSS_PROPERTIES = {
       "spinner-upbutton",
       "splitter",
       "statusbar",
-      "statusbarpanel",
       "tab",
       "tab-scroll-arrow-back",
       "tab-scroll-arrow-forward",
@@ -301,7 +278,6 @@ exports.CSS_PROPERTIES = {
       "tabpanels",
       "textarea",
       "textfield",
-      "textfield-multiline",
       "toolbar",
       "toolbarbutton",
       "toolbarbutton-dropdown",
@@ -339,15 +315,16 @@ exports.CSS_PROPERTIES = {
   "-moz-border-end": {
     "isInherited": false,
     "subproperties": [
-      "border-inline-end-color",
+      "border-inline-end-width",
       "border-inline-end-style",
-      "border-inline-end-width"
+      "border-inline-end-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -361,8 +338,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -386,6 +367,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -393,6 +375,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -491,15 +477,16 @@ exports.CSS_PROPERTIES = {
   "-moz-border-start": {
     "isInherited": false,
     "subproperties": [
-      "border-inline-start-color",
+      "border-inline-start-width",
       "border-inline-start-style",
-      "border-inline-start-width"
+      "border-inline-start-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -513,8 +500,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -538,6 +529,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -545,6 +537,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -781,22 +777,6 @@ exports.CSS_PROPERTIES = {
       "initial",
       "manual",
       "none",
-      "revert",
-      "revert-layer",
-      "unset"
-    ]
-  },
-  "-moz-image-region": {
-    "isInherited": true,
-    "subproperties": [
-      "-moz-image-region"
-    ],
-    "supports": [],
-    "values": [
-      "auto",
-      "inherit",
-      "initial",
-      "rect",
       "revert",
       "revert-layer",
       "unset"
@@ -1334,7 +1314,8 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
-      "unset"
+      "unset",
+      "view"
     ]
   },
   "-webkit-animation-delay": {
@@ -1486,21 +1467,11 @@ exports.CSS_PROPERTIES = {
       "-moz-mac-source-list",
       "-moz-mac-source-list-selection",
       "-moz-menulist-arrow-button",
-      "-moz-win-borderless-glass",
-      "-moz-win-browsertabbar-toolbox",
-      "-moz-win-communications-toolbox",
-      "-moz-win-exclude-glass",
-      "-moz-win-glass",
-      "-moz-win-media-toolbox",
       "-moz-window-button-box",
-      "-moz-window-button-box-maximized",
       "-moz-window-button-close",
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -1515,38 +1486,25 @@ exports.CSS_PROPERTIES = {
       "checkmenuitem",
       "dialog",
       "dualbutton",
-      "groupbox",
       "inherit",
       "initial",
       "listbox",
       "menuarrow",
-      "menubar",
-      "menucheckbox",
-      "menuimage",
       "menuitem",
-      "menuitemtext",
       "menulist",
       "menulist-button",
-      "menulist-text",
       "menupopup",
-      "menuradio",
-      "menuseparator",
       "meter",
-      "meterbar",
       "meterchunk",
       "none",
       "number-input",
       "progress-bar",
-      "progressbar",
       "progresschunk",
       "radio",
       "radio-container",
       "radio-label",
-      "radiomenuitem",
       "range",
       "range-thumb",
-      "resizer",
-      "resizerpanel",
       "revert",
       "revert-layer",
       "scrollbar-horizontal",
@@ -1568,7 +1526,6 @@ exports.CSS_PROPERTIES = {
       "spinner-upbutton",
       "splitter",
       "statusbar",
-      "statusbarpanel",
       "tab",
       "tab-scroll-arrow-back",
       "tab-scroll-arrow-forward",
@@ -1576,7 +1533,6 @@ exports.CSS_PROPERTIES = {
       "tabpanels",
       "textarea",
       "textfield",
-      "textfield-multiline",
       "toolbar",
       "toolbarbutton",
       "toolbarbutton-dropdown",
@@ -1891,6 +1847,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -1899,7 +1856,11 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -1922,6 +1883,36 @@ exports.CSS_PROPERTIES = {
       "revert",
       "revert-layer",
       "unset"
+    ]
+  },
+  "-webkit-clip-path": {
+    "isInherited": false,
+    "subproperties": [
+      "clip-path"
+    ],
+    "supports": [],
+    "values": [
+      "border-box",
+      "circle",
+      "content-box",
+      "ellipse",
+      "fill-box",
+      "inherit",
+      "initial",
+      "inset",
+      "margin-box",
+      "none",
+      "padding-box",
+      "path",
+      "polygon",
+      "rect",
+      "revert",
+      "revert-layer",
+      "stroke-box",
+      "unset",
+      "url",
+      "view-box",
+      "xywh"
     ]
   },
   "-webkit-filter": {
@@ -2436,6 +2427,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -2443,11 +2435,33 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
       "rgba",
       "transparent",
+      "unset"
+    ]
+  },
+  "-webkit-text-security": {
+    "isInherited": true,
+    "subproperties": [
+      "-webkit-text-security"
+    ],
+    "supports": [],
+    "values": [
+      "circle",
+      "disc",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "square",
       "unset"
     ]
   },
@@ -2478,6 +2492,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -2485,7 +2500,11 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "medium",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -2506,6 +2525,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -2513,6 +2533,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -2740,6 +2764,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -2747,6 +2772,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -2959,6 +2988,7 @@ exports.CSS_PROPERTIES = {
       "float",
       "clear",
       "vertical-align",
+      "baseline-source",
       "overflow-clip-box-inline",
       "overflow-clip-box-block",
       "overflow-x",
@@ -2972,6 +3002,7 @@ exports.CSS_PROPERTIES = {
       "offset-distance",
       "offset-rotate",
       "offset-anchor",
+      "offset-position",
       "scroll-behavior",
       "scroll-snap-align",
       "scroll-snap-type",
@@ -3025,11 +3056,14 @@ exports.CSS_PROPERTIES = {
       "font-weight",
       "font-size",
       "font-size-adjust",
-      "font-synthesis",
+      "font-synthesis-weight",
+      "font-synthesis-style",
+      "font-synthesis-small-caps",
       "font-stretch",
       "font-kerning",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position",
@@ -3037,6 +3071,7 @@ exports.CSS_PROPERTIES = {
       "font-variation-settings",
       "font-language-override",
       "font-optical-sizing",
+      "font-palette",
       "math-depth",
       "math-style",
       "-moz-osx-font-smoothing",
@@ -3104,6 +3139,8 @@ exports.CSS_PROPERTIES = {
       "text-underline-position",
       "text-decoration-skip-ink",
       "hyphenate-character",
+      "forced-color-adjust",
+      "-webkit-text-security",
       "cursor",
       "pointer-events",
       "-moz-user-input",
@@ -3117,7 +3154,6 @@ exports.CSS_PROPERTIES = {
       "list-style-type",
       "list-style-image",
       "quotes",
-      "-moz-image-region",
       "margin-top",
       "margin-right",
       "margin-bottom",
@@ -3131,7 +3167,6 @@ exports.CSS_PROPERTIES = {
       "outline-style",
       "outline-width",
       "outline-offset",
-      "size",
       "page",
       "padding-top",
       "padding-right",
@@ -3238,6 +3273,9 @@ exports.CSS_PROPERTIES = {
       "animation-timeline",
       "scroll-timeline-name",
       "scroll-timeline-axis",
+      "view-timeline-name",
+      "view-timeline-axis",
+      "view-timeline-inset",
       "-moz-box-align",
       "-moz-box-direction",
       "-moz-box-flex",
@@ -3297,6 +3335,24 @@ exports.CSS_PROPERTIES = {
       "step-end",
       "step-start",
       "steps",
+      "unset",
+      "view"
+    ]
+  },
+  "animation-composition": {
+    "isInherited": false,
+    "subproperties": [
+      "animation-composition"
+    ],
+    "supports": [],
+    "values": [
+      "accumulate",
+      "add",
+      "inherit",
+      "initial",
+      "replace",
+      "revert",
+      "revert-layer",
       "unset"
     ]
   },
@@ -3449,21 +3505,11 @@ exports.CSS_PROPERTIES = {
       "-moz-mac-source-list",
       "-moz-mac-source-list-selection",
       "-moz-menulist-arrow-button",
-      "-moz-win-borderless-glass",
-      "-moz-win-browsertabbar-toolbox",
-      "-moz-win-communications-toolbox",
-      "-moz-win-exclude-glass",
-      "-moz-win-glass",
-      "-moz-win-media-toolbox",
       "-moz-window-button-box",
-      "-moz-window-button-box-maximized",
       "-moz-window-button-close",
       "-moz-window-button-maximize",
       "-moz-window-button-minimize",
       "-moz-window-button-restore",
-      "-moz-window-frame-bottom",
-      "-moz-window-frame-left",
-      "-moz-window-frame-right",
       "-moz-window-titlebar",
       "-moz-window-titlebar-maximized",
       "auto",
@@ -3478,38 +3524,25 @@ exports.CSS_PROPERTIES = {
       "checkmenuitem",
       "dialog",
       "dualbutton",
-      "groupbox",
       "inherit",
       "initial",
       "listbox",
       "menuarrow",
-      "menubar",
-      "menucheckbox",
-      "menuimage",
       "menuitem",
-      "menuitemtext",
       "menulist",
       "menulist-button",
-      "menulist-text",
       "menupopup",
-      "menuradio",
-      "menuseparator",
       "meter",
-      "meterbar",
       "meterchunk",
       "none",
       "number-input",
       "progress-bar",
-      "progressbar",
       "progresschunk",
       "radio",
       "radio-container",
       "radio-label",
-      "radiomenuitem",
       "range",
       "range-thumb",
-      "resizer",
-      "resizerpanel",
       "revert",
       "revert-layer",
       "scrollbar-horizontal",
@@ -3531,7 +3564,6 @@ exports.CSS_PROPERTIES = {
       "spinner-upbutton",
       "splitter",
       "statusbar",
-      "statusbarpanel",
       "tab",
       "tab-scroll-arrow-back",
       "tab-scroll-arrow-forward",
@@ -3539,7 +3571,6 @@ exports.CSS_PROPERTIES = {
       "tabpanels",
       "textarea",
       "textfield",
-      "textfield-multiline",
       "toolbar",
       "toolbarbutton",
       "toolbarbutton-dropdown",
@@ -3649,6 +3680,7 @@ exports.CSS_PROPERTIES = {
       "border-box",
       "bottom",
       "center",
+      "color",
       "color-mix",
       "conic-gradient",
       "contain",
@@ -3662,11 +3694,15 @@ exports.CSS_PROPERTIES = {
       "image-set",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "left",
       "linear-gradient",
       "local",
       "no-repeat",
       "none",
+      "oklab",
+      "oklch",
       "padding-box",
       "radial-gradient",
       "repeat",
@@ -3765,6 +3801,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -3772,6 +3809,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -3924,6 +3965,23 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "baseline-source": {
+    "isInherited": false,
+    "subproperties": [
+      "baseline-source"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "first",
+      "inherit",
+      "initial",
+      "last",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "block-size": {
     "isInherited": false,
     "subproperties": [
@@ -3946,18 +4004,18 @@ exports.CSS_PROPERTIES = {
   "border": {
     "isInherited": false,
     "subproperties": [
-      "border-top-color",
-      "border-top-style",
       "border-top-width",
-      "border-right-color",
-      "border-right-style",
+      "border-top-style",
+      "border-top-color",
       "border-right-width",
-      "border-bottom-color",
-      "border-bottom-style",
+      "border-right-style",
+      "border-right-color",
       "border-bottom-width",
-      "border-left-color",
-      "border-left-style",
+      "border-bottom-style",
+      "border-bottom-color",
       "border-left-width",
+      "border-left-style",
+      "border-left-color",
       "border-image-outset",
       "border-image-repeat",
       "border-image-slice",
@@ -3969,6 +4027,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -3982,8 +4041,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4012,6 +4075,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4025,8 +4089,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4051,6 +4119,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4058,6 +4127,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4069,15 +4142,16 @@ exports.CSS_PROPERTIES = {
   "border-block-end": {
     "isInherited": false,
     "subproperties": [
-      "border-block-end-color",
+      "border-block-end-width",
       "border-block-end-style",
-      "border-block-end-width"
+      "border-block-end-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4091,8 +4165,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4116,6 +4194,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4123,6 +4202,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4175,15 +4258,16 @@ exports.CSS_PROPERTIES = {
   "border-block-start": {
     "isInherited": false,
     "subproperties": [
-      "border-block-start-color",
+      "border-block-start-width",
       "border-block-start-style",
-      "border-block-start-width"
+      "border-block-start-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4197,8 +4281,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4222,6 +4310,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4229,6 +4318,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4324,15 +4417,16 @@ exports.CSS_PROPERTIES = {
   "border-bottom": {
     "isInherited": false,
     "subproperties": [
-      "border-bottom-color",
+      "border-bottom-width",
       "border-bottom-style",
-      "border-bottom-width"
+      "border-bottom-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4346,8 +4440,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4371,6 +4469,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4378,6 +4477,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4484,6 +4587,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4491,6 +4595,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4686,6 +4794,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4699,8 +4808,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4725,6 +4838,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4732,6 +4846,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4743,15 +4861,16 @@ exports.CSS_PROPERTIES = {
   "border-inline-end": {
     "isInherited": false,
     "subproperties": [
-      "border-inline-end-color",
+      "border-inline-end-width",
       "border-inline-end-style",
-      "border-inline-end-width"
+      "border-inline-end-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4765,8 +4884,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4790,6 +4913,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4797,6 +4921,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4849,15 +4977,16 @@ exports.CSS_PROPERTIES = {
   "border-inline-start": {
     "isInherited": false,
     "subproperties": [
-      "border-inline-start-color",
+      "border-inline-start-width",
       "border-inline-start-style",
-      "border-inline-start-width"
+      "border-inline-start-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -4871,8 +5000,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -4896,6 +5029,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -4903,6 +5037,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -4998,15 +5136,16 @@ exports.CSS_PROPERTIES = {
   "border-left": {
     "isInherited": false,
     "subproperties": [
-      "border-left-color",
+      "border-left-width",
       "border-left-style",
-      "border-left-width"
+      "border-left-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -5020,8 +5159,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -5045,6 +5188,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5052,6 +5196,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5121,15 +5269,16 @@ exports.CSS_PROPERTIES = {
   "border-right": {
     "isInherited": false,
     "subproperties": [
-      "border-right-color",
+      "border-right-width",
       "border-right-style",
-      "border-right-width"
+      "border-right-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -5143,8 +5292,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -5168,6 +5321,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5175,6 +5329,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5296,15 +5454,16 @@ exports.CSS_PROPERTIES = {
   "border-top": {
     "isInherited": false,
     "subproperties": [
-      "border-top-color",
+      "border-top-width",
       "border-top-style",
-      "border-top-width"
+      "border-top-color"
     ],
     "supports": [
       "color"
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -5318,8 +5477,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -5343,6 +5506,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5350,6 +5514,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5488,6 +5656,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5496,7 +5665,11 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5587,15 +5760,11 @@ exports.CSS_PROPERTIES = {
     "supports": [],
     "values": [
       "bottom",
-      "bottom-outside",
       "inherit",
       "initial",
-      "left",
       "revert",
       "revert-layer",
-      "right",
       "top",
-      "top-outside",
       "unset"
     ]
   },
@@ -5610,6 +5779,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5617,6 +5787,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5681,12 +5855,14 @@ exports.CSS_PROPERTIES = {
       "padding-box",
       "path",
       "polygon",
+      "rect",
       "revert",
       "revert-layer",
       "stroke-box",
       "unset",
       "url",
-      "view-box"
+      "view-box",
+      "xywh"
     ]
   },
   "clip-rule": {
@@ -5715,6 +5891,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5722,6 +5899,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -5856,6 +6037,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -5869,8 +6051,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -5894,6 +6080,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -5901,6 +6088,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -6019,30 +6210,204 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "contain-intrinsic-block-size": {
+    "isInherited": false,
+    "subproperties": [
+      "contain-intrinsic-block-size"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "auto-none",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "contain-intrinsic-height": {
+    "isInherited": false,
+    "subproperties": [
+      "contain-intrinsic-height"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "auto-none",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "contain-intrinsic-inline-size": {
+    "isInherited": false,
+    "subproperties": [
+      "contain-intrinsic-inline-size"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "auto-none",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "contain-intrinsic-size": {
+    "isInherited": false,
+    "subproperties": [
+      "contain-intrinsic-width",
+      "contain-intrinsic-height"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "auto-none",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "contain-intrinsic-width": {
+    "isInherited": false,
+    "subproperties": [
+      "contain-intrinsic-width"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "auto-none",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "container": {
+    "isInherited": false,
+    "subproperties": [
+      "container-name",
+      "container-type"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "inline-size",
+      "none",
+      "normal",
+      "revert",
+      "revert-layer",
+      "size",
+      "unset"
+    ]
+  },
+  "container-name": {
+    "isInherited": false,
+    "subproperties": [
+      "container-name"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "container-type": {
+    "isInherited": false,
+    "subproperties": [
+      "container-type"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "inline-size",
+      "normal",
+      "revert",
+      "revert-layer",
+      "size",
+      "unset"
+    ]
+  },
   "content": {
     "isInherited": false,
     "subproperties": [
       "content"
     ],
-    "supports": [],
+    "supports": [
+      "gradient"
+    ],
     "values": [
       "-moz-alt-content",
+      "-moz-element",
+      "-moz-image-rect",
+      "-moz-label-content",
+      "-moz-linear-gradient",
+      "-moz-radial-gradient",
+      "-moz-repeating-linear-gradient",
+      "-moz-repeating-radial-gradient",
+      "-webkit-gradient",
+      "-webkit-linear-gradient",
+      "-webkit-radial-gradient",
+      "-webkit-repeating-linear-gradient",
+      "-webkit-repeating-radial-gradient",
       "attr",
       "close-quote",
+      "conic-gradient",
       "counter",
       "counters",
       "image-set",
       "inherit",
       "initial",
+      "linear-gradient",
       "no-close-quote",
       "no-open-quote",
       "none",
       "normal",
       "open-quote",
+      "radial-gradient",
+      "repeating-conic-gradient",
+      "repeating-linear-gradient",
+      "repeating-radial-gradient",
       "revert",
       "revert-layer",
       "unset",
       "url"
+    ]
+  },
+  "content-visibility": {
+    "isInherited": false,
+    "subproperties": [
+      "content-visibility"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "hidden",
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "unset",
+      "visible"
     ]
   },
   "counter-increment": {
@@ -6301,6 +6666,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "context-fill",
       "context-stroke",
@@ -6310,7 +6676,11 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -6534,6 +6904,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -6541,6 +6912,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -6578,6 +6953,7 @@ exports.CSS_PROPERTIES = {
       "font-optical-sizing",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position",
@@ -6588,15 +6964,9 @@ exports.CSS_PROPERTIES = {
     "supports": [],
     "values": [
       "-moz-button",
-      "-moz-desktop",
-      "-moz-dialog",
-      "-moz-document",
       "-moz-field",
-      "-moz-info",
       "-moz-list",
       "-moz-pull-down-menu",
-      "-moz-window",
-      "-moz-workspace",
       "all-petite-caps",
       "all-small-caps",
       "bold",
@@ -6613,6 +6983,7 @@ exports.CSS_PROPERTIES = {
       "large",
       "larger",
       "lighter",
+      "math",
       "medium",
       "menu",
       "message-box",
@@ -6717,6 +7088,20 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "font-palette": {
+    "isInherited": true,
+    "subproperties": [
+      "font-palette"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "font-size": {
     "isInherited": true,
     "subproperties": [
@@ -6728,6 +7113,7 @@ exports.CSS_PROPERTIES = {
       "initial",
       "large",
       "larger",
+      "math",
       "medium",
       "revert",
       "revert-layer",
@@ -6803,7 +7189,9 @@ exports.CSS_PROPERTIES = {
   "font-synthesis": {
     "isInherited": true,
     "subproperties": [
-      "font-synthesis"
+      "font-synthesis-weight",
+      "font-synthesis-style",
+      "font-synthesis-small-caps"
     ],
     "supports": [],
     "values": [
@@ -6818,12 +7206,61 @@ exports.CSS_PROPERTIES = {
       "weight"
     ]
   },
+  "font-synthesis-small-caps": {
+    "isInherited": true,
+    "subproperties": [
+      "font-synthesis-small-caps"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "font-synthesis-style": {
+    "isInherited": true,
+    "subproperties": [
+      "font-synthesis-style"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
+  "font-synthesis-weight": {
+    "isInherited": true,
+    "subproperties": [
+      "font-synthesis-weight"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "font-variant": {
     "isInherited": true,
     "subproperties": [
       "font-variant-caps",
       "font-variant-alternates",
       "font-variant-east-asian",
+      "font-variant-emoji",
       "font-variant-ligatures",
       "font-variant-numeric",
       "font-variant-position"
@@ -6838,6 +7275,7 @@ exports.CSS_PROPERTIES = {
       "contextual",
       "diagonal-fractions",
       "discretionary-ligatures",
+      "emoji",
       "full-width",
       "historical-forms",
       "historical-ligatures",
@@ -6873,9 +7311,11 @@ exports.CSS_PROPERTIES = {
       "super",
       "swash",
       "tabular-nums",
+      "text",
       "titling-caps",
       "traditional",
       "unicase",
+      "unicode",
       "unset"
     ]
   },
@@ -6943,6 +7383,24 @@ exports.CSS_PROPERTIES = {
       "ruby",
       "simplified",
       "traditional",
+      "unset"
+    ]
+  },
+  "font-variant-emoji": {
+    "isInherited": true,
+    "subproperties": [
+      "font-variant-emoji"
+    ],
+    "supports": [],
+    "values": [
+      "emoji",
+      "inherit",
+      "initial",
+      "normal",
+      "revert",
+      "revert-layer",
+      "text",
+      "unicode",
       "unset"
     ]
   },
@@ -7043,6 +7501,22 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "forced-color-adjust": {
+    "isInherited": true,
+    "subproperties": [
+      "forced-color-adjust"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "none",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "gap": {
     "isInherited": false,
     "subproperties": [
@@ -7086,6 +7560,7 @@ exports.CSS_PROPERTIES = {
       "revert",
       "revert-layer",
       "row",
+      "subgrid",
       "unset"
     ]
   },
@@ -7314,6 +7789,7 @@ exports.CSS_PROPERTIES = {
       "repeat",
       "revert",
       "revert-layer",
+      "subgrid",
       "unset"
     ]
   },
@@ -7351,6 +7827,7 @@ exports.CSS_PROPERTIES = {
       "repeat",
       "revert",
       "revert-layer",
+      "subgrid",
       "unset"
     ]
   },
@@ -7373,6 +7850,7 @@ exports.CSS_PROPERTIES = {
       "repeat",
       "revert",
       "revert-layer",
+      "subgrid",
       "unset"
     ]
   },
@@ -7786,6 +8264,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -7793,6 +8272,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -8600,6 +9083,22 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "math-depth": {
+    "isInherited": true,
+    "subproperties": [
+      "math-depth"
+    ],
+    "supports": [],
+    "values": [
+      "add",
+      "auto-add",
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "math-style": {
     "isInherited": true,
     "subproperties": [
@@ -8843,25 +9342,39 @@ exports.CSS_PROPERTIES = {
       "offset-path",
       "offset-distance",
       "offset-rotate",
-      "offset-anchor"
+      "offset-anchor",
+      "offset-position"
     ],
     "supports": [],
     "values": [
       "auto",
+      "border-box",
       "bottom",
       "center",
+      "circle",
+      "content-box",
+      "ellipse",
+      "fill-box",
       "inherit",
       "initial",
+      "inset",
       "left",
       "none",
+      "normal",
+      "padding-box",
       "path",
+      "polygon",
       "ray",
+      "rect",
       "reverse",
       "revert",
       "revert-layer",
       "right",
+      "stroke-box",
       "top",
-      "unset"
+      "unset",
+      "view-box",
+      "xywh"
     ]
   },
   "offset-anchor": {
@@ -8905,13 +9418,46 @@ exports.CSS_PROPERTIES = {
     ],
     "supports": [],
     "values": [
+      "border-box",
+      "circle",
+      "content-box",
+      "ellipse",
+      "fill-box",
       "inherit",
       "initial",
+      "inset",
       "none",
+      "padding-box",
       "path",
+      "polygon",
       "ray",
+      "rect",
       "revert",
       "revert-layer",
+      "stroke-box",
+      "unset",
+      "view-box",
+      "xywh"
+    ]
+  },
+  "offset-position": {
+    "isInherited": false,
+    "subproperties": [
+      "offset-position"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "bottom",
+      "center",
+      "inherit",
+      "initial",
+      "left",
+      "normal",
+      "revert",
+      "revert-layer",
+      "right",
+      "top",
       "unset"
     ]
   },
@@ -8972,6 +9518,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -8985,8 +9532,12 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "inset",
+      "lab",
+      "lch",
       "medium",
       "none",
+      "oklab",
+      "oklch",
       "outset",
       "revert",
       "revert-layer",
@@ -9010,6 +9561,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -9017,6 +9569,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -9469,6 +10025,21 @@ exports.CSS_PROPERTIES = {
       "unset"
     ]
   },
+  "page": {
+    "isInherited": false,
+    "subproperties": [
+      "page"
+    ],
+    "supports": [],
+    "values": [
+      "auto",
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "unset"
+    ]
+  },
   "page-break-after": {
     "isInherited": false,
     "subproperties": [
@@ -9525,6 +10096,23 @@ exports.CSS_PROPERTIES = {
       "revert",
       "revert-layer",
       "unset"
+    ]
+  },
+  "page-orientation": {
+    "isInherited": false,
+    "subproperties": [
+      "page-orientation"
+    ],
+    "supports": [],
+    "values": [
+      "inherit",
+      "initial",
+      "revert",
+      "revert-layer",
+      "rotate-left",
+      "rotate-right",
+      "unset",
+      "upright"
     ]
   },
   "paint-order": {
@@ -10316,6 +10904,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "auto",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -10323,6 +10912,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -10426,15 +11019,18 @@ exports.CSS_PROPERTIES = {
       "margin-box",
       "none",
       "padding-box",
+      "path",
       "polygon",
       "radial-gradient",
+      "rect",
       "repeating-conic-gradient",
       "repeating-linear-gradient",
       "repeating-radial-gradient",
       "revert",
       "revert-layer",
       "unset",
-      "url"
+      "url",
+      "xywh"
     ]
   },
   "shape-rendering": {
@@ -10492,6 +11088,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -10499,6 +11096,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -10531,6 +11132,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "context-fill",
       "context-stroke",
@@ -10540,7 +11142,11 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -10785,6 +11391,7 @@ exports.CSS_PROPERTIES = {
       "-moz-none",
       "auto",
       "blink",
+      "color",
       "color-mix",
       "currentColor",
       "dashed",
@@ -10796,8 +11403,12 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "line-through",
       "none",
+      "oklab",
+      "oklch",
       "overline",
       "revert",
       "revert-layer",
@@ -10820,6 +11431,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -10827,6 +11439,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -10919,6 +11535,7 @@ exports.CSS_PROPERTIES = {
     "values": [
       "COLOR",
       "circle",
+      "color",
       "color-mix",
       "currentColor",
       "dot",
@@ -10929,7 +11546,11 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "open",
       "revert",
       "revert-layer",
@@ -10951,6 +11572,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -10958,6 +11580,10 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -11101,6 +11727,7 @@ exports.CSS_PROPERTIES = {
     ],
     "values": [
       "COLOR",
+      "color",
       "color-mix",
       "currentColor",
       "hsl",
@@ -11108,7 +11735,11 @@ exports.CSS_PROPERTIES = {
       "hwb",
       "inherit",
       "initial",
+      "lab",
+      "lch",
       "none",
+      "oklab",
+      "oklch",
       "revert",
       "revert-layer",
       "rgb",
@@ -11130,6 +11761,7 @@ exports.CSS_PROPERTIES = {
       "inherit",
       "initial",
       "lowercase",
+      "math-auto",
       "none",
       "revert",
       "revert-layer",
@@ -11691,6 +12323,7 @@ exports.PSEUDO_ELEMENTS = [
   "::cue",
   "::first-letter",
   "::first-line",
+  "::highlight",
   "::selection",
   "::-moz-focus-inner",
   "::-moz-progress-bar",
@@ -11701,323 +12334,4 @@ exports.PSEUDO_ELEMENTS = [
   "::placeholder",
   "::-moz-color-swatch",
   "::file-selector-button"
-];
-
-/**
- * A list of the preferences keys for whether a CSS property is enabled or not. This is
- * exposed for testing purposes.
- */
-exports.PREFERENCES = [
-  [
-    "container-type",
-    "layout.css.container-queries.enabled"
-  ],
-  [
-    "content-visibility",
-    "layout.css.content-visibility.enabled"
-  ],
-  [
-    "font-optical-sizing",
-    "layout.css.font-variations.enabled"
-  ],
-  [
-    "initial-letter",
-    "layout.css.initial-letter.enabled"
-  ],
-  [
-    "masonry-auto-flow",
-    "layout.css.grid-template-masonry-value.enabled"
-  ],
-  [
-    "math-depth",
-    "layout.css.math-depth.enabled"
-  ],
-  [
-    "math-style",
-    "layout.css.math-style.enabled"
-  ],
-  [
-    "-moz-control-character-visibility",
-    "layout.css.moz-control-character-visibility.enabled"
-  ],
-  [
-    "-moz-osx-font-smoothing",
-    "layout.css.osx-font-smoothing.enabled"
-  ],
-  [
-    "offset-rotate",
-    "layout.css.motion-path.enabled"
-  ],
-  [
-    "overflow-anchor",
-    "layout.css.scroll-anchoring.enabled"
-  ],
-  [
-    "scrollbar-gutter",
-    "layout.css.scrollbar-gutter.enabled"
-  ],
-  [
-    "-webkit-line-clamp",
-    "layout.css.webkit-line-clamp.enabled"
-  ],
-  [
-    "overflow-clip-box-block",
-    "layout.css.overflow-clip-box.enabled"
-  ],
-  [
-    "overflow-clip-box-inline",
-    "layout.css.overflow-clip-box.enabled"
-  ],
-  [
-    "overflow-block",
-    "layout.css.overflow-logical.enabled"
-  ],
-  [
-    "overflow-inline",
-    "layout.css.overflow-logical.enabled"
-  ],
-  [
-    "overscroll-behavior-block",
-    "layout.css.overscroll-behavior.enabled"
-  ],
-  [
-    "overscroll-behavior-inline",
-    "layout.css.overscroll-behavior.enabled"
-  ],
-  [
-    "overscroll-behavior-x",
-    "layout.css.overscroll-behavior.enabled"
-  ],
-  [
-    "overscroll-behavior-y",
-    "layout.css.overscroll-behavior.enabled"
-  ],
-  [
-    "accent-color",
-    "layout.css.accent-color.enabled"
-  ],
-  [
-    "align-tracks",
-    "layout.css.grid-template-masonry-value.enabled"
-  ],
-  [
-    "animation-composition",
-    "layout.css.animation-composition.enabled"
-  ],
-  [
-    "animation-timeline",
-    "layout.css.scroll-linked-animations.enabled"
-  ],
-  [
-    "backdrop-filter",
-    "layout.css.backdrop-filter.enabled"
-  ],
-  [
-    "color-scheme",
-    "layout.css.color-scheme.enabled"
-  ],
-  [
-    "container-name",
-    "layout.css.container-queries.enabled"
-  ],
-  [
-    "d",
-    "layout.css.d-property.enabled"
-  ],
-  [
-    "font-variation-settings",
-    "layout.css.font-variations.enabled"
-  ],
-  [
-    "hyphenate-character",
-    "layout.css.hyphenate-character.enabled"
-  ],
-  [
-    "justify-tracks",
-    "layout.css.grid-template-masonry-value.enabled"
-  ],
-  [
-    "-moz-context-properties",
-    "svg.context-properties.content.enabled"
-  ],
-  [
-    "offset-anchor",
-    "layout.css.motion-path.enabled"
-  ],
-  [
-    "offset-path",
-    "layout.css.motion-path.enabled"
-  ],
-  [
-    "page",
-    "layout.css.named-pages.enabled"
-  ],
-  [
-    "rotate",
-    "layout.css.individual-transform.enabled"
-  ],
-  [
-    "scale",
-    "layout.css.individual-transform.enabled"
-  ],
-  [
-    "scroll-timeline-axis",
-    "layout.css.scroll-linked-animations.enabled"
-  ],
-  [
-    "scroll-timeline-name",
-    "layout.css.scroll-linked-animations.enabled"
-  ],
-  [
-    "size",
-    "layout.css.page-size.enabled"
-  ],
-  [
-    "translate",
-    "layout.css.individual-transform.enabled"
-  ],
-  [
-    "contain-intrinsic-block-size",
-    "layout.css.contain-intrinsic-size.enabled"
-  ],
-  [
-    "contain-intrinsic-height",
-    "layout.css.contain-intrinsic-size.enabled"
-  ],
-  [
-    "contain-intrinsic-inline-size",
-    "layout.css.contain-intrinsic-size.enabled"
-  ],
-  [
-    "contain-intrinsic-width",
-    "layout.css.contain-intrinsic-size.enabled"
-  ],
-  [
-    "offset-distance",
-    "layout.css.motion-path.enabled"
-  ],
-  [
-    "overflow-clip-box",
-    "layout.css.overflow-clip-box.enabled"
-  ],
-  [
-    "overscroll-behavior",
-    "layout.css.overscroll-behavior.enabled"
-  ],
-  [
-    "container",
-    "layout.css.container-queries.enabled"
-  ],
-  [
-    "offset",
-    "layout.css.motion-path.enabled"
-  ],
-  [
-    "zoom",
-    "layout.css.zoom-transform-hack.enabled"
-  ],
-  [
-    "contain-intrinsic-size",
-    "layout.css.contain-intrinsic-size.enabled"
-  ],
-  [
-    "scroll-timeline",
-    "layout.css.scroll-linked-animations.enabled"
-  ],
-  [
-    "-moz-transform",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-perspective",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-perspective-origin",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-backface-visibility",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-transform-style",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-transform-origin",
-    "layout.css.prefixes.transforms"
-  ],
-  [
-    "-moz-font-feature-settings",
-    "layout.css.prefixes.font-features"
-  ],
-  [
-    "-moz-font-language-override",
-    "layout.css.prefixes.font-features"
-  ],
-  [
-    "-moz-box-sizing",
-    "layout.css.prefixes.box-sizing"
-  ],
-  [
-    "-moz-transition-duration",
-    "layout.css.prefixes.transitions"
-  ],
-  [
-    "-moz-transition-timing-function",
-    "layout.css.prefixes.transitions"
-  ],
-  [
-    "-moz-transition-property",
-    "layout.css.prefixes.transitions"
-  ],
-  [
-    "-moz-transition-delay",
-    "layout.css.prefixes.transitions"
-  ],
-  [
-    "-moz-animation-name",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-duration",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-timing-function",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-iteration-count",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-direction",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-play-state",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-fill-mode",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-animation-delay",
-    "layout.css.prefixes.animations"
-  ],
-  [
-    "-moz-border-image",
-    "layout.css.prefixes.border-image"
-  ],
-  [
-    "-moz-transition",
-    "layout.css.prefixes.transitions"
-  ],
-  [
-    "-moz-animation",
-    "layout.css.prefixes.animations"
-  ]
 ];

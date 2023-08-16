@@ -4,14 +4,10 @@
 
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
-
-XPCOMUtils.defineLazyModuleGetters(this, {
-  CustomizableUI: "resource:///modules/CustomizableUI.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  CustomizableUI: "resource:///modules/CustomizableUI.sys.mjs",
   CustomizableUITestUtils:
-    "resource://testing-common/CustomizableUITestUtils.jsm",
+    "resource://testing-common/CustomizableUITestUtils.sys.mjs",
 });
 
 var EventUtils = {};
@@ -91,9 +87,11 @@ function createOverflowableToolbarWithPlacements(id, placements) {
 
   tb.setAttribute("customizable", "true");
   tb.setAttribute("overflowable", "true");
-  tb.setAttribute("overflowpanel", overflowPanel.id);
-  tb.setAttribute("overflowtarget", overflowList.id);
-  tb.setAttribute("overflowbutton", chevron.id);
+  tb.setAttribute("default-overflowpanel", overflowPanel.id);
+  tb.setAttribute("default-overflowtarget", overflowList.id);
+  tb.setAttribute("default-overflowbutton", chevron.id);
+  tb.setAttribute("addon-webext-overflowbutton", "unified-extensions-button");
+  tb.setAttribute("addon-webext-overflowtarget", "overflowed-extensions-list");
 
   gNavToolbox.appendChild(tb);
   CustomizableUI.registerToolbarNode(tb);
@@ -285,7 +283,7 @@ function openAndLoadWindow(aOptions, aWaitForDelayedStartup = false) {
     } else {
       win.addEventListener(
         "load",
-        function() {
+        function () {
           resolve(win);
         },
         { once: true }
@@ -298,7 +296,7 @@ function promiseWindowClosed(win) {
   return new Promise(resolve => {
     win.addEventListener(
       "unload",
-      function() {
+      function () {
         resolve();
       },
       { once: true }
@@ -401,7 +399,7 @@ function waitFor(aTimeout = 100) {
 function promiseTabLoadEvent(aTab, aURL) {
   let browser = aTab.linkedBrowser;
 
-  BrowserTestUtils.loadURI(browser, aURL);
+  BrowserTestUtils.loadURIString(browser, aURL);
   return BrowserTestUtils.browserLoaded(browser);
 }
 

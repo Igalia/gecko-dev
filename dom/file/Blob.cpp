@@ -9,7 +9,6 @@
 #include "File.h"
 #include "MemoryBlobImpl.h"
 #include "mozilla/dom/BlobBinding.h"
-#include "mozilla/dom/BodyStream.h"
 #include "mozilla/dom/ReadableStream.h"
 #include "mozilla/dom/WorkerCommon.h"
 #include "mozilla/dom/WorkerPrivate.h"
@@ -150,7 +149,7 @@ already_AddRefed<File> Blob::ToFile(const nsAString& aName,
 
   RefPtr<MultipartBlobImpl> impl =
       MultipartBlobImpl::Create(std::move(blobImpls), aName, contentType,
-                                mGlobal->CrossOriginIsolated(), aRv);
+                                mGlobal->GetRTPCallerType(), aRv);
   if (NS_WARN_IF(aRv.Failed())) {
     return nullptr;
   }
@@ -226,9 +225,9 @@ already_AddRefed<Blob> Blob::Constructor(
     MakeValidBlobType(type);
     impl->InitializeBlob(aData.Value(), type,
                          aBag.mEndings == EndingType::Native,
-                         global->CrossOriginIsolated(), aRv);
+                         global->GetRTPCallerType(), aRv);
   } else {
-    impl->InitializeBlob(global->CrossOriginIsolated(), aRv);
+    impl->InitializeBlob(global->GetRTPCallerType(), aRv);
   }
 
   if (NS_WARN_IF(aRv.Failed())) {
@@ -275,7 +274,7 @@ already_AddRefed<Promise> Blob::ConsumeBody(
     return nullptr;
   }
 
-  nsCOMPtr<nsIEventTarget> mainThreadEventTarget;
+  nsCOMPtr<nsISerialEventTarget> mainThreadEventTarget;
   if (!NS_IsMainThread()) {
     WorkerPrivate* workerPrivate = GetCurrentThreadWorkerPrivate();
     MOZ_ASSERT(workerPrivate);
@@ -298,57 +297,10 @@ already_AddRefed<Promise> Blob::ConsumeBody(
                               MutableBlobStorage::eOnlyInMemory, aRv);
 }
 
-namespace {
-
-class BlobBodyStreamHolder final : public BodyStreamHolder {
- public:
-  NS_DECL_ISUPPORTS_INHERITED
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(BlobBodyStreamHolder,
-                                                         BodyStreamHolder)
-
-  BlobBodyStreamHolder() { mozilla::HoldJSObjects(this); }
-
-  void NullifyStream() override { mozilla::DropJSObjects(this); }
-
-  void MarkAsRead() override {}
-
-  void SetReadableStreamBody(ReadableStream* aBody) override {
-    mStream = aBody;
-  }
-  ReadableStream* GetReadableStreamBody() override { return mStream; }
-
- private:
-  RefPtr<ReadableStream> mStream;
-
- protected:
-  ~BlobBodyStreamHolder() override { NullifyStream(); }
-};
-
-NS_IMPL_CYCLE_COLLECTION_CLASS(BlobBodyStreamHolder)
-
-NS_IMPL_CYCLE_COLLECTION_TRACE_BEGIN_INHERITED(BlobBodyStreamHolder,
-                                               BodyStreamHolder)
-NS_IMPL_CYCLE_COLLECTION_TRACE_END
-
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INHERITED(BlobBodyStreamHolder,
-                                                  BodyStreamHolder)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStream)
-NS_IMPL_CYCLE_COLLECTION_TRAVERSE_END
-
-NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN_INHERITED(BlobBodyStreamHolder,
-                                                BodyStreamHolder)
-  tmp->NullifyStream();
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mStream)
-NS_IMPL_CYCLE_COLLECTION_UNLINK_END
-
-NS_IMPL_ADDREF_INHERITED(BlobBodyStreamHolder, BodyStreamHolder)
-NS_IMPL_RELEASE_INHERITED(BlobBodyStreamHolder, BodyStreamHolder)
-
-NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(BlobBodyStreamHolder)
-NS_INTERFACE_MAP_END_INHERITING(BodyStreamHolder)
-
-}  // anonymous namespace
-
+// https://w3c.github.io/FileAPI/#stream-method-algo
+// "The stream() method, when invoked, must return the result of calling get
+// stream on this."
+// And that's https://w3c.github.io/FileAPI/#blob-get-stream.
 already_AddRefed<ReadableStream> Blob::Stream(JSContext* aCx,
                                               ErrorResult& aRv) const {
   nsCOMPtr<nsIInputStream> stream;
@@ -362,15 +314,25 @@ already_AddRefed<ReadableStream> Blob::Stream(JSContext* aCx,
     return nullptr;
   }
 
-  RefPtr<BlobBodyStreamHolder> holder = new BlobBodyStreamHolder();
+  auto algorithms =
+      MakeRefPtr<NonAsyncInputToReadableStreamAlgorithms>(*stream);
 
-  BodyStream::Create(aCx, holder, mGlobal, stream, aRv);
-  if (NS_WARN_IF(aRv.Failed())) {
+  // Step 1: Let stream be a new ReadableStream created in blob’s relevant
+  // Realm.
+  // Step 2: Set up stream with byte reading support.
+  // Step 3: ...
+  // (The spec here does not define pullAlgorithm and instead greedily enqueues
+  // everything into the stream when .stream() is called, but here we only reads
+  // the data when actual read request happens, via
+  // InputToReadableStreamAlgorithms. See
+  // https://github.com/w3c/FileAPI/issues/194.)
+  RefPtr<ReadableStream> body = ReadableStream::CreateByteNative(
+      aCx, mGlobal, *algorithms, Nothing(), aRv);
+  if (aRv.Failed()) {
     return nullptr;
   }
 
-  RefPtr<ReadableStream> rStream = holder->GetReadableStreamBody();
-  return rStream.forget();
+  return body.forget();
 }
 
 }  // namespace mozilla::dom

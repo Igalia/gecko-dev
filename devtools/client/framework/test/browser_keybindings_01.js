@@ -14,10 +14,8 @@ const TEST_URL =
 
 const {
   gDevToolsBrowser,
-} = require("devtools/client/framework/devtools-browser");
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
+} = require("resource://devtools/client/framework/devtools-browser.js");
+
 const isMac = AppConstants.platform == "macosx";
 
 const allKeys = [];
@@ -54,7 +52,7 @@ function setupKeyBindingsTest() {
   }
 }
 
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URL);
   await new Promise(done => waitForFocus(done));
 

@@ -21,10 +21,13 @@ const APS_PREF =
 const TPC_PREF = "network.cookie.cookieBehavior";
 const DTSCBN_PREF = "dom.testing.sync-content-blocking-notifications";
 const BENIGN_PAGE =
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://tracking.example.org/browser/browser/base/content/test/protectionsUI/benignPage.html";
 const TRACKING_PAGE =
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://tracking.example.org/browser/browser/base/content/test/protectionsUI/trackingPage.html";
 const COOKIE_PAGE =
+  // eslint-disable-next-line @microsoft/sdl/no-insecure-url
   "http://not-tracking.example.com/browser/browser/base/content/test/protectionsUI/cookiePage.html";
 var gProtectionsHandler = null;
 var TrackingProtection = null;
@@ -46,8 +49,12 @@ const sDisabledIconTooltip = gNavigatorBundle.getString(
   "trackingProtection.icon.disabledTooltip2"
 );
 
-registerCleanupFunction(function() {
-  TrackingProtection = gProtectionsHandler = ThirdPartyCookies = tabbrowser = null;
+registerCleanupFunction(function () {
+  TrackingProtection =
+    gProtectionsHandler =
+    ThirdPartyCookies =
+    tabbrowser =
+      null;
   UrlClassifierTestUtils.cleanupTestTrackers();
   Services.prefs.clearUserPref(TP_PREF);
   Services.prefs.clearUserPref(TP_PB_PREF);

@@ -7,14 +7,14 @@
 const TEST_COM_URI = `${URL_ROOT_COM_SSL}examples/doc_dbg-fission-pause-exceptions.html`;
 // Tests Pause on exceptions in remote iframes
 
-add_task(async function() {
+add_task(async function () {
   // Load a test page with a remote iframe
   const dbg = await initDebuggerWithAbsoluteURL(TEST_COM_URI);
 
   info("Test pause on exceptions ignoring caught exceptions");
   await togglePauseOnExceptions(dbg, true, false);
 
-  await reload(dbg);
+  let onReloaded = reload(dbg);
   await waitForPaused(dbg);
 
   assertPausedAtSourceAndLine(
@@ -24,11 +24,13 @@ add_task(async function() {
   );
 
   await resume(dbg);
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 
   info("Test pause on exceptions including caught exceptions");
   await togglePauseOnExceptions(dbg, true, true);
 
-  await reload(dbg);
+  onReloaded = reload(dbg);
   await waitForPaused(dbg);
 
   assertPausedAtSourceAndLine(
@@ -47,4 +49,6 @@ add_task(async function() {
   );
 
   await resume(dbg);
+  info("Wait for reload to complete after resume");
+  await onReloaded;
 });

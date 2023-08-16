@@ -32,6 +32,10 @@ HWY_BEFORE_NAMESPACE();
 namespace jxl {
 namespace HWY_NAMESPACE {
 
+// These templates are not found via ADL.
+using hwy::HWY_NAMESPACE::Clamp;
+using hwy::HWY_NAMESPACE::NearestInt;
+
 // TODO(jon): check if this can be replaced by a FloatToU16 function
 void FloatToU32(const float* in, uint32_t* out, size_t num, float mul,
                 size_t bits_per_sample) {
@@ -50,7 +54,7 @@ void FloatToU32(const float* in, uint32_t* out, size_t num, float mul,
     auto v = Load(d, in + x);
     // Clamp turns NaN to 'min'.
     v = Clamp(v, Zero(d), one);
-    auto i = NearestInt(v * scale);
+    auto i = NearestInt(Mul(v, scale));
     Store(BitCast(du, i), du, out + x);
   }
 
@@ -231,18 +235,8 @@ void StoreFloatRow(const float* JXL_RESTRICT* rows_in, size_t num_channels,
 
 void JXL_INLINE Store8(uint32_t value, uint8_t* dest) { *dest = value & 0xff; }
 
-// Maximum number of channels for the ConvertChannelsToExternal function.
-const size_t kConvertMaxChannels = 4;
+}  // namespace
 
-// Converts a list of channels to an interleaved image, applying transformations
-// when needed.
-// The input channels are given as a (non-const!) array of channel pointers and
-// interleaved in that order.
-//
-// Note: if a pointer in channels[] is nullptr, a 1.0 value will be used
-// instead. This is useful for handling when a user requests an alpha channel
-// from an image that doesn't have one. The first channel in the list may not
-// be nullptr, since it is used to determine the image size.
 Status ConvertChannelsToExternal(const ImageF* channels[], size_t num_channels,
                                  size_t bits_per_sample, bool float_out,
                                  JxlEndianness endianness, size_t stride,
@@ -444,8 +438,6 @@ Status ConvertChannelsToExternal(const ImageF* channels[], size_t num_channels,
   return true;
 }
 
-}  // namespace
-
 Status ConvertToExternal(const jxl::ImageBundle& ib, size_t bits_per_sample,
                          bool float_out, size_t num_channels,
                          JxlEndianness endianness, size_t stride,
@@ -483,18 +475,6 @@ Status ConvertToExternal(const jxl::ImageBundle& ib, size_t bits_per_sample,
   return ConvertChannelsToExternal(
       channels, num_channels, bits_per_sample, float_out, endianness, stride,
       pool, out_image, out_size, out_callback, undo_orientation);
-}
-
-Status ConvertToExternal(const jxl::ImageF& channel, size_t bits_per_sample,
-                         bool float_out, JxlEndianness endianness,
-                         size_t stride, jxl::ThreadPool* pool, void* out_image,
-                         size_t out_size, const PixelCallback& out_callback,
-                         jxl::Orientation undo_orientation) {
-  const ImageF* channels[1];
-  channels[0] = &channel;
-  return ConvertChannelsToExternal(channels, 1, bits_per_sample, float_out,
-                                   endianness, stride, pool, out_image,
-                                   out_size, out_callback, undo_orientation);
 }
 
 }  // namespace jxl

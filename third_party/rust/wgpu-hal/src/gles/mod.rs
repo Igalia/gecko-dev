@@ -57,9 +57,11 @@ To address this, we invalidate the vertex buffers based on:
 */
 
 ///cbindgen:ignore
-#[cfg(any(not(target_arch = "wasm32"), feature = "emscripten"))]
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
 mod egl;
-#[cfg(all(target_arch = "wasm32", not(feature = "emscripten")))]
+#[cfg(target_os = "emscripten")]
+mod emscripten;
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
 mod web;
 
 mod adapter;
@@ -68,17 +70,26 @@ mod conv;
 mod device;
 mod queue;
 
-#[cfg(any(not(target_arch = "wasm32"), feature = "emscripten"))]
-use self::egl::{AdapterContext, Instance, Surface};
+use crate::{CopyExtent, TextureDescriptor};
 
-#[cfg(all(target_arch = "wasm32", not(feature = "emscripten")))]
-use self::web::{AdapterContext, Instance, Surface};
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+pub use self::egl::{AdapterContext, AdapterContextLock};
+#[cfg(any(not(target_arch = "wasm32"), target_os = "emscripten"))]
+use self::egl::{Instance, Surface};
+
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+pub use self::web::AdapterContext;
+#[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+use self::web::{Instance, Surface};
 
 use arrayvec::ArrayVec;
 
 use glow::HasContext;
 
-use std::{ops::Range, sync::Arc};
+use naga::FastHashMap;
+use parking_lot::Mutex;
+use std::sync::atomic::AtomicU32;
+use std::{fmt, ops::Range, sync::Arc};
 
 #[derive(Clone)]
 pub struct Api;
@@ -89,7 +100,7 @@ const MAX_TEXTURE_SLOTS: usize = 16;
 const MAX_SAMPLERS: usize = 16;
 const MAX_VERTEX_ATTRIBUTES: usize = 16;
 const ZERO_BUFFER_SIZE: usize = 256 << 10;
-const MAX_PUSH_CONSTANTS: usize = 16;
+const MAX_PUSH_CONSTANTS: usize = 64;
 
 impl crate::Api for Api {
     type Instance = Instance;
@@ -120,6 +131,7 @@ impl crate::Api for Api {
 bitflags::bitflags! {
     /// Flags that affect internal code paths but do not
     /// change the exposed feature set.
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     struct PrivateCapabilities: u32 {
         /// Indicates support for `glBufferStorage` allocation.
         const BUFFER_ALLOCATION = 1 << 0;
@@ -138,11 +150,18 @@ bitflags::bitflags! {
         const CAN_DISABLE_DRAW_BUFFER = 1 << 6;
         /// Supports `glGetBufferSubData`
         const GET_BUFFER_SUB_DATA = 1 << 7;
+        /// Supports `f16` color buffers
+        const COLOR_BUFFER_HALF_FLOAT = 1 << 8;
+        /// Supports `f11/f10` and `f32` color buffers
+        const COLOR_BUFFER_FLOAT = 1 << 9;
+        /// Supports linear flitering `f32` textures.
+        const TEXTURE_FLOAT_LINEAR = 1 << 10;
     }
 }
 
 bitflags::bitflags! {
     /// Flags that indicate necessary workarounds for specific devices or driver bugs
+    #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash)]
     struct Workarounds: u32 {
         // Needs workaround for Intel Mesa bug:
         // https://gitlab.freedesktop.org/mesa/mesa/-/issues/2565.
@@ -172,19 +191,21 @@ impl Default for VertexAttribKind {
 }
 
 #[derive(Clone, Debug)]
-struct TextureFormatDesc {
-    internal: u32,
-    external: u32,
-    data_type: u32,
+pub struct TextureFormatDesc {
+    pub internal: u32,
+    pub external: u32,
+    pub data_type: u32,
 }
 
 struct AdapterShared {
     context: AdapterContext,
     private_caps: PrivateCapabilities,
+    features: wgt::Features,
     workarounds: Workarounds,
     shading_language_version: naga::back::glsl::Version,
     max_texture_size: u32,
-    is_ext_color_buffer_float_supported: bool,
+    next_shader_id: AtomicU32,
+    program_cache: Mutex<ProgramCache>,
 }
 
 pub struct Adapter {
@@ -194,7 +215,7 @@ pub struct Adapter {
 pub struct Device {
     shared: Arc<AdapterShared>,
     main_vao: glow::VertexArray,
-    #[cfg(feature = "renderdoc")]
+    #[cfg(all(not(target_arch = "wasm32"), feature = "renderdoc"))]
     render_doc: crate::auxil::renderdoc::RenderDoc,
 }
 
@@ -225,14 +246,21 @@ pub struct Buffer {
     data: Option<Arc<std::sync::Mutex<Vec<u8>>>>,
 }
 
-// Safe: WASM doesn't have threads
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Sync for Buffer {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Send for Buffer {}
 
 #[derive(Clone, Debug)]
-enum TextureInner {
+pub enum TextureInner {
     Renderbuffer {
         raw: glow::Renderbuffer,
     },
@@ -241,7 +269,24 @@ enum TextureInner {
         raw: glow::Texture,
         target: BindTarget,
     },
+    #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+    ExternalFramebuffer {
+        inner: web_sys::WebGlFramebuffer,
+    },
 }
+
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
+unsafe impl Sync for TextureInner {}
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
+unsafe impl Send for TextureInner {}
 
 impl TextureInner {
     fn as_native(&self) -> (glow::Texture, BindTarget) {
@@ -250,26 +295,30 @@ impl TextureInner {
                 panic!("Unexpected renderbuffer");
             }
             Self::Texture { raw, target } => (raw, target),
+            #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+            Self::ExternalFramebuffer { .. } => panic!("Unexpected external framebuffer"),
         }
     }
 }
 
 #[derive(Debug)]
 pub struct Texture {
-    inner: TextureInner,
-    mip_level_count: u32,
-    array_layer_count: u32,
-    format: wgt::TextureFormat,
+    pub inner: TextureInner,
+    pub drop_guard: Option<crate::DropGuard>,
+    pub mip_level_count: u32,
+    pub array_layer_count: u32,
+    pub format: wgt::TextureFormat,
     #[allow(unused)]
-    format_desc: TextureFormatDesc,
-    copy_size: crate::CopyExtent,
-    is_cubemap: bool,
+    pub format_desc: TextureFormatDesc,
+    pub copy_size: CopyExtent,
+    pub is_cubemap: bool,
 }
 
 impl Texture {
     pub fn default_framebuffer(format: wgt::TextureFormat) -> Self {
         Self {
             inner: TextureInner::DefaultRenderbuffer,
+            drop_guard: None,
             mip_level_count: 1,
             array_layer_count: 1,
             format,
@@ -278,7 +327,7 @@ impl Texture {
                 external: 0,
                 data_type: 0,
             },
-            copy_size: crate::CopyExtent {
+            copy_size: CopyExtent {
                 width: 0,
                 height: 0,
                 depth: 0,
@@ -286,12 +335,28 @@ impl Texture {
             is_cubemap: false,
         }
     }
+
+    /// Returns the `target`, whether the image is 3d and whether the image is a cubemap.
+    fn get_info_from_desc(desc: &TextureDescriptor) -> (u32, bool, bool) {
+        match desc.dimension {
+            wgt::TextureDimension::D1 => (glow::TEXTURE_2D, false, false),
+            wgt::TextureDimension::D2 => {
+                // HACK: detect a cube map; forces cube compatible textures to be cube textures
+                match (desc.is_cube_compatible(), desc.size.depth_or_array_layers) {
+                    (false, 1) => (glow::TEXTURE_2D, false, false),
+                    (false, _) => (glow::TEXTURE_2D_ARRAY, true, false),
+                    (true, 6) => (glow::TEXTURE_CUBE_MAP, false, true),
+                    (true, _) => (glow::TEXTURE_CUBE_MAP_ARRAY, true, true),
+                }
+            }
+            wgt::TextureDimension::D3 => (glow::TEXTURE_3D, true, false),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct TextureView {
     inner: TextureInner,
-    sample_type: wgt::TextureSampleType,
     aspects: crate::FormatAspects,
     mip_levels: Range<u32>,
     array_layers: Range<u32>,
@@ -347,6 +412,7 @@ enum RawBinding {
     Texture {
         raw: glow::Texture,
         target: BindTarget,
+        aspects: crate::FormatAspects,
         //TODO: mip levels, array layers
     },
     Image(ImageBinding),
@@ -358,10 +424,13 @@ pub struct BindGroup {
     contents: Box<[RawBinding]>,
 }
 
+type ShaderId = u32;
+
 #[derive(Debug)]
 pub struct ShaderModule {
     naga: crate::NagaShader,
     label: Option<String>,
+    id: ShaderId,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -407,10 +476,17 @@ struct UniformDesc {
     utype: u32,
 }
 
-// Safe: WASM doesn't have threads
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Sync for UniformDesc {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Send for UniformDesc {}
 
 /// For each texture in the pipeline layout, store the index of the only
@@ -448,8 +524,23 @@ struct ColorTargetDesc {
     blend: Option<BlendDesc>,
 }
 
+#[derive(PartialEq, Eq, Hash)]
+struct ProgramStage {
+    naga_stage: naga::ShaderStage,
+    shader_id: ShaderId,
+    entry_point: String,
+}
+
+#[derive(PartialEq, Eq, Hash)]
+struct ProgramCacheKey {
+    stages: ArrayVec<ProgramStage, 3>,
+    group_to_binding_to_slot: Box<[Box<[u8]>]>,
+}
+
+type ProgramCache = FastHashMap<ProgramCacheKey, Result<Arc<PipelineInner>, crate::PipelineError>>;
+
 pub struct RenderPipeline {
-    inner: PipelineInner,
+    inner: Arc<PipelineInner>,
     primitive: wgt::PrimitiveState,
     vertex_buffers: Box<[VertexBufferDesc]>,
     vertex_attributes: Box<[AttributeDesc]>,
@@ -457,23 +548,38 @@ pub struct RenderPipeline {
     depth: Option<DepthState>,
     depth_bias: wgt::DepthBiasState,
     stencil: Option<StencilState>,
+    alpha_to_coverage_enabled: bool,
 }
 
-// SAFE: WASM doesn't have threads
-#[cfg(target_arch = "wasm32")]
-unsafe impl Send for RenderPipeline {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Sync for RenderPipeline {}
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
+unsafe impl Send for RenderPipeline {}
 
 pub struct ComputePipeline {
-    inner: PipelineInner,
+    inner: Arc<PipelineInner>,
 }
 
-// SAFE: WASM doesn't have threads
-#[cfg(target_arch = "wasm32")]
-unsafe impl Send for ComputePipeline {}
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
 unsafe impl Sync for ComputePipeline {}
+#[cfg(all(
+    target_arch = "wasm32",
+    feature = "fragile-send-sync-non-atomic-wasm",
+    not(target_feature = "atomics")
+))]
+unsafe impl Send for ComputePipeline {}
 
 #[derive(Debug)]
 pub struct QuerySet {
@@ -487,7 +593,21 @@ pub struct Fence {
     pending: Vec<(crate::FenceValue, glow::Fence)>,
 }
 
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    all(
+        feature = "fragile-send-sync-non-atomic-wasm",
+        not(target_feature = "atomics")
+    )
+))]
 unsafe impl Send for Fence {}
+#[cfg(any(
+    not(target_arch = "wasm32"),
+    all(
+        feature = "fragile-send-sync-non-atomic-wasm",
+        not(target_feature = "atomics")
+    )
+))]
 unsafe impl Sync for Fence {}
 
 impl Fence {
@@ -613,6 +733,15 @@ enum Command {
         dst_target: BindTarget,
         copy: crate::BufferCopy,
     },
+    #[cfg(all(target_arch = "wasm32", not(target_os = "emscripten")))]
+    CopyExternalImageToTexture {
+        src: wgt::ImageCopyExternalImage,
+        dst: glow::Texture,
+        dst_target: BindTarget,
+        dst_format: wgt::TextureFormat,
+        dst_premultiplication: bool,
+        copy: crate::TextureCopy,
+    },
     CopyTextureToTexture {
         src: glow::Texture,
         src_target: BindTarget,
@@ -697,6 +826,7 @@ enum Command {
     SetDepth(DepthState),
     SetDepthBias(wgt::DepthBiasState),
     ConfigureDepthStencil(crate::FormatAspects),
+    SetAlphaToCoverage(bool),
     SetVertexAttribute {
         buffer: Option<glow::Buffer>,
         buffer_desc: VertexBufferDesc,
@@ -727,6 +857,7 @@ enum Command {
         slot: u32,
         texture: glow::Texture,
         target: BindTarget,
+        aspects: crate::FormatAspects,
     },
     BindImage {
         slot: u32,
@@ -750,6 +881,16 @@ pub struct CommandBuffer {
     queries: Vec<glow::Query>,
 }
 
+impl fmt::Debug for CommandBuffer {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut builder = f.debug_struct("CommandBuffer");
+        if let Some(ref label) = self.label {
+            builder.field("label", label);
+        }
+        builder.finish()
+    }
+}
+
 //TODO: we would have something like `Arc<typed_arena::Arena>`
 // here and in the command buffers. So that everything grows
 // inside the encoder and stays there until `reset_all`.
@@ -758,4 +899,12 @@ pub struct CommandEncoder {
     cmd_buffer: CommandBuffer,
     state: command::State,
     private_caps: PrivateCapabilities,
+}
+
+impl fmt::Debug for CommandEncoder {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("CommandEncoder")
+            .field("cmd_buffer", &self.cmd_buffer)
+            .finish()
+    }
 }

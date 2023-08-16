@@ -149,16 +149,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
                                 nsCString& _GUID);
 
   /**
-   * Asynchronously recalculates frecency for a given page.
-   *
-   * @param aPlaceId
-   *        Place id to recalculate the frecency for.
-   * @note If the new frecency is a non-zero value it will also unhide the page,
-   *       otherwise will reuse the old hidden value.
-   */
-  nsresult UpdateFrecency(int64_t aPlaceId);
-
-  /**
    * These functions return non-owning references to the locale-specific
    * objects for places components.
    */
@@ -213,14 +203,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
                             const nsACString& aURI, const nsACString& aTitle,
                             uint32_t aAccessCount, PRTime aTime,
                             nsNavHistoryResultNode** aNode);
-
-  nsresult VisitIdToResultNode(int64_t visitId,
-                               nsNavHistoryQueryOptions* aOptions,
-                               nsNavHistoryResultNode** aResult);
-
-  nsresult BookmarkIdToResultNode(int64_t aBookmarkId,
-                                  nsNavHistoryQueryOptions* aOptions,
-                                  nsNavHistoryResultNode** aResult);
   nsresult URIToResultNode(nsIURI* aURI, nsNavHistoryQueryOptions* aOptions,
                            nsNavHistoryResultNode** aResult);
 
@@ -278,21 +260,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
     return mDefaultWeight;
   }
 
-  int32_t GetFrecencyBucketWeight(int32_t aBucketIndex) const {
-    switch (aBucketIndex) {
-      case 1:
-        return mFirstBucketWeight;
-      case 2:
-        return mSecondBucketWeight;
-      case 3:
-        return mThirdBucketWeight;
-      case 4:
-        return mFourthBucketWeight;
-      default:
-        return mDefaultWeight;
-    }
-  }
-
   int32_t GetFrecencyTransitionBonus(int32_t aTransitionType, bool aVisited,
                                      bool aRedirect = false) const {
     if (aRedirect) {
@@ -335,17 +302,19 @@ class nsNavHistory final : public nsSupportsWeakReference,
   void UpdateDaysOfHistory(PRTime visitTime);
 
   /**
-   * Returns true if frecency is currently being decayed.
-   *
-   * @return True if frecency is being decayed, false if not.
-   */
-  bool IsFrecencyDecaying() const;
-
-  /**
    * Store last insterted id for a table.
    */
   static mozilla::Atomic<int64_t> sLastInsertedPlaceId;
   static mozilla::Atomic<int64_t> sLastInsertedVisitId;
+
+  /**
+   * Tracks whether frecency is currently being decayed.
+   */
+  static mozilla::Atomic<bool> sIsFrecencyDecaying;
+  /**
+   * Tracks whether there's frecency to be recalculated.
+   */
+  static mozilla::Atomic<bool> sShouldStartFrecencyRecalculation;
 
   static void StoreLastInsertedId(const nsACString& aTable,
                                   const int64_t aLastInsertedId);
@@ -356,8 +325,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
       nsCOMArray<nsNavHistoryResultNode>* aFiltered,
       const RefPtr<nsNavHistoryQuery>& aQuery,
       nsNavHistoryQueryOptions* aOptions);
-
-  void DecayFrecencyCompleted();
 
   static void InvalidateDaysOfHistory();
 
@@ -460,8 +427,6 @@ class nsNavHistory final : public nsSupportsWeakReference,
   int32_t mUnvisitedBookmarkBonus;
   int32_t mUnvisitedTypedBonus;
   int32_t mReloadVisitBonus;
-
-  uint32_t mDecayFrecencyPendingCount;
 
   nsresult RecalculateOriginFrecencyStatsInternal();
 

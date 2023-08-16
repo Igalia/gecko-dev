@@ -80,8 +80,52 @@ class RustBuffer < FFI::Struct
     end
   end
 
+  {% when Type::Bytes -%}
+  # The primitive Bytes type.
+
+  def self.allocFromBytes(value)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_Bytes(value)
+      return builder.finalize
+    end
+  end
+
+  def consumeIntoBytes
+    consumeWithStream do |stream|
+      return stream.readBytes
+    end
+  end
+
+  {% when Type::Timestamp -%}
+  def self.alloc_from_{{ canonical_type_name }}(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_{{ canonical_type_name }}(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeInto{{ canonical_type_name }}
+    consumeWithStream do |stream|
+      return stream.read{{ canonical_type_name }}
+    end
+  end
+
+  {% when Type::Duration -%}
+  def self.alloc_from_{{ canonical_type_name }}(v)
+    RustBuffer.allocWithBuilder do |builder|
+      builder.write_{{ canonical_type_name }}(v)
+      return builder.finalize
+    end
+  end
+
+  def consumeInto{{ canonical_type_name }}
+    consumeWithStream do |stream|
+      return stream.read{{ canonical_type_name }}
+    end
+  end
+
   {% when Type::Record with (record_name) -%}
-  {%- let rec = ci.get_record_definition(record_name).unwrap() -%}
+  {%- let rec = ci|get_record_definition(record_name) -%}
   # The Record type {{ record_name }}.
 
   def self.alloc_from_{{ canonical_type_name }}(v)
@@ -98,7 +142,8 @@ class RustBuffer < FFI::Struct
   end
 
   {% when Type::Enum with (enum_name) -%}
-  {%- let e = ci.get_enum_definition(enum_name).unwrap() -%}
+  {% if !ci.is_name_used_as_error(enum_name) %}
+  {%- let e = ci|get_enum_definition(enum_name) -%}
   # The Enum type {{ enum_name }}.
 
   def self.alloc_from_{{ canonical_type_name }}(v)
@@ -113,6 +158,7 @@ class RustBuffer < FFI::Struct
       return stream.read{{ canonical_type_name }}
     end
   end
+  {% endif %}
 
   {% when Type::Optional with (inner_type) -%}
   # The Optional<T> type for {{ inner_type.canonical_name() }}.

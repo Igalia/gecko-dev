@@ -4,19 +4,17 @@
 
 add_task(async function test_setup() {
   await gCUITestUtils.addSearchBar();
-  let engine = await SearchTestUtils.promiseNewSearchEngine(
-    getRootDirectory(gTestPath) + "426329.xml"
-  );
+  await SearchTestUtils.promiseNewSearchEngine({
+    url: getRootDirectory(gTestPath) + "426329.xml",
+    setAsDefault: true,
+  });
 
-  const current = await Services.search.getDefault();
-  await Services.search.setDefault(engine);
   registerCleanupFunction(async () => {
-    await Services.search.setDefault(current);
     gCUITestUtils.removeSearchBar();
   });
 });
 
-add_task(async function() {
+add_task(async function () {
   let windowsToClose = [];
 
   function performSearch(aWin, aIsPrivate) {
@@ -72,7 +70,7 @@ add_task(async function() {
   searchBar.textbox.toggleHistoryPopup();
   searchBar.value = "";
 
-  windowsToClose.forEach(function(win) {
+  windowsToClose.forEach(function (win) {
     win.close();
   });
 });

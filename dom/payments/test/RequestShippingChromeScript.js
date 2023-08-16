@@ -66,7 +66,7 @@ const NormalUIService = {
     let payRequest = paymentSrv.getPaymentRequestById(requestId);
 
     const shippingOptions = payRequest.paymentDetails.shippingOptions;
-    if (shippingOptions.length != 0) {
+    if (shippingOptions.length) {
       emitTestFail("Wrong length for shippingOptions.");
     }
 
@@ -104,13 +104,13 @@ const NormalUIService = {
   QueryInterface: ChromeUtils.generateQI(["nsIPaymentUIService"]),
 };
 
-addMessageListener("set-normal-ui-service", function() {
+addMessageListener("set-normal-ui-service", function () {
   paymentSrv.setTestingUIService(
     NormalUIService.QueryInterface(Ci.nsIPaymentUIService)
   );
 });
 
-addMessageListener("teardown", function() {
+addMessageListener("teardown", function () {
   paymentSrv.setTestingUIService(null);
   sendAsyncMessage("teardown-complete");
 });

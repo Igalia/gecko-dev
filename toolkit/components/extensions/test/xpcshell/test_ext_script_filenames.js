@@ -181,7 +181,7 @@ add_task(async function test_background_page_injects_scripts_inline() {
   let validFileName = "injected_background.js";
   let invalidFileName = "invalid_background.xyz";
 
-  let inlineScript = `(${function() {
+  let inlineScript = `(${function () {
     const script = document.createElement("script");
     script.src = "./invalid_background.xyz";
     document.head.appendChild(script);
@@ -203,9 +203,6 @@ add_task(async function test_background_page_injects_scripts_inline() {
         "script-src",
         "'self'",
         `'sha256-${inlineScriptSHA256}'`,
-        ";",
-        "object-src",
-        "'self'",
         ";",
       ].join(" "),
     },

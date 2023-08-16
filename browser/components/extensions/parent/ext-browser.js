@@ -10,26 +10,12 @@
 // modules. All of the code is installed on |global|, which is a scope
 // shared among the different ext-*.js scripts.
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "PrivateBrowsingUtils",
-  "resource://gre/modules/PrivateBrowsingUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "BrowserWindowTracker",
-  "resource:///modules/BrowserWindowTracker.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PromiseUtils",
-  "resource://gre/modules/PromiseUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "AboutReaderParent",
-  "resource:///actors/AboutReaderParent.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AboutReaderParent: "resource:///actors/AboutReaderParent.sys.mjs",
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+});
 
 var { ExtensionError } = ExtensionUtils;
 
@@ -49,7 +35,6 @@ extensions.on("uninstalling", (msg, extension) => {
   if (extension.uninstallURL) {
     let browser = windowTracker.topWindow.gBrowser;
     browser.addTab(extension.uninstallURL, {
-      disallowInheritPrincipal: true,
       relatedToCurrent: true,
       triggeringPrincipal: Services.scriptSecurityManager.createNullPrincipal(
         {}
@@ -138,9 +123,9 @@ global.waitForTabLoaded = (tab, url) => {
   });
 };
 
-global.replaceUrlInTab = (gBrowser, tab, url) => {
-  let loaded = waitForTabLoaded(tab, url);
-  gBrowser.loadURI(url, {
+global.replaceUrlInTab = (gBrowser, tab, uri) => {
+  let loaded = waitForTabLoaded(tab, uri.spec);
+  gBrowser.loadURI(uri, {
     flags: Ci.nsIWebNavigation.LOAD_FLAGS_REPLACE_HISTORY,
     triggeringPrincipal: Services.scriptSecurityManager.getSystemPrincipal(), // This is safe from this functions usage however it would be preferred not to dot his.
   });
@@ -177,7 +162,7 @@ global.TabContext = class extends EventEmitter {
    *
    * @param {XULElement|ChromeWindow} keyObject
    *        Browser tab or browser chrome window.
-   * @returns {Object}
+   * @returns {object}
    */
   get(keyObject) {
     if (!this.tabData.has(keyObject)) {
@@ -565,7 +550,7 @@ class TabTracker extends TabTrackerBase {
   }
 
   /**
-   * @param {Object} message
+   * @param {object} message
    *        The message to handle.
    * @private
    */
@@ -671,7 +656,7 @@ class TabTracker extends TabTrackerBase {
    *
    * @param {NativeTab} nativeTab
    *        The tab element which is being created.
-   * @param {Object} [currentTabSize]
+   * @param {object} [currentTabSize]
    *        The size of the tab element for the currently active tab.
    * @private
    */
@@ -760,6 +745,10 @@ class Tab extends TabBase {
 
   get audible() {
     return this.nativeTab.soundPlaying;
+  }
+
+  get autoDiscardable() {
+    return !this.nativeTab.undiscardable;
   }
 
   get browser() {
@@ -877,14 +866,14 @@ class Tab extends TabBase {
    *
    * @param {Extension} extension
    *        The extension for which to convert the data.
-   * @param {Object} tabData
+   * @param {object} tabData
    *        Session store data for a closed tab, as returned by
    *        `SessionStore.getClosedTabData()`.
    * @param {DOMWindow} [window = null]
    *        The browser window which the tab belonged to before it was closed.
    *        May be null if the window the tab belonged to no longer exists.
    *
-   * @returns {Object}
+   * @returns {object}
    * @static
    */
   static convertFromSessionStoreClosedData(extension, tabData, window = null) {
@@ -935,7 +924,7 @@ class Window extends WindowBase {
   /**
    * Update the geometry of the browser window.
    *
-   * @param {Object} options
+   * @param {object} options
    *        An object containing new values for the window's geometry.
    * @param {integer} [options.left]
    *        The new pixel distance of the left side of the browser window from
@@ -1025,7 +1014,7 @@ class Window extends WindowBase {
   async setState(state) {
     let { window } = this;
 
-    const expectedState = (function() {
+    const expectedState = (function () {
       switch (state) {
         case "maximized":
           return window.STATE_MAXIMIZED;
@@ -1045,7 +1034,10 @@ class Window extends WindowBase {
       return;
     }
 
-    if (initialState == window.STATE_FULLSCREEN) {
+    // We check for window.fullScreen here to make sure to exit fullscreen even
+    // if DOM and widget disagree on what the state is. This is a speculative
+    // fix for bug 1780876, ideally it should not be needed.
+    if (initialState == window.STATE_FULLSCREEN || window.fullScreen) {
       window.fullScreen = false;
     }
 
@@ -1088,7 +1080,7 @@ class Window extends WindowBase {
 
       let onSizeModeChange;
       const promiseExpectedSizeMode = new Promise(resolve => {
-        onSizeModeChange = function() {
+        onSizeModeChange = function () {
           if (window.windowState == expectedState) {
             resolve();
           }
@@ -1159,11 +1151,11 @@ class Window extends WindowBase {
    *
    * @param {Extension} extension
    *        The extension for which to convert the data.
-   * @param {Object} windowData
+   * @param {object} windowData
    *        Session store data for a closed window, as returned by
    *        `SessionStore.getClosedWindowData()`.
    *
-   * @returns {Object}
+   * @returns {object}
    * @static
    */
   static convertFromSessionStoreClosedData(extension, windowData) {
@@ -1227,6 +1219,12 @@ class TabManager extends TabManagerBase {
 
   wrapTab(nativeTab) {
     return new Tab(this.extension, nativeTab, tabTracker.getId(nativeTab));
+  }
+
+  getWrapper(nativeTab) {
+    if (!nativeTab.ownerGlobal.gBrowserInit.isAdoptingTab()) {
+      return super.getWrapper(nativeTab);
+    }
   }
 }
 

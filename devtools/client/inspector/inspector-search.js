@@ -4,11 +4,10 @@
 
 "use strict";
 
-const { KeyCodes } = require("devtools/client/shared/keycodes");
+const { KeyCodes } = require("resource://devtools/client/shared/keycodes.js");
 
-const EventEmitter = require("devtools/shared/event-emitter");
-const AutocompletePopup = require("devtools/client/shared/autocomplete-popup");
-const Services = require("Services");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const AutocompletePopup = require("resource://devtools/client/shared/autocomplete-popup.js");
 
 // Maximum number of selector suggestions shown in the panel.
 const MAX_SUGGESTIONS = 15;
@@ -71,7 +70,7 @@ InspectorSearch.prototype = {
 
     if (query.length === 0) {
       searchContainer.classList.remove("devtools-searchbox-no-match");
-      if (!lastSearched || lastSearched.length > 0) {
+      if (!lastSearched || lastSearched.length) {
         this.emit("search-cleared");
       }
       return;
@@ -508,11 +507,12 @@ SelectorAutocompleter.prototype = {
       query += "*";
     }
 
-    let suggestions = await this.inspector.commands.inspectorCommand.getSuggestionsForQuery(
-      query,
-      firstPart,
-      state
-    );
+    let suggestions =
+      await this.inspector.commands.inspectorCommand.getSuggestionsForQuery(
+        query,
+        firstPart,
+        state
+      );
 
     if (state === this.States.CLASS) {
       firstPart = "." + firstPart;

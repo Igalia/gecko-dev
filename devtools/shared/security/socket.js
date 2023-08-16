@@ -4,58 +4,72 @@
 
 "use strict";
 
-var { Ci, Cc, CC, Cr } = require("chrome");
-
 // Ensure PSM is initialized to support TLS sockets
 Cc["@mozilla.org/psm;1"].getService(Ci.nsISupports);
 
-var Services = require("Services");
-var DevToolsUtils = require("devtools/shared/DevToolsUtils");
+var DevToolsUtils = require("resource://devtools/shared/DevToolsUtils.js");
 var { dumpn } = DevToolsUtils;
 loader.lazyRequireGetter(
   this,
   "WebSocketServer",
-  "devtools/server/socket/websocket-server"
+  "resource://devtools/server/socket/websocket-server.js"
 );
 loader.lazyRequireGetter(
   this,
   "DebuggerTransport",
-  "devtools/shared/transport/transport",
+  "resource://devtools/shared/transport/transport.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "WebSocketDebuggerTransport",
-  "devtools/shared/transport/websocket-transport"
+  "resource://devtools/shared/transport/websocket-transport.js"
 );
 loader.lazyRequireGetter(
   this,
   "discovery",
-  "devtools/shared/discovery/discovery"
+  "resource://devtools/shared/discovery/discovery.js"
 );
 loader.lazyRequireGetter(
   this,
   "Authenticators",
-  "devtools/shared/security/auth",
+  "resource://devtools/shared/security/auth.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "AuthenticationResult",
-  "devtools/shared/security/auth",
+  "resource://devtools/shared/security/auth.js",
   true
 );
+const lazy = {};
+
+DevToolsUtils.defineLazyGetter(
+  lazy,
+  "DevToolsSocketStatus",
+  () =>
+    ChromeUtils.importESModule(
+      "resource://devtools/shared/security/DevToolsSocketStatus.sys.mjs",
+      {
+        // DevToolsSocketStatus is also accessed by non-devtools modules and
+        // should be loaded in the regular / shared global.
+        loadInDevToolsLoader: false,
+      }
+    ).DevToolsSocketStatus
+);
+
 loader.lazyRequireGetter(
   this,
-  "DevToolsSocketStatus",
-  "resource://devtools/shared/security/DevToolsSocketStatus.jsm",
-  true
+  "EventEmitter",
+  "resource://devtools/shared/event-emitter.js"
 );
 
-loader.lazyRequireGetter(this, "EventEmitter", "devtools/shared/event-emitter");
-
 DevToolsUtils.defineLazyGetter(this, "nsFile", () => {
-  return CC("@mozilla.org/file/local;1", "nsIFile", "initWithPath");
+  return Components.Constructor(
+    "@mozilla.org/file/local;1",
+    "nsIFile",
+    "initWithPath"
+  );
 });
 
 DevToolsUtils.defineLazyGetter(this, "socketTransportService", () => {
@@ -81,7 +95,7 @@ var DebuggerSocket = {};
  * @return promise
  *         Resolved to a DebuggerTransport instance.
  */
-DebuggerSocket.connect = async function(settings) {
+DebuggerSocket.connect = async function (settings) {
   // Default to PROMPT |Authenticator| instance if not supplied
   if (!settings.authenticator) {
     settings.authenticator = new (Authenticators.get().Client)();
@@ -125,7 +139,7 @@ function _validateSettings(settings) {
  *         A possible DevTools transport (if connection succeeded and streams
  *         are actually alive and working)
  */
-var _getTransport = async function(settings) {
+var _getTransport = async function (settings) {
   const { host, port, webSocket } = settings;
 
   if (webSocket) {
@@ -164,7 +178,7 @@ var _getTransport = async function(settings) {
  * @return s nsISocketTransport
  *         Underlying socket transport, in case more details are needed.
  */
-var _attemptTransport = async function(settings) {
+var _attemptTransport = async function (settings) {
   const { authenticator } = settings;
   // _attemptConnect only opens the streams.  Any failures at that stage
   // aborts the connection process immedidately.
@@ -219,7 +233,7 @@ var _attemptTransport = async function(settings) {
  * @return output nsIAsyncOutputStream
  *         The socket's output stream.
  */
-var _attemptConnect = async function({ host, port }) {
+var _attemptConnect = async function ({ host, port }) {
   const s = socketTransportService.createTransport([], host, port, null, null);
 
   // Force disabling IPV6 if we aren't explicitely connecting to an IPv6 address
@@ -316,9 +330,8 @@ function _isInputAlive(input) {
  *            mechanism. Defaults is false.
  *          fromBrowserToolbox:
  *            Should only be passed when opening a socket for a Browser Toolbox
- *            session. This will skip notifying DevToolsSocketStatus
- *            about the opened socket, to avoid triggering the visual cue in the
- *            URL bar.
+ *            session. DevToolsSocketStatus will track the socket separately to
+ *            avoid triggering the visual cue in the URL bar.
  *          portOrPath:
  *            The port or path to listen on.
  *            If given an integer, the port to listen on.  Use -1 to choose any available
@@ -391,7 +404,7 @@ SocketListener.prototype = {
     }
 
     const self = this;
-    return (async function() {
+    return (async function () {
       const backlog = 4;
       self._socket = self._createSocketInstance();
       if (self.isPortBased) {
@@ -411,9 +424,9 @@ SocketListener.prototype = {
       dumpn("Socket listening on: " + (self.port || self.portOrPath));
     })()
       .then(() => {
-        if (!self.fromBrowserToolbox) {
-          DevToolsSocketStatus.notifySocketOpened();
-        }
+        lazy.DevToolsSocketStatus.notifySocketOpened({
+          fromBrowserToolbox: self.fromBrowserToolbox,
+        });
         this._advertise();
       })
       .catch(e => {
@@ -459,9 +472,9 @@ SocketListener.prototype = {
       this._socket.close();
       this._socket = null;
 
-      if (!this.fromBrowserToolbox) {
-        DevToolsSocketStatus.notifySocketClosed();
-      }
+      lazy.DevToolsSocketStatus.notifySocketClosed({
+        fromBrowserToolbox: this.fromBrowserToolbox,
+      });
     }
     this._devToolsServer.removeSocketListener(this);
   },
@@ -501,7 +514,7 @@ SocketListener.prototype = {
 
   // nsIServerSocketListener implementation
 
-  onSocketAccepted: DevToolsUtils.makeInfallible(function(
+  onSocketAccepted: DevToolsUtils.makeInfallible(function (
     socket,
     socketTransport
   ) {

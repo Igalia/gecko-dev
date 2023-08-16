@@ -4,6 +4,8 @@
  * You can obtain one at http://mozilla.org/MPL/2.0/.
  */
 
+interface nsIFile;
+
 /**
  * IOUtils is a simple, efficient interface for performing file I/O from a
  * privileged chrome-only context. All asynchronous I/O tasks are run on
@@ -37,7 +39,8 @@ namespace IOUtils {
   Promise<Uint8Array> read(DOMString path, optional ReadOptions opts = {});
   /**
    * Reads the UTF-8 text file located at |path| and returns the decoded
-   * contents as a |DOMString|.
+   * contents as a |DOMString|. If a UTF-8 byte order marker (BOM) is
+   * present, it will be stripped from the returned string.
    *
    * NB: The maximum file size that can be read is UINT32_MAX.
    *
@@ -120,7 +123,7 @@ namespace IOUtils {
    *         a DOMException.
    */
   [NewObject]
-  Promise<void> move(DOMString sourcePath, DOMString destPath, optional MoveOptions options = {});
+  Promise<undefined> move(DOMString sourcePath, DOMString destPath, optional MoveOptions options = {});
   /**
    * Removes a file or directory at |path| according to |options|.
    *
@@ -131,7 +134,7 @@ namespace IOUtils {
    *         with a DOMException.
    */
   [NewObject]
-  Promise<void> remove(DOMString path, optional RemoveOptions options = {});
+  Promise<undefined> remove(DOMString path, optional RemoveOptions options = {});
   /**
    * Creates a new directory at |path| according to |options|.
    *
@@ -141,7 +144,7 @@ namespace IOUtils {
    *         rejects with a DOMException.
    */
   [NewObject]
-  Promise<void> makeDirectory(DOMString path, optional MakeDirectoryOptions options = {});
+  Promise<undefined> makeDirectory(DOMString path, optional MakeDirectoryOptions options = {});
   /**
    * Obtains information about a file, such as size, modification dates, etc.
    *
@@ -168,9 +171,26 @@ namespace IOUtils {
    *         with a DOMException.
    */
   [NewObject]
-  Promise<void> copy(DOMString sourcePath, DOMString destPath, optional CopyOptions options = {});
+  Promise<undefined> copy(DOMString sourcePath, DOMString destPath, optional CopyOptions options = {});
   /**
-   * Updates the |modification| time for the file at |path|.
+   * Updates the access time for the file at |path|.
+   *
+   * @param path         An absolute file path identifying the file whose
+   *                     modification time is to be set. This file must exist
+   *                     and will not be created.
+   * @param modification An optional access time for the file expressed in
+   *                     milliseconds since the Unix epoch
+   *                     (1970-01-01T00:00:00Z). The current system time is used
+   *                     if this parameter is not provided.
+   *
+   * @return Resolves with the updated access time time expressed in
+   *         milliseconds since the Unix epoch, otherwise rejects with a
+   *         DOMException.
+   */
+  [NewObject]
+  Promise<long long> setAccessTime(DOMString path, optional long long access);
+  /**
+   * Updates the modification time for the file at |path|.
    *
    * @param path         An absolute file path identifying the file whose
    *                     modification time is to be set. This file must exist
@@ -218,7 +238,7 @@ namespace IOUtils {
    *         rejects with a DOMException.
    */
   [NewObject]
-  Promise<void> setPermissions(DOMString path, unsigned long permissions, optional boolean honorUmask = true);
+  Promise<undefined> setPermissions(DOMString path, unsigned long permissions, optional boolean honorUmask = true);
   /**
    * Return whether or not the file exists at the given path.
    *
@@ -286,7 +306,7 @@ namespace IOUtils {
    * @return A promise that resolves is the attributes were set successfully.
    */
   [NewObject]
-  Promise<void> setWindowsAttributes(DOMString path, optional WindowsFileAttributes attrs = {});
+  Promise<undefined> setWindowsAttributes(DOMString path, optional WindowsFileAttributes attrs = {});
 #elif defined(XP_MACOSX)
   /**
    * Return whether or not the file has a specific extended attribute.
@@ -321,7 +341,7 @@ namespace IOUtils {
    *         attribute, or rejects with an error.
    */
   [NewObject]
-  Promise<void> setMacXAttr(DOMString path, UTF8String attr, Uint8Array value);
+  Promise<undefined> setMacXAttr(DOMString path, UTF8String attr, Uint8Array value);
   /**
    * Delete the extended attribute on a file.
    *
@@ -332,14 +352,50 @@ namespace IOUtils {
    *         with an error.
    */
   [NewObject]
-  Promise<void> delMacXAttr(DOMString path, UTF8String attr);
+  Promise<undefined> delMacXAttr(DOMString path, UTF8String attr);
 #endif
+
+  /**
+   * Return a nsIFile whose parent directory exists. The parent directory of the
+   * file will be created off main thread if it does not already exist.
+   *
+   * @param components The path components. The first component must be an
+   *                   absolute path.
+   *
+   * @return A promise that resolves to an nsIFile for the requested file.
+   */
+  [NewObject]
+  Promise<nsIFile> getFile(DOMString... components);
+
+  /**
+   * Return an nsIFile corresponding to a directory. It will be created
+   * off-main-thread if it does not already exist.
+   *
+   * @param components The path components. The first component must be an
+   *                   absolute path.
+   *
+   * @return A promise that resolves to an nsIFile for the requested directory.
+   */
+  [NewObject]
+  Promise<nsIFile> getDirectory(DOMString... components);
 };
 
 [Exposed=Window]
 partial namespace IOUtils {
+  /**
+   * The async shutdown client for the profile-before-change shutdown phase.
+   */
   [Throws]
   readonly attribute any profileBeforeChange;
+
+  /**
+   * The async shutdown client for the profile-before-change-telemetry shutdown
+   * phase.
+   *
+   * ONLY telemetry should register blockers on this client.
+   */
+  [Throws]
+  readonly attribute any sendTelemetry;
 };
 
 [Exposed=Worker]
@@ -361,7 +417,7 @@ partial namespace IOUtils {
    * but it would use u16-based strings, so it would basically be a separate
    * copy of the bindings.)
    *
-   * This interface was added for use by `Subprocess.jsm`; other would-be
+   * This interface was added for use by `Subprocess.sys.jsm`; other would-be
    * callers may want to just use Subprocess instead of calling this directly.
    *
    * @param argv The command to run and its arguments.
@@ -400,13 +456,13 @@ interface SyncReadFile {
    *               range is given by |dest.length|.)
    */
   [Throws]
-  void readBytesInto(Uint8Array dest, long long offset);
+  undefined readBytesInto(Uint8Array dest, long long offset);
 
   /**
    * Close the file. Subsequent calls to readBytesInto will throw.
    * If the file is not closed manually, it will be closed once this object is GC'ed.
    */
-  void close();
+  undefined close();
 };
 
 /**
@@ -454,6 +510,10 @@ enum WriteMode {
    * This mode will refuse to create the file if it does not exist.
    */
   "append",
+  /**
+   * Append to the end of the file, or create it if it does not exist.
+   */
+  "appendOrCreate",
   /**
    * Create a new file.
    *
@@ -517,6 +577,14 @@ dictionary RemoveOptions {
    * If true, and the target is a directory, recursively remove files.
    */
   boolean recursive = false;
+
+  /**
+   * If true, a failed delete on a readonly file will be retried by first
+   * removing the readonly attribute.
+   *
+   * Only has an effect on Windows.
+   */
+  boolean retryReadonly = false;
 };
 
 /**
@@ -581,21 +649,18 @@ dictionary FileInfo {
    * obtained.
    */
   DOMString path;
+
   /**
    * Identifies if the file at |path| is a regular file, directory, or something
    * something else.
    */
   FileType type;
+
   /**
    * If this represents a regular file, the size of the file in bytes.
    * Otherwise, -1.
    */
   long long size;
-  /**
-   * The timestamp of the last file modification, represented in milliseconds
-   * since Epoch (1970-01-01T00:00:00.000Z).
-   */
-  long long lastModified;
 
   /**
    * The timestamp of file creation, represented in milliseconds since Epoch
@@ -604,6 +669,19 @@ dictionary FileInfo {
    * This is only available on MacOS and Windows.
    */
   long long creationTime;
+
+  /**
+   * The timestmp of last file accesss, represented in milliseconds since Epoch
+   * (1970-01-01T00:00:00.000Z).
+   */
+  long long lastAccessed;
+
+  /**
+   * The timestamp of the last file modification, represented in milliseconds
+   * since Epoch (1970-01-01T00:00:00.000Z).
+   */
+  long long lastModified;
+
   /**
    * The permissions of the file, expressed as a UNIX file mode.
    *

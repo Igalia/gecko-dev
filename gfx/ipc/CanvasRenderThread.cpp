@@ -13,6 +13,9 @@ namespace mozilla::gfx {
 
 static StaticRefPtr<CanvasRenderThread> sCanvasRenderThread;
 static mozilla::BackgroundHangMonitor* sBackgroundHangMonitor;
+#ifdef DEBUG
+static bool sCanvasRenderThreadEverStarted = false;
+#endif
 
 CanvasRenderThread::CanvasRenderThread(RefPtr<nsIThread> aThread)
     : mThread(std::move(aThread)) {}
@@ -27,24 +30,35 @@ void CanvasRenderThread::Start() {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(!sCanvasRenderThread);
 
-  // This is 512K, which is higher than the default 256K.
-  // Increased to accommodate Mesa in bug 1753340.
+#ifdef DEBUG
+  // Check to ensure nobody will try to ever start us more than once during
+  // the process' lifetime (in particular after Stop).
+  MOZ_ASSERT(!sCanvasRenderThreadEverStarted);
+  sCanvasRenderThreadEverStarted = true;
+#endif
+
+  // This is 4M, which is higher than the default 256K.
+  // Increased with bug 1753349 to accommodate the `chromium/5359` branch of
+  // ANGLE, which has large peak stack usage for some pathological shader
+  // compilations.
+  //
+  // Previously increased to 512K to accommodate Mesa in bug 1753340.
   //
   // Previously increased to 320K to avoid a stack overflow in the
   // Intel Vulkan driver initialization in bug 1716120.
   //
   // Note: we only override it if it's limited already.
   const uint32_t stackSize =
-      nsIThreadManager::DEFAULT_STACK_SIZE ? 512 << 10 : 0;
+      nsIThreadManager::DEFAULT_STACK_SIZE ? 4096 << 10 : 0;
 
   RefPtr<nsIThread> thread;
   nsresult rv = NS_NewNamedThread(
       "CanvasRenderer", getter_AddRefs(thread),
       NS_NewRunnableFunction(
-          "CanvasRender::BackgroundHanSetup",
+          "CanvasRender::BackgroundHangSetup",
           []() {
             sBackgroundHangMonitor = new mozilla::BackgroundHangMonitor(
-                "CanvasRenderer",
+                "CanvasRendererBHM",
                 /* Timeout values are powers-of-two to enable us get better
                    data. 128ms is chosen for transient hangs because 8Hz should
                    be the minimally acceptable goal for Compositor
@@ -59,7 +73,7 @@ void CanvasRenderThread::Start() {
             nsthread->SetUseHangMonitor(true);
             nsthread->SetPriority(nsISupportsPriority::PRIORITY_HIGH);
           }),
-      stackSize);
+      {.stackSize = stackSize});
 
   if (NS_FAILED(rv)) {
     return;
@@ -73,19 +87,14 @@ void CanvasRenderThread::ShutDown() {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(sCanvasRenderThread);
 
-  layers::SynchronousTask task("CanvasRenderThread");
-  RefPtr<Runnable> runnable =
-      WrapRunnable(RefPtr<CanvasRenderThread>(sCanvasRenderThread.get()),
-                   &CanvasRenderThread::ShutDownTask, &task);
-  sCanvasRenderThread->PostRunnable(runnable.forget());
-  task.Wait();
-
+  // Null out sCanvasRenderThread before we enter synchronous Shutdown,
+  // from here on we are to be considered shut down for our consumers.
+  nsCOMPtr<nsIThread> oldThread = sCanvasRenderThread->GetCanvasRenderThread();
   sCanvasRenderThread = nullptr;
-}
 
-void CanvasRenderThread::ShutDownTask(layers::SynchronousTask* aTask) {
-  layers::AutoCompleteTask complete(aTask);
-  MOZ_ASSERT(IsInCanvasRenderThread());
+  // We do a synchronous shutdown here while spinning the MT event loop.
+  MOZ_ASSERT(oldThread);
+  oldThread->Shutdown();
 }
 
 // static

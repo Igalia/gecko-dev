@@ -10,15 +10,14 @@ import FrameComponent from "./Frame";
 import Group from "./Group";
 
 import actions from "../../../actions";
-import { collapseFrames, formatCopyName } from "../../../utils/pause/frames";
-import { copyToTheClipboard } from "../../../utils/clipboard";
+import { collapseFrames } from "../../../utils/pause/frames";
 
 import {
   getFrameworkGroupingState,
   getSelectedFrame,
-  getCallStackFrames,
+  getCurrentThreadFrames,
   getCurrentThread,
-  getThreadContext,
+  getShouldSelectOriginalLocation,
 } from "../../../selectors";
 
 import "./Frames.css";
@@ -36,7 +35,6 @@ class Frames extends Component {
 
   static get propTypes() {
     return {
-      cx: PropTypes.object,
       disableContextMenu: PropTypes.bool.isRequired,
       disableFrameTruncate: PropTypes.bool.isRequired,
       displayFullUrl: PropTypes.bool.isRequired,
@@ -44,23 +42,26 @@ class Frames extends Component {
       frameworkGroupingOn: PropTypes.bool.isRequired,
       getFrameTitle: PropTypes.func,
       panel: PropTypes.oneOf(["debugger", "webconsole"]).isRequired,
-      restart: PropTypes.func,
       selectFrame: PropTypes.func.isRequired,
       selectLocation: PropTypes.func,
       selectedFrame: PropTypes.object,
-      toggleBlackBox: PropTypes.func,
-      toggleFrameworkGrouping: PropTypes.func,
     };
   }
 
   shouldComponentUpdate(nextProps, nextState) {
-    const { frames, selectedFrame, frameworkGroupingOn } = this.props;
+    const {
+      frames,
+      selectedFrame,
+      frameworkGroupingOn,
+      shouldDisplayOriginalLocation,
+    } = this.props;
     const { showAllFrames } = this.state;
     return (
       frames !== nextProps.frames ||
       selectedFrame !== nextProps.selectedFrame ||
       showAllFrames !== nextState.showAllFrames ||
-      frameworkGroupingOn !== nextProps.frameworkGroupingOn
+      frameworkGroupingOn !== nextProps.frameworkGroupingOn ||
+      shouldDisplayOriginalLocation !== nextProps.shouldDisplayOriginalLocation
     );
   }
 
@@ -87,31 +88,17 @@ class Frames extends Component {
     return frames.slice(0, numFramesToShow);
   }
 
-  copyStackTrace = () => {
-    const { frames } = this.props;
-    const { l10n } = this.context;
-    const framesToCopy = frames.map(f => formatCopyName(f, l10n)).join("\n");
-    copyToTheClipboard(framesToCopy);
-  };
-
-  toggleFrameworkGrouping = () => {
-    const { toggleFrameworkGrouping, frameworkGroupingOn } = this.props;
-    toggleFrameworkGrouping(!frameworkGroupingOn);
-  };
-
   renderFrames(frames) {
     const {
-      cx,
       selectFrame,
       selectLocation,
       selectedFrame,
-      toggleBlackBox,
-      frameworkGroupingOn,
       displayFullUrl,
       getFrameTitle,
       disableContextMenu,
       panel,
-      restart,
+      shouldDisplayOriginalLocation,
+      showFrameContextMenu,
     } = this.props;
 
     const framesOrGroups = this.truncateFrames(this.collapseFrames(frames));
@@ -124,39 +111,30 @@ class Frames extends Component {
         {framesOrGroups.map(frameOrGroup =>
           frameOrGroup.id ? (
             <FrameComponent
-              cx={cx}
               frame={frameOrGroup}
-              toggleFrameworkGrouping={this.toggleFrameworkGrouping}
-              copyStackTrace={this.copyStackTrace}
-              frameworkGroupingOn={frameworkGroupingOn}
+              showFrameContextMenu={showFrameContextMenu}
               selectFrame={selectFrame}
               selectLocation={selectLocation}
               selectedFrame={selectedFrame}
-              toggleBlackBox={toggleBlackBox}
+              shouldDisplayOriginalLocation={shouldDisplayOriginalLocation}
               key={String(frameOrGroup.id)}
               displayFullUrl={displayFullUrl}
               getFrameTitle={getFrameTitle}
               disableContextMenu={disableContextMenu}
               panel={panel}
-              restart={restart}
             />
           ) : (
             <Group
-              cx={cx}
               group={frameOrGroup}
-              toggleFrameworkGrouping={this.toggleFrameworkGrouping}
-              copyStackTrace={this.copyStackTrace}
-              frameworkGroupingOn={frameworkGroupingOn}
+              showFrameContextMenu={showFrameContextMenu}
               selectFrame={selectFrame}
               selectLocation={selectLocation}
               selectedFrame={selectedFrame}
-              toggleBlackBox={toggleBlackBox}
               key={frameOrGroup[0].id}
               displayFullUrl={displayFullUrl}
               getFrameTitle={getFrameTitle}
               disableContextMenu={disableContextMenu}
               panel={panel}
-              restart={restart}
             />
           )
         )}
@@ -209,10 +187,10 @@ class Frames extends Component {
 Frames.contextTypes = { l10n: PropTypes.object };
 
 const mapStateToProps = state => ({
-  cx: getThreadContext(state),
-  frames: getCallStackFrames(state),
+  frames: getCurrentThreadFrames(state),
   frameworkGroupingOn: getFrameworkGroupingState(state),
   selectedFrame: getSelectedFrame(state, getCurrentThread(state)),
+  shouldDisplayOriginalLocation: getShouldSelectOriginalLocation(state),
   disableFrameTruncate: false,
   disableContextMenu: false,
   displayFullUrl: false,
@@ -221,9 +199,7 @@ const mapStateToProps = state => ({
 export default connect(mapStateToProps, {
   selectFrame: actions.selectFrame,
   selectLocation: actions.selectLocation,
-  toggleBlackBox: actions.toggleBlackBox,
-  toggleFrameworkGrouping: actions.toggleFrameworkGrouping,
-  restart: actions.restart,
+  showFrameContextMenu: actions.showFrameContextMenu,
 })(Frames);
 
 // Export the non-connected component in order to use it outside of the debugger

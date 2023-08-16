@@ -16,19 +16,27 @@
 #include "nsThreadManager.h"
 #include "nsThreadSyncDispatch.h"
 #include "nsThreadUtils.h"
-#include "nsXPCOMPrivate.h"  // for gXPCOMThreadsShutDown
 #include "ThreadDelay.h"
 
 using namespace mozilla;
 
-ThreadEventTarget::ThreadEventTarget(ThreadTargetSink* aSink,
-                                     bool aIsMainThread)
-    : mSink(aSink)
 #ifdef DEBUG
-      ,
-      mIsMainThread(aIsMainThread)
+// This flag will be set right after XPCOMShutdownThreads finished but before
+// we continue with other processing. It is exclusively meant to prime the
+// assertion of ThreadEventTarget::Dispatch as early as possible.
+// Please use AppShutdown::IsInOrBeyond(ShutdownPhase::???)
+// elsewhere to check for shutdown phases.
+static mozilla::Atomic<bool, mozilla::SequentiallyConsistent>
+    gXPCOMThreadsShutDownNotified(false);
 #endif
-{
+
+ThreadEventTarget::ThreadEventTarget(ThreadTargetSink* aSink,
+                                     bool aIsMainThread, bool aBlockDispatch)
+    : mSink(aSink),
+#ifdef DEBUG
+      mIsMainThread(aIsMainThread),
+#endif
+      mBlockDispatch(aBlockDispatch) {
   mThread = PR_GetCurrentThread();
 }
 
@@ -47,6 +55,13 @@ ThreadEventTarget::DispatchFromScript(nsIRunnable* aRunnable, uint32_t aFlags) {
   return Dispatch(do_AddRef(aRunnable), aFlags);
 }
 
+#ifdef DEBUG
+// static
+void ThreadEventTarget::XPCOMShutdownThreadsNotificationFinished() {
+  gXPCOMThreadsShutDownNotified = true;
+}
+#endif
+
 NS_IMETHODIMP
 ThreadEventTarget::Dispatch(already_AddRefed<nsIRunnable> aEvent,
                             uint32_t aFlags) {
@@ -57,43 +72,22 @@ ThreadEventTarget::Dispatch(already_AddRefed<nsIRunnable> aEvent,
     return NS_ERROR_INVALID_ARG;
   }
 
-  NS_ASSERTION(!gXPCOMThreadsShutDown || mIsMainThread ||
+  NS_ASSERTION(!gXPCOMThreadsShutDownNotified || mIsMainThread ||
                    PR_GetCurrentThread() == mThread,
                "Dispatch to non-main thread after xpcom-shutdown-threads");
 
-  LogRunnable::LogDispatch(event.get());
-
-  if (aFlags & DISPATCH_SYNC) {
-    nsCOMPtr<nsIEventTarget> current = GetCurrentEventTarget();
-    if (NS_WARN_IF(!current)) {
-      return NS_ERROR_NOT_AVAILABLE;
-    }
-
-    // XXX we should be able to do something better here... we should
-    //     be able to monitor the slot occupied by this event and use
-    //     that to tell us when the event has been processed.
-
-    RefPtr<nsThreadSyncDispatch> wrapper =
-        new nsThreadSyncDispatch(current.forget(), event.take());
-    bool success = mSink->PutEvent(do_AddRef(wrapper),
-                                   EventQueuePriority::Normal);  // hold a ref
-    if (!success) {
-      // PutEvent leaked the wrapper runnable object on failure, so we
-      // explicitly release this object once for that. Note that this
-      // object will be released again soon because it exits the scope.
-      wrapper.get()->Release();
-      return NS_ERROR_UNEXPECTED;
-    }
-
-    // Allows waiting; ensure no locks are held that would deadlock us!
-    SpinEventLoopUntil(
-        "ThreadEventTarget::Dispatch"_ns,
-        [&, wrapper]() -> bool { return !wrapper->IsPending(); });
-
-    return NS_OK;
+  if (mBlockDispatch && !(aFlags & NS_DISPATCH_IGNORE_BLOCK_DISPATCH)) {
+    MOZ_DIAGNOSTIC_ASSERT(
+        false,
+        "Attempt to dispatch to thread which does not usually process "
+        "dispatched runnables until shutdown");
+    return NS_ERROR_NOT_IMPLEMENTED;
   }
 
-  NS_ASSERTION(aFlags == NS_DISPATCH_NORMAL || aFlags == NS_DISPATCH_AT_END,
+  LogRunnable::LogDispatch(event.get());
+
+  NS_ASSERTION((aFlags & (NS_DISPATCH_AT_END |
+                          NS_DISPATCH_IGNORE_BLOCK_DISPATCH)) == aFlags,
                "unexpected dispatch flags");
   if (!mSink->PutEvent(event.take(), EventQueuePriority::Normal)) {
     return NS_ERROR_UNEXPECTED;

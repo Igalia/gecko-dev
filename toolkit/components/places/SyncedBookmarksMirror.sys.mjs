@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This file implements a mirror and two-way merger for synced bookmarks. The
  * mirror matches the complete tree stored on the Sync server, and stages new
@@ -31,7 +29,7 @@
  *   the server to match the merged tree.
  *
  * - `BookmarkObserverRecorder` records all changes made to Places during the
- *   merge, then dispatches `nsINavBookmarkObserver` notifications. Places uses
+ *   merge, then dispatches `PlacesObservers` notifications. Places uses
  *   these notifications to update the UI and internal caches. We can't dispatch
  *   during the merge because observers won't see the changes until the merge
  *   transaction commits and the database is consistent again.
@@ -49,21 +47,16 @@
  *   issues.
  */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  Async: "resource://services-common/async.sys.mjs",
+  Log: "resource://gre/modules/Log.sys.mjs",
   PlacesSyncUtils: "resource://gre/modules/PlacesSyncUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  Async: "resource://services-common/async.js",
-  Log: "resource://gre/modules/Log.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "MirrorLog", () =>
+ChromeUtils.defineLazyGetter(lazy, "MirrorLog", () =>
   lazy.Log.repository.getLogger("Sync.Engine.Bookmarks.Mirror")
 );
 
@@ -79,14 +72,12 @@ const DB_TITLE_LENGTH_MAX = 4096;
 
 // The current mirror database schema version. Bump for migrations, then add
 // migration code to `migrateMirrorSchema`.
-const MIRROR_SCHEMA_VERSION = 8;
-
-const DEFAULT_MAX_FRECENCIES_TO_RECALCULATE = 400;
+const MIRROR_SCHEMA_VERSION = 9;
 
 // Use a shared jankYielder in these functions
-XPCOMUtils.defineLazyGetter(lazy, "yieldState", () => lazy.Async.yieldState());
+ChromeUtils.defineLazyGetter(lazy, "yieldState", () => lazy.Async.yieldState());
 
-/** Adapts a `Log.jsm` logger to a `mozIServicesLogSink`. */
+/** Adapts a `Log.sys.mjs` logger to a `mozIServicesLogSink`. */
 class LogAdapter {
   constructor(log) {
     this.log = log;
@@ -442,7 +433,7 @@ export class SyncedBookmarksMirror {
     await this.db.executeBeforeShutdown(
       "SyncedBookmarksMirror: ensureCurrentSyncId",
       db =>
-        db.executeTransaction(async function() {
+        db.executeTransaction(async function () {
           await resetMirror(db);
           await db.execute(
             `
@@ -541,13 +532,6 @@ export class SyncedBookmarksMirror {
    *         The current local time, in seconds.
    * @param  {Number} [options.remoteTimeSeconds]
    *         The current server time, in seconds.
-   * @param  {Number} [options.maxFrecenciesToRecalculate]
-   *         The maximum number of bookmark URL frecencies to recalculate after
-   *         this merge. Frecency calculation blocks other Places writes, so we
-   *         limit the number of URLs we process at once. We'll process either
-   *         the next set of URLs after the next merge, or all remaining URLs
-   *         when Places automatically fixes invalid frecencies on idle;
-   *         whichever comes first.
    * @param  {Boolean} [options.notifyInStableOrder]
    *         If `true`, fire observer notifications for items in the same folder
    *         in a stable order. This is disabled by default, to avoid the cost
@@ -565,7 +549,6 @@ export class SyncedBookmarksMirror {
   async apply({
     localTimeSeconds,
     remoteTimeSeconds,
-    maxFrecenciesToRecalculate,
     notifyInStableOrder,
     signal = null,
   } = {}) {
@@ -585,7 +568,6 @@ export class SyncedBookmarksMirror {
         finalizeOrInterruptSignal,
         localTimeSeconds,
         remoteTimeSeconds,
-        maxFrecenciesToRecalculate,
         notifyInStableOrder
       );
     } finally {
@@ -599,7 +581,6 @@ export class SyncedBookmarksMirror {
     signal,
     localTimeSeconds,
     remoteTimeSeconds,
-    maxFrecenciesToRecalculate = DEFAULT_MAX_FRECENCIES_TO_RECALCULATE,
     notifyInStableOrder = false
   ) {
     let wasMerged = await withTiming("Merging bookmarks in Rust", () =>
@@ -608,7 +589,6 @@ export class SyncedBookmarksMirror {
 
     if (!wasMerged) {
       lazy.MirrorLog.debug("No changes detected in both mirror and Places");
-      await updateFrecencies(this.db, maxFrecenciesToRecalculate);
       return {};
     }
 
@@ -616,7 +596,6 @@ export class SyncedBookmarksMirror {
     // inflate records for outgoing items.
 
     let observersToNotify = new BookmarkObserverRecorder(this.db, {
-      maxFrecenciesToRecalculate,
       signal,
       notifyInStableOrder,
     });
@@ -634,7 +613,6 @@ export class SyncedBookmarksMirror {
           // Places relies on observer notifications to update internal caches.
           // If notifying observers failed, these caches may be inconsistent,
           // so we invalidate them just in case.
-          lazy.PlacesUtils.invalidateCachedGuids();
           await lazy.PlacesUtils.keywords.invalidateCachedKeywords();
           lazy.MirrorLog.warn("Error notifying Places observers", ex);
         } finally {
@@ -826,13 +804,21 @@ export class SyncedBookmarksMirror {
       ? Ci.mozISyncedBookmarksMerger.VALIDITY_VALID
       : Ci.mozISyncedBookmarksMerger.VALIDITY_REPLACE;
 
+    let unknownFields = extractUnknownFields(record.cleartext, [
+      "bmkUri",
+      "description",
+      "keyword",
+      "tags",
+      "title",
+      ...COMMON_UNKNOWN_FIELDS,
+    ]);
     await this.db.executeCached(
       `
       REPLACE INTO items(guid, parentGuid, serverModified, needsMerge, kind,
-                         dateAdded, title, keyword, validity,
+                         dateAdded, title, keyword, validity, unknownFields,
                          urlId)
       VALUES(:guid, :parentGuid, :serverModified, :needsMerge, :kind,
-             :dateAdded, NULLIF(:title, ''), :keyword, :validity,
+             :dateAdded, NULLIF(:title, ''), :keyword, :validity, :unknownFields,
              (SELECT id FROM urls
               WHERE hash = hash(:url) AND
                     url = :url))`,
@@ -847,6 +833,7 @@ export class SyncedBookmarksMirror {
         keyword,
         url: url ? url.href : null,
         validity,
+        unknownFields,
       }
     );
 
@@ -943,18 +930,29 @@ export class SyncedBookmarksMirror {
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
 
+    let unknownFields = extractUnknownFields(record.cleartext, [
+      "bmkUri",
+      "description",
+      "folderName",
+      "keyword",
+      "queryId",
+      "tags",
+      "title",
+      ...COMMON_UNKNOWN_FIELDS,
+    ]);
+
     await this.db.executeCached(
       `
       REPLACE INTO items(guid, parentGuid, serverModified, needsMerge, kind,
                          dateAdded, title,
                          urlId,
-                         validity)
+                         validity, unknownFields)
       VALUES(:guid, :parentGuid, :serverModified, :needsMerge, :kind,
              :dateAdded, NULLIF(:title, ''),
              (SELECT id FROM urls
               WHERE hash = hash(:url) AND
                     url = :url),
-             :validity)`,
+             :validity, :unknownFields)`,
       {
         guid,
         parentGuid,
@@ -965,6 +963,7 @@ export class SyncedBookmarksMirror {
         title,
         url: url ? url.href : null,
         validity,
+        unknownFields,
       }
     );
   }
@@ -977,13 +976,18 @@ export class SyncedBookmarksMirror {
     let serverModified = determineServerModified(record);
     let dateAdded = determineDateAdded(record);
     let title = validateTitle(record.title);
-
+    let unknownFields = extractUnknownFields(record.cleartext, [
+      "children",
+      "description",
+      "title",
+      ...COMMON_UNKNOWN_FIELDS,
+    ]);
     await this.db.executeCached(
       `
       REPLACE INTO items(guid, parentGuid, serverModified, needsMerge, kind,
-                         dateAdded, title)
+                         dateAdded, title, unknownFields)
       VALUES(:guid, :parentGuid, :serverModified, :needsMerge, :kind,
-             :dateAdded, NULLIF(:title, ''))`,
+             :dateAdded, NULLIF(:title, ''), :unknownFields)`,
       {
         guid,
         parentGuid,
@@ -992,6 +996,7 @@ export class SyncedBookmarksMirror {
         kind: Ci.mozISyncedBookmarksMerger.KIND_FOLDER,
         dateAdded,
         title,
+        unknownFields,
       }
     );
 
@@ -1042,12 +1047,21 @@ export class SyncedBookmarksMirror {
       ? Ci.mozISyncedBookmarksMerger.VALIDITY_VALID
       : Ci.mozISyncedBookmarksMerger.VALIDITY_REPLACE;
 
+    let unknownFields = extractUnknownFields(record.cleartext, [
+      "children",
+      "description",
+      "feedUri",
+      "siteUri",
+      "title",
+      ...COMMON_UNKNOWN_FIELDS,
+    ]);
+
     await this.db.executeCached(
       `
       REPLACE INTO items(guid, parentGuid, serverModified, needsMerge, kind,
-                         dateAdded, title, feedURL, siteURL, validity)
+                         dateAdded, title, feedURL, siteURL, validity, unknownFields)
       VALUES(:guid, :parentGuid, :serverModified, :needsMerge, :kind,
-             :dateAdded, NULLIF(:title, ''), :feedURL, :siteURL, :validity)`,
+             :dateAdded, NULLIF(:title, ''), :feedURL, :siteURL, :validity, :unknownFields)`,
       {
         guid,
         parentGuid,
@@ -1059,6 +1073,7 @@ export class SyncedBookmarksMirror {
         feedURL: feedURL ? feedURL.href : null,
         siteURL: siteURL ? siteURL.href : null,
         validity,
+        unknownFields,
       }
     );
   }
@@ -1070,13 +1085,17 @@ export class SyncedBookmarksMirror {
     );
     let serverModified = determineServerModified(record);
     let dateAdded = determineDateAdded(record);
+    let unknownFields = extractUnknownFields(record.cleartext, [
+      "pos",
+      ...COMMON_UNKNOWN_FIELDS,
+    ]);
 
     await this.db.executeCached(
       `
       REPLACE INTO items(guid, parentGuid, serverModified, needsMerge, kind,
-                         dateAdded)
+                         dateAdded, unknownFields)
       VALUES(:guid, :parentGuid, :serverModified, :needsMerge, :kind,
-             :dateAdded)`,
+             :dateAdded, :unknownFields)`,
       {
         guid,
         parentGuid,
@@ -1084,6 +1103,7 @@ export class SyncedBookmarksMirror {
         needsMerge,
         kind: Ci.mozISyncedBookmarksMerger.KIND_SEPARATOR,
         dateAdded,
+        unknownFields,
       }
     );
   }
@@ -1138,7 +1158,7 @@ export class SyncedBookmarksMirror {
         if (signal.aborted) {
           cancel();
         } else {
-          // `Sqlite.jsm` callbacks swallow exceptions (bug 1387775), so we
+          // `Sqlite.sys.mjs` callbacks swallow exceptions (bug 1387775), so we
           // accumulate all rows in an array, and process them after.
           childGuidRows.push(row);
         }
@@ -1204,7 +1224,7 @@ export class SyncedBookmarksMirror {
     await this.db.execute(
       `SELECT id, syncChangeCounter, guid, isDeleted, type, isQuery,
               tagFolderName, keyword, url, IFNULL(title, '') AS title,
-              position, parentGuid,
+              position, parentGuid, unknownFields,
               IFNULL(parentTitle, '') AS parentTitle, dateAdded
        FROM itemsToUpload`,
       null,
@@ -1244,10 +1264,13 @@ export class SyncedBookmarksMirror {
         }
 
         let parentGuid = row.getResultByName("parentGuid");
-        let parentRecordId = lazy.PlacesSyncUtils.bookmarks.guidToRecordId(
-          parentGuid
-        );
+        let parentRecordId =
+          lazy.PlacesSyncUtils.bookmarks.guidToRecordId(parentGuid);
 
+        let unknownFieldsRow = row.getResultByName("unknownFields");
+        let unknownFields = unknownFieldsRow
+          ? JSON.parse(unknownFieldsRow)
+          : null;
         let type = row.getResultByName("type");
         switch (type) {
           case lazy.PlacesUtils.bookmarks.TYPE_BOOKMARK: {
@@ -1274,6 +1297,7 @@ export class SyncedBookmarksMirror {
                 title: row.getResultByName("title"),
                 // folderName should never be an empty string or null
                 folderName: row.getResultByName("tagFolderName") || undefined,
+                ...unknownFields,
               };
               changeRecords[recordId] = new BookmarkChangeRecord(
                 syncChangeCounter,
@@ -1291,6 +1315,7 @@ export class SyncedBookmarksMirror {
               dateAdded: row.getResultByName("dateAdded") || undefined,
               bmkUri: row.getResultByName("url"),
               title: row.getResultByName("title"),
+              ...unknownFields,
             };
             let keyword = row.getResultByName("keyword");
             if (keyword) {
@@ -1317,6 +1342,7 @@ export class SyncedBookmarksMirror {
               parentName: row.getResultByName("parentTitle"),
               dateAdded: row.getResultByName("dateAdded") || undefined,
               title: row.getResultByName("title"),
+              ...unknownFields,
             };
             let localId = row.getResultByName("id");
             let childRecordIds = childRecordIdsByLocalParentId.get(localId);
@@ -1338,6 +1364,7 @@ export class SyncedBookmarksMirror {
               dateAdded: row.getResultByName("dateAdded") || undefined,
               // Older Desktops use `pos` for deduping.
               pos: row.getResultByName("position"),
+              ...unknownFields,
             };
             changeRecords[recordId] = new BookmarkChangeRecord(
               syncChangeCounter,
@@ -1469,7 +1496,7 @@ function isDatabaseCorrupt(error) {
 async function attachAndInitMirrorDatabase(db, path) {
   await db.execute(`ATTACH :path AS mirror`, { path });
   try {
-    await db.executeTransaction(async function() {
+    await db.executeTransaction(async function () {
       let currentSchemaVersion = await db.getSchemaVersion("mirror");
       if (currentSchemaVersion > 0) {
         if (currentSchemaVersion < MIRROR_SCHEMA_VERSION) {
@@ -1524,6 +1551,19 @@ async function migrateMirrorSchema(db, currentSchemaVersion) {
                       WHERE EXISTS (SELECT 1 FROM mirror.items
                                     WHERE guid = b.guid)`);
   }
+  if (currentSchemaVersion < 9) {
+    // Adding unknownFields to the mirror table, which allows us to
+    // keep fields we may not yet understand from other clients and roundtrip
+    // them during the sync process
+    let columns = await db.execute(`PRAGMA table_info(items)`);
+    // migration needs to be idempotent, so we check if the column exists first
+    let exists = columns.find(
+      row => row.getResultByName("name") === "unknownFields"
+    );
+    if (!exists) {
+      await db.execute(`ALTER TABLE items ADD COLUMN unknownFields TEXT`);
+    }
+  }
 }
 
 /**
@@ -1564,7 +1604,8 @@ async function initializeMirrorDatabase(db) {
     loadInSidebar BOOLEAN,
     smartBookmarkName TEXT,
     feedURL TEXT,
-    siteURL TEXT
+    siteURL TEXT,
+    unknownFields TEXT
   )`);
 
   await db.execute(`CREATE TABLE mirror.structure(
@@ -1611,7 +1652,7 @@ async function initializeMirrorDatabase(db) {
  *        The mirror database connection.
  */
 async function cleanupMirrorDatabase(db) {
-  await db.executeTransaction(async function() {
+  await db.executeTransaction(async function () {
     await db.execute(`DROP TABLE changeGuidOps`);
     await db.execute(`DROP TABLE itemsToApply`);
     await db.execute(`DROP TABLE applyNewLocalStructureOps`);
@@ -1929,7 +1970,8 @@ async function initializeTempMirrorEntities(db) {
     /* We record the original level of the removed item in the tree so that we
        can notify children before parents. */
     level INTEGER NOT NULL DEFAULT -1,
-    isUntagging BOOLEAN NOT NULL DEFAULT 0
+    isUntagging BOOLEAN NOT NULL DEFAULT 0,
+    keywordRemoved BOOLEAN NOT NULL DEFAULT 0
   )`);
 
   await db.execute(
@@ -1952,7 +1994,8 @@ async function initializeTempMirrorEntities(db) {
     url TEXT,
     tagFolderName TEXT,
     keyword TEXT,
-    position INTEGER
+    position INTEGER,
+    unknownFields TEXT
   )`);
 
   await db.execute(`CREATE TEMP TABLE structureToUpload(
@@ -2071,9 +2114,8 @@ async function withTiming(name, func, recordTiming) {
  * the merge.
  */
 class BookmarkObserverRecorder {
-  constructor(db, { maxFrecenciesToRecalculate, notifyInStableOrder, signal }) {
+  constructor(db, { notifyInStableOrder, signal }) {
     this.db = db;
-    this.maxFrecenciesToRecalculate = maxFrecenciesToRecalculate;
     this.notifyInStableOrder = notifyInStableOrder;
     this.signal = signal;
     this.placesEvents = [];
@@ -2096,7 +2138,6 @@ class BookmarkObserverRecorder {
         "Interrupted before recalculating frecencies for new URLs"
       );
     }
-    await updateFrecencies(this.db, this.maxFrecenciesToRecalculate);
   }
 
   orderBy(level, parent, position) {
@@ -2116,7 +2157,7 @@ class BookmarkObserverRecorder {
     await this.db.execute(
       `SELECT v.itemId AS id, v.parentId, v.parentGuid, v.position, v.type,
               (SELECT h.url FROM moz_places h WHERE h.id = v.placeId) AS url,
-              v.title, v.guid, v.isUntagging
+              v.title, v.guid, v.isUntagging, v.keywordRemoved
        FROM itemsRemoved v
        ${this.orderBy("v.level", "v.parentId", "v.position")}`,
       null,
@@ -2137,6 +2178,9 @@ class BookmarkObserverRecorder {
           isUntagging: row.getResultByName("isUntagging"),
         };
         this.noteItemRemoved(info);
+        if (row.getResultByName("keywordRemoved")) {
+          this.shouldInvalidateKeywords = true;
+        }
       }
     );
     if (this.signal.aborted) {
@@ -2180,12 +2224,26 @@ class BookmarkObserverRecorder {
     lazy.MirrorLog.trace("Recording observer notifications for new items");
     await this.db.execute(
       `SELECT b.id, p.id AS parentId, b.position, b.type,
-              (SELECT h.url FROM moz_places h WHERE h.id = b.fk) AS url,
               IFNULL(b.title, '') AS title, b.dateAdded, b.guid,
-              p.guid AS parentGuid, n.isTagging, n.keywordChanged
+              p.guid AS parentGuid, n.isTagging, n.keywordChanged,
+              h.url AS url, IFNULL(h.frecency, 0) AS frecency,
+              IFNULL(h.hidden, 0) AS hidden,
+              IFNULL(h.visit_count, 0) AS visit_count,
+              h.last_visit_date,
+              (
+                SELECT GROUP_CONCAT(t.title, ',')
+                FROM moz_bookmarks t
+                LEFT JOIN moz_bookmarks ref ON ref.fk = h.id
+                WHERE t.id = +ref.parent
+                  AND t.parent = (
+                    SELECT id FROM moz_bookmarks
+                    WHERE guid = '${lazy.PlacesUtils.bookmarks.tagsGuid}'
+                  )
+              ) AS tags
        FROM itemsAdded n
        JOIN moz_bookmarks b ON b.guid = n.guid
        JOIN moz_bookmarks p ON p.id = b.parent
+       LEFT JOIN moz_places h ON h.id = b.fk
        ${this.orderBy("n.level", "b.parent", "b.position")}`,
       null,
       (row, cancel) => {
@@ -2193,6 +2251,9 @@ class BookmarkObserverRecorder {
           cancel();
           return;
         }
+
+        let lastVisitDate = row.getResultByName("last_visit_date");
+
         let info = {
           id: row.getResultByName("id"),
           parentId: row.getResultByName("parentId"),
@@ -2204,7 +2265,15 @@ class BookmarkObserverRecorder {
           guid: row.getResultByName("guid"),
           parentGuid: row.getResultByName("parentGuid"),
           isTagging: row.getResultByName("isTagging"),
+          frecency: row.getResultByName("frecency"),
+          hidden: row.getResultByName("hidden"),
+          visitCount: row.getResultByName("visit_count"),
+          lastVisitDate: lastVisitDate
+            ? lazy.PlacesUtils.toDate(lastVisitDate).getTime()
+            : null,
+          tags: row.getResultByName("tags"),
         };
+
         this.noteItemAdded(info);
         if (row.getResultByName("keywordChanged")) {
           this.shouldInvalidateKeywords = true;
@@ -2222,11 +2291,25 @@ class BookmarkObserverRecorder {
       `SELECT b.id, b.guid, b.type, p.guid AS newParentGuid, c.oldParentGuid,
               b.position AS newPosition, c.oldPosition,
               gp.guid AS grandParentGuid,
-              (SELECT h.url FROM moz_places h WHERE h.id = b.fk) AS url
+              h.url AS url, IFNULL(b.title, '') AS title,
+              IFNULL(h.frecency, 0) AS frecency, IFNULL(h.hidden, 0) AS hidden,
+              IFNULL(h.visit_count, 0) AS visit_count,
+              h.last_visit_date,
+              (
+                SELECT GROUP_CONCAT(t.title, ',')
+                FROM moz_bookmarks t
+                LEFT JOIN moz_bookmarks ref ON ref.fk = h.id
+                WHERE t.id = +ref.parent
+                  AND t.parent = (
+                    SELECT id FROM moz_bookmarks
+                    WHERE guid = '${lazy.PlacesUtils.bookmarks.tagsGuid}'
+                  )
+              ) AS tags
        FROM itemsMoved c
        JOIN moz_bookmarks b ON b.id = c.itemId
        JOIN moz_bookmarks p ON p.id = b.parent
        LEFT JOIN moz_bookmarks gp ON gp.id = p.parent
+       LEFT JOIN moz_places h ON h.id = b.fk
        ${this.orderBy("c.level", "b.parent", "b.position")}`,
       null,
       (row, cancel) => {
@@ -2234,6 +2317,7 @@ class BookmarkObserverRecorder {
           cancel();
           return;
         }
+        let lastVisitDate = row.getResultByName("last_visit_date");
         let info = {
           id: row.getResultByName("id"),
           guid: row.getResultByName("guid"),
@@ -2244,6 +2328,14 @@ class BookmarkObserverRecorder {
           oldPosition: row.getResultByName("oldPosition"),
           urlHref: row.getResultByName("url"),
           grandParentGuid: row.getResultByName("grandParentGuid"),
+          title: row.getResultByName("title"),
+          frecency: row.getResultByName("frecency"),
+          hidden: row.getResultByName("hidden"),
+          visitCount: row.getResultByName("visit_count"),
+          lastVisitDate: lastVisitDate
+            ? lazy.PlacesUtils.toDate(lastVisitDate).getTime()
+            : null,
+          tags: row.getResultByName("tags"),
         };
         this.noteItemMoved(info);
       }
@@ -2321,12 +2413,16 @@ class BookmarkObserverRecorder {
         source: lazy.PlacesUtils.bookmarks.SOURCES.SYNC,
         itemType: info.type,
         isTagging: info.isTagging,
+        tags: info.tags,
+        frecency: info.frecency,
+        hidden: info.hidden,
+        visitCount: info.visitCount,
+        lastVisitDate: info.lastVisitDate,
       })
     );
   }
 
   noteGuidChanged(info) {
-    lazy.PlacesUtils.invalidateCachedGuidFor(info.id);
     this.placesEvents.push(
       new PlacesBookmarkGuid({
         id: info.id,
@@ -2349,6 +2445,7 @@ class BookmarkObserverRecorder {
         id: info.id,
         itemType: info.type,
         url: info.urlHref,
+        title: info.title,
         guid: info.guid,
         parentGuid: info.newParentGuid,
         source: lazy.PlacesUtils.bookmarks.SOURCES.SYNC,
@@ -2358,6 +2455,11 @@ class BookmarkObserverRecorder {
         isTagging:
           info.newParentGuid === lazy.PlacesUtils.bookmarks.tagsGuid ||
           info.grandParentGuid === lazy.PlacesUtils.bookmarks.tagsGuid,
+        tags: info.tags,
+        frecency: info.frecency,
+        hidden: info.hidden,
+        visitCount: info.visitCount,
+        lastVisitDate: info.lastVisitDate,
       })
     );
   }
@@ -2445,22 +2547,6 @@ class BookmarkChangeRecord {
   }
 }
 
-async function updateFrecencies(db, limit) {
-  lazy.MirrorLog.trace("Recalculating frecencies for new URLs");
-  await db.execute(
-    `
-    UPDATE moz_places SET
-      frecency = CALCULATE_FRECENCY(id)
-    WHERE id IN (
-      SELECT id FROM moz_places
-      WHERE frecency < 0
-      ORDER BY frecency ASC
-      LIMIT :limit
-    )`,
-    { limit }
-  );
-}
-
 function bagToNamedCounts(bag, names) {
   let counts = [];
   for (let name of names) {
@@ -2502,6 +2588,42 @@ function anyAborted(finalizeSignal, interruptSignal = null) {
   finalizeSignal.addEventListener("abort", onAbort);
   interruptSignal.addEventListener("abort", onAbort);
   return controller.signal;
+}
+
+// Common unknown fields for places items
+const COMMON_UNKNOWN_FIELDS = [
+  "dateAdded",
+  "hasDupe",
+  "id",
+  "modified",
+  "parentid",
+  "parentName",
+  "type",
+];
+
+// Other clients might have new fields we don't quite understand yet,
+// so we add it to a "unknownFields" field to roundtrip back to the server
+// so other clients don't experience data loss
+function extractUnknownFields(record, validFields) {
+  let { unknownFields, hasUnknownFields } = Object.keys(record).reduce(
+    ({ unknownFields, hasUnknownFields }, key) => {
+      if (validFields.includes(key)) {
+        return { unknownFields, hasUnknownFields };
+      }
+      unknownFields[key] = record[key];
+      return { unknownFields, hasUnknownFields: true };
+    },
+    { unknownFields: {}, hasUnknownFields: false }
+  );
+  // If we found some unknown fields, we stringify it to be able
+  // to properly encrypt it for roundtripping since we can't know if
+  // it contained sensitive fields or not
+  if (hasUnknownFields) {
+    // For simplicity, we store the unknown fields as a string
+    // since we never operate on it and just need it for roundtripping
+    return JSON.stringify(unknownFields);
+  }
+  return null;
 }
 
 // In conclusion, this is why bookmark syncing is hard.

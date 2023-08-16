@@ -8,6 +8,7 @@
 #define mozilla_dom_workerscope_h__
 
 #include "js/TypeDecls.h"
+#include "js/loader/ModuleLoaderBase.h"
 #include "mozilla/Assertions.h"
 #include "mozilla/Attributes.h"
 #include "mozilla/DOMEventTargetHelper.h"
@@ -19,6 +20,7 @@
 #include "mozilla/dom/AnimationFrameProvider.h"
 #include "mozilla/dom/ImageBitmapBinding.h"
 #include "mozilla/dom/ImageBitmapSource.h"
+#include "mozilla/dom/PerformanceWorker.h"
 #include "mozilla/dom/SafeRefPtr.h"
 #include "mozilla/dom/WorkerPrivate.h"
 #include "nsCOMPtr.h"
@@ -116,9 +118,7 @@ class WorkerGlobalScopeBase : public DOMEventTargetHelper,
 
   bool IsSharedMemoryAllowed() const final;
 
-  bool ShouldResistFingerprinting() const final;
-
-  uint32_t GetPrincipalHashValue() const final;
+  bool ShouldResistFingerprinting(RFPTarget aTarget) const final;
 
   OriginTrials Trials() const final;
 
@@ -127,6 +127,8 @@ class WorkerGlobalScopeBase : public DOMEventTargetHelper,
   Maybe<ClientInfo> GetClientInfo() const final;
 
   Maybe<ServiceWorkerDescriptor> GetController() const final;
+
+  mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult> GetStorageKey() final;
 
   virtual void Control(const ServiceWorkerDescriptor& aServiceWorker);
 
@@ -154,9 +156,20 @@ class WorkerGlobalScopeBase : public DOMEventTargetHelper,
 
   Console* GetConsoleIfExists() const { return mConsole; }
 
-  uint64_t WindowID() const;
+  void InitModuleLoader(JS::loader::ModuleLoaderBase* aModuleLoader) {
+    if (!mModuleLoader) {
+      mModuleLoader = aModuleLoader;
+    }
+  }
 
-  void NoteTerminating() { StartDying(); }
+  // The nullptr here is not used, but is required to make the override method
+  // have the same signature as other GetModuleLoader methods on globals.
+  JS::loader::ModuleLoaderBase* GetModuleLoader(
+      JSContext* aCx = nullptr) override {
+    return mModuleLoader;
+  };
+
+  uint64_t WindowID() const;
 
   // Usually global scope dies earlier than the WorkerPrivate, but if we see
   // it leak at least we can tell it to not carry away a dead pointer.
@@ -180,6 +193,7 @@ class WorkerGlobalScopeBase : public DOMEventTargetHelper,
 
  private:
   RefPtr<Console> mConsole;
+  RefPtr<JS::loader::ModuleLoaderBase> mModuleLoader;
   const UniquePtr<ClientSource> mClientSource;
   nsCOMPtr<nsISerialEventTarget> mSerialEventTarget;
 #ifdef DEBUG
@@ -212,6 +226,10 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
 
   using WorkerGlobalScopeBase::WorkerGlobalScopeBase;
 
+  void NoteTerminating();
+
+  void NoteShuttingDown();
+
   // nsIGlobalObject implementation
   RefPtr<ServiceWorkerRegistration> GetServiceWorkerRegistration(
       const ServiceWorkerRegistrationDescriptor& aDescriptor) const final;
@@ -226,6 +244,12 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
   Maybe<EventCallbackDebuggerNotificationType> GetDebuggerNotificationType()
       const final;
 
+  mozilla::dom::StorageManager* GetStorageManager() final;
+
+  void SetIsNotEligibleForMessaging() { mIsEligibleForMessaging = false; }
+
+  bool IsEligibleForMessaging() final;
+
   // WorkerGlobalScope WebIDL implementation
   WorkerGlobalScope* Self() { return this; }
 
@@ -235,7 +259,8 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
 
   already_AddRefed<WorkerNavigator> GetExistingNavigator() const;
 
-  FontFaceSet* Fonts() final;
+  FontFaceSet* GetFonts(ErrorResult&);
+  FontFaceSet* GetFonts() final { return GetFonts(IgnoreErrors()); }
 
   void ImportScripts(JSContext* aCx, const Sequence<nsString>& aScriptURLs,
                      ErrorResult& aRv);
@@ -358,6 +383,7 @@ class WorkerGlobalScope : public WorkerGlobalScopeBase {
   RefPtr<DebuggerNotificationManager> mDebuggerNotificationManager;
   RefPtr<WebTaskSchedulerWorker> mWebTaskScheduler;
   uint32_t mWindowInteractionsAllowed = 0;
+  bool mIsEligibleForMessaging{true};
 };
 
 class DedicatedWorkerGlobalScope final
@@ -398,6 +424,7 @@ class DedicatedWorkerGlobalScope final
 
   IMPL_EVENT_HANDLER(message)
   IMPL_EVENT_HANDLER(messageerror)
+  IMPL_EVENT_HANDLER(rtctransform)
 
  private:
   ~DedicatedWorkerGlobalScope() = default;

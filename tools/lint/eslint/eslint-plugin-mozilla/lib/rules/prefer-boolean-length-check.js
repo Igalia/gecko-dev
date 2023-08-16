@@ -59,10 +59,13 @@ function funcForBooleanLength(context, node, conditionCheck) {
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/prefer-boolean-length-check.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/prefer-boolean-length-check.html",
     },
     fixable: "code",
+    messages: {
+      preferBooleanCheck: "Prefer boolean length check",
+    },
+    schema: [],
     type: "suggestion",
   },
 
@@ -82,12 +85,10 @@ module.exports = {
           ["==", "!=", ">", "<"].includes(node.operator) &&
           ((node.right.type == "Literal" &&
             node.right.value == 0 &&
-            node.left.property &&
-            node.left.property.name == "length") ||
+            node.left.property?.name == "length") ||
             (node.left.type == "Literal" &&
               node.left.value == 0 &&
-              node.right.property &&
-              node.right.property.name == "length"))
+              node.right.property?.name == "length"))
         ) {
           if (
             conditionStatement.includes(node.parent.type) ||
@@ -105,7 +106,7 @@ module.exports = {
 
                 return fixer.replaceText(node, generateExpression);
               },
-              message: "Prefer boolean length check",
+              messageId: "preferBooleanCheck",
             });
           } else {
             context.report({
@@ -118,7 +119,7 @@ module.exports = {
                 );
                 return fixer.replaceText(node, generateExpression);
               },
-              message: "Prefer boolean length check",
+              messageId: "preferBooleanCheck",
             });
           }
         }

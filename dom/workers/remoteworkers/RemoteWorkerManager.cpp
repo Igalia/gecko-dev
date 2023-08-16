@@ -109,8 +109,8 @@ Result<nsCString, nsresult> RemoteWorkerManager::GetRemoteType(
   MOZ_ASSERT_IF(aWorkerKind == WorkerKind::WorkerKindService,
                 aPrincipal->GetIsContentPrincipal());
 
-  nsCOMPtr<nsIE10SUtils> e10sUtils = do_ImportModule(
-      "resource://gre/modules/E10SUtils.jsm", "E10SUtils", fallible);
+  nsCOMPtr<nsIE10SUtils> e10sUtils = do_ImportESModule(
+      "resource://gre/modules/E10SUtils.sys.mjs", "E10SUtils", fallible);
   if (NS_WARN_IF(!e10sUtils)) {
     LOG(("GetRemoteType Abort: could not import E10SUtils"));
     return Err(NS_ERROR_DOM_ABORT_ERR);
@@ -197,7 +197,7 @@ Result<nsCString, nsresult> RemoteWorkerManager::GetRemoteType(
 
         if (rv == NS_ERROR_XPC_JAVASCRIPT_ERROR_WITH_DETAILS) {
           // When the failure is a Javascript Error, the line number retrieved
-          // from the Exception instance isn't going to be the E10SUtils.jsm
+          // from the Exception instance isn't going to be the E10SUtils.sys.mjs
           // line that originated the failure, and so we fallback to retrieve it
           // from the nsIScriptError.
           nsCOMPtr<nsIScriptError> scriptError =
@@ -419,6 +419,7 @@ void RemoteWorkerManager::Launch(RemoteWorkerController* aController,
     pending->mController = aController;
     pending->mData = aData;
 
+    // Launching is async, so we cannot check for failures right here.
     LaunchNewContentProcess(aData);
     return;
   }
@@ -447,26 +448,30 @@ void RemoteWorkerManager::LaunchInternal(
   // We need to send permissions to content processes, but not if we're spawning
   // the worker here in the parent process.
   if (aTargetActor != mParentActor) {
-    RefPtr<ContentParent> contentParent =
-        BackgroundParent::GetContentParent(aTargetActor->Manager());
+    RefPtr<ThreadsafeContentParentHandle> contentHandle =
+        BackgroundParent::GetContentParentHandle(aTargetActor->Manager());
 
     // This won't cause any race conditions because the content process
     // should wait for the permissions to be received before executing the
     // Service Worker.
     nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
-        __func__, [contentParent = std::move(contentParent),
+        __func__, [contentHandle = std::move(contentHandle),
                    principalInfo = aData.principalInfo()] {
-          TransmitPermissionsAndBlobURLsForPrincipalInfo(contentParent,
-                                                         principalInfo);
+          AssertIsOnMainThread();
+          if (RefPtr<ContentParent> contentParent =
+                  contentHandle->GetContentParent()) {
+            TransmitPermissionsAndBlobURLsForPrincipalInfo(contentParent,
+                                                           principalInfo);
+          }
         });
 
     MOZ_ALWAYS_SUCCEEDS(
         SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
   }
 
-  RemoteWorkerParent* workerActor = static_cast<RemoteWorkerParent*>(
-      aTargetActor->Manager()->SendPRemoteWorkerConstructor(aData));
-  if (NS_WARN_IF(!workerActor)) {
+  RefPtr<RemoteWorkerParent> workerActor = MakeAndAddRef<RemoteWorkerParent>();
+  if (!aTargetActor->Manager()->SendPRemoteWorkerConstructor(workerActor,
+                                                             aData)) {
     AsyncCreationFailed(aController);
     return;
   }
@@ -510,32 +515,21 @@ void RemoteWorkerManager::ForEachActor(
 
   uint32_t i = end;
 
-  nsTArray<RefPtr<ContentParent>> proxyReleaseArray;
-
   do {
     MOZ_ASSERT(i < mChildActors.Length());
     RemoteWorkerServiceParent* actor = mChildActors[i];
 
     if (MatchRemoteType(actor->GetRemoteType(), aRemoteType)) {
-      RefPtr<ContentParent> contentParent =
-          BackgroundParent::GetContentParent(actor->Manager());
+      ThreadsafeContentParentHandle* contentHandle =
+          BackgroundParent::GetContentParentHandle(actor->Manager());
 
-      auto scopeExit = MakeScopeExit(
-          [&]() { proxyReleaseArray.AppendElement(std::move(contentParent)); });
-
-      if (!aCallback(actor, std::move(contentParent))) {
+      if (!aCallback(actor, contentHandle)) {
         break;
       }
     }
 
     i = (i + 1) % length;
   } while (i != end);
-
-  nsCOMPtr<nsIRunnable> r = NS_NewRunnableFunction(
-      __func__, [proxyReleaseArray = std::move(proxyReleaseArray)] {});
-
-  MOZ_ALWAYS_SUCCEEDS(
-      SchedulerGroup::Dispatch(TaskCategory::Other, r.forget()));
 }
 
 /**
@@ -556,7 +550,7 @@ void RemoteWorkerManager::ForEachActor(
  * remove worker actor unregistering
  * (see `ContentParent::UnregisterRemoveWorkerActor`).
  *
- * In `ContentParent::MaybeAsyncSendShutDownMessage` we only dispatch a runnable
+ * In `ContentParent::MaybeBeginShutdown` we only dispatch a runnable
  * to call `ContentParent::ShutDownProcess` if there are no registered remote
  * worker actors, and we ensure that the check for the number of registered
  * actors and the dispatching of the runnable are atomic. That happens on the
@@ -576,7 +570,7 @@ RemoteWorkerServiceParent* RemoteWorkerManager::SelectTargetActorInternal(
 
   ForEachActor(
       [&](RemoteWorkerServiceParent* aActor,
-          RefPtr<ContentParent>&& aContentParent) {
+          ThreadsafeContentParentHandle* aContentHandle) {
         // Make sure to choose an actor related to a child process that is not
         // going to shutdown while we are still in the process of launching the
         // remote worker.
@@ -585,16 +579,14 @@ RemoteWorkerServiceParent* RemoteWorkerManager::SelectTargetActorInternal(
         // process with a pid equal to aProcessId if any, otherwise it would
         // start from a random actor in the mChildActors array, this guarantees
         // that we will choose that actor if it does also match the remote type.
-        auto lock = aContentParent->mRemoteWorkerActorData.Lock();
-
-        if ((lock->mCount || !lock->mShutdownStarted) &&
-            (aActor->OtherPid() == aProcessId || !actor)) {
-          ++lock->mCount;
-
+        if (aContentHandle->MaybeRegisterRemoteWorkerActor(
+                [&](uint32_t count, bool shutdownStarted) -> bool {
+                  return (count || !shutdownStarted) &&
+                         (aActor->OtherPid() == aProcessId || !actor);
+                })) {
           actor = aActor;
           return false;
         }
-
         MOZ_ASSERT(!actor);
         return true;
       },
@@ -647,7 +639,8 @@ void RemoteWorkerManager::LaunchNewContentProcess(
 
   nsCOMPtr<nsISerialEventTarget> bgEventTarget = GetCurrentSerialEventTarget();
 
-  using CallbackParamType = ContentParent::LaunchPromise::ResolveOrRejectValue;
+  using LaunchPromiseType = ContentParent::LaunchPromise;
+  using CallbackParamType = LaunchPromiseType::ResolveOrRejectValue;
 
   // A new content process must be requested on the main thread. On success,
   // the success callback will also run on the main thread. On failure, however,
@@ -701,28 +694,38 @@ void RemoteWorkerManager::LaunchNewContentProcess(
         auto remoteType =
             workerRemoteType.IsEmpty() ? DEFAULT_REMOTE_TYPE : workerRemoteType;
 
-        // Request a process making sure to specify aPreferUsed=true.  For a
-        // given remoteType there's a pool size limit.  If we pass aPreferUsed
-        // here, then if there's any process in the pool already, we will use
-        // that.  If we pass false (which is the default if omitted), then this
-        // call will spawn a new process if the pool isn't at its limit yet.
-        //
-        // (Our intent is never to grow the pool size here.  Our logic gets here
-        // because our current logic on PBackground is only aware of
-        // RemoteWorkerServiceParent actors that have registered themselves,
-        // which is fundamentally unaware of processes that will match in the
-        // future when they register.  So we absolutely are fine with and want
-        // any existing processes.)
-        ContentParent::GetNewOrUsedBrowserProcessAsync(
-            /* aRemoteType = */ remoteType,
-            /* aGroup */ nullptr,
-            hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
-            /* aPreferUsed */ true)
-            ->Then(GetCurrentSerialEventTarget(), __func__,
-                   [callback = std::move(callback),
-                    remoteType](const CallbackParamType& aValue) mutable {
-                     callback(aValue, remoteType);
-                   });
+        RefPtr<LaunchPromiseType> onFinished;
+        if (!AppShutdown::IsInOrBeyond(ShutdownPhase::AppShutdownConfirmed)) {
+          // Request a process making sure to specify aPreferUsed=true.  For a
+          // given remoteType there's a pool size limit.  If we pass aPreferUsed
+          // here, then if there's any process in the pool already, we will use
+          // that.  If we pass false (which is the default if omitted), then
+          // this call will spawn a new process if the pool isn't at its limit
+          // yet.
+          //
+          // (Our intent is never to grow the pool size here.  Our logic gets
+          // here because our current logic on PBackground is only aware of
+          // RemoteWorkerServiceParent actors that have registered themselves,
+          // which is fundamentally unaware of processes that will match in the
+          // future when they register.  So we absolutely are fine with and want
+          // any existing processes.)
+          onFinished = ContentParent::GetNewOrUsedBrowserProcessAsync(
+              /* aRemoteType = */ remoteType,
+              /* aGroup */ nullptr,
+              hal::ProcessPriority::PROCESS_PRIORITY_FOREGROUND,
+              /* aPreferUsed */ true);
+        } else {
+          // We can find this event still in flight after having been asked to
+          // shutdown. Let's fake a failure to ensure our callback is called
+          // such that we clean up everything properly.
+          onFinished = LaunchPromiseType::CreateAndReject(
+              NS_ERROR_ILLEGAL_DURING_SHUTDOWN, __func__);
+        }
+        onFinished->Then(GetCurrentSerialEventTarget(), __func__,
+                         [callback = std::move(callback),
+                          remoteType](const CallbackParamType& aValue) mutable {
+                           callback(aValue, remoteType);
+                         });
       });
 
   SchedulerGroup::Dispatch(TaskCategory::Other, r.forget());

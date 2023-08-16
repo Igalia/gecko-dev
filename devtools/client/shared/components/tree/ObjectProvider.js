@@ -4,7 +4,7 @@
 "use strict";
 
 // Make this available to both AMD and CJS environments
-define(function(require, exports, module) {
+define(function (require, exports, module) {
   /**
    * Implementation of the default data provider. A provider is state less
    * object responsible for transformation data (usually a state) to
@@ -53,7 +53,7 @@ define(function(require, exports, module) {
         return false;
       }
 
-      return Object.keys(object).length > 0;
+      return !!Object.keys(object).length;
     },
 
     getLabel(object) {

@@ -25,18 +25,11 @@ interface IDBDatabase : EventTarget {
         DOMString name,
         optional IDBObjectStoreParameters options = {});
     [Throws]
-    void           deleteObjectStore (DOMString name);
-    void           close ();
+    undefined      deleteObjectStore (DOMString name);
+    undefined      close ();
 
                 attribute EventHandler       onabort;
                 attribute EventHandler       onclose;
                 attribute EventHandler       onerror;
                 attribute EventHandler       onversionchange;
-};
-
-partial interface IDBDatabase {
-    [Exposed=Window, Throws,
-     Deprecated="IDBDatabaseCreateMutableFile",
-     Pref="dom.fileHandle.enabled"]
-    IDBRequest createMutableFile (DOMString name, optional DOMString type);
 };

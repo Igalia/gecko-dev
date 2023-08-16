@@ -4,7 +4,7 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "QuotaCommon.h"
+#include "mozilla/dom/quota/QuotaCommon.h"
 
 #ifdef QM_ERROR_STACKS_ENABLED
 #  include "base/process_util.h"
@@ -12,6 +12,7 @@
 #include "mozIStorageConnection.h"
 #include "mozIStorageStatement.h"
 #include "mozilla/ErrorNames.h"
+#include "mozilla/MozPromise.h"
 #include "mozilla/Logging.h"
 #include "mozilla/Telemetry.h"
 #include "mozilla/TelemetryComms.h"
@@ -35,7 +36,24 @@
 #  include "nsILocalFileWin.h"
 #endif
 
-namespace mozilla::dom::quota {
+namespace mozilla {
+
+RefPtr<BoolPromise> CreateAndRejectBoolPromise(const char* aFunc,
+                                               nsresult aRv) {
+  return CreateAndRejectMozPromise<BoolPromise>(aFunc, aRv);
+}
+
+RefPtr<Int64Promise> CreateAndRejectInt64Promise(const char* aFunc,
+                                                 nsresult aRv) {
+  return CreateAndRejectMozPromise<Int64Promise>(aFunc, aRv);
+}
+
+RefPtr<BoolPromise> CreateAndRejectBoolPromiseFromQMResult(
+    const char* aFunc, const QMResult& aRv) {
+  return CreateAndRejectMozPromise<BoolPromise>(aFunc, aRv);
+}
+
+namespace dom::quota {
 
 using namespace mozilla::Telemetry;
 
@@ -617,4 +635,5 @@ Result<bool, nsresult> WarnIfFileIsUnknown(nsIFile& aFile,
 }
 #endif
 
-}  // namespace mozilla::dom::quota
+}  // namespace dom::quota
+}  // namespace mozilla

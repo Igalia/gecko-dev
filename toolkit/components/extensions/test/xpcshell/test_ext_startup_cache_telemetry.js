@@ -3,17 +3,10 @@
 
 "use strict";
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionParent",
-  "resource://gre/modules/ExtensionParent.jsm"
-);
-
-ChromeUtils.defineModuleGetter(
-  this,
-  "TelemetryTestUtils",
-  "resource://testing-common/TelemetryTestUtils.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
+  TelemetryTestUtils: "resource://testing-common/TelemetryTestUtils.sys.mjs",
+});
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
@@ -28,15 +21,6 @@ AddonTestUtils.createAppInfo(
 const ADDON_ID = "test-startup-cache-telemetry@xpcshell.mozilla.org";
 
 add_setup(async () => {
-  // Allows to run this telemetry test also on products (e.g. Thunderbird) where
-  // that telemetry wouldn't be actually collected in practice (but to be sure
-  // that it will work on those products as well by just adding the product in
-  // the telemetry metric definitions if it turns out we want to).
-  Services.prefs.setBoolPref(
-    "toolkit.telemetry.testing.overrideProductsCheck",
-    true
-  );
-
   // FOG needs a profile directory to put its data in.
   do_get_profile();
   // FOG needs to be initialized in order for data to flow.
@@ -49,7 +33,7 @@ add_task(async function test_startupCache_write_byteLength() {
   const extension = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
-      applications: { gecko: { id: ADDON_ID } },
+      browser_specific_settings: { gecko: { id: ADDON_ID } },
     },
   });
 
@@ -121,11 +105,11 @@ add_task(async function test_startupCache_read_errors() {
   restoreStartupCacheFile();
 });
 
-async function test_startupCache_load_timestamps() {
+add_task(async function test_startupCache_load_timestamps() {
   const { StartupCache } = ExtensionParent;
 
   // Clear any pre-existing keyed scalar and Glean metrics data.
-  TelemetryTestUtils.getProcessScalars("parent", false, true);
+  Services.telemetry.getSnapshotForScalars("main", true);
   Services.fog.testResetFOG();
 
   let gleanMetric = Glean.extensions.startupCacheLoadTime.testGetValue();
@@ -168,11 +152,4 @@ async function test_startupCache_load_timestamps() {
     gleanMetric,
     "Expect the glean metric and mirrored scalar to be set to the same value"
   );
-}
-
-add_task(
-  // Bug 1752139: this test can be re-enabled once Services.fog.testResetFOG()
-  // is implemented also on Android.
-  { skip_if: () => AppConstants.platform === "android" },
-  test_startupCache_load_timestamps
-);
+});

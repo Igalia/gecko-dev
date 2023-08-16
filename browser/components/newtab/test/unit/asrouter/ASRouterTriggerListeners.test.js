@@ -10,13 +10,17 @@ describe("ASRouterTriggerListeners", () => {
   const triggerHandler = () => {};
   const openURLListener = ASRouterTriggerListeners.get("openURL");
   const frequentVisitsListener = ASRouterTriggerListeners.get("frequentVisits");
-  const captivePortalLoginListener = ASRouterTriggerListeners.get(
-    "captivePortalLogin"
-  );
-  const bookmarkedURLListener = ASRouterTriggerListeners.get(
-    "openBookmarkedURL"
-  );
+  const captivePortalLoginListener =
+    ASRouterTriggerListeners.get("captivePortalLogin");
+  const bookmarkedURLListener =
+    ASRouterTriggerListeners.get("openBookmarkedURL");
   const openArticleURLListener = ASRouterTriggerListeners.get("openArticleURL");
+  const nthTabClosedListener = ASRouterTriggerListeners.get("nthTabClosed");
+  const idleListener = ASRouterTriggerListeners.get("activityAfterIdle");
+  const formAutofillListener = ASRouterTriggerListeners.get("formAutofill");
+  const cookieBannerDetectedListener = ASRouterTriggerListeners.get(
+    "cookieBannerDetected"
+  );
   const hosts = ["www.mozilla.com", "www.mozilla.org"];
 
   const regionFake = {
@@ -178,10 +182,8 @@ describe("ASRouterTriggerListeners", () => {
         const target = { currentURI: { host: hosts[0], spec: hosts[1] } };
         openArticleURLListener.init(stub, hosts, hosts);
 
-        const [
-          ,
-          { receiveMessage },
-        ] = global.AboutReaderParent.addMessageListener.firstCall.args;
+        const [, { receiveMessage }] =
+          global.AboutReaderParent.addMessageListener.firstCall.args;
         receiveMessage({ data: { isArticle: true }, target });
 
         assert.calledOnce(stub);
@@ -195,10 +197,8 @@ describe("ASRouterTriggerListeners", () => {
         const target = { currentURI: { host: null, spec: hosts[1] } };
         openArticleURLListener.init(stub, hosts, hosts);
 
-        const [
-          ,
-          { receiveMessage },
-        ] = global.AboutReaderParent.addMessageListener.firstCall.args;
+        const [, { receiveMessage }] =
+          global.AboutReaderParent.addMessageListener.firstCall.args;
         receiveMessage({ data: { isArticle: true }, target });
 
         assert.calledOnce(stub);
@@ -322,6 +322,171 @@ describe("ASRouterTriggerListeners", () => {
         assert.isTrue(
           frequentVisitsListener._matchPatternSet.patterns.has("foo")
         );
+      });
+    });
+  });
+
+  describe("nthTabClosed", () => {
+    describe("#init", () => {
+      beforeEach(() => {
+        nthTabClosedListener.init(triggerHandler);
+      });
+      afterEach(() => {
+        nthTabClosedListener.uninit();
+      });
+
+      it("should set ._initialized to true and save the triggerHandler", () => {
+        assert.ok(nthTabClosedListener._initialized);
+        assert.equal(nthTabClosedListener._triggerHandler, triggerHandler);
+      });
+
+      it("if already initialised, it should only update the trigger handler", () => {
+        const newTriggerHandler = () => {};
+        nthTabClosedListener.init(newTriggerHandler);
+        assert.ok(nthTabClosedListener._initialized);
+        assert.equal(nthTabClosedListener._triggerHandler, newTriggerHandler);
+      });
+
+      it("should add an event listeners to all existing browser windows", () => {
+        assert.calledOnce(existingWindow.addEventListener);
+        assert.calledWith(existingWindow.addEventListener, "TabClose");
+      });
+    });
+
+    describe("#uninit", () => {
+      beforeEach(async () => {
+        nthTabClosedListener.init(triggerHandler);
+        nthTabClosedListener.uninit();
+      });
+      it("should set ._initialized to false and clear the triggerHandler, closed tabs count", () => {
+        assert.notOk(nthTabClosedListener._initialized);
+        assert.equal(nthTabClosedListener._triggerHandler, null);
+        assert.equal(nthTabClosedListener._closedTabs, 0);
+      });
+
+      it("should do nothing if already uninitialised", () => {
+        nthTabClosedListener.uninit();
+        assert.notOk(nthTabClosedListener._initialized);
+      });
+
+      it("should remove event listeners from all existing browser windows", () => {
+        assert.calledOnce(existingWindow.removeEventListener);
+      });
+    });
+  });
+
+  describe("activityAfterIdle", () => {
+    let addObsStub;
+    let removeObsStub;
+    describe("#init", () => {
+      beforeEach(() => {
+        addObsStub = sandbox.stub(global.Services.obs, "addObserver");
+        sandbox
+          .stub(global.Services.wm, "getEnumerator")
+          .returns([{ closed: false, document: { hidden: false } }]);
+        idleListener.init(triggerHandler);
+      });
+      afterEach(() => {
+        idleListener.uninit();
+      });
+
+      it("should set ._initialized to true and save the triggerHandler", () => {
+        assert.ok(idleListener._initialized);
+        assert.equal(idleListener._triggerHandler, triggerHandler);
+      });
+
+      it("if already initialised, it should only update the trigger handler", () => {
+        const newTriggerHandler = () => {};
+        idleListener.init(newTriggerHandler);
+        assert.ok(idleListener._initialized);
+        assert.equal(idleListener._triggerHandler, newTriggerHandler);
+      });
+
+      it("should add observers for idle and activity", () => {
+        assert.called(addObsStub);
+      });
+
+      it("should add event listeners to all existing browser windows", () => {
+        assert.called(existingWindow.addEventListener);
+      });
+    });
+
+    describe("#uninit", () => {
+      beforeEach(async () => {
+        removeObsStub = sandbox.stub(global.Services.obs, "removeObserver");
+        sandbox.stub(global.Services.wm, "getEnumerator").returns([]);
+        idleListener.init(triggerHandler);
+        idleListener.uninit();
+      });
+      it("should set ._initialized to false and clear the triggerHandler and timestamps", () => {
+        assert.notOk(idleListener._initialized);
+        assert.equal(idleListener._triggerHandler, null);
+        assert.equal(idleListener._quietSince, null);
+      });
+
+      it("should do nothing if already uninitialised", () => {
+        idleListener.uninit();
+        assert.notOk(idleListener._initialized);
+      });
+
+      it("should remove observers for idle and activity", () => {
+        assert.called(removeObsStub);
+      });
+
+      it("should remove event listeners from all existing browser windows", () => {
+        assert.called(existingWindow.removeEventListener);
+      });
+    });
+  });
+
+  describe("formAutofill", () => {
+    let addObsStub;
+    let removeObsStub;
+    describe("#init", () => {
+      beforeEach(() => {
+        addObsStub = sandbox.stub(global.Services.obs, "addObserver");
+        formAutofillListener.init(triggerHandler);
+      });
+      afterEach(() => {
+        formAutofillListener.uninit();
+      });
+
+      it("should set ._initialized to true and save the triggerHandler", () => {
+        assert.ok(formAutofillListener._initialized);
+        assert.equal(formAutofillListener._triggerHandler, triggerHandler);
+      });
+
+      it("if already initialised, it should only update the trigger handler", () => {
+        const newTriggerHandler = () => {};
+        formAutofillListener.init(newTriggerHandler);
+        assert.ok(formAutofillListener._initialized);
+        assert.equal(formAutofillListener._triggerHandler, newTriggerHandler);
+      });
+
+      it(`should add observer for ${formAutofillListener._topic}`, () => {
+        assert.called(addObsStub);
+      });
+    });
+
+    describe("#uninit", () => {
+      beforeEach(async () => {
+        removeObsStub = sandbox.stub(global.Services.obs, "removeObserver");
+        formAutofillListener.init(triggerHandler);
+        formAutofillListener.uninit();
+      });
+
+      it("should set ._initialized to false and clear the triggerHandler", () => {
+        assert.notOk(formAutofillListener._initialized);
+        assert.equal(formAutofillListener._triggerHandler, null);
+      });
+
+      it("should do nothing if already uninitialised", () => {
+        formAutofillListener.uninit();
+        assert.notOk(formAutofillListener._initialized);
+      });
+
+      it(`should remove observers for ${formAutofillListener._topic}`, () => {
+        assert.called(removeObsStub);
       });
     });
   });
@@ -555,6 +720,58 @@ describe("ASRouterTriggerListeners", () => {
         );
         assert.calledOnce(aRequest.QueryInterface);
         assert.notCalled(newTriggerHandler);
+      });
+    });
+  });
+
+  describe("cookieBannerDetected", () => {
+    describe("#init", () => {
+      beforeEach(() => {
+        cookieBannerDetectedListener.init(triggerHandler);
+      });
+      afterEach(() => {
+        cookieBannerDetectedListener.uninit();
+      });
+
+      it("should set ._initialized to true and save the triggerHandler", () => {
+        assert.ok(cookieBannerDetectedListener._initialized);
+        assert.equal(
+          cookieBannerDetectedListener._triggerHandler,
+          triggerHandler
+        );
+      });
+
+      it("if already initialised, it should only update the trigger handler", () => {
+        const newTriggerHandler = () => {};
+        cookieBannerDetectedListener.init(newTriggerHandler);
+        assert.ok(cookieBannerDetectedListener._initialized);
+        assert.equal(
+          cookieBannerDetectedListener._triggerHandler,
+          newTriggerHandler
+        );
+      });
+
+      it("should add an event listeners to all existing browser windows", () => {
+        assert.calledOnce(existingWindow.addEventListener);
+      });
+    });
+    describe("#uninit", () => {
+      beforeEach(async () => {
+        cookieBannerDetectedListener.init(triggerHandler);
+        cookieBannerDetectedListener.uninit();
+      });
+      it("should set ._initialized to false and clear the triggerHandler and timestamps", () => {
+        assert.notOk(cookieBannerDetectedListener._initialized);
+        assert.equal(cookieBannerDetectedListener._triggerHandler, null);
+      });
+
+      it("should do nothing if already uninitialised", () => {
+        cookieBannerDetectedListener.uninit();
+        assert.notOk(cookieBannerDetectedListener._initialized);
+      });
+
+      it("should remove event listeners from all existing browser windows", () => {
+        assert.called(existingWindow.removeEventListener);
       });
     });
   });

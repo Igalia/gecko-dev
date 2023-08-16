@@ -4,12 +4,12 @@
 
 "use strict";
 
-const { LoginFormFactory } = ChromeUtils.import(
-  "resource://gre/modules/LoginFormFactory.jsm"
+const { LoginFormFactory } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginFormFactory.sys.mjs"
 );
 
-const { LoginManagerChild } = ChromeUtils.import(
-  "resource://gre/modules/LoginManagerChild.jsm"
+const { LoginManagerChild } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginManagerChild.sys.mjs"
 );
 
 const TESTENVIRONMENTS = {
@@ -473,9 +473,9 @@ _setPrefs();
 for (let tc of TEST_ENVIRONMENT_CASES) {
   info("Sanity checking the testcase: " + tc.description);
 
-  (function() {
+  (function () {
     let testcase = tc;
-    add_task(async function() {
+    add_task(async function () {
       info("Starting testcase: " + testcase.description);
 
       for (let pref of testcase.extraTestPreferences) {

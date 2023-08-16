@@ -18,14 +18,10 @@ const test = new SearchConfigTest({
     {
       included: [{}],
       domain: "duckduckgo.com",
-      telemetryId: "ddg",
-      codes: {
-        searchbar: "t=ffsb",
-        keyword: "t=ffab",
-        contextmenu: "t=ffcm",
-        homepage: "t=ffhp",
-        newtab: "t=ffnt",
-      },
+      telemetryId:
+        SearchUtils.MODIFIED_APP_CHANNEL == "esr" ? "ddg-esr" : "ddg",
+      searchUrlCode:
+        SearchUtils.MODIFIED_APP_CHANNEL == "esr" ? "t=ftsa" : "t=ffab",
     },
   ],
 });

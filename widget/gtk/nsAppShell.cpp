@@ -362,10 +362,6 @@ nsresult nsAppShell::Init() {
     unsetenv("GTK_CSD");
   }
 
-  if (PR_GetEnv("MOZ_DEBUG_PAINTS")) {
-    gdk_window_set_debug_updates(TRUE);
-  }
-
   // Whitelist of only common, stable formats - see bugs 1197059 and 1203078
   GSList* pixbufFormats = gdk_pixbuf_get_formats();
   for (GSList* iter = pixbufFormats; iter; iter = iter->next) {
@@ -373,7 +369,7 @@ nsresult nsAppShell::Init() {
     gchar* name = gdk_pixbuf_format_get_name(format);
     if (strcmp(name, "jpeg") && strcmp(name, "png") && strcmp(name, "gif") &&
         strcmp(name, "bmp") && strcmp(name, "ico") && strcmp(name, "xpm") &&
-        strcmp(name, "svg")) {
+        strcmp(name, "svg") && strcmp(name, "webp") && strcmp(name, "avif")) {
       gdk_pixbuf_format_set_disabled(format, TRUE);
     }
     g_free(name);
@@ -420,9 +416,9 @@ void nsAppShell::ScheduleNativeEventCallback() {
 }
 
 bool nsAppShell::ProcessNextNativeEvent(bool mayWait) {
+  if (mSuspendNativeCount) {
+    return false;
+  }
   bool didProcessEvent = g_main_context_iteration(nullptr, mayWait);
-#ifdef MOZ_WAYLAND
-  mozilla::widget::WaylandDispatchDisplays();
-#endif
   return didProcessEvent;
 }

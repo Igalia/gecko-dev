@@ -32,10 +32,10 @@ with Files("Glean*.webidl"):
     BUG_COMPONENT = ("Toolkit", "Telemetry")
 
 with Files("IOUtils.webidl"):
-    BUG_COMPONENT = ("Toolkit", "OS.File")
+    BUG_COMPONENT = ("Toolkit", "IOUtils and PathUtils")
 
 with Files("PathUtils.webidl"):
-    BUG_COMPONENT = ("Toolkit", "OS.File")
+    BUG_COMPONENT = ("Toolkit", "IOUtils and PathUtils")
 
 PREPROCESSED_WEBIDL_FILES = [
     "ChromeUtils.webidl",
@@ -79,9 +79,9 @@ WEBIDL_FILES = [
     "PrecompiledScript.webidl",
     "PromiseDebugging.webidl",
     "SessionStoreUtils.webidl",
+    "StripOnShareRule.webidl",
     "StructuredCloneHolder.webidl",
     "TelemetryStopwatch.webidl",
-    "UniFFI.webidl",
     "UserInteraction.webidl",
     "WebExtensionContentScript.webidl",
     "WebExtensionPolicy.webidl",
@@ -92,6 +92,11 @@ WEBIDL_FILES = [
     "XULTreeElement.webidl",
 ]
 
+if CONFIG["MOZ_BUILD_APP"] != "mobile/android":
+    WEBIDL_FILES += [
+        "UniFFI.webidl",
+    ]
+
 if CONFIG["MOZ_PLACES"]:
     WEBIDL_FILES += [
         "PlacesEvent.webidl",
@@ -101,8 +106,4 @@ if CONFIG["MOZ_PLACES"]:
 WEBIDL_FILES += [
     "Glean.webidl",
     "GleanPings.webidl",
-]
-
-WEBIDL_FILES += [
-    "PrioEncoder.webidl",
 ]

@@ -1,5 +1,78 @@
 # Version History
 
+## 1.28.1
+
+### Fixed
+
+* Bumped `borsh` and `criterion` dependencies to the latest versions. ([#568](https://github.com/paupino/rust-decimal/pull/568))
+* Removed erroneous debug statements in `serde-with-str` feature. ([#571](https://github.com/paupino/rust-decimal/pull/571))
+
+Thanks [@attila-lin](https://github.com/attila-lin) for your help bumping dependencies.
+
+## 1.28.0
+
+### Added
+
+* Implement `TryFrom<&str>` for `Decimal` ([#560](https://github.com/paupino/rust-decimal/pull/560))
+
+### Fixed
+
+* Explicit string deserialize for `Option<Decimal>` when using `serde-with-str` ([#565](https://github.com/paupino/rust-decimal/pull/565))
+* Fix for `rescale` preventing `Decimal::ZERO` to be rescaled to an invalid precision ([#566](https://github.com/paupino/rust-decimal/pull/566))
+
+### Credit
+
+Thank you to [@c410-f3r](https://github.com/c410-f3r) for your diligent help adding features to this library!
+
+## 1.27.0
+
+### Added
+
+* Added `Copy`/`Clone` traits for `rkvy::Archive` ([#539](https://github.com/paupino/rust-decimal/pull/539))
+* Support precision for scientific notation formatting ([#555](https://github.com/paupino/rust-decimal/pull/555), [#557](https://github.com/paupino/rust-decimal/pull/557))
+
+### Fixed
+
+* Fixed edge case parsing of strings whereby it would incorrectly error instead of round ([#541](https://github.com/paupino/rust-decimal/pull/541)) 
+
+### Changed
+
+* Update diesel feature to use release version ([#546](https://github.com/paupino/rust-decimal/pull/546))
+* Updated documentation to include `cargo-edit` instructions ([#538](https://github.com/paupino/rust-decimal/pull/538))
+* Start using new feature resolver for cargo dependencies ([#551](https://github.com/paupino/rust-decimal/pull/551))
+* Optional serde deserialization avoids using `deserialize_any` except in explicit use cases ([#558](https://github.com/paupino/rust-decimal/pull/558))
+
+### Credit
+
+This release wouldn't have been possible without the help of the community. Special call out and thank you to [@icy-ux](https://github.com/icy-ux), [@CAD97](https://github.com/CAD97), [@nicksenger](https://github.com/nicksenger),
+[@c410-f3r](https://github.com/c410-f3r) and [@yongqli](https://github.com/yongqli).
+
+## 1.26.1
+
+### Fixed
+
+* Fixes `docs.rs` [failing to compile](https://docs.rs/crate/rust_decimal/1.26.0/builds/605522) due to mutually exclusive `diesel1` and `diesel2` features. The previous `compile_error!`
+  was in fact an [anti-pattern](https://doc.rust-lang.org/cargo/reference/features.html#mutually-exclusive-features). Consequently,
+  if both `diesel1` and `diesel2` features are specified then it will favor `diesel2`. This helps prevent any conflict scenarios
+  and ultimately resolves the downstream `docs.rs` issue. 
+
+## 1.26.0
+
+### Added
+
+* `serde-with-*` features now support `Option<T>` variants ([#524](https://github.com/paupino/rust-decimal/pull/524)).
+* Implementation support for `core::iter::Product` ([#525](https://github.com/paupino/rust-decimal/pull/525)).
+* Diesel `2.0.0-rc.1` support via `db-diesel2-mysql` and `db-diesel2-postgres` features. ([#533](https://github.com/paupino/rust-decimal/pull/533) and ([#532](https://github.com/paupino/rust-decimal/pull/532))).
+
+### Fixed
+
+* Fixes a silent overflow in `from_str` when parsing `Decimal::MAX` with a fractional portion. ([#530](https://github.com/paupino/rust-decimal/pull/530)).
+
+### Credit
+
+Thank you to [@Guara92](https://github.com/Guara92) who made the initial `diesel2` PR which made parallel implementation a breeze! Also, once again, thank you
+to [@c410-f3r](https://github.com/c410-f3r) for implementing the missing `Product` trait!
+
 ## 1.25.0
 
 ### Added

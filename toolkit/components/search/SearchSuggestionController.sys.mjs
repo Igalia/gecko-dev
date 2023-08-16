@@ -2,24 +2,21 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  FormHistory: "resource://gre/modules/FormHistory.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
-});
-
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
 });
 
 const DEFAULT_FORM_HISTORY_PARAM = "searchbar-history";
 const HTTP_OK = 200;
 const BROWSER_SUGGEST_PREF = "browser.search.suggest.enabled";
 const BROWSER_SUGGEST_PRIVATE_PREF = "browser.search.suggest.enabled.private";
+const BROWSER_RICH_SUGGEST_PREF = "browser.urlbar.richSuggestions.featureGate";
 const REMOTE_TIMEOUT_PREF = "browser.search.suggest.timeout";
 const REMOTE_TIMEOUT_DEFAULT = 500; // maximum time (ms) to wait before giving up on a remote suggestions
 
@@ -48,22 +45,34 @@ function uuid() {
 class SearchSuggestionEntry {
   /**
    * Creates an entry.
+   *
    * @param {string} value
    *   The suggestion as a full-text string. Suitable for display directly to
    *   the user.
-   * @param {string} [matchPrefix]
+   * @param {object} options
+   *   An object with the following properties:
+   * @param {string} [options.matchPrefix]
    *   Represents the part of a tail suggestion that is already typed. For
    *   example, Google returns "…" as the match prefix to replace
    *   "what time is it in" in a tail suggestion for the query
    *   "what time is it in t".
-   * @param {string} [tail]
+   * @param {string} [options.tail]
    *   Represents the suggested part of a tail suggestion. For example, Google
    *   might return "toronto" as the tail for the query "what time is it in t".
+   * @param {string} [options.icon]
+   *   An icon representing the result in a data uri format.
+   * @param {string} [options.description]
+   *   A description of the result.
+   * @param {boolean} [options.trending]
+   *   Whether this is a trending suggestion.
    */
-  constructor(value, { matchPrefix, tail } = {}) {
+  constructor(value, { matchPrefix, tail, icon, description, trending } = {}) {
     this.#value = value;
     this.#matchPrefix = matchPrefix;
     this.#tail = tail;
+    this.#trending = trending;
+    this.#icon = icon;
+    this.#description = description;
   }
 
   get value() {
@@ -76,6 +85,18 @@ class SearchSuggestionEntry {
 
   get tail() {
     return this.#tail;
+  }
+
+  get trending() {
+    return this.#trending;
+  }
+
+  get icon() {
+    return this.#icon;
+  }
+
+  get description() {
+    return this.#description;
   }
 
   get tailOffsetIndex() {
@@ -102,7 +123,8 @@ class SearchSuggestionEntry {
   /**
    * Returns true if `otherEntry` is equivalent to this instance of
    * SearchSuggestionEntry.
-   * @param {SearchSuggestionEntry} otherEntry
+   *
+   * @param {SearchSuggestionEntry} otherEntry The entry to compare to.
    * @returns {boolean}
    */
   equals(otherEntry) {
@@ -112,6 +134,9 @@ class SearchSuggestionEntry {
   #value;
   #matchPrefix;
   #tail;
+  #trending;
+  #icon;
+  #description;
 }
 
 // Maps each engine name to a unique firstPartyDomain, so that requests to
@@ -134,13 +159,25 @@ var gFirstPartyDomains = new Map();
  */
 export class SearchSuggestionController {
   /**
+   * Constructor
+   *
+   * @param {string} [formHistoryParam]
+   *   The form history type to use with this controller.
+   */
+  constructor(formHistoryParam = DEFAULT_FORM_HISTORY_PARAM) {
+    this.formHistoryParam = formHistoryParam;
+  }
+
+  /**
    * The maximum length of a value to be stored in search history.
+   *
    *  @type {number}
    */
   static SEARCH_HISTORY_MAX_VALUE_LENGTH = 255;
 
   /**
    * Maximum time (ms) to wait before giving up on remote suggestions
+   *
    *  @type {number}
    */
   static REMOTE_TIMEOUT_DEFAULT = REMOTE_TIMEOUT_DEFAULT;
@@ -149,20 +186,15 @@ export class SearchSuggestionController {
    * Determines whether the given engine offers search suggestions.
    *
    * @param {nsISearchEngine} engine - The search engine
+   * @param {boolean} fetchTrending - Whether we should fetch trending suggestions.
    * @returns {boolean} True if the engine offers suggestions and false otherwise.
    */
-  static engineOffersSuggestions(engine) {
-    return engine.supportsResponseType(lazy.SearchUtils.URL_TYPE.SUGGEST_JSON);
-  }
-
-  /**
-   * Creates a Search Suggestion Controller.
-   * @param {function} [callback] - Callback for search suggestion results. You
-   *                                can use the promise returned by the fetch
-   *                                method instead if you prefer.
-   */
-  constructor(callback = null) {
-    this.#callback = callback;
+  static engineOffersSuggestions(engine, fetchTrending) {
+    return engine.supportsResponseType(
+      fetchTrending
+        ? lazy.SearchUtils.URL_TYPE.TRENDING_JSON
+        : lazy.SearchUtils.URL_TYPE.SUGGEST_JSON
+    );
   }
 
   /**
@@ -199,32 +231,21 @@ export class SearchSuggestionController {
   formHistoryResult = null;
 
   /**
-   * The remote server timeout timer, if applicable. The timer starts when form
-   * history search is completed.
-   *
-   * @type {nsITimer|null}
-   */
-  remoteResultTimer = null;
-
-  /**
-   * The deferred for the remote results before its promise is resolved.
-   *
-   * @type {Promise|null}
-   */
-  deferredRemoteResult = null;
-
-  /**
-   * The XMLHttpRequest object for remote results.
-   */
-  request = null;
-
-  /**
    * Gets the firstPartyDomains Map, useful for tests.
+   *
    * @returns {Map} firstPartyDomains mapped by engine names.
    */
   get firstPartyDomains() {
     return gFirstPartyDomains;
   }
+
+  /**
+   * @typedef {object} FetchResult
+   * @property {Array<SearchSuggestionEntry>} local
+   *   Contains local search suggestions.
+   * @property {Array<SearchSuggestionEntry>} remote
+   *   Contains remote search suggestions.
+   */
 
   /**
    * Fetch search suggestions from all of the providers. Fetches in progress
@@ -239,12 +260,9 @@ export class SearchSuggestionController {
    *   suggestions to the ones registered under the given engine.
    * @param {boolean} dedupeRemoteAndLocal - whether to remove remote
    *   suggestions that dupe local suggestions
+   * @param {boolean} fetchTrending - Whether we should fetch trending suggestions.
    *
-   * @returns {Promise} resolving to an object with the following contents:
-   * @returns {array<SearchSuggestionEntry>} results.local
-   *   Contains local search suggestions.
-   * @returns {array<SearchSuggestionEntry>} results.remote
-   *   Contains remote search suggestions.
+   * @returns {Promise<FetchResult>}
    */
   fetch(
     searchTerm,
@@ -252,7 +270,8 @@ export class SearchSuggestionController {
     engine,
     userContextId = 0,
     restrictToEngine = false,
-    dedupeRemoteAndLocal = true
+    dedupeRemoteAndLocal = true,
+    fetchTrending = false
   ) {
     // There is no smart filtering from previous results here (as there is when
     // looking through history/form data) because the result set returned by the
@@ -281,33 +300,35 @@ export class SearchSuggestionController {
 
     // Array of promises to resolve before returning results.
     let promises = [];
-    this.#searchString = searchTerm;
+    let context = (this.#context = {
+      awaitingLocalResults: false,
+      dedupeRemoteAndLocal,
+      engine,
+      engineId: engine?.identifier || "other",
+      fetchTrending,
+      privateMode,
+      request: null,
+      restrictToEngine,
+      searchString: searchTerm,
+      telemetryHandled: false,
+      timer: Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer),
+      userContextId,
+    });
 
-    // Remote results
+    // Fetch local results from Form History, if requested.
+    if (this.maxLocalResults && !fetchTrending) {
+      context.awaitingLocalResults = true;
+      promises.push(this.#fetchFormHistory(context));
+    }
+    // Fetch remote results from Search Service, if requested.
     if (
-      searchTerm &&
+      (searchTerm || fetchTrending) &&
       this.suggestionsEnabled &&
       (!privateMode || this.suggestionsInPrivateBrowsingEnabled) &&
       this.maxRemoteResults &&
-      engine.supportsResponseType(lazy.SearchUtils.URL_TYPE.SUGGEST_JSON)
+      SearchSuggestionController.engineOffersSuggestions(engine, fetchTrending)
     ) {
-      this.#deferredRemoteResult = this.#fetchRemote(
-        searchTerm,
-        engine,
-        privateMode,
-        userContextId
-      );
-      promises.push(this.#deferredRemoteResult.promise);
-    }
-
-    // Local results from form history
-    if (this.maxLocalResults) {
-      promises.push(
-        this.#fetchFormHistory(
-          searchTerm,
-          restrictToEngine ? engine.name : null
-        )
-      );
+      promises.push(this.#fetchRemote(context));
     }
 
     function handleRejection(reason) {
@@ -315,11 +336,11 @@ export class SearchSuggestionController {
         // Do nothing since this is normal.
         return null;
       }
-      Cu.reportError("SearchSuggestionController rejection: " + reason);
+      console.error("SearchSuggestionController rejection:", reason);
       return null;
     }
     return Promise.all(promises).then(
-      results => this.#dedupeAndReturnResults(results, dedupeRemoteAndLocal),
+      results => this.#dedupeAndReturnResults(context, results),
       handleRejection
     );
   }
@@ -332,113 +353,61 @@ export class SearchSuggestionController {
    * on aborting the XMLHTTPRequest to reject the promise for Promise.all.
    */
   stop() {
-    if (this.#request) {
-      this.#request.abort();
+    if (this.#context) {
+      this.#context.abort = true;
+      this.#context.request?.abort();
     }
-    this.#reset();
+    this.#context = null;
   }
 
-  #callback;
-  #searchString;
-  #deferredRemoteResult;
-  #request;
-  #formHistoryResult;
-  #remoteResultTimer;
-  #requestStopwatchToken;
+  #context;
 
-  #fetchFormHistory(searchTerm, source) {
-    return new Promise(resolve => {
-      let acSearchObserver = {
-        // Implements nsIAutoCompleteSearch
-        onSearchResult: (search, result) => {
-          this.#formHistoryResult = result;
+  async #fetchFormHistory(context) {
+    // We don't cache these results as we assume that the in-memory SQL cache is
+    // good enough in performance.
+    let params = {
+      fieldname: this.formHistoryParam,
+    };
 
-          if (this.#request) {
-            this.#remoteResultTimer = Cc["@mozilla.org/timer;1"].createInstance(
-              Ci.nsITimer
-            );
-            this.#remoteResultTimer.initWithCallback(
-              this.#onRemoteTimeout.bind(this),
-              this.remoteTimeout,
-              Ci.nsITimer.TYPE_ONE_SHOT
-            );
-          }
+    if (context.restrictToEngine) {
+      params.source = context.engine.name;
+    }
 
-          switch (result.searchResult) {
-            case Ci.nsIAutoCompleteResult.RESULT_SUCCESS:
-            case Ci.nsIAutoCompleteResult.RESULT_NOMATCH:
-              if (result.searchString !== this.#searchString) {
-                resolve(
-                  "Unexpected response, this.#searchString does not match form history response"
-                );
-                return;
-              }
-              let fhEntries = [];
-              for (let i = 0; i < result.matchCount; ++i) {
-                fhEntries.push(result.getValueAt(i));
-              }
-              resolve({
-                result: fhEntries,
-                formHistoryResult: result,
-              });
-              break;
-            case Ci.nsIAutoCompleteResult.RESULT_FAILURE:
-            case Ci.nsIAutoCompleteResult.RESULT_IGNORED:
-              resolve("Form History returned RESULT_FAILURE or RESULT_IGNORED");
-              break;
-          }
-        },
-      };
+    let results = await lazy.FormHistory.getAutoCompleteResults(
+      context.searchString,
+      params
+    );
 
-      let formHistory = Cc[
-        "@mozilla.org/autocomplete/search;1?name=form-history"
-      ].createInstance(Ci.nsIAutoCompleteSearch);
-      let params = this.formHistoryParam || DEFAULT_FORM_HISTORY_PARAM;
-      let options = null;
-      if (source) {
-        options = Cc["@mozilla.org/hash-property-bag;1"].createInstance(
-          Ci.nsIWritablePropertyBag2
-        );
-        options.setPropertyAsAUTF8String("source", source);
-      }
-      formHistory.startSearch(
-        searchTerm,
-        params,
-        this.#formHistoryResult,
-        acSearchObserver,
-        options
-      );
-    });
+    context.awaitingLocalResults = false;
+
+    return { localResults: results };
   }
 
   /**
    * Records per-engine telemetry after a search has finished.
    *
-   * @param {string} engineId
-   * @param {boolean} privateMode
-   *   Whether the search was in a private context.
-   * @param {boolean} [aborted]
-   *   Whether the search was aborted.
+   * @param {object} context
+   *   The search context.
    */
-  #reportTelemetryForEngine(engineId, privateMode, aborted = false) {
-    this.#reportBandwidthForEngine(engineId, privateMode);
+  #reportTelemetryForEngine(context) {
+    this.#reportBandwidthForEngine(context);
 
     // Stop the latency stopwatch.
-    if (this.#requestStopwatchToken) {
-      if (aborted) {
+    if (!context.telemetryHandled) {
+      if (context.abort) {
         TelemetryStopwatch.cancelKeyed(
           SEARCH_TELEMETRY_LATENCY,
-          engineId,
-          this.#requestStopwatchToken
+          context.engineId,
+          context
         );
       } else {
         TelemetryStopwatch.finishKeyed(
           SEARCH_TELEMETRY_LATENCY,
-          engineId,
-          this.#requestStopwatchToken
+          context.engineId,
+          context
         );
       }
-      this.#requestStopwatchToken = null;
+      context.telemetryHandled = true;
     }
   }
 
@@ -446,23 +415,30 @@ export class SearchSuggestionController {
    * Report bandwidth used by search activities. It only reports when it matches
    * search provider information.
    *
-   * @param {string} engineId the name of the search provider.
-   * @param {boolean} privateMode set to true if this is coming from a private
-   * browsing mode request.
+   * @param {object} context
+   *   The search context.
+   * @param {boolean} context.abort
+   *   If the request should be aborted.
+   * @param {string} context.engineId
+   *   The search engine identifier.
+   * @param {object} context.request
+   *   Request information
+   * @param {boolean} context.privateMode
+   *   Set to true if this is coming from a private browsing mode request.
    */
-  #reportBandwidthForEngine(engineId, privateMode) {
-    if (!this.#request || !this.#request.channel) {
+  #reportBandwidthForEngine(context) {
+    if (context.abort || !context.request.channel) {
       return;
     }
 
-    let channel = ChannelWrapper.get(this.#request.channel);
+    let channel = ChannelWrapper.get(context.request.channel);
     let bytesTransferred = channel.requestSize + channel.responseSize;
     if (bytesTransferred == 0) {
       return;
     }
 
-    let telemetryKey = `${SEARCH_TELEMETRY_KEY_PREFIX}-${engineId}`;
-    if (privateMode) {
+    let telemetryKey = `${SEARCH_TELEMETRY_KEY_PREFIX}-${context.engineId}`;
+    if (context.privateMode) {
       telemetryKey += `-${SEARCH_TELEMETRY_PRIVATE_BROWSING_KEY_SUFFIX}`;
     }
 
@@ -476,153 +452,148 @@ export class SearchSuggestionController {
   /**
    * Fetch suggestions from the search engine over the network.
    *
-   * @param {string} searchTerm
-   *   The term being searched for.
-   * @param {SearchEngine} engine
-   *   The engine to request suggestions from.
-   * @param {boolean} privateMode
-   *   Set to true if this is coming from a private browsing mode request.
-   * @param {number} userContextId
-   *   The id of the user container this request was made from.
+   * @param {object} context
+   *   The search context.
    * @returns {Promise}
    *   Returns a promise that is resolved when the response is received, or
    *   rejected if there is an error.
    */
-  #fetchRemote(searchTerm, engine, privateMode, userContextId) {
+  #fetchRemote(context) {
     let deferredResponse = lazy.PromiseUtils.defer();
-    this.#request = new XMLHttpRequest();
-    let submission = engine.getSubmission(
-      searchTerm,
-      lazy.SearchUtils.URL_TYPE.SUGGEST_JSON
+    let request = (context.request = new XMLHttpRequest());
+    // Expect the response type to be JSON, so that the network layer will
+    // decode it for us. This will also ignore incorrect Mime Types, as we are
+    // dictating how we process it.
+    request.responseType = "json";
+
+    let submission = context.engine.getSubmission(
+      context.searchString,
+      context.searchString
+        ? lazy.SearchUtils.URL_TYPE.SUGGEST_JSON
+        : lazy.SearchUtils.URL_TYPE.TRENDING_JSON
     );
     let method = submission.postData ? "POST" : "GET";
-    this.#request.open(method, submission.uri.spec, true);
+    request.open(method, submission.uri.spec, true);
     // Don't set or store cookies or on-disk cache.
-    this.#request.channel.loadFlags =
+    request.channel.loadFlags =
       Ci.nsIChannel.LOAD_ANONYMOUS | Ci.nsIChannel.INHIBIT_PERSISTENT_CACHING;
     // Use a unique first-party domain for each engine, to isolate the
     // suggestions requests.
-    if (!gFirstPartyDomains.has(engine.name)) {
+    if (!gFirstPartyDomains.has(context.engine.name)) {
       // Use the engine identifier, or an uuid when not available, because the
       // domain cannot contain invalid chars and the engine name may not be
       // suitable. When using an uuid the firstPartyDomain of the same engine
       // will differ across restarts, but that's acceptable for now.
       // TODO (Bug 1511339): use a persistent unique identifier per engine.
       gFirstPartyDomains.set(
-        engine.name,
-        `${engine.identifier || uuid()}.search.suggestions.mozilla`
+        context.engine.name,
+        `${context.engine.identifier || uuid()}.search.suggestions.mozilla`
       );
     }
-    let firstPartyDomain = gFirstPartyDomains.get(engine.name);
+    let firstPartyDomain = gFirstPartyDomains.get(context.engine.name);
 
-    this.#request.setOriginAttributes({
-      userContextId,
-      privateBrowsingId: privateMode ? 1 : 0,
+    request.setOriginAttributes({
+      userContextId: context.userContextId,
+      privateBrowsingId: context.privateMode ? 1 : 0,
       firstPartyDomain,
     });
 
-    this.#request.mozBackgroundRequest = true; // suppress dialogs and fail silently
+    request.mozBackgroundRequest = true; // suppress dialogs and fail silently
 
-    let engineId = engine.identifier || "other";
-
-    this.#request.addEventListener(
-      "load",
-      this.#onRemoteLoaded.bind(this, deferredResponse, engineId, privateMode)
+    context.timer.initWithCallback(
+      () => {
+        // Abort if we already got local results.
+        if (
+          request.readyState != 4 /* not complete */ &&
+          !context.awaitingLocalResults
+        ) {
+          deferredResponse.resolve("HTTP request timeout");
+        }
+      },
+      this.remoteTimeout,
+      Ci.nsITimer.TYPE_ONE_SHOT
     );
-    this.#request.addEventListener("error", evt => {
-      this.#reportTelemetryForEngine(engineId, privateMode);
+
+    request.addEventListener("load", () => {
+      context.timer.cancel();
+      this.#reportTelemetryForEngine(context);
+      if (!this.#context || context != this.#context || context.abort) {
+        deferredResponse.resolve(
+          "Got HTTP response after the request was cancelled"
+        );
+        return;
+      }
+      this.#onRemoteLoaded(context, deferredResponse);
+    });
+
+    request.addEventListener("error", evt => {
+      this.#reportTelemetryForEngine(context);
       deferredResponse.resolve("HTTP error");
     });
-    // Reject for an abort assuming it's always from .stop() in which case we shouldn't return local
-    // or remote results for existing searches.
-    this.#request.addEventListener("abort", evt => {
-      this.#reportTelemetryForEngine(engineId, privateMode, true);
+
+    // Reject for an abort assuming it's always from .stop() in which case we
+    // shouldn't return local or remote results for existing searches.
+    request.addEventListener("abort", evt => {
+      context.timer.cancel();
+      this.#reportTelemetryForEngine(context);
       deferredResponse.reject("HTTP request aborted");
     });
 
     if (submission.postData) {
-      this.#request.sendInputStream(submission.postData);
+      request.sendInputStream(submission.postData);
     } else {
-      this.#request.send();
+      request.send();
     }
 
-    // Start the latency stopwatch, but first cancel the current one if any.
-    // `_requestStopwatchToken` is used to associate a stopwatch with each new
-    // remote fetch. It also keeps track of the engine ID that was used for the
-    // fetch, which is useful since the histogram is keyed on it.
-    if (this.#requestStopwatchToken) {
-      TelemetryStopwatch.cancelKeyed(
-        SEARCH_TELEMETRY_LATENCY,
-        this.#requestStopwatchToken.engineId,
-        this.#requestStopwatchToken
-      );
-    }
-    this.#requestStopwatchToken = { engineId };
     TelemetryStopwatch.startKeyed(
       SEARCH_TELEMETRY_LATENCY,
-      engineId,
-      this.#requestStopwatchToken
+      context.engineId,
+      context
     );
 
-    return deferredResponse;
+    return deferredResponse.promise;
   }
 
   /**
    * Called when the request completed successfully (thought the HTTP status
    * could be anything) so we can handle the response data.
    *
+   * @param {object} context
+   *   The search context.
    * @param {Promise} deferredResponse
    *   The promise to resolve when a response is received.
-   * @param {string} engineId
-   *   The name of the search provider.
-   * @param {boolean} privateMode
-   *   Set to true if this is coming from a private browsing mode request.
    * @private
    */
-  #onRemoteLoaded(deferredResponse, engineId, privateMode) {
-    this.#reportTelemetryForEngine(engineId, privateMode);
-
-    if (!this.#request) {
-      deferredResponse.resolve(
-        "Got HTTP response after the request was cancelled"
-      );
-      return;
-    }
-
-    let status, serverResults;
+  #onRemoteLoaded(context, deferredResponse) {
+    let status;
     try {
-      status = this.#request.status;
+      status = context.request.status;
     } catch (e) {
       // The XMLHttpRequest can throw NS_ERROR_NOT_AVAILABLE.
       deferredResponse.resolve("Unknown HTTP status: " + e);
       return;
     }
 
-    if (status != HTTP_OK || this.#request.responseText == "") {
+    if (status != HTTP_OK) {
       deferredResponse.resolve(
         "Non-200 status or empty HTTP response: " + status
       );
       return;
     }
 
-    try {
-      serverResults = JSON.parse(this.#request.responseText);
-    } catch (ex) {
-      deferredResponse.resolve("Failed to parse suggestion JSON: " + ex);
-      return;
-    }
+    let serverResults = context.request.response;
 
     try {
       if (
         !Array.isArray(serverResults) ||
-        !serverResults[0] ||
-        (this.#searchString.localeCompare(serverResults[0], undefined, {
+        serverResults[0] == undefined ||
+        (context.searchString.localeCompare(serverResults[0], undefined, {
           sensitivity: "base",
         }) &&
           // Some engines (e.g. Amazon) return a search string containing
           // escaped Unicode sequences. Try decoding the remote search string
           // and compare that with our typed search string.
-          this.#searchString.localeCompare(
+          context.searchString.localeCompare(
             decodeURIComponent(
               JSON.parse('"' + serverResults[0].replace(/\"/g, '\\"') + '"')
             ),
@@ -634,7 +605,7 @@ export class SearchSuggestionController {
       ) {
         // something is wrong here so drop remote results
         deferredResponse.resolve(
-          "Unexpected response, this.#searchString does not match remote response"
+          "Unexpected response, searchString does not match remote response"
         );
         return;
       }
@@ -652,61 +623,35 @@ export class SearchSuggestionController {
   }
 
   /**
-   * Called when this.#remoteResultTimer fires indicating the remote request
-   * took too long.
-   */
-  #onRemoteTimeout() {
-    this.#request = null;
-
-    // FIXME: bug 387341
-    // Need to break the cycle between us and the timer.
-    this.#remoteResultTimer = null;
-
-    // The XMLHTTPRequest for suggest results is taking too long
-    // so send out the form history results and cancel the request.
-    if (this.#deferredRemoteResult) {
-      this.#deferredRemoteResult.resolve("HTTP Timeout");
-      this.#deferredRemoteResult = null;
-    }
-  }
-
-  /**
+   * @param {object} context
+   *   The search context.
    * @param {Array} suggestResults - an array of result objects from different
    *   sources (local or remote).
-   * @param {boolean} dedupeRemoteAndLocal - whether to remove remote
-   *   suggestions that dupe local suggestions
    * @returns {object}
    */
-  #dedupeAndReturnResults(suggestResults, dedupeRemoteAndLocal) {
-    if (this.#searchString === null) {
-      // _searchString can be null if stop() was called and remote suggestions
-      // were disabled (stopping if we are fetching remote suggestions will
-      // cause a promise rejection before we reach _dedupeAndReturnResults).
+  #dedupeAndReturnResults(context, suggestResults) {
+    if (context.abort) {
       return null;
     }
 
     let results = {
-      term: this.#searchString,
+      term: context.searchString,
       remote: [],
       local: [],
-      formHistoryResult: null,
     };
 
     for (let resultData of suggestResults) {
-      if (typeof result === "string") {
+      if (typeof resultData === "string") {
         // Failure message
-        Cu.reportError(
-          "SearchSuggestionController found an unexpected string value: " +
-            resultData
+        console.error(
+          "SearchSuggestionController found an unexpected string value:",
+          resultData
         );
-      } else if (resultData.formHistoryResult) {
-        // Local results have a formHistoryResult property.
-        results.formHistoryResult = resultData.formHistoryResult;
-        if (resultData.result) {
-          results.local = resultData.result.map(
-            s => new SearchSuggestionEntry(s)
-          );
-        }
+      } else if (resultData.localResults) {
+        results.formHistoryResults = resultData.localResults;
+        results.local = resultData.localResults.map(
+          s => new SearchSuggestionEntry(s.text)
+        );
       } else if (resultData.result) {
         // Remote result
         let richSuggestionData = this.#getRichSuggestionData(resultData.result);
@@ -715,7 +660,8 @@ export class SearchSuggestionController {
           results.remote.push(
             this.#newSearchSuggestionEntry(
               fullTextSuggestions[i],
-              richSuggestionData?.[i]
+              richSuggestionData?.[i],
+              context.fetchTrending
             )
           );
         }
@@ -729,7 +675,11 @@ export class SearchSuggestionController {
 
     // We don't want things to appear in both history and suggestions so remove
     // entries from remote results that are already in local.
-    if (results.remote.length && results.local.length && dedupeRemoteAndLocal) {
+    if (
+      results.remote.length &&
+      results.local.length &&
+      context.dedupeRemoteAndLocal
+    ) {
       for (let i = 0; i < results.local.length; ++i) {
         let dupIndex = results.remote.findIndex(e =>
           e.equals(results.local[i])
@@ -742,24 +692,20 @@ export class SearchSuggestionController {
 
     // Trim the number of results to the maximum requested (now that we've pruned dupes).
     let maxRemoteCount = this.maxRemoteResults;
-    if (dedupeRemoteAndLocal) {
+    if (context.dedupeRemoteAndLocal) {
       maxRemoteCount -= results.local.length;
     }
     results.remote = results.remote.slice(0, maxRemoteCount);
-
-    if (this.#callback) {
-      this.#callback(results);
-    }
-    this.#reset();
 
     return results;
   }
 
   /**
    * Returns rich suggestion data from a remote fetch, if available.
-   * @param {array} remoteResultData
+   *
+   * @param {Array} remoteResultData
    *  The results.remote array returned by SearchSuggestionsController.fetch.
-   * @returns {array}
+   * @returns {Array}
    *  An array of additional rich suggestion data. Each element should
    *  correspond to the array of text suggestions.
    */
@@ -788,33 +734,34 @@ export class SearchSuggestionController {
   /**
    * Given a text suggestion and rich suggestion data, returns a
    * SearchSuggestionEntry.
+   *
    * @param {string} suggestion
    *   A suggestion string.
    * @param {object} richSuggestionData
    *   Rich suggestion data returned by the engine. In Google's case, this is
    *   the corresponding entry at "google:suggestdetail".
+   * @param {boolean} trending
+   *   Whether the suggestion is a trending suggestion.
    * @returns {SearchSuggestionEntry}
    */
-  #newSearchSuggestionEntry(suggestion, richSuggestionData) {
-    if (richSuggestionData) {
+  #newSearchSuggestionEntry(suggestion, richSuggestionData, trending) {
+    if (richSuggestionData && (!trending || this.richSuggestionsEnabled)) {
       // We have valid rich suggestions.
-      return new SearchSuggestionEntry(suggestion, {
+      let args = {
         matchPrefix: richSuggestionData?.mp,
         tail: richSuggestionData?.t,
-      });
+        trending,
+      };
+
+      if (this.richSuggestionsEnabled) {
+        args.icon = richSuggestionData?.i;
+        args.description = richSuggestionData?.a;
+      }
+
+      return new SearchSuggestionEntry(suggestion, args);
     }
     // Return a regular suggestion.
-    return new SearchSuggestionEntry(suggestion);
-  }
-
-  #reset() {
-    this.#request = null;
-    if (this.#remoteResultTimer) {
-      this.#remoteResultTimer.cancel();
-      this.#remoteResultTimer = null;
-    }
-    this.#deferredRemoteResult = null;
-    this.#searchString = null;
+    return new SearchSuggestionEntry(suggestion, { trending });
   }
 }
 
@@ -845,5 +792,15 @@ XPCOMUtils.defineLazyPreferenceGetter(
   SearchSuggestionController.prototype,
   "suggestionsInPrivateBrowsingEnabled",
   BROWSER_SUGGEST_PRIVATE_PREF,
+  false
+);
+
+/**
+ * Whether or not rich suggestions are turned on.
+ */
+XPCOMUtils.defineLazyPreferenceGetter(
+  SearchSuggestionController.prototype,
+  "richSuggestionsEnabled",
+  BROWSER_RICH_SUGGEST_PREF,
   false
 );

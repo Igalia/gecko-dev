@@ -104,9 +104,8 @@ nsInputStreamTransport::OpenInputStream(uint32_t flags, uint32_t segsize,
   net_ResolveSegmentParams(segsize, segcount);
 
   nsCOMPtr<nsIAsyncOutputStream> pipeOut;
-  rv = NS_NewPipe2(getter_AddRefs(mPipeIn), getter_AddRefs(pipeOut),
-                   nonblocking, true, segsize, segcount);
-  if (NS_FAILED(rv)) return rv;
+  NS_NewPipe2(getter_AddRefs(mPipeIn), getter_AddRefs(pipeOut), nonblocking,
+              true, segsize, segcount);
 
   mInProgress = true;
 
@@ -165,6 +164,9 @@ NS_IMETHODIMP
 nsInputStreamTransport::Available(uint64_t* result) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
+
+NS_IMETHODIMP
+nsInputStreamTransport::StreamStatus() { return mSource->StreamStatus(); }
 
 NS_IMETHODIMP
 nsInputStreamTransport::Read(char* buf, uint32_t count, uint32_t* result) {
@@ -376,7 +378,7 @@ class AvailableEvent final : public Runnable {
         mDoingCallback(false),
         mSize(0),
         mResultForCallback(NS_OK) {
-    mCallbackTarget = GetCurrentEventTarget();
+    mCallbackTarget = GetCurrentSerialEventTarget();
   }
 
   NS_IMETHOD Run() override {

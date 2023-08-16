@@ -45,6 +45,7 @@ using struct nsID from "nsID.h";
 using mozilla::net::SocketInfo from "mozilla/net/DashboardTypes.h";
 using mozilla::net::DNSCacheEntries from "mozilla/net/DashboardTypes.h";
 using mozilla::net::HttpRetParams from "mozilla/net/DashboardTypes.h";
+using nsIDNSService::DNSFlags from "nsIDNSService.h";
 
 #if defined(XP_WIN)
 [MoveOnly] using mozilla::UntrustedModulesData from "mozilla/UntrustedModulesData.h";
@@ -87,7 +88,7 @@ struct SocketPorcessInitAttributes {
   FileDescriptor? mSandboxBroker;
 };
 
-[ManualDealloc, NeedsOtherPid]
+[NeedsOtherPid]
 sync protocol PSocketProcess
 {
   manages PDNSRequest;
@@ -122,12 +123,11 @@ parent:
                             nsCString aExtraStringData);
   async InitBackground(Endpoint<PBackgroundStarterParent> aEndpoint);
   async PAltService();
-  async PProxyConfigLookup(nsIURI aUri, uint32_t aFlags);
-  async CachePushCheck(nsIURI aPushedURL,
+  async PProxyConfigLookup(nullable nsIURI aUri, uint32_t aFlags);
+  async CachePushCheck(nullable nsIURI aPushedURL,
                        OriginAttributes aOriginAttributes,
                        nsCString aRequestString)
     returns (bool aAccepted);
-  async ODoHServiceActivated(bool aActivated);
 
   async ExcludeHttp2OrHttp3(HttpConnectionInfoCloneArgs aArgs);
 
@@ -173,7 +173,7 @@ child:
                                    uint32_t maxBytesPerSecond);
   async PAltSvcTransaction(HttpConnectionInfoCloneArgs aConnInfo,
                            uint32_t aCaps);
-  async ClearSessionCache();
+  async ClearSessionCache() returns (void_t ok);
   async PTRRService(bool aCaptiveIsPassed,
                     bool aParentalControlEnabled,
                     nsCString[] aDNSSuffixList);
@@ -216,7 +216,7 @@ child:
 both:
   async PDNSRequest(nsCString hostName, nsCString trrServer, int32_t port,
                     uint16_t type, OriginAttributes originAttributes,
-                    uint32_t flags);
+                    DNSFlags flags);
 };
 
 } // namespace net

@@ -4,8 +4,8 @@
 
 "use strict";
 
-const { LoginManagerChild } = ChromeUtils.import(
-  "resource://gre/modules/LoginManagerChild.jsm"
+const { LoginManagerChild } = ChromeUtils.importESModule(
+  "resource://gre/modules/LoginManagerChild.sys.mjs"
 );
 
 // expectation[0] tests cases when a form doesn't have a sign-in keyword.
@@ -144,9 +144,9 @@ for (let tc of TESTCASES) {
 
   // A form is considered a username-only form
   for (let formHasSigninKeyword of [false, true]) {
-    (function() {
+    (function () {
       const testcase = tc;
-      add_task(async function() {
+      add_task(async function () {
         if (formHasSigninKeyword) {
           testcase.decription += " (form has a login keyword)";
         }

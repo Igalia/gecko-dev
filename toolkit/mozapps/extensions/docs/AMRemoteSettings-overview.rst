@@ -84,6 +84,17 @@ Group of settings to control InstallTrigger deprecation (Bug 1754441)
   - Turning this to false will hide all the InstallTrigger implementation, preventing using it to
     trigger the addon install flow, while the InstallTrigger global will still exists but be set to null.
 
+quarantinedDomains
+------------------
+
+Group of settings to control the list of quarantined domains (Bug 1832791)
+
+- **extensions.quarantinedDomains.list** (string), controls the list of domains to be quarantined
+
+    .. note::
+      The WebExtensions and Add-ons Operations teams should be consulted before applying changes to
+      the list of quarantined domains.
+
 How to define new remotely controlled settings
 ----------------------------------------------
 
@@ -142,8 +153,12 @@ The entries part of the ``"addons-manager-settings"`` collection are validated u
 
   * JSON Schema for each group of settings is defined in an entry of the ``"definitions"`` property.
 
-  * Each group of settings is contained it its own entry in ``"properties"``, named as the entry added to the ``"definitions"``)
-    and referencing (using ``"$ref"``) the related definition
+  * The definition for each of the groups defined in the schema should be defined as a ``"oneOf"`` array including an entry
+    of ``"type": "null"`` and ``"default"` set to ``null`` to omit the group of settings by default in new records.
+
+  * In addition to the ``"type": "null"`` schema, each group of settings is expected to include in the ``"oneOf"`` array
+    a second entry of ``"type": "object"`` and the controlled about:config preferences part of the group listed in
+    the ``"properties"``.
 
 .. literalinclude :: ./AMRemoteSettings-JSONSchema.json
    :language: json

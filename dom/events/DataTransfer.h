@@ -42,6 +42,7 @@ class FileList;
 class Promise;
 template <typename T>
 class Optional;
+class WindowContext;
 
 #define NS_DATATRANSFER_IID                          \
   {                                                  \
@@ -59,7 +60,7 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
 
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
 
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(DataTransfer)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(DataTransfer)
 
   friend class mozilla::EventStateManager;
 
@@ -83,7 +84,8 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
                bool aIsExternal, bool aUserCancelled,
                bool aIsCrossDomainSubFrameDrop, int32_t aClipboardType,
                DataTransferItemList* aItems, Element* aDragImage,
-               uint32_t aDragImageX, uint32_t aDragImageY);
+               uint32_t aDragImageX, uint32_t aDragImageY,
+               bool aShowFailAnimation);
 
   ~DataTransfer();
 
@@ -253,6 +255,8 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
 
   already_AddRefed<nsINode> GetMozSourceNode();
 
+  already_AddRefed<WindowContext> GetSourceTopWindowContext();
+
   /*
    * Integer version of dropEffect, set to one of the constants in
    * nsIDragService.
@@ -361,7 +365,7 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
                  DataTransfer** aResult);
 
   // converts some formats used for compatibility in aInFormat into aOutFormat.
-  // Text and text/unicode become text/plain, and URL becomes text/uri-list
+  // Text becomes text/plain, and URL becomes text/uri-list
   void GetRealFormat(const nsAString& aInFormat, nsAString& aOutFormat) const;
 
   static bool PrincipalMaySetData(const nsAString& aFormat, nsIVariant* aData,
@@ -376,6 +380,11 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   // NOTE: Please don't use this. See the comments in the webidl for more.
   already_AddRefed<DataTransfer> MozCloneForEvent(const nsAString& aEvent,
                                                   ErrorResult& aRv);
+
+  void SetMozShowFailAnimation(bool aShouldAnimate) {
+    mShowFailAnimation = aShouldAnimate;
+  }
+  bool MozShowFailAnimation() const { return mShowFailAnimation; }
 
   // Retrieve a list of clipboard formats supported
   //
@@ -393,15 +402,31 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
                                              bool aPlainTextOnly,
                                              nsTArray<nsCString>* aResult);
 
- protected:
-  // Non-text items are ignored.
-  //
-  // @param aHidden true, iff the data should be hidden from non-chrome code.
-  // @param aDataTransfer expected to be empty.
-  static void IPCDataTransferTextItemsToDataTransfer(
-      const IPCDataTransfer& aIpcDataTransfer, bool aHidden,
-      DataTransfer& aDataTransfer);
+  // Formats that are "known" and won't be converted to the kCustomTypesMime.
+  static inline const char* const kKnownFormats[] = {kTextMime,
+                                                     kHTMLMime,
+                                                     kNativeHTMLMime,
+                                                     kRTFMime,
+                                                     kURLMime,
+                                                     kURLDataMime,
+                                                     kURLDescriptionMime,
+                                                     kURLPrivateMime,
+                                                     kPNGImageMime,
+                                                     kJPEGImageMime,
+                                                     kGIFImageMime,
+                                                     kNativeImageMime,
+                                                     kFileMime,
+                                                     kFilePromiseMime,
+                                                     kFilePromiseURLMime,
+                                                     kFilePromiseDestFilename,
+                                                     kFilePromiseDirectoryMime,
+                                                     kMozTextInternal,
+                                                     kHTMLContext,
+                                                     kHTMLInfo,
+                                                     kImageRequestMime,
+                                                     kPDFJSMime};
 
+ protected:
   // caches text and uri-list data formats that exist in the drag service or
   // clipboard for retrieval later.
   nsresult CacheExternalData(const char* aFormat, uint32_t aIndex,
@@ -490,6 +515,10 @@ class DataTransfer final : public nsISupports, public nsWrapperCache {
   nsCOMPtr<mozilla::dom::Element> mDragImage;
   uint32_t mDragImageX;
   uint32_t mDragImageY;
+
+  // Whether to animate the drag back to its starting point if it fails.
+  // Not supported everywhere.
+  bool mShowFailAnimation = true;
 };
 
 NS_DEFINE_STATIC_IID_ACCESSOR(DataTransfer, NS_DATATRANSFER_IID)

@@ -40,7 +40,7 @@ SharedSurface_ANGLEShareHandle::Create(const SharedSurfaceDesc& desc) {
   MOZ_ASSERT(egl->IsExtensionSupported(
       EGLExtension::ANGLE_surface_d3d_texture_2d_share_handle));
 
-  const auto& config = gle->mConfig;
+  const auto& config = gle->mSurfaceConfig;
   MOZ_ASSERT(config);
 
   EGLSurface pbuffer = CreatePBufferSurface(egl.get(), config, desc.size);
@@ -143,7 +143,7 @@ SharedSurface_ANGLEShareHandle::ToSurfaceDescriptor() {
   const auto format = gfx::SurfaceFormat::B8G8R8A8;
   return Some(layers::SurfaceDescriptorD3D10(
       (WindowsHandle)mShareHandle, /* gpuProcessTextureId */ Nothing(),
-      /* arrayIndex */ 0, format, mDesc.size, gfx::YUVColorSpace::Identity,
+      /* arrayIndex */ 0, format, mDesc.size, mDesc.colorSpace,
       gfx::ColorRange::FULL));
 }
 

@@ -11,10 +11,8 @@
 
 #include "jstypes.h"
 
-#include "gc/Barrier.h"
 #include "gc/Memory.h"
 #include "vm/ArrayBufferObject.h"
-#include "vm/JSObject.h"
 #include "wasm/WasmMemory.h"
 
 namespace js {
@@ -153,6 +151,11 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
         dataPtr - sizeof(WasmSharedArrayRawBuffer));
   }
 
+  static WasmSharedArrayRawBuffer* fromDataPtr(uint8_t* dataPtr) {
+    return reinterpret_cast<WasmSharedArrayRawBuffer*>(
+        dataPtr - sizeof(WasmSharedArrayRawBuffer));
+  }
+
   wasm::IndexType wasmIndexType() const { return indexType_; }
 
   wasm::Pages volatileWasmPages() const {
@@ -162,12 +165,17 @@ class WasmSharedArrayRawBuffer : public SharedArrayRawBuffer {
   wasm::Pages wasmClampedMaxPages() const { return clampedMaxPages_; }
   wasm::Pages wasmSourceMaxPages() const { return sourceMaxPages_; }
 
-  size_t wasmMappedSize() const { return mappedSize_; }
+  size_t mappedSize() const { return mappedSize_; }
 
   void tryGrowMaxPagesInPlace(wasm::Pages deltaMaxPages);
 
   bool wasmGrowToPagesInPlace(const Lock&, wasm::IndexType t,
                               wasm::Pages newPages);
+
+  // Discard a region of memory, zeroing the pages and releasing physical memory
+  // back to the operating system. byteOffset and byteLen must be wasm page
+  // aligned and in bounds. A discard of zero bytes will have no effect.
+  void discard(size_t byteOffset, size_t byteLen);
 };
 
 inline WasmSharedArrayRawBuffer* SharedArrayRawBuffer::toWasmBuffer() {
@@ -298,20 +306,16 @@ class SharedArrayBufferObject : public ArrayBufferObjectMaybeShared {
     return rawWasmBufferObject()->wasmSourceMaxPages();
   }
 
-  size_t wasmMappedSize() const {
-    return rawWasmBufferObject()->wasmMappedSize();
-  }
+  size_t wasmMappedSize() const { return rawWasmBufferObject()->mappedSize(); }
+
+  static void wasmDiscard(Handle<SharedArrayBufferObject*> buf,
+                          uint64_t byteOffset, uint64_t byteLength);
 
  private:
   [[nodiscard]] bool acceptRawBuffer(SharedArrayRawBuffer* buffer,
                                      size_t length);
   void dropRawBuffer();
 };
-
-using RootedSharedArrayBufferObject = Rooted<SharedArrayBufferObject*>;
-using HandleSharedArrayBufferObject = Handle<SharedArrayBufferObject*>;
-using MutableHandleSharedArrayBufferObject =
-    MutableHandle<SharedArrayBufferObject*>;
 
 }  // namespace js
 

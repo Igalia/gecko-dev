@@ -18,7 +18,7 @@ impl MigrationLogic for WebExtMigrationLogin {
     const NAME: &'static str = "webext storage db";
     const END_VERSION: u32 = 2;
 
-    fn prepare(&self, conn: &Connection) -> MigrationResult<()> {
+    fn prepare(&self, conn: &Connection, _db_empty: bool) -> MigrationResult<()> {
         let initial_pragmas = "
             -- We don't care about temp tables being persisted to disk.
             PRAGMA temp_store = 2;
@@ -79,42 +79,6 @@ pub fn create_empty_sync_temp_tables(db: &Connection) -> Result<()> {
     log::debug!("Initializing sync temp tables");
     db.execute_batch(CREATE_SYNC_TEMP_TABLES_SQL)?;
     Ok(())
-}
-
-#[cfg(test)]
-pub mod test {
-    use prettytable::{Cell, Row};
-    use rusqlite::Result as RusqliteResult;
-    use rusqlite::{types::Value, Connection};
-
-    // To help debugging tests etc.
-    #[allow(unused)]
-    pub fn print_table(conn: &Connection, table_name: &str) -> RusqliteResult<()> {
-        let mut stmt = conn.prepare(&format!("SELECT * FROM {}", table_name))?;
-        let mut rows = stmt.query([])?;
-        let mut table = prettytable::Table::new();
-        let mut titles = Row::empty();
-        for col in rows.as_ref().expect("must have statement").columns() {
-            titles.add_cell(Cell::new(col.name()));
-        }
-        table.set_titles(titles);
-        while let Some(sql_row) = rows.next()? {
-            let mut table_row = Row::empty();
-            for i in 0..sql_row.as_ref().column_count() {
-                let val = match sql_row.get::<_, Value>(i)? {
-                    Value::Null => "null".to_string(),
-                    Value::Integer(i) => i.to_string(),
-                    Value::Real(f) => f.to_string(),
-                    Value::Text(s) => s,
-                    Value::Blob(b) => format!("<blob with {} bytes>", b.len()),
-                };
-                table_row.add_cell(Cell::new(&val));
-            }
-            table.add_row(table_row);
-        }
-        table.printstd();
-        Ok(())
-    }
 }
 
 #[cfg(test)]

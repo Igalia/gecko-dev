@@ -2,15 +2,16 @@
 /* vim: set sts=2 sw=2 et tw=80: */
 "use strict";
 
-const { AddonTestUtils } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+const { AddonTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
-XPCOMUtils.defineLazyModuleGetters(this, {
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  HomePage: "resource:///modules/HomePage.jsm",
-  PromiseUtils: "resource://gre/modules/PromiseUtils.jsm",
-  RemoteSettings: "resource://services-settings/remote-settings.js",
-  sinon: "resource://testing-common/Sinon.jsm",
+
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  HomePage: "resource:///modules/HomePage.sys.mjs",
+  PromiseUtils: "resource://gre/modules/PromiseUtils.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  sinon: "resource://testing-common/Sinon.sys.mjs",
 });
 
 AddonTestUtils.init(this);
@@ -82,7 +83,7 @@ add_task(async function test_overrides_update_removal() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: EXTENSION_ID,
         },
@@ -138,7 +139,7 @@ add_task(async function test_overrides_update_removal() {
 
   extensionInfo.manifest = {
     version: "2.0",
-    applications: {
+    browser_specific_settings: {
       gecko: {
         id: EXTENSION_ID,
       },
@@ -183,7 +184,7 @@ add_task(async function test_overrides_update_adding() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: EXTENSION_ID,
         },
@@ -216,7 +217,7 @@ add_task(async function test_overrides_update_adding() {
 
   extensionInfo.manifest = {
     version: "2.0",
-    applications: {
+    browser_specific_settings: {
       gecko: {
         id: EXTENSION_ID,
       },
@@ -282,7 +283,7 @@ add_task(async function test_overrides_update_homepage_change() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: EXTENSION_ID,
         },
@@ -310,7 +311,7 @@ add_task(async function test_overrides_update_homepage_change() {
 
   extensionInfo.manifest = {
     version: "2.0",
-    applications: {
+    browser_specific_settings: {
       gecko: {
         id: EXTENSION_ID,
       },
@@ -392,7 +393,7 @@ add_task(async function test_default_search_prompts() {
     useAddonManager: "permanent",
     manifest: {
       version: "1.0",
-      applications: {
+      browser_specific_settings: {
         gecko: {
           id: EXTENSION_ID,
         },
@@ -513,8 +514,8 @@ async function test_default_search_on_updating_addons_installed_before_bug175776
     },
   };
 
-  const { ExtensionSettingsStore } = ChromeUtils.import(
-    "resource://gre/modules/ExtensionSettingsStore.jsm"
+  const { ExtensionSettingsStore } = ChromeUtils.importESModule(
+    "resource://gre/modules/ExtensionSettingsStore.sys.mjs"
   );
 
   async function assertExtensionSettingsStore(
@@ -588,7 +589,10 @@ async function test_default_search_on_updating_addons_installed_before_bug175776
       extensionInfo.manifest.chrome_settings_overrides.search_provider.name
     );
   }
-  await Services.search.setDefault(initialEngine);
+  await Services.search.setDefault(
+    initialEngine,
+    Ci.nsISearchService.CHANGE_REASON_UNKNOWN
+  );
 
   let defaultEngineName = (await Services.search.getDefault()).name;
   Assert.equal(

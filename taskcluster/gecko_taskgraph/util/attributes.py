@@ -5,7 +5,6 @@
 
 import re
 
-
 INTEGRATION_PROJECTS = {
     "autoland",
 }
@@ -16,13 +15,15 @@ RELEASE_PROJECTS = {
     "mozilla-central",
     "mozilla-beta",
     "mozilla-release",
-    "mozilla-esr91",
     "mozilla-esr102",
+    "mozilla-esr115",
     "comm-central",
     "comm-beta",
-    "comm-esr91",
     "comm-esr102",
-    "oak",
+    "comm-esr115",
+    # bug 1845368: pine is a permanent project branch used for testing
+    # nightly updates
+    "pine",
 }
 
 RELEASE_PROMOTION_PROJECTS = {
@@ -34,8 +35,8 @@ RELEASE_PROMOTION_PROJECTS = {
 
 TEMPORARY_PROJECTS = set(
     {
-        # When using a "Disposeabel Project Branch" you can specify your branch here. e.g.:
-        # 'oak',
+        # When using a "Disposable Project Branch" you can specify your branch here. e.g.:
+        "oak",
     }
 )
 
@@ -49,9 +50,16 @@ ALL_PROJECTS = RELEASE_PROMOTION_PROJECTS | TRUNK_PROJECTS | TEMPORARY_PROJECTS
 RUN_ON_PROJECT_ALIASES = {
     # key is alias, value is lambda to test it against
     "all": lambda project: True,
-    "integration": lambda project: project in INTEGRATION_PROJECTS,
-    "release": lambda project: project in RELEASE_PROJECTS,
-    "trunk": lambda project: project in TRUNK_PROJECTS,
+    "integration": lambda project: (
+        project in INTEGRATION_PROJECTS or project == "toolchains"
+    ),
+    "release": lambda project: (project in RELEASE_PROJECTS or project == "toolchains"),
+    "trunk": lambda project: (project in TRUNK_PROJECTS or project == "toolchains"),
+    "trunk-only": lambda project: project in TRUNK_PROJECTS,
+    "autoland": lambda project: project in ("autoland", "toolchains"),
+    "autoland-only": lambda project: project == "autoland",
+    "mozilla-central": lambda project: project in ("mozilla-central", "toolchains"),
+    "mozilla-central-only": lambda project: project == "mozilla-central",
 }
 
 _COPYABLE_ATTRIBUTES = (
@@ -135,5 +143,4 @@ def is_try(params):
 def task_name(task):
     if task.label.startswith(task.kind + "-"):
         return task.label[len(task.kind) + 1 :]
-    else:
-        raise AttributeError(f"Task {task.label} does not have a name.")
+    raise AttributeError(f"Task {task.label} does not have a name.")

@@ -1,15 +1,13 @@
-const { NetUtil } = ChromeUtils.import("resource://gre/modules/NetUtil.jsm");
-
-var { XPCOMUtils } = ChromeUtils.importESModule(
-  "resource://gre/modules/XPCOMUtils.sys.mjs"
+const { NetUtil } = ChromeUtils.importESModule(
+  "resource://gre/modules/NetUtil.sys.mjs"
 );
 
 function inChildProcess() {
   return Services.appinfo.processType != Ci.nsIXULRuntime.PROCESS_TYPE_DEFAULT;
 }
 
-const { CookieXPCShellUtils } = ChromeUtils.import(
-  "resource://testing-common/CookieXPCShellUtils.jsm"
+const { CookieXPCShellUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/CookieXPCShellUtils.sys.mjs"
 );
 
 let CookieXPCShellUtilsInitialized = false;

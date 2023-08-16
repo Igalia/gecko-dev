@@ -17,6 +17,8 @@
 
 namespace mozilla::dom {
 
+using namespace streams_abstract;
+
 NS_IMPL_CYCLE_COLLECTION_WRAPPERCACHE(TransformStreamDefaultController, mGlobal,
                                       mStream, mTransformerAlgorithms)
 NS_IMPL_CYCLE_COLLECTING_ADDREF(TransformStreamDefaultController)
@@ -33,12 +35,12 @@ void TransformStreamDefaultController::SetStream(TransformStream& aStream) {
   mStream = &aStream;
 }
 
-TransformerAlgorithms* TransformStreamDefaultController::Algorithms() {
+TransformerAlgorithmsBase* TransformStreamDefaultController::Algorithms() {
   return mTransformerAlgorithms;
 }
 
 void TransformStreamDefaultController::SetAlgorithms(
-    TransformerAlgorithms* aTransformerAlgorithms) {
+    TransformerAlgorithmsBase* aTransformerAlgorithms) {
   mTransformerAlgorithms = aTransformerAlgorithms;
 }
 
@@ -139,8 +141,8 @@ void TransformStreamDefaultController::Enqueue(JSContext* aCx,
     // Step 7.1: Assert: backpressure is true.
     MOZ_ASSERT(backpressure);
 
-    // Step 7.2: Perform ! TransformStreamSetBackpressure(stream, true).
-    TransformStreamSetBackpressure(stream, true, aRv);
+    // Step 7.2: Perform ! TransformStreamSetBackpressure(true).
+    stream->SetBackpressure(true);
   }
 }
 
@@ -192,11 +194,13 @@ void TransformStreamDefaultController::Terminate(JSContext* aCx,
   TransformStreamErrorWritableAndUnblockWrite(aCx, stream, error, aRv);
 }
 
+namespace streams_abstract {
+
 // https://streams.spec.whatwg.org/#set-up-transform-stream-default-controller
 void SetUpTransformStreamDefaultController(
     JSContext* aCx, TransformStream& aStream,
     TransformStreamDefaultController& aController,
-    TransformerAlgorithms& aTransformerAlgorithms) {
+    TransformerAlgorithmsBase& aTransformerAlgorithms) {
   // Step 1. Assert: stream implements TransformStream.
   // Step 2. Assert: stream.[[controller]] is undefined.
   MOZ_ASSERT(!aStream.Controller());
@@ -228,5 +232,7 @@ void SetUpTransformStreamDefaultControllerFromTransformer(
   // transformAlgorithm, flushAlgorithm).
   SetUpTransformStreamDefaultController(aCx, aStream, *controller, *algorithms);
 }
+
+}  // namespace streams_abstract
 
 }  // namespace mozilla::dom

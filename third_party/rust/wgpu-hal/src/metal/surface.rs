@@ -1,3 +1,5 @@
+#![allow(clippy::let_unit_value)] // `let () =` being used to constrain result type
+
 use std::{mem, os::raw::c_void, ptr::NonNull, sync::Once, thread};
 
 use core_graphics_types::{
@@ -15,7 +17,7 @@ use objc::{
 use parking_lot::Mutex;
 
 #[cfg(target_os = "macos")]
-#[link(name = "QuartzCore", kind = "framework")]
+#[cfg_attr(feature = "link", link(name = "QuartzCore", kind = "framework"))]
 extern "C" {
     #[allow(non_upper_case_globals)]
     static kCAGravityTopLeft: *mut Object;
@@ -57,11 +59,11 @@ impl HalManagedMetalLayerDelegate {
 }
 
 impl super::Surface {
-    fn new(view: Option<NonNull<Object>>, layer: mtl::MetalLayer) -> Self {
+    fn new(view: Option<NonNull<Object>>, layer: metal::MetalLayer) -> Self {
         Self {
             view,
             render_layer: Mutex::new(layer),
-            raw_swapchain_format: mtl::MTLPixelFormat::Invalid,
+            swapchain_format: None,
             extent: wgt::Extent3d::default(),
             main_thread_id: thread::current().id(),
             present_with_transaction: false,
@@ -81,30 +83,51 @@ impl super::Surface {
         delegate: Option<&HalManagedMetalLayerDelegate>,
     ) -> Self {
         let view = view as *mut Object;
+        let render_layer = {
+            let layer = unsafe { Self::get_metal_layer(view, delegate) };
+            unsafe { mem::transmute::<_, &metal::MetalLayerRef>(layer) }
+        }
+        .to_owned();
+        let _: *mut c_void = msg_send![view, retain];
+        Self::new(NonNull::new(view), render_layer)
+    }
+
+    pub unsafe fn from_layer(layer: &metal::MetalLayerRef) -> Self {
+        let class = class!(CAMetalLayer);
+        let proper_kind: BOOL = msg_send![layer, isKindOfClass: class];
+        assert_eq!(proper_kind, YES);
+        Self::new(None, layer.to_owned())
+    }
+
+    /// If not called on the main thread, this will panic.
+    pub(crate) unsafe fn get_metal_layer(
+        view: *mut Object,
+        delegate: Option<&HalManagedMetalLayerDelegate>,
+    ) -> *mut Object {
         if view.is_null() {
             panic!("window does not have a valid contentView");
         }
 
         let is_main_thread: BOOL = msg_send![class!(NSThread), isMainThread];
         if is_main_thread == NO {
-            panic!("create_surface cannot be called in non-ui thread.");
+            panic!("get_metal_layer cannot be called in non-ui thread.");
         }
 
         let main_layer: *mut Object = msg_send![view, layer];
         let class = class!(CAMetalLayer);
         let is_valid_layer: BOOL = msg_send![main_layer, isKindOfClass: class];
 
-        let render_layer = if is_valid_layer == YES {
-            mem::transmute::<_, &mtl::MetalLayerRef>(main_layer).to_owned()
+        if is_valid_layer == YES {
+            main_layer
         } else {
             // If the main layer is not a CAMetalLayer, we create a CAMetalLayer and use it.
-            let new_layer: mtl::MetalLayer = msg_send![class, new];
+            let new_layer: *mut Object = msg_send![class, new];
             let frame: CGRect = msg_send![main_layer, bounds];
-            let () = msg_send![new_layer.as_ref(), setFrame: frame];
+            let () = msg_send![new_layer, setFrame: frame];
             #[cfg(target_os = "ios")]
             {
                 // Unlike NSView, UIView does not allow to replace main layer.
-                let () = msg_send![main_layer, addSublayer: new_layer.as_ref()];
+                let () = msg_send![main_layer, addSublayer: new_layer];
                 // On iOS, "from_view" may be called before the application initialization is complete,
                 // `msg_send![view, window]` and `msg_send![window, screen]` will get null.
                 let screen: *mut Object = msg_send![class!(UIScreen), mainScreen];
@@ -113,9 +136,9 @@ impl super::Surface {
             };
             #[cfg(target_os = "macos")]
             {
-                let () = msg_send![view, setLayer: new_layer.as_ref()];
+                let () = msg_send![view, setLayer: new_layer];
                 let () = msg_send![view, setWantsLayer: YES];
-                let () = msg_send![new_layer.as_ref(), setContentsGravity: kCAGravityTopLeft];
+                let () = msg_send![new_layer, setContentsGravity: unsafe { kCAGravityTopLeft }];
                 let window: *mut Object = msg_send![view, window];
                 if !window.is_null() {
                     let scale_factor: CGFloat = msg_send![window, backingScaleFactor];
@@ -126,17 +149,7 @@ impl super::Surface {
                 let () = msg_send![new_layer, setDelegate: delegate.0];
             }
             new_layer
-        };
-
-        let _: *mut c_void = msg_send![view, retain];
-        Self::new(NonNull::new(view), render_layer)
-    }
-
-    pub unsafe fn from_layer(layer: &mtl::MetalLayerRef) -> Self {
-        let class = class!(CAMetalLayer);
-        let proper_kind: BOOL = msg_send![layer, isKindOfClass: class];
-        assert_eq!(proper_kind, YES);
-        Self::new(None, layer.to_owned())
+        }
     }
 
     pub(super) fn dimensions(&self) -> wgt::Extent3d {
@@ -165,18 +178,22 @@ impl crate::Surface<super::Api> for super::Surface {
         log::info!("build swapchain {:?}", config);
 
         let caps = &device.shared.private_caps;
-        self.raw_swapchain_format = caps.map_format(config.format);
+        self.swapchain_format = Some(config.format);
         self.extent = config.extent;
 
         let render_layer = self.render_layer.lock();
         let framebuffer_only = config.usage == crate::TextureUses::COLOR_TARGET;
-        let display_sync = config.present_mode != wgt::PresentMode::Immediate;
+        let display_sync = match config.present_mode {
+            wgt::PresentMode::Fifo => true,
+            wgt::PresentMode::Immediate => false,
+            m => unreachable!("Unsupported present mode: {m:?}"),
+        };
         let drawable_size = CGSize::new(config.extent.width as f64, config.extent.height as f64);
 
         match config.composite_alpha_mode {
-            crate::CompositeAlphaMode::Opaque => render_layer.set_opaque(true),
-            crate::CompositeAlphaMode::PostMultiplied => render_layer.set_opaque(false),
-            crate::CompositeAlphaMode::PreMultiplied => (),
+            wgt::CompositeAlphaMode::Opaque => render_layer.set_opaque(true),
+            wgt::CompositeAlphaMode::PostMultiplied => render_layer.set_opaque(false),
+            _ => (),
         }
 
         let device_raw = device.shared.device.lock();
@@ -192,13 +209,13 @@ impl crate::Surface<super::Api> for super::Surface {
                 let () = msg_send![*render_layer, setFrame: bounds];
             }
         }
-        render_layer.set_device(&*device_raw);
-        render_layer.set_pixel_format(self.raw_swapchain_format);
+        render_layer.set_device(&device_raw);
+        render_layer.set_pixel_format(caps.map_format(config.format));
         render_layer.set_framebuffer_only(framebuffer_only);
         render_layer.set_presents_with_transaction(self.present_with_transaction);
         // opt-in to Metal EDR
         // EDR potentially more power used in display and more bandwidth, memory footprint.
-        let wants_edr = self.raw_swapchain_format == mtl::MTLPixelFormat::RGBA16Float;
+        let wants_edr = config.format == wgt::TextureFormat::Rgba16Float;
         if wants_edr != render_layer.wants_extended_dynamic_range_content() {
             render_layer.set_wants_extended_dynamic_range_content(wants_edr);
         }
@@ -217,7 +234,7 @@ impl crate::Surface<super::Api> for super::Surface {
     }
 
     unsafe fn unconfigure(&mut self, _device: &super::Device) {
-        self.raw_swapchain_format = mtl::MTLPixelFormat::Invalid;
+        self.swapchain_format = None;
     }
 
     unsafe fn acquire_texture(
@@ -237,8 +254,8 @@ impl crate::Surface<super::Api> for super::Surface {
         let suf_texture = super::SurfaceTexture {
             texture: super::Texture {
                 raw: texture,
-                raw_format: self.raw_swapchain_format,
-                raw_type: mtl::MTLTextureType::D2,
+                format: self.swapchain_format.unwrap(),
+                raw_type: metal::MTLTextureType::D2,
                 array_layers: 1,
                 mip_levels: 1,
                 copy_size: crate::CopyExtent {

@@ -51,8 +51,7 @@ static int32_t GetActionType(nsIContent* aContent) {
 
   if (aContent) {
     if (!aContent->IsElement() ||
-        !aContent->AsElement()->GetAttr(kNameSpaceID_None,
-                                        nsGkAtoms::actiontype_, value))
+        !aContent->AsElement()->GetAttr(nsGkAtoms::actiontype_, value))
       return NS_MATHML_ACTION_TYPE_NONE;
   }
 
@@ -127,8 +126,7 @@ nsIFrame* nsMathMLmactionFrame::GetSelectedFrame() {
     return mSelectedFrame;
   }
 
-  mContent->AsElement()->GetAttr(kNameSpaceID_None, nsGkAtoms::selection_,
-                                 value);
+  mContent->AsElement()->GetAttr(nsGkAtoms::selection_, value);
   if (!value.IsEmpty()) {
     nsresult errorCode;
     selection = value.ToInteger(&errorCode);
@@ -164,8 +162,8 @@ nsIFrame* nsMathMLmactionFrame::GetSelectedFrame() {
 }
 
 void nsMathMLmactionFrame::SetInitialChildList(ChildListID aListID,
-                                               nsFrameList& aChildList) {
-  nsMathMLSelectedFrame::SetInitialChildList(aListID, aChildList);
+                                               nsFrameList&& aChildList) {
+  nsMathMLSelectedFrame::SetInitialChildList(aListID, std::move(aChildList));
 
   if (!mSelectedFrame) {
     mActionType = NS_MATHML_ACTION_TYPE_NONE;
@@ -208,7 +206,7 @@ nsresult nsMathMLmactionFrame::AttributeChanged(int32_t aNameSpaceID,
   }
 
   if (needsReflow) {
-    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::TreeChange,
+    PresShell()->FrameNeedsReflow(this, IntrinsicDirty::FrameAndAncestors,
                                   NS_FRAME_IS_DIRTY);
   }
 
@@ -302,8 +300,8 @@ void nsMathMLmactionFrame::MouseClick() {
                                      value, notify);
 
       // Now trigger a content-changed reflow...
-      PresShell()->FrameNeedsReflow(mSelectedFrame, IntrinsicDirty::TreeChange,
-                                    NS_FRAME_IS_DIRTY);
+      PresShell()->FrameNeedsReflow(
+          mSelectedFrame, IntrinsicDirty::FrameAndAncestors, NS_FRAME_IS_DIRTY);
     }
   }
 }

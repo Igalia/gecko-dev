@@ -13,6 +13,8 @@
 #include "JavaExceptions.h"
 #include "mozilla/java/WebAuthnTokenManagerWrappers.h"
 #include "mozilla/jni/Conversions.h"
+#include "mozilla/StaticPrefs_security.h"
+#include "WebAuthnEnumStrings.h"
 
 namespace mozilla {
 namespace jni {
@@ -92,7 +94,7 @@ RefPtr<U2FRegisterPromise> AndroidWebAuthnTokenManager::Register(
 
   ClearPromises();
 
-  GetMainThreadEventTarget()->Dispatch(NS_NewRunnableFunction(
+  GetMainThreadSerialEventTarget()->Dispatch(NS_NewRunnableFunction(
       "java::WebAuthnTokenManager::WebAuthnMakeCredential",
       [self = RefPtr{this}, aInfo, aForceNoneAttestation]() {
         AssertIsOnMainThread();
@@ -132,79 +134,77 @@ RefPtr<U2FRegisterPromise> AndroidWebAuthnTokenManager::Register(
         GECKOBUNDLE_START(extensionsBundle);
         GECKOBUNDLE_START(credentialBundle);
 
-        if (aInfo.Extra().isSome()) {
-          const auto& extra = aInfo.Extra().ref();
-          const auto& rp = extra.Rp();
-          const auto& user = extra.User();
+        const auto& rp = aInfo.Rp();
+        const auto& user = aInfo.User();
 
-          // If we have extra data, then this is WebAuthn, not U2F
-          GECKOBUNDLE_PUT(credentialBundle, "isWebAuthn",
-                          java::sdk::Integer::ValueOf(1));
+        GECKOBUNDLE_PUT(credentialBundle, "isWebAuthn",
+                        java::sdk::Integer::ValueOf(1));
 
-          // Get the attestation preference and override if the user asked
-          AttestationConveyancePreference attestation =
-              extra.attestationConveyancePreference();
-
-          if (aForceNoneAttestation) {
-            // Add UI support to trigger this, bug 1550164
-            attestation = AttestationConveyancePreference::None;
-          }
-
-          nsString attestPref;
-          attestPref.AssignASCII(
-              AttestationConveyancePreferenceValues::GetString(attestation));
+        // Get the attestation preference and override if the user asked
+        if (aForceNoneAttestation) {
+          // Add UI support to trigger this, bug 1550164
           GECKOBUNDLE_PUT(authSelBundle, "attestationPreference",
-                          jni::StringParam(attestPref));
-
-          const WebAuthnAuthenticatorSelection& sel =
-              extra.AuthenticatorSelection();
-          if (sel.requireResidentKey()) {
-            GECKOBUNDLE_PUT(authSelBundle, "requireResidentKey",
-                            java::sdk::Integer::ValueOf(1));
-          }
-
-          if (sel.userVerificationRequirement() ==
-              UserVerificationRequirement::Required) {
-            GECKOBUNDLE_PUT(authSelBundle, "requireUserVerification",
-                            java::sdk::Integer::ValueOf(1));
-          }
-
-          if (sel.authenticatorAttachment().isSome()) {
-            const AuthenticatorAttachment authenticatorAttachment =
-                sel.authenticatorAttachment().value();
-            if (authenticatorAttachment == AuthenticatorAttachment::Platform) {
-              GECKOBUNDLE_PUT(authSelBundle, "requirePlatformAttachment",
-                              java::sdk::Integer::ValueOf(1));
-            } else if (authenticatorAttachment ==
-                       AuthenticatorAttachment::Cross_platform) {
-              GECKOBUNDLE_PUT(authSelBundle, "requireCrossPlatformAttachment",
-                              java::sdk::Integer::ValueOf(1));
-            }
-          }
-
-          // Get extensions
-          for (const WebAuthnExtension& ext : extra.Extensions()) {
-            if (ext.type() == WebAuthnExtension::TWebAuthnExtensionAppId) {
-              GECKOBUNDLE_PUT(
-                  extensionsBundle, "fidoAppId",
-                  jni::StringParam(
-                      ext.get_WebAuthnExtensionAppId().appIdentifier()));
-            }
-          }
-
-          uidBuf.Assign(user.Id());
-
-          GECKOBUNDLE_PUT(credentialBundle, "rpName",
-                          jni::StringParam(rp.Name()));
-          GECKOBUNDLE_PUT(credentialBundle, "rpIcon",
-                          jni::StringParam(rp.Icon()));
-          GECKOBUNDLE_PUT(credentialBundle, "userName",
-                          jni::StringParam(user.Name()));
-          GECKOBUNDLE_PUT(credentialBundle, "userIcon",
-                          jni::StringParam(user.Icon()));
-          GECKOBUNDLE_PUT(credentialBundle, "userDisplayName",
-                          jni::StringParam(user.DisplayName()));
+                          jni::StringParam(u"none"_ns));
+        } else {
+          const nsString& attestation = aInfo.attestationConveyancePreference();
+          GECKOBUNDLE_PUT(authSelBundle, "attestationPreference",
+                          jni::StringParam(attestation));
         }
+
+        const WebAuthnAuthenticatorSelection& sel =
+            aInfo.AuthenticatorSelection();
+        // Unfortunately, GMS's FIDO2 API has no option for Passkey. If using
+        // residentKey, credential will be synced with Passkey via Google
+        // account or credential provider service. So this is experimental.
+        if (StaticPrefs::
+                security_webauthn_webauthn_enable_android_fido2_residentkey()) {
+          GECKOBUNDLE_PUT(authSelBundle, "residentKey",
+                          jni::StringParam(sel.residentKey()));
+        }
+
+        if (sel.userVerificationRequirement().EqualsLiteral(
+                MOZ_WEBAUTHN_USER_VERIFICATION_REQUIREMENT_REQUIRED)) {
+          GECKOBUNDLE_PUT(authSelBundle, "requireUserVerification",
+                          java::sdk::Integer::ValueOf(1));
+        }
+
+        if (sel.authenticatorAttachment().isSome()) {
+          const nsString& authenticatorAttachment =
+              sel.authenticatorAttachment().value();
+          if (authenticatorAttachment.EqualsLiteral(
+                  MOZ_WEBAUTHN_AUTHENTICATOR_ATTACHMENT_PLATFORM)) {
+            GECKOBUNDLE_PUT(authSelBundle, "requirePlatformAttachment",
+                            java::sdk::Integer::ValueOf(1));
+          } else if (
+              authenticatorAttachment.EqualsLiteral(
+                  MOZ_WEBAUTHN_AUTHENTICATOR_ATTACHMENT_CROSS_PLATFORM)) {
+            GECKOBUNDLE_PUT(authSelBundle, "requireCrossPlatformAttachment",
+                            java::sdk::Integer::ValueOf(1));
+          }
+        }
+
+        // Get extensions
+        for (const WebAuthnExtension& ext : aInfo.Extensions()) {
+          if (ext.type() == WebAuthnExtension::TWebAuthnExtensionAppId) {
+            GECKOBUNDLE_PUT(
+                extensionsBundle, "fidoAppId",
+                jni::StringParam(
+                    ext.get_WebAuthnExtensionAppId().appIdentifier()));
+          }
+        }
+
+        uidBuf.Assign(user.Id());
+
+        GECKOBUNDLE_PUT(credentialBundle, "rpName",
+                        jni::StringParam(rp.Name()));
+        GECKOBUNDLE_PUT(credentialBundle, "rpIcon",
+                        jni::StringParam(rp.Icon()));
+        GECKOBUNDLE_PUT(credentialBundle, "userName",
+                        jni::StringParam(user.Name()));
+        GECKOBUNDLE_PUT(credentialBundle, "userIcon",
+                        jni::StringParam(user.Icon()));
+        GECKOBUNDLE_PUT(credentialBundle, "userDisplayName",
+                        jni::StringParam(user.DisplayName()));
 
         GECKOBUNDLE_PUT(credentialBundle, "rpId",
                         jni::StringParam(aInfo.RpId()));
@@ -264,11 +264,10 @@ void AndroidWebAuthnTokenManager::HandleRegisterResult(
         "AndroidWebAuthnTokenManager::RegisterComplete",
         [self = RefPtr<AndroidWebAuthnTokenManager>(this),
          aResult = std::move(aResult)]() {
-          CryptoBuffer emptyBuffer;
           nsTArray<WebAuthnExtensionResult> extensions;
-          WebAuthnMakeCredentialResult result(
-              aResult.mClientDataJSON, aResult.mAttObj, aResult.mKeyHandle,
-              emptyBuffer, extensions);
+          WebAuthnMakeCredentialResult result(aResult.mClientDataJSON,
+                                              aResult.mAttObj,
+                                              aResult.mKeyHandle, extensions);
           self->mRegisterPromise.Resolve(std::move(result), __func__);
         }));
   }
@@ -280,7 +279,7 @@ RefPtr<U2FSignPromise> AndroidWebAuthnTokenManager::Sign(
 
   ClearPromises();
 
-  GetMainThreadEventTarget()->Dispatch(NS_NewRunnableFunction(
+  GetMainThreadSerialEventTarget()->Dispatch(NS_NewRunnableFunction(
       "java::WebAuthnTokenManager::WebAuthnGetAssertion",
       [self = RefPtr{this}, aInfo]() {
         AssertIsOnMainThread();
@@ -315,24 +314,20 @@ RefPtr<U2FSignPromise> AndroidWebAuthnTokenManager::Sign(
         // Get extensions
         GECKOBUNDLE_START(assertionBundle);
         GECKOBUNDLE_START(extensionsBundle);
-        if (aInfo.Extra().isSome()) {
-          const auto& extra = aInfo.Extra().ref();
 
-          // If we have extra data, then this is WebAuthn, not U2F
-          GECKOBUNDLE_PUT(assertionBundle, "isWebAuthn",
-                          java::sdk::Integer::ValueOf(1));
+        GECKOBUNDLE_PUT(assertionBundle, "isWebAuthn",
+                        java::sdk::Integer::ValueOf(1));
 
-          // User Verification Requirement is not currently used in the
-          // Android FIDO API. Adding it should look like
-          // AttestationConveyancePreference
+        // User Verification Requirement is not currently used in the
+        // Android FIDO API. Adding it should look like
+        // AttestationConveyancePreference
 
-          for (const WebAuthnExtension& ext : extra.Extensions()) {
-            if (ext.type() == WebAuthnExtension::TWebAuthnExtensionAppId) {
-              GECKOBUNDLE_PUT(
-                  extensionsBundle, "fidoAppId",
-                  jni::StringParam(
-                      ext.get_WebAuthnExtensionAppId().appIdentifier()));
-            }
+        for (const WebAuthnExtension& ext : aInfo.Extensions()) {
+          if (ext.type() == WebAuthnExtension::TWebAuthnExtensionAppId) {
+            GECKOBUNDLE_PUT(
+                extensionsBundle, "fidoAppId",
+                jni::StringParam(
+                    ext.get_WebAuthnExtensionAppId().appIdentifier()));
           }
         }
 
@@ -386,14 +381,13 @@ void AndroidWebAuthnTokenManager::HandleSignResult(
         "AndroidWebAuthnTokenManager::SignComplete",
         [self = RefPtr<AndroidWebAuthnTokenManager>(this),
          aResult = std::move(aResult)]() {
-          CryptoBuffer emptyBuffer;
-
           nsTArray<WebAuthnExtensionResult> emptyExtensions;
           WebAuthnGetAssertionResult result(
               aResult.mClientDataJSON, aResult.mKeyHandle, aResult.mSignature,
-              aResult.mAuthData, emptyExtensions, emptyBuffer,
-              aResult.mUserHandle);
-          self->mSignPromise.Resolve(std::move(result), __func__);
+              aResult.mAuthData, emptyExtensions, aResult.mUserHandle);
+          nsTArray<WebAuthnGetAssertionResultWrapper> results = {
+              {result, mozilla::Nothing()}};
+          self->mSignPromise.Resolve(std::move(results), __func__);
         }));
   }
 }

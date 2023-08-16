@@ -4,8 +4,6 @@
 
 "use strict";
 
-const Services = require("Services");
-
 exports.DOMHelpers = {
   /**
    * A simple way to be notified (once) when a window becomes
@@ -28,7 +26,7 @@ exports.DOMHelpers = {
       throw new Error("window can't be null or undefined");
     }
     const docShell = win.docShell;
-    const onReady = function(event) {
+    const onReady = function (event) {
       if (event.target == win.document) {
         docShell.chromeEventHandler.removeEventListener(
           "DOMContentLoaded",

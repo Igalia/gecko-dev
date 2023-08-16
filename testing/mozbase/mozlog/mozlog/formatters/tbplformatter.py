@@ -2,16 +2,15 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import, division
-
 import functools
 from collections import deque
+from functools import reduce
 
+import six
+
+from ..handlers import SummaryHandler
 from .base import BaseFormatter
 from .process import strstatus
-from ..handlers import SummaryHandler
-import six
-from functools import reduce
 
 
 def output_subtests(func):
@@ -119,7 +118,13 @@ class TbplFormatter(BaseFormatter):
 
         else:
             signature = data["signature"] if data["signature"] else "unknown top frame"
-            rv = ["PROCESS-CRASH | %s | application crashed [%s]" % (id, signature)]
+            reason = data.get("reason", "application crashed")
+            rv = ["PROCESS-CRASH | %s [%s] | %s " % (reason, signature, id)]
+
+            if data.get("process_type"):
+                rv.append("Process type: {}".format(data["process_type"]))
+
+            rv.append("Process pid: {}".format(data.get("pid", "unknown")))
 
             if data.get("reason"):
                 rv.append("Mozilla crash reason: %s" % data["reason"])
@@ -308,6 +313,9 @@ class TbplFormatter(BaseFormatter):
     def suite_end(self, data):
         start_time = self.suite_start_time
         # pylint --py3k W1619
+        # in wpt --repeat mode sometimes we miss suite_start()
+        if start_time is None:
+            start_time = data["time"]
         time = int((data["time"] - start_time) / 1000)
 
         return "SUITE-END | took %is\n" % time

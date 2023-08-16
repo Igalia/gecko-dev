@@ -9,8 +9,7 @@
 #include "mozilla/HashFunctions.h"
 #include "mozilla/Range.h"
 
-#include "ds/LifoAlloc.h"
-#include "frontend/BytecodeCompilation.h"
+#include "frontend/BytecodeCompiler.h"  // frontend::CompileEvalScript
 #include "gc/HashUtil.h"
 #include "js/CompilationAndEvaluation.h"
 #include "js/friend/ErrorMessages.h"   // js::GetErrorMessage, JSMSG_*
@@ -18,12 +17,17 @@
 #include "js/friend/WindowProxy.h"     // js::IsWindowProxy
 #include "js/SourceText.h"
 #include "js/StableStringChars.h"
+#include "vm/EnvironmentObject.h"
+#include "vm/FrameIter.h"
 #include "vm/GlobalObject.h"
+#include "vm/Interpreter.h"
 #include "vm/JSContext.h"
 #include "vm/JSONParser.h"
 
-#include "debugger/DebugAPI-inl.h"
-#include "vm/Interpreter-inl.h"
+#include "gc/Marking-inl.h"
+#include "vm/EnvironmentObject-inl.h"
+#include "vm/JSContext-inl.h"
+#include "vm/Stack-inl.h"
 
 using namespace js;
 
@@ -178,7 +182,7 @@ static EvalJSONResult ParseEvalStringAsJSON(
 
   Rooted<JSONParser<CharT>> parser(
       cx, JSONParser<CharT>(cx, jsonChars,
-                            JSONParserBase::ParseType::AttemptForEval));
+                            JSONParser<CharT>::ParseType::AttemptForEval));
   if (!parser.parse(rval)) {
     return EvalJSONResult::Failure;
   }
@@ -326,12 +330,7 @@ static bool EvalKernel(JSContext* cx, HandleValue v, EvalType evalType,
     }
 
     SourceText<char16_t> srcBuf;
-
-    const char16_t* chars = linearChars.twoByteRange().begin().get();
-    SourceOwnership ownership = linearChars.maybeGiveOwnershipToCaller()
-                                    ? SourceOwnership::TakeOwnership
-                                    : SourceOwnership::Borrowed;
-    if (!srcBuf.init(cx, chars, linearStr->length(), ownership)) {
+    if (!srcBuf.initMaybeBorrowed(cx, linearChars)) {
       return false;
     }
 

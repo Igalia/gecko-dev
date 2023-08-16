@@ -1,6 +1,8 @@
 "use strict";
 
-const { Utils } = ChromeUtils.import("resource://services-settings/Utils.jsm");
+const { Utils } = ChromeUtils.importESModule(
+  "resource://services-settings/Utils.sys.mjs"
+);
 
 Cu.importGlobalProperties(["fetch"]);
 
@@ -32,7 +34,7 @@ add_task(async function lastModified_of_non_existing_dump() {
 });
 
 add_task(async function lastModified_summary_is_correct() {
-  ok(Object.keys(Utils._dumpStats).length > 0, "Contains summary of dumps");
+  ok(!!Object.keys(Utils._dumpStats).length, "Contains summary of dumps");
 
   let checked = 0;
   for (let [identifier, lastModified] of Object.entries(Utils._dumpStats)) {

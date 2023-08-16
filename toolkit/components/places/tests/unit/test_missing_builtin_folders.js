@@ -59,11 +59,10 @@ add_task(async function test_database_recreates_roots() {
     "Should successfully access the database for the first time"
   );
 
-  let rootId = PlacesUtils.placesRootId;
-  Assert.greaterOrEqual(rootId, 0, "Should have a valid root Id");
-
   let db = await PlacesUtils.promiseDBConnection();
-
+  let rootId = await PlacesTestUtils.promiseItemId(
+    PlacesUtils.bookmarks.rootGuid
+  );
   for (let guid of ALL_ROOT_GUIDS) {
     let rows = await db.execute(
       `
@@ -97,12 +96,12 @@ add_task(async function test_database_recreates_roots() {
 
     let id = rows[0].getResultByName("id");
     Assert.equal(
-      await PlacesUtils.promiseItemId(guid),
+      await PlacesTestUtils.promiseItemId(guid),
       id,
       "Should return the correct id from promiseItemId"
     );
     Assert.equal(
-      await PlacesUtils.promiseItemGuid(id),
+      await PlacesTestUtils.promiseItemGuid(id),
       guid,
       "Should return the correct guid from promiseItemGuid"
     );

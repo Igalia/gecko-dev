@@ -1,7 +1,7 @@
 "use strict";
 
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
 );
 
 /**
@@ -27,7 +27,7 @@ const { TelemetryTestUtils } = ChromeUtils.import(
  * @returns Promise
  */
 function promiseCrashReport(expectedExtra = {}) {
-  return (async function() {
+  return (async function () {
     info("Starting wait on crash-report-status");
     let [subject] = await TestUtils.topicObserved(
       "crash-report-status",
@@ -110,6 +110,7 @@ function getPropertyBagValue(bag, key) {
  */
 async function setupLocalCrashReportServer() {
   const SERVER_URL =
+    // eslint-disable-next-line @microsoft/sdl/no-insecure-url
     "http://example.com/browser/toolkit/crashreporter/test/browser/crashreport.sjs";
 
   // The test harness sets MOZ_CRASHREPORTER_NO_REPORT, which disables crash
@@ -117,17 +118,14 @@ async function setupLocalCrashReportServer() {
   // report server, and fortunately one is already set up by toolkit/
   // crashreporter/test/Makefile.in.  Assign its URL to MOZ_CRASHREPORTER_URL,
   // which CrashSubmit.jsm uses as a server override.
-  let env = Cc["@mozilla.org/process/environment;1"].getService(
-    Ci.nsIEnvironment
-  );
-  let noReport = env.get("MOZ_CRASHREPORTER_NO_REPORT");
-  let serverUrl = env.get("MOZ_CRASHREPORTER_URL");
-  env.set("MOZ_CRASHREPORTER_NO_REPORT", "");
-  env.set("MOZ_CRASHREPORTER_URL", SERVER_URL);
+  let noReport = Services.env.get("MOZ_CRASHREPORTER_NO_REPORT");
+  let serverUrl = Services.env.get("MOZ_CRASHREPORTER_URL");
+  Services.env.set("MOZ_CRASHREPORTER_NO_REPORT", "");
+  Services.env.set("MOZ_CRASHREPORTER_URL", SERVER_URL);
 
-  registerCleanupFunction(function() {
-    env.set("MOZ_CRASHREPORTER_NO_REPORT", noReport);
-    env.set("MOZ_CRASHREPORTER_URL", serverUrl);
+  registerCleanupFunction(function () {
+    Services.env.set("MOZ_CRASHREPORTER_NO_REPORT", noReport);
+    Services.env.set("MOZ_CRASHREPORTER_URL", serverUrl);
   });
 }
 
@@ -137,7 +135,7 @@ async function setupLocalCrashReportServer() {
  */
 function prepareNoDump() {
   let originalGetDumpID = TabCrashHandler.getDumpID;
-  TabCrashHandler.getDumpID = function(browser) {
+  TabCrashHandler.getDumpID = function (browser) {
     return null;
   };
   registerCleanupFunction(() => {
@@ -146,22 +144,19 @@ function prepareNoDump() {
 }
 
 const kBuildidMatchEnv = "MOZ_BUILDID_MATCH_DONTSEND";
-const envService = Cc["@mozilla.org/process/environment;1"].getService(
-  Ci.nsIEnvironment
-);
 
 function setBuildidMatchDontSendEnv() {
   info("Setting " + kBuildidMatchEnv + "=1");
-  envService.set(kBuildidMatchEnv, "1");
+  Services.env.set(kBuildidMatchEnv, "1");
 }
 
 function unsetBuildidMatchDontSendEnv() {
   info("Setting " + kBuildidMatchEnv + "=0");
-  envService.set(kBuildidMatchEnv, "0");
+  Services.env.set(kBuildidMatchEnv, "0");
 }
 
 function getEventPromise(eventName, eventKind) {
-  return new Promise(function(resolve, reject) {
+  return new Promise(function (resolve, reject) {
     info("Installing event listener (" + eventKind + ")");
     window.addEventListener(
       eventName,

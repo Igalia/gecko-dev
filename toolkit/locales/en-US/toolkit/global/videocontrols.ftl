@@ -2,8 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-videocontrols-scrubber =
-    .aria-label = Position
 # This label is used by screenreaders and other assistive technology to indicate
 # to users how much of the video has been loaded from the network. It will be
 # followed by the percentage of the video that has loaded (e.g. "Loading: 13%").
@@ -27,6 +25,8 @@ videocontrols-exitfullscreen-button =
     .aria-label = Exit Full Screen
 videocontrols-casting-button-label =
     .aria-label = Cast to Screen
+# .offlabel is processed by the video control custom element to be used
+# as a text-track label
 videocontrols-closed-caption-off =
     .offlabel = Off
 
@@ -41,7 +41,7 @@ videocontrols-picture-in-picture-toggle-label2 = Pop out this video
 # This string is used as part of a variation of the Picture-in-Picture video toggle
 # button. When using this variation, this string appears below the toggle when the
 # mouse hovers the toggle.
-videocontrols-picture-in-picture-explainer2 = More screens are more fun. Play this video in Picture-in-Picture while you browse.
+videocontrols-picture-in-picture-explainer3 = More screens are more fun. Play this video while you do other things.
 
 videocontrols-error-aborted = Video loading stopped.
 videocontrols-error-network = Video playback aborted due to a network error.
@@ -64,3 +64,13 @@ videocontrols-status-picture-in-picture = This video is playing in Picture-in-Pi
 # duration video, $position would be "5:00" and the string which is
 # surrounded by <span> would be deleted, result string would be "5:00".
 videocontrols-position-and-duration-labels = { $position }<span data-l10n-name="position-duration-format"> / { $duration }</span>
+
+# This is a plain text version of the videocontrols-position-and-duration-labels
+# string, used by screenreaders.
+#
+# Variables:
+#   $position (String): The current media position
+#   $duration (String): The total video duration
+videocontrols-scrubber-position-and-duration =
+    .aria-label = Position
+    .aria-valuetext = { $position } / { $duration }

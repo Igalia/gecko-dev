@@ -7,15 +7,17 @@
  * entries.
  */
 
-const { SessionWriter } = ChromeUtils.import(
-  "resource:///modules/sessionstore/SessionWriter.jsm"
+const { SessionWriter } = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionWriter.sys.mjs"
 );
 
 // Make sure that we have a profile before initializing SessionFile.
 do_get_profile();
 const {
   SessionFile: { Paths },
-} = ChromeUtils.import("resource:///modules/sessionstore/SessionFile.jsm");
+} = ChromeUtils.importESModule(
+  "resource:///modules/sessionstore/SessionFile.sys.mjs"
+);
 
 const MAX_ENTRIES = 9;
 const URL = "http://example.com/#";
@@ -31,7 +33,7 @@ async function prepareWithLimit(back, fwd) {
   await SessionWriter.wipe();
 }
 
-add_setup(async function() {
+add_setup(async function () {
   registerCleanupFunction(() => SessionWriter.wipe());
 });
 

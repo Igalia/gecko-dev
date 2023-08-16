@@ -40,7 +40,7 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
  public:
   NS_DECL_CYCLE_COLLECTING_ISUPPORTS
-  NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS(WindowGlobalChild)
+  NS_DECL_CYCLE_COLLECTION_WRAPPERCACHE_CLASS(WindowGlobalChild)
 
   static already_AddRefed<WindowGlobalChild> GetByInnerWindowId(
       uint64_t aInnerWindowId);
@@ -123,6 +123,23 @@ class WindowGlobalChild final : public WindowGlobalActor,
 
   bool SameOriginWithTop();
 
+  // Returns `true` if this WindowGlobal is allowed to navigate the given
+  // BrowsingContext. BrowsingContexts which are currently out-of-process are
+  // supported, and assumed to be cross-origin.
+  //
+  // The given BrowsingContext must be in the same BrowsingContextGroup as this
+  // WindowGlobal.
+  bool CanNavigate(dom::BrowsingContext* aTarget, bool aConsiderOpener = true);
+
+  // Using the rules for choosing a browsing context we try to find
+  // the browsing context with the given name in the set of
+  // transitively reachable browsing contexts. Performs access control
+  // checks with regard to this.
+  // See
+  // https://html.spec.whatwg.org/multipage/browsers.html#the-rules-for-choosing-a-browsing-context-given-a-browsing-context-name.
+  dom::BrowsingContext* FindBrowsingContextWithName(
+      const nsAString& aName, bool aUseEntryGlobalForAccessCheck = true);
+
   nsISupports* GetParentObject();
   JSObject* WrapObject(JSContext* aCx,
                        JS::Handle<JSObject*> aGivenProto) override;
@@ -165,9 +182,6 @@ class WindowGlobalChild final : public WindowGlobalActor,
   mozilla::ipc::IPCResult RecvDispatchSecurityPolicyViolation(
       const nsString& aViolationEventJSON);
 
-  mozilla::ipc::IPCResult RecvGetSecurityInfo(
-      GetSecurityInfoResolver&& aResolve);
-
   mozilla::ipc::IPCResult RecvSaveStorageAccessPermissionGranted();
 
   mozilla::ipc::IPCResult RecvAddBlockedFrameNodeByClassifier(
@@ -186,6 +200,8 @@ class WindowGlobalChild final : public WindowGlobalActor,
   MOZ_CAN_RUN_SCRIPT_BOUNDARY mozilla::ipc::IPCResult RecvRestoreTabContent(
       dom::SessionStoreRestoreData* aData,
       RestoreTabContentResolver&& aResolve);
+
+  mozilla::ipc::IPCResult RecvNotifyPermissionChange(const nsCString& aType);
 
   virtual void ActorDestroy(ActorDestroyReason aWhy) override;
 

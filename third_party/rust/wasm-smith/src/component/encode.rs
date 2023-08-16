@@ -1,4 +1,8 @@
+use std::borrow::Cow;
+
 use super::*;
+use wasm_encoder::{ComponentExportKind, ComponentOuterAliasKind, ExportKind};
+use wasmparser::names::KebabStr;
 
 impl Component {
     /// Encode this Wasm component into bytes.
@@ -27,7 +31,6 @@ impl Section {
                 });
             }
             Self::CoreInstance(_) => todo!(),
-            Self::CoreAlias(_) => todo!(),
             Self::CoreType(sec) => sec.encode(component),
             Self::Component(comp) => {
                 let bytes = comp.to_bytes();
@@ -50,8 +53,8 @@ impl Section {
 impl CustomSection {
     fn encode(&self, component: &mut wasm_encoder::Component) {
         component.section(&wasm_encoder::CustomSection {
-            name: &self.name,
-            data: &self.data,
+            name: (&self.name).into(),
+            data: Cow::Borrowed(&self.data),
         });
     }
 }
@@ -70,7 +73,7 @@ impl ImportSection {
     fn encode(&self, component: &mut wasm_encoder::Component) {
         let mut sec = wasm_encoder::ComponentImportSection::new();
         for imp in &self.imports {
-            sec.import(&imp.name, imp.ty);
+            sec.import(wasm_encoder::ComponentExternName::Kebab(&imp.name), imp.ty);
         }
         component.section(&sec);
     }
@@ -128,15 +131,10 @@ impl CoreType {
                                 func_ty.results.iter().copied(),
                             );
                         }
-                        ModuleTypeDef::Alias(alias) => match alias {
-                            CoreAlias::Outer {
-                                count,
-                                i,
-                                kind: CoreOuterAliasKind::Type(_),
-                            } => {
+                        ModuleTypeDef::OuterAlias { count, i, kind } => match kind {
+                            CoreOuterAliasKind::Type(_) => {
                                 enc_mod_ty.alias_outer_core_type(*count, *i);
                             }
-                            CoreAlias::InstanceExport { .. } => unreachable!(),
                         },
                         ModuleTypeDef::Import(imp) => {
                             enc_mod_ty.import(
@@ -163,17 +161,29 @@ impl Type {
                 ty.encode(enc.defined_type());
             }
             Self::Func(func_ty) => {
-                enc.function(
-                    func_ty.params.iter().map(translate_optional_named_type),
-                    func_ty.result,
-                );
+                let mut f = enc.function();
+
+                f.params(func_ty.params.iter().map(|(name, ty)| (name.as_str(), *ty)));
+
+                if let Some(ty) = func_ty.unnamed_result_ty() {
+                    f.result(ty);
+                } else {
+                    f.results(
+                        func_ty.results.iter().map(|(name, ty)| {
+                            (name.as_deref().map(KebabStr::as_str).unwrap(), *ty)
+                        }),
+                    );
+                }
             }
             Self::Component(comp_ty) => {
                 let mut enc_comp_ty = wasm_encoder::ComponentType::new();
                 for def in &comp_ty.defs {
                     match def {
                         ComponentTypeDef::Import(imp) => {
-                            enc_comp_ty.import(&imp.name, imp.ty);
+                            enc_comp_ty.import(
+                                wasm_encoder::ComponentExternName::Kebab(&imp.name),
+                                imp.ty,
+                            );
                         }
                         ComponentTypeDef::CoreType(ty) => {
                             ty.encode(enc_comp_ty.core_type());
@@ -181,24 +191,12 @@ impl Type {
                         ComponentTypeDef::Type(ty) => {
                             ty.encode(enc_comp_ty.ty());
                         }
-                        ComponentTypeDef::Export { name, ty } => {
-                            enc_comp_ty.export(name, *ty);
+                        ComponentTypeDef::Export { name, url: _, ty } => {
+                            enc_comp_ty.export(wasm_encoder::ComponentExternName::Kebab(name), *ty);
                         }
-                        ComponentTypeDef::Alias(Alias::Outer {
-                            count,
-                            i,
-                            kind: OuterAliasKind::Type(_),
-                        }) => {
-                            enc_comp_ty.alias_outer_type(*count, *i);
+                        ComponentTypeDef::Alias(a) => {
+                            enc_comp_ty.alias(translate_alias(a));
                         }
-                        ComponentTypeDef::Alias(Alias::Outer {
-                            count,
-                            i,
-                            kind: OuterAliasKind::CoreType(_),
-                        }) => {
-                            enc_comp_ty.alias_outer_core_type(*count, *i);
-                        }
-                        ComponentTypeDef::Alias(_) => unreachable!(),
                     }
                 }
                 enc.component(&enc_comp_ty);
@@ -207,30 +205,18 @@ impl Type {
                 let mut enc_inst_ty = wasm_encoder::InstanceType::new();
                 for def in &inst_ty.defs {
                     match def {
-                        InstanceTypeDef::CoreType(ty) => {
+                        InstanceTypeDecl::CoreType(ty) => {
                             ty.encode(enc_inst_ty.core_type());
                         }
-                        InstanceTypeDef::Type(ty) => {
+                        InstanceTypeDecl::Type(ty) => {
                             ty.encode(enc_inst_ty.ty());
                         }
-                        InstanceTypeDef::Export { name, ty } => {
-                            enc_inst_ty.export(name, *ty);
+                        InstanceTypeDecl::Export { name, url: _, ty } => {
+                            enc_inst_ty.export(wasm_encoder::ComponentExternName::Kebab(name), *ty);
                         }
-                        InstanceTypeDef::Alias(Alias::Outer {
-                            count,
-                            i,
-                            kind: OuterAliasKind::Type(_),
-                        }) => {
-                            enc_inst_ty.alias_outer_type(*count, *i);
+                        InstanceTypeDecl::Alias(a) => {
+                            enc_inst_ty.alias(translate_alias(a));
                         }
-                        InstanceTypeDef::Alias(Alias::Outer {
-                            count,
-                            i,
-                            kind: OuterAliasKind::CoreType(_),
-                        }) => {
-                            enc_inst_ty.alias_outer_core_type(*count, *i);
-                        }
-                        InstanceTypeDef::Alias(_) => unreachable!(),
                     }
                 }
                 enc.instance(&enc_inst_ty);
@@ -244,13 +230,13 @@ impl DefinedType {
         match self {
             Self::Primitive(ty) => enc.primitive(*ty),
             Self::Record(ty) => {
-                enc.record(ty.fields.iter().map(translate_named_type));
+                enc.record(ty.fields.iter().map(|(name, ty)| (name.as_str(), *ty)));
             }
             Self::Variant(ty) => {
                 enc.variant(
                     ty.cases
                         .iter()
-                        .map(|(ty, refines)| (ty.name.as_str(), ty.ty, *refines)),
+                        .map(|(name, ty, refines)| (name.as_str(), *ty, *refines)),
                 );
             }
             Self::List(ty) => {
@@ -271,19 +257,11 @@ impl DefinedType {
             Self::Option(ty) => {
                 enc.option(ty.inner_ty);
             }
-            Self::Expected(ty) => {
-                enc.expected(ty.ok_ty, ty.err_ty);
+            Self::Result(ty) => {
+                enc.result(ty.ok_ty, ty.err_ty);
             }
         }
     }
-}
-
-fn translate_named_type(ty: &NamedType) -> (&str, ComponentValType) {
-    (&ty.name, ty.ty)
-}
-
-fn translate_optional_named_type(ty: &OptionalNamedType) -> (Option<&str>, ComponentValType) {
-    (ty.name.as_deref(), ty.ty)
 }
 
 fn translate_canon_opt(options: &[CanonOpt]) -> Vec<wasm_encoder::CanonicalOption> {
@@ -298,4 +276,49 @@ fn translate_canon_opt(options: &[CanonOpt]) -> Vec<wasm_encoder::CanonicalOptio
             CanonOpt::PostReturn(idx) => wasm_encoder::CanonicalOption::PostReturn(*idx),
         })
         .collect()
+}
+
+fn translate_alias(alias: &Alias) -> wasm_encoder::Alias<'_> {
+    match alias {
+        Alias::InstanceExport {
+            instance,
+            name,
+            kind,
+        } => wasm_encoder::Alias::InstanceExport {
+            instance: *instance,
+            name,
+            kind: match kind {
+                InstanceExportAliasKind::Module => ComponentExportKind::Module,
+                InstanceExportAliasKind::Component => ComponentExportKind::Component,
+                InstanceExportAliasKind::Instance => ComponentExportKind::Instance,
+                InstanceExportAliasKind::Func => ComponentExportKind::Func,
+                InstanceExportAliasKind::Value => ComponentExportKind::Value,
+            },
+        },
+        Alias::CoreInstanceExport {
+            instance,
+            name,
+            kind,
+        } => wasm_encoder::Alias::CoreInstanceExport {
+            instance: *instance,
+            name,
+            kind: match kind {
+                CoreInstanceExportAliasKind::Func => ExportKind::Func,
+                CoreInstanceExportAliasKind::Table => ExportKind::Table,
+                CoreInstanceExportAliasKind::Global => ExportKind::Global,
+                CoreInstanceExportAliasKind::Memory => ExportKind::Memory,
+                CoreInstanceExportAliasKind::Tag => ExportKind::Tag,
+            },
+        },
+        Alias::Outer { count, i, kind } => wasm_encoder::Alias::Outer {
+            count: *count,
+            index: *i,
+            kind: match kind {
+                OuterAliasKind::Module => ComponentOuterAliasKind::CoreModule,
+                OuterAliasKind::Component => ComponentOuterAliasKind::Component,
+                OuterAliasKind::Type(_) => ComponentOuterAliasKind::Type,
+                OuterAliasKind::CoreType(_) => ComponentOuterAliasKind::CoreType,
+            },
+        },
+    }
 }

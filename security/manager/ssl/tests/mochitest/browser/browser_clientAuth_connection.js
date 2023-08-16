@@ -7,8 +7,8 @@
 // authentication. Also tests that nsIClientAuthDialogs.chooseCertificate
 // is called at the appropriate times and with the correct arguments.
 
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
 );
 
 const DialogState = {
@@ -123,7 +123,7 @@ const gClientAuthDialogs = {
   QueryInterface: ChromeUtils.generateQI(["nsIClientAuthDialogs"]),
 };
 
-add_setup(async function() {
+add_setup(async function () {
   let clientAuthDialogsCID = MockRegistrar.register(
     "@mozilla.org/nsClientAuthDialogs;1",
     gClientAuthDialogs
@@ -157,22 +157,29 @@ add_setup(async function() {
 /**
  * Test helper for the tests below.
  *
- * @param {String} prefValue
+ * @param {string} prefValue
  *        Value to set the "security.default_personal_cert" pref to.
- * @param {String} expectedURL
+ * @param {string} urlToNavigate
+ *        The URL to navigate to.
+ * @param {string} expectedURL
  *        If the connection is expected to load successfully, the URL that
  *        should load. If the connection is expected to fail and result in an
  *        error page, |undefined|.
- * @param {Boolean} expectCallingChooseCertificate
+ * @param {boolean} expectCallingChooseCertificate
  *        Determines whether we expect chooseCertificate to be called.
- * @param {Object} options
+ * @param {object} options
  *        Optional options object to pass on to the window that gets opened.
+ * @param {string} expectStringInPage
+ *        Optional string that is expected to be in the content of the page
+ *        once it loads.
  */
 async function testHelper(
   prefValue,
+  urlToNavigate,
   expectedURL,
   expectCallingChooseCertificate,
-  options = undefined
+  options = undefined,
+  expectStringInPage = undefined
 ) {
   gClientAuthDialogs.chooseCertificateCalled = false;
   await SpecialPowers.pushPrefEnv({
@@ -181,27 +188,52 @@ async function testHelper(
 
   let win = await BrowserTestUtils.openNewBrowserWindow(options);
 
-  BrowserTestUtils.loadURI(
-    win.gBrowser.selectedBrowser,
-    "https://requireclientcert.example.com:443"
-  );
+  BrowserTestUtils.loadURIString(win.gBrowser.selectedBrowser, urlToNavigate);
+  if (expectedURL) {
+    await BrowserTestUtils.browserLoaded(
+      win.gBrowser.selectedBrowser,
+      false,
+      "https://requireclientcert.example.com/",
+      true
+    );
+    let loadedURL = win.gBrowser.selectedBrowser.documentURI.spec;
+    Assert.ok(
+      loadedURL.startsWith(expectedURL),
+      `Expected and actual URLs should match (got '${loadedURL}', expected '${expectedURL}')`
+    );
+  } else {
+    await new Promise(resolve => {
+      let removeEventListener = BrowserTestUtils.addContentEventListener(
+        win.gBrowser.selectedBrowser,
+        "AboutNetErrorLoad",
+        () => {
+          removeEventListener();
+          resolve();
+        },
+        { capture: false, wantUntrusted: true }
+      );
+    });
+  }
 
-  await BrowserTestUtils.browserLoaded(
-    win.gBrowser.selectedBrowser,
-    false,
-    "https://requireclientcert.example.com/",
-    true
-  );
-  let loadedURL = win.gBrowser.selectedBrowser.documentURI.spec;
-  Assert.ok(
-    loadedURL.startsWith(expectedURL),
-    `Expected and actual URLs should match (got '${loadedURL}', expected '${expectedURL}')`
-  );
   Assert.equal(
     gClientAuthDialogs.chooseCertificateCalled,
     expectCallingChooseCertificate,
     "chooseCertificate should have been called if we were expecting it to be called"
   );
+
+  if (expectStringInPage) {
+    let pageContent = await SpecialPowers.spawn(
+      win.gBrowser.selectedBrowser,
+      [],
+      async function () {
+        return content.document.body.textContent;
+      }
+    );
+    Assert.ok(
+      pageContent.includes(expectStringInPage),
+      `page should contain the string '${expectStringInPage}' (was '${pageContent}')`
+    );
+  }
 
   await win.close();
 
@@ -218,6 +250,7 @@ add_task(async function testCertChosenAutomatically() {
   await testHelper(
     "Select Automatically",
     "https://requireclientcert.example.com/",
+    "https://requireclientcert.example.com/",
     false
   );
   // This clears all saved client auth certificate state so we don't influence
@@ -231,8 +264,14 @@ add_task(async function testCertNotChosenByUser() {
   gClientAuthDialogs.state = DialogState.RETURN_CERT_NOT_SELECTED;
   await testHelper(
     "Ask Every Time",
-    "about:neterror?e=nssFailure2&u=https%3A//requireclientcert.example.com/",
-    true
+    "https://requireclientcert.example.com/",
+    undefined,
+    true,
+    undefined,
+    // bug 1818556: ssltunnel doesn't behave as expected here on Windows
+    AppConstants.platform != "win"
+      ? "SSL_ERROR_RX_CERTIFICATE_REQUIRED_ALERT"
+      : undefined
   );
   cars.clearRememberedDecisions();
 });
@@ -242,6 +281,7 @@ add_task(async function testCertChosenByUser() {
   gClientAuthDialogs.state = DialogState.RETURN_CERT_SELECTED;
   await testHelper(
     "Ask Every Time",
+    "https://requireclientcert.example.com/",
     "https://requireclientcert.example.com/",
     true
   );
@@ -254,12 +294,14 @@ add_task(async function testEmptyCertChosenByUser() {
   gClientAuthDialogs.rememberClientAuthCertificate = true;
   await testHelper(
     "Ask Every Time",
-    "about:neterror?e=nssFailure2&u=https%3A//requireclientcert.example.com/",
+    "https://requireclientcert.example.com/",
+    undefined,
     true
   );
   await testHelper(
     "Ask Every Time",
-    "about:neterror?e=nssFailure2&u=https%3A//requireclientcert.example.com/",
+    "https://requireclientcert.example.com/",
+    undefined,
     false
   );
   cars.clearRememberedDecisions();
@@ -279,13 +321,6 @@ add_task(async function testClearPrivateBrowsingState() {
   await testHelper(
     "Ask Every Time",
     "https://requireclientcert.example.com/",
-    true,
-    {
-      private: true,
-    }
-  );
-  await testHelper(
-    "Ask Every Time",
     "https://requireclientcert.example.com/",
     true,
     {
@@ -294,6 +329,16 @@ add_task(async function testClearPrivateBrowsingState() {
   );
   await testHelper(
     "Ask Every Time",
+    "https://requireclientcert.example.com/",
+    "https://requireclientcert.example.com/",
+    true,
+    {
+      private: true,
+    }
+  );
+  await testHelper(
+    "Ask Every Time",
+    "https://requireclientcert.example.com/",
     "https://requireclientcert.example.com/",
     true
   );
@@ -307,12 +352,10 @@ add_task(async function testClearPrivateBrowsingState() {
 // Test that 3rd party certificates are taken into account when filtering client
 // certificates based on the acceptible CA list sent by the server.
 add_task(async function testCertFilteringWithIntermediate() {
-  let intermediateBytes = await OS.File.read(
+  let intermediateBytes = await IOUtils.readUTF8(
     getTestFilePath("intermediate.pem")
   ).then(
-    data => {
-      let decoder = new TextDecoder();
-      let pem = decoder.decode(data);
+    pem => {
       let base64 = pemToBase64(pem);
       let bin = atob(base64);
       let bytes = [];
@@ -332,6 +375,7 @@ add_task(async function testCertFilteringWithIntermediate() {
   await testHelper(
     "Ask Every Time",
     "https://requireclientcert.example.com/",
+    "https://requireclientcert.example.com/",
     true
   );
   cars.clearRememberedDecisions();
@@ -339,4 +383,19 @@ add_task(async function testCertFilteringWithIntermediate() {
   await SpecialPowers.pushPrefEnv({
     set: [["security.enterprise_roots.enabled", true]],
   });
+});
+
+// Test that if the server certificate does not validate successfully,
+// nsIClientAuthDialogs.chooseCertificate() is never called.
+add_task(async function testNoDialogForUntrustedServerCertificate() {
+  gClientAuthDialogs.state = DialogState.ASSERT_NOT_CALLED;
+  await testHelper(
+    "Ask Every Time",
+    "https://requireclientcert-untrusted.example.com/",
+    undefined,
+    false
+  );
+  // This clears all saved client auth certificate state so we don't influence
+  // subsequent tests.
+  cars.clearRememberedDecisions();
 });

@@ -146,6 +146,7 @@ MockCubebStream::MockCubebStream(cubeb* aContext, cubeb_devid aInputDevice,
                                  void* aUserPtr, SmartMockCubebStream* aSelf,
                                  bool aFrozenStart)
     : context(aContext),
+      mUserPtr(aUserPtr),
       mHasInput(aInputStreamParams),
       mHasOutput(aOutputStreamParams),
       mSelf(aSelf),
@@ -153,7 +154,6 @@ MockCubebStream::MockCubebStream(cubeb* aContext, cubeb_devid aInputDevice,
       mFrozenStart(aFrozenStart),
       mDataCallback(aDataCallback),
       mStateCallback(aStateCallback),
-      mUserPtr(aUserPtr),
       mInputDeviceID(aInputDevice),
       mOutputDeviceID(aOutputDevice),
       mAudioGenerator(aInputStreamParams ? aInputStreamParams->channels
@@ -179,12 +179,35 @@ MockCubebStream::~MockCubebStream() = default;
 int MockCubebStream::Start() {
   NotifyStateChanged(CUBEB_STATE_STARTED);
   mStreamStop = false;
-  MonitorAutoLock lock(mFrozenStartMonitor);
   if (mFrozenStart) {
+    // We need to grab mFrozenStartMonitor before returning to avoid races in
+    // the calling code -- it controls when to mFrozenStartMonitor.Notify().
+    // TempData helps facilitate this by holding what's needed to block the
+    // calling thread until the background thread has grabbed the lock.
+    struct TempData {
+      NS_INLINE_DECL_THREADSAFE_REFCOUNTING(TempData)
+      static_assert(HasThreadSafeRefCnt::value,
+                    "Silence a -Wunused-local-typedef warning");
+      Monitor mMonitor{"MockCubebStream::Start::TempData::mMonitor"};
+      bool mFinished = false;
+
+     private:
+      ~TempData() = default;
+    };
+    auto temp = MakeRefPtr<TempData>();
+    MonitorAutoLock lock(temp->mMonitor);
     NS_DispatchBackgroundTask(NS_NewRunnableFunction(
         "MockCubebStream::WaitForThawBeforeStart",
-        [this, self = RefPtr<SmartMockCubebStream>(mSelf)] {
+        [temp, this, self = RefPtr<SmartMockCubebStream>(mSelf)]() mutable {
           MonitorAutoLock lock(mFrozenStartMonitor);
+          {
+            // Unblock MockCubebStream::Start now that we have locked the frozen
+            // start monitor.
+            MonitorAutoLock tempLock(temp->mMonitor);
+            temp->mFinished = true;
+            temp->mMonitor.Notify();
+            temp = nullptr;
+          }
           while (mFrozenStart) {
             mFrozenStartMonitor.Wait();
           }
@@ -192,6 +215,9 @@ int MockCubebStream::Start() {
             MockCubeb::AsMock(context)->StartStream(mSelf);
           }
         }));
+    while (!temp->mFinished) {
+      temp->mMonitor.Wait();
+    }
     return CUBEB_OK;
   }
   MockCubeb::AsMock(context)->StartStream(this);
@@ -199,7 +225,7 @@ int MockCubebStream::Start() {
 }
 
 int MockCubebStream::Stop() {
-  mOutputVerificationEvent.Notify(MakeTuple(
+  mOutputVerificationEvent.Notify(std::make_tuple(
       mAudioVerifier.PreSilenceSamples(), mAudioVerifier.EstimatedFreq(),
       mAudioVerifier.CountDiscontinuities()));
   int rv = MockCubeb::AsMock(context)->StopStream(this);
@@ -208,6 +234,14 @@ int MockCubebStream::Stop() {
     NotifyStateChanged(CUBEB_STATE_STOPPED);
   }
   return rv;
+}
+
+void MockCubebStream::Destroy() {
+  // Dispatch an extra STOPPED state change as produced with audioipc.
+  // https://bugzilla.mozilla.org/show_bug.cgi?id=1801190#c1
+  NotifyStateChanged(CUBEB_STATE_STOPPED);
+
+  MockCubeb::AsMock(context)->StreamDestroy(AsCubebStream());
 }
 
 int MockCubebStream::RegisterDeviceChangedCallback(
@@ -291,7 +325,7 @@ MediaEventSource<uint32_t>& MockCubebStream::FramesVerifiedEvent() {
   return mFramesVerifiedEvent;
 }
 
-MediaEventSource<Tuple<uint64_t, float, uint32_t>>&
+MediaEventSource<std::tuple<uint64_t, float, uint32_t>>&
 MockCubebStream::OutputVerificationEvent() {
   return mOutputVerificationEvent;
 }

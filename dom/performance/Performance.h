@@ -10,6 +10,7 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/DOMEventTargetHelper.h"
 #include "nsCOMPtr.h"
+#include "nsContentUtils.h"
 #include "nsDOMNavigationTiming.h"
 #include "nsTObserverArray.h"
 
@@ -35,7 +36,7 @@ class PerformanceService;
 class PerformanceStorage;
 class PerformanceTiming;
 class PerformanceEventTiming;
-class WorkerPrivate;
+class WorkerGlobalScope;
 class EventCounts;
 
 // Base class for main-thread and worker Performance API
@@ -51,7 +52,7 @@ class Performance : public DOMEventTargetHelper {
       nsDOMNavigationTiming* aDOMTiming, nsITimedChannel* aChannel);
 
   static already_AddRefed<Performance> CreateForWorker(
-      WorkerPrivate* aWorkerPrivate);
+      WorkerGlobalScope* aGlobalScope);
 
   // This will return nullptr if called outside of a Window or Worker.
   static already_AddRefed<Performance> Get(JSContext* aCx,
@@ -119,7 +120,12 @@ class Performance : public DOMEventTargetHelper {
 
   virtual TimeStamp CreationTimeStamp() const = 0;
 
-  bool IsSystemPrincipal() const { return mSystemPrincipal; }
+  RTPCallerType GetRTPCallerType() const { return mRTPCallerType; }
+
+  bool CrossOriginIsolated() const { return mCrossOriginIsolated; }
+  bool ShouldResistFingerprinting() const {
+    return mShouldResistFingerprinting;
+  }
 
   DOMHighResTimeStamp TimeStampToDOMHighResForRendering(TimeStamp) const;
 
@@ -146,19 +152,17 @@ class Performance : public DOMEventTargetHelper {
 
   virtual void UpdateNavigationTimingEntry() = 0;
 
-  virtual bool CrossOriginIsolated() const = 0;
-
   virtual void DispatchPendingEventTimingEntries() = 0;
 
   void QueueNotificationObserversTask();
 
-  virtual bool IsPerformanceTimingAttribute(const nsAString& aName) {
-    return false;
-  }
+  bool IsPerformanceTimingAttribute(const nsAString& aName) const;
+
+  virtual bool IsGlobalObjectWindow() const { return false; };
 
  protected:
-  Performance(nsIGlobalObject* aGlobal, bool aSystemPrincipal);
-  Performance(nsPIDOMWindowInner* aWindow, bool aSystemPrincipal);
+  Performance(nsIGlobalObject* aGlobal);
+  Performance(nsPIDOMWindowInner* aWindow);
 
   virtual ~Performance();
 
@@ -204,33 +208,43 @@ class Performance : public DOMEventTargetHelper {
 
   RefPtr<PerformanceService> mPerformanceService;
 
-  bool mSystemPrincipal;
+  const RTPCallerType mRTPCallerType;
+  const bool mCrossOriginIsolated;
+  const bool mShouldResistFingerprinting;
 
  private:
   MOZ_ALWAYS_INLINE bool CanAddResourceTimingEntry();
   void BufferEvent();
+  void MaybeEmitExternalProfilerMarker(
+      const nsAString& aName, Maybe<const PerformanceMeasureOptions&> aOptions,
+      Maybe<const nsAString&> aStartMark, const Optional<nsAString>& aEndMark);
 
   // The attributes of a PerformanceMeasureOptions that we call
   // ResolveTimestamp* on.
   enum class ResolveTimestampAttribute;
 
   DOMHighResTimeStamp ConvertMarkToTimestampWithString(const nsAString& aName,
-                                                       ErrorResult& aRv);
+                                                       ErrorResult& aRv,
+                                                       bool aReturnUnclamped);
   DOMHighResTimeStamp ConvertMarkToTimestampWithDOMHighResTimeStamp(
       const ResolveTimestampAttribute aAttribute, const double aTimestamp,
       ErrorResult& aRv);
   DOMHighResTimeStamp ConvertMarkToTimestamp(
       const ResolveTimestampAttribute aAttribute,
-      const OwningStringOrDouble& aMarkNameOrTimestamp, ErrorResult& aRv);
+      const OwningStringOrDouble& aMarkNameOrTimestamp, ErrorResult& aRv,
+      bool aReturnUnclamped);
+
+  DOMHighResTimeStamp ConvertNameToTimestamp(const nsAString& aName,
+                                             ErrorResult& aRv);
 
   DOMHighResTimeStamp ResolveEndTimeForMeasure(
       const Optional<nsAString>& aEndMark,
-      const Maybe<const PerformanceMeasureOptions&>& aOptions,
-      ErrorResult& aRv);
+      const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv,
+      bool aReturnUnclamped);
   DOMHighResTimeStamp ResolveStartTimeForMeasure(
       const Maybe<const nsAString&>& aStartMark,
-      const Maybe<const PerformanceMeasureOptions&>& aOptions,
-      ErrorResult& aRv);
+      const Maybe<const PerformanceMeasureOptions&>& aOptions, ErrorResult& aRv,
+      bool aReturnUnclamped);
 };
 
 }  // namespace dom

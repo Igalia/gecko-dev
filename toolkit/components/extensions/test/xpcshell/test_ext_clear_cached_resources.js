@@ -14,8 +14,8 @@ AddonTestUtils.createAppInfo(
   "43"
 );
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
 
 const LEAVE_UUID_PREF = "extensions.webextensions.keepUuidOnUninstall";
@@ -300,7 +300,8 @@ add_task(
     // in XPInstall.jsm).
     const random = Math.round(Math.random() * 36 ** 3).toString(36);
     const tmpDirName = `xpcshelltest_unpacked_addons_${random}`;
-    let tmpExtPath = FileUtils.getDir("TmpD", [tmpDirName], true);
+    let tmpExtPath = FileUtils.getDir("TmpD", [tmpDirName]);
+    tmpExtPath.create(Ci.nsIFile.DIRECTORY_TYPE, FileUtils.PERMS_DIRECTORY);
     registerCleanupFunction(() => {
       tmpExtPath.remove(true);
     });

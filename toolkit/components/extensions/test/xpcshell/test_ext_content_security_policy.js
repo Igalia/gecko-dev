@@ -19,7 +19,6 @@ server.registerPathHandler("/worker.js", (request, response) => {
 const baseCSP = [];
 // Keep in sync with extensions.webextensions.base-content-security-policy
 baseCSP[2] = {
-  "object-src": ["blob:", "filesystem:", "moz-extension:", "'self'"],
   "script-src": [
     "'unsafe-eval'",
     "'wasm-unsafe-eval'",
@@ -35,20 +34,16 @@ baseCSP[2] = {
 };
 // Keep in sync with extensions.webextensions.base-content-security-policy.v3
 baseCSP[3] = {
-  "object-src": ["'self'"],
-  "script-src": [
-    "http://localhost:*",
-    "http://127.0.0.1:*",
-    "'self'",
-    "'wasm-unsafe-eval'",
-  ],
-  "worker-src": [
-    "http://localhost:*",
-    "http://127.0.0.1:*",
-    "'self'",
-    "'wasm-unsafe-eval'",
-  ],
+  "script-src": ["'self'", "'wasm-unsafe-eval'"],
 };
+
+/**
+ * @typedef TestPolicyExpects
+ * @type {object}
+ * @param {boolean} workerEvalAllowed
+ * @param {boolean} workerImportScriptsAllowed
+ * @param {boolean} workerWasmAllowed
+ */
 
 /**
  * Tests that content security policies for an add-on are actually applied to *
@@ -56,12 +51,10 @@ baseCSP[3] = {
  * specific policies, and ensures that the parsed policies applied to the
  * document's principal match what was specified in the policy string.
  *
- * @param {number} [manifest_version]
- * @param {object} [customCSP]
- * @param {object} expects
- * @param {object} expects.workerEvalAllowed
- * @param {object} expects.workerImportScriptsAllowed
- * @param {object} expects.workerWasmAllowed
+ * @param {object} options
+ * @param {number} [options.manifest_version]
+ * @param {object} [options.customCSP]
+ * @param {TestPolicyExpects} options.expects
  */
 async function testPolicy({
   manifest_version = 2,
@@ -78,7 +71,6 @@ async function testPolicy({
   let baseURL;
 
   let addonCSP = {
-    "object-src": ["'self'"],
     "script-src": ["'self'"],
   };
 
@@ -136,11 +128,11 @@ async function testPolicy({
       browser.runtime.getURL("").replace(/\/$/, "")
     );
 
-    browser.test.sendMessage("background-csp", window.getCSP());
+    browser.test.sendMessage("background-csp", window.getCsp());
   }
 
   function tabScript() {
-    browser.test.sendMessage("tab-csp", window.getCSP());
+    browser.test.sendMessage("tab-csp", window.getCsp());
 
     const worker = new Worker("worker.js");
     worker.onmessage = event => {
@@ -222,11 +214,11 @@ async function testPolicy({
       "DOMWindowCreated",
       event => {
         let win = event.target.ownerGlobal;
-        function getCSP() {
+        function getCsp() {
           let { cspJSON } = win.document;
           return win.wrappedJSObject.JSON.parse(cspJSON);
         }
-        Cu.exportFunction(getCSP, win, { defineAs: "getCSP" });
+        Cu.exportFunction(getCsp, win, { defineAs: "getCsp" });
       },
       true
     );
@@ -250,7 +242,7 @@ async function testPolicy({
   );
 
   let contentCSP = await contentPage.spawn(
-    `${baseURL}/content.html`,
+    [`${baseURL}/content.html`],
     async src => {
       let doc = this.content.document;
 
@@ -262,7 +254,7 @@ async function testPolicy({
         frame.onload = resolve;
       });
 
-      return frame.contentWindow.wrappedJSObject.getCSP();
+      return frame.contentWindow.wrappedJSObject.getCsp();
     }
   );
 
@@ -308,7 +300,6 @@ add_task(async function testCSP() {
   await testPolicy({
     manifest_version: 2,
     customCSP: {
-      "object-src": "'self' https://*.example.com",
       "script-src": `'self' https://*.example.com 'unsafe-eval' ${hash}`,
     },
     expects: {
@@ -321,7 +312,6 @@ add_task(async function testCSP() {
   await testPolicy({
     manifest_version: 2,
     customCSP: {
-      "object-src": "'none'",
       "script-src": `'self'`,
     },
     expects: {
@@ -334,9 +324,8 @@ add_task(async function testCSP() {
   await testPolicy({
     manifest_version: 3,
     customCSP: {
-      "object-src": "'self' http://localhost",
-      "script-src": `'self' http://localhost:123 ${hash}`,
-      "worker-src": `'self' http://127.0.0.1:*`,
+      "script-src": `'self' ${hash}`,
+      "worker-src": `'self'`,
     },
     expects: {
       workerEvalAllowed: false,
@@ -348,7 +337,6 @@ add_task(async function testCSP() {
   await testPolicy({
     manifest_version: 3,
     customCSP: {
-      "object-src": "'none'",
       "script-src": `'self'`,
       "worker-src": `'self'`,
     },
@@ -362,7 +350,6 @@ add_task(async function testCSP() {
   await testPolicy({
     manifest_version: 3,
     customCSP: {
-      "object-src": "'none'",
       "script-src": `'self' 'wasm-unsafe-eval'`,
       "worker-src": `'self' 'wasm-unsafe-eval'`,
     },

@@ -8,13 +8,45 @@ exports[`ConditionalPanel it should render at location of selected breakpoint 1`
       "generatedLocation": Object {
         "column": 2,
         "line": 2,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "id": "breakpoint",
       "location": Object {
         "column": 2,
         "line": 2,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "options": Object {
         "condition": undefined,
@@ -171,7 +203,23 @@ exports[`ConditionalPanel it should render at location of selected breakpoint 1`
     Object {
       "column": 2,
       "line": 2,
-      "sourceId": "source",
+      "source": Object {
+        "displayURL": Object {
+          "fileExtension": "",
+          "filename": "url",
+          "group": "",
+          "path": "url",
+          "search": "",
+        },
+        "extensionName": null,
+        "id": "source",
+        "isExtension": false,
+        "isOriginal": false,
+        "isPrettyPrinted": false,
+        "isWasm": false,
+        "thread": "FakeThread",
+        "url": "url",
+      },
     }
   }
   log={false}
@@ -206,13 +254,45 @@ exports[`ConditionalPanel it should render with condition at selected breakpoint
       "generatedLocation": Object {
         "column": 3,
         "line": 3,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "id": "breakpoint",
       "location": Object {
         "column": 3,
         "line": 3,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "options": Object {
         "condition": "I'm a condition",
@@ -373,7 +453,23 @@ exports[`ConditionalPanel it should render with condition at selected breakpoint
     Object {
       "column": 3,
       "line": 3,
-      "sourceId": "source",
+      "source": Object {
+        "displayURL": Object {
+          "fileExtension": "",
+          "filename": "url",
+          "group": "",
+          "path": "url",
+          "search": "",
+        },
+        "extensionName": null,
+        "id": "source",
+        "isExtension": false,
+        "isOriginal": false,
+        "isPrettyPrinted": false,
+        "isWasm": false,
+        "thread": "FakeThread",
+        "url": "url",
+      },
     }
   }
   log={false}
@@ -408,13 +504,45 @@ exports[`ConditionalPanel it should render with logpoint at selected breakpoint 
       "generatedLocation": Object {
         "column": 4,
         "line": 4,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "id": "breakpoint",
       "location": Object {
         "column": 4,
         "line": 4,
-        "sourceId": "source",
+        "source": Object {
+          "displayURL": Object {
+            "fileExtension": "",
+            "filename": "url",
+            "group": "",
+            "path": "url",
+            "search": "",
+          },
+          "extensionName": null,
+          "id": "source",
+          "isExtension": false,
+          "isOriginal": false,
+          "isPrettyPrinted": false,
+          "isWasm": false,
+          "thread": "FakeThread",
+          "url": "url",
+        },
       },
       "options": Object {
         "condition": "not a condition",
@@ -575,7 +703,23 @@ exports[`ConditionalPanel it should render with logpoint at selected breakpoint 
     Object {
       "column": 4,
       "line": 4,
-      "sourceId": "source",
+      "source": Object {
+        "displayURL": Object {
+          "fileExtension": "",
+          "filename": "url",
+          "group": "",
+          "path": "url",
+          "search": "",
+        },
+        "extensionName": null,
+        "id": "source",
+        "isExtension": false,
+        "isOriginal": false,
+        "isPrettyPrinted": false,
+        "isWasm": false,
+        "thread": "FakeThread",
+        "url": "url",
+      },
     }
   }
   log={true}

@@ -17,10 +17,6 @@ add_task(async function setup_storage() {
 // Verify that form fillin works in a remote iframe, and that changing
 // a field updates storage.
 add_task(async function test_iframe_autocomplete() {
-  await SpecialPowers.pushPrefEnv({
-    set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
-  });
-
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
     IFRAME_URL_PATH,
@@ -43,7 +39,7 @@ add_task(async function test_iframe_autocomplete() {
   EventUtils.synthesizeKey("VK_RETURN", {});
 
   let onLoaded = BrowserTestUtils.browserLoaded(browser, true);
-  await SpecialPowers.spawn(iframeBC, [], async function() {
+  await SpecialPowers.spawn(iframeBC, [], async function () {
     await ContentTaskUtils.waitForCondition(() => {
       return (
         content.document.getElementById("street-address").value ==
@@ -59,7 +55,7 @@ add_task(async function test_iframe_autocomplete() {
   await focusUpdateSubmitForm(iframeBC, {
     focusSelector: "#organization",
     newValues: {
-      "#organization": "Example Inc.",
+      "#tel": "+16172535702",
     },
   });
   await onPopupShown;
@@ -69,28 +65,24 @@ add_task(async function test_iframe_autocomplete() {
   await clickDoorhangerButton(MAIN_BUTTON);
   await onUpdated;
 
-  // Check that the organization was updated properly.
+  // Check that the tel number was updated properly.
   let addresses = await getAddresses();
-  is(addresses.length, 3, "Still 1 address in storage");
-  is(
-    addresses[1].organization,
-    "Example Inc.",
-    "Verify the organization field"
-  );
+  is(addresses.length, 3, "Still 3 address in storage");
+  is(addresses[1].tel, "+16172535702", "Verify the tel field");
 
   // Fill in the details again and then clear the form from the dropdown.
   await openPopupOnSubframe(browser, iframeBC, "#street-address");
   await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, iframeBC);
   EventUtils.synthesizeKey("VK_RETURN", {});
 
-  await waitForAutofill(iframeBC, "#organization", "Example Inc.");
+  await waitForAutofill(iframeBC, "#tel", "+16172535702");
 
   // Open the dropdown and select the Clear Form item.
   await openPopupOnSubframe(browser, iframeBC, "#street-address");
   await BrowserTestUtils.synthesizeKey("VK_DOWN", {}, iframeBC);
   EventUtils.synthesizeKey("VK_RETURN", {});
 
-  await SpecialPowers.spawn(iframeBC, [], async function() {
+  await SpecialPowers.spawn(iframeBC, [], async function () {
     await ContentTaskUtils.waitForCondition(() => {
       return (
         content.document.getElementById("street-address").value == "" &&
@@ -105,10 +97,6 @@ add_task(async function test_iframe_autocomplete() {
 
 // Choose preferences from the autocomplete dropdown within an iframe.
 add_task(async function test_iframe_autocomplete_preferences() {
-  await SpecialPowers.pushPrefEnv({
-    set: [[CREDITCARDS_USED_STATUS_PREF, 0]],
-  });
-
   let tab = await BrowserTestUtils.openNewForegroundTab(
     gBrowser,
     IFRAME_URL_PATH,
@@ -118,7 +106,7 @@ add_task(async function test_iframe_autocomplete_preferences() {
   let iframeBC = browser.browsingContext.children[1];
   await openPopupOnSubframe(browser, iframeBC, "#organization");
 
-  await expectWarningText(browser, "Also autofills address, email");
+  await expectWarningText(browser, "Also autofills address, phone, email");
 
   const prefTabPromise = BrowserTestUtils.waitForNewTab(
     gBrowser,

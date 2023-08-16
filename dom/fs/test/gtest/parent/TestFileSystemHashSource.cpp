@@ -4,17 +4,16 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "gtest/gtest.h"
-
 #include "FileSystemHashSource.h"
+#include "FileSystemParentTypes.h"
 #include "TestHelpers.h"
-
+#include "gtest/gtest.h"
 #include "mozilla/Array.h"
 #include "mozilla/dom/FileSystemTypes.h"
 #include "nsContentUtils.h"
-#include "nsStringFwd.h"
-#include "nsString.h"
 #include "nsLiteralString.h"
+#include "nsString.h"
+#include "nsStringFwd.h"
 #include "nsTArray.h"
 #include "nsTHashSet.h"
 
@@ -62,7 +61,8 @@ TEST(TestFileSystemHashSource, areNestedNameHashesValidAndUnequal)
     TEST_TRY_UNWRAP(EntryId result,
                     FileSystemHashSource::GenerateHash(previousParent, name));
 
-    TEST_TRY_UNWRAP(Name encoded, FileSystemHashSource::EncodeHash(result));
+    TEST_TRY_UNWRAP(Name encoded,
+                    FileSystemHashSource::EncodeHash(FileId(result)));
 
     // Validity checks
     ASSERT_TRUE(mozilla::IsAscii(encoded))
@@ -94,7 +94,8 @@ TEST(TestFileSystemHashSource, areNameCombinationHashesUnequal)
   for (const auto& name : inputs) {
     TEST_TRY_UNWRAP(EntryId result,
                     FileSystemHashSource::GenerateHash(emptyParent, name));
-    TEST_TRY_UNWRAP(Name encoded, FileSystemHashSource::EncodeHash(result));
+    TEST_TRY_UNWRAP(Name encoded,
+                    FileSystemHashSource::EncodeHash(FileId(result)));
 
     // Validity checks
     ASSERT_TRUE(mozilla::IsAscii(encoded))
@@ -113,7 +114,8 @@ TEST(TestFileSystemHashSource, areNameCombinationHashesUnequal)
     for (const auto& name : inputs) {
       TEST_TRY_UNWRAP(EntryId result,
                       FileSystemHashSource::GenerateHash(parent, name));
-      TEST_TRY_UNWRAP(Name encoded, FileSystemHashSource::EncodeHash(result));
+      TEST_TRY_UNWRAP(Name encoded,
+                      FileSystemHashSource::EncodeHash(FileId(result)));
 
       // Validity checks
       ASSERT_TRUE(mozilla::IsAscii(encoded))
@@ -156,7 +158,7 @@ TEST(TestFileSystemHashSource, encodeGeneratedHash)
                   FileSystemHashSource::GenerateHash(parent, name));
   ASSERT_EQ(sha256ByteLength, entry.Length());
 
-  TEST_TRY_UNWRAP(Name result, FileSystemHashSource::EncodeHash(entry));
+  TEST_TRY_UNWRAP(Name result, FileSystemHashSource::EncodeHash(FileId(entry)));
   ASSERT_EQ(kExpectedLength, result.Length());
   ASSERT_STREQ(asWide(expected).c_str(), asWide(result).c_str());
 
@@ -164,12 +166,12 @@ TEST(TestFileSystemHashSource, encodeGeneratedHash)
   TEST_TRY_UNWRAP(entry, FileSystemHashSource::GenerateHash(entry, result));
   ASSERT_EQ(sha256ByteLength, entry.Length());
 
-  TEST_TRY_UNWRAP(result, FileSystemHashSource::EncodeHash(entry));
+  TEST_TRY_UNWRAP(result, FileSystemHashSource::EncodeHash(FileId(entry)));
 
   // Always the same length
   ASSERT_EQ(kExpectedLength, result.Length());
 
-  // Reused buffer should be different
+  // Encoded versions should differ
   ASSERT_STRNE(asWide(expected).c_str(), asWide(result).c_str());
 
   // Padding length should have been stripped

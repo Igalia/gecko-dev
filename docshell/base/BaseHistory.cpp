@@ -116,9 +116,6 @@ void BaseHistory::RegisterVisitedCallback(nsIURI* aURI, Link* aLink) {
     case VisitedStatus::Unknown:
       break;
     case VisitedStatus::Unvisited:
-      if (!StaticPrefs::layout_css_notify_of_unvisited()) {
-        break;
-      }
       [[fallthrough]];
     case VisitedStatus::Visited:
       aLink->VisitedQueryFinished(links->mStatus == VisitedStatus::Visited);
@@ -158,11 +155,6 @@ void BaseHistory::NotifyVisited(
     const ContentParentSet* aListOfProcessesToNotify) {
   MOZ_ASSERT(NS_IsMainThread());
   MOZ_ASSERT(aStatus != VisitedStatus::Unknown);
-
-  if (aStatus == VisitedStatus::Unvisited &&
-      !StaticPrefs::layout_css_notify_of_unvisited()) {
-    return;
-  }
 
   NotifyVisitedInThisProcess(aURI, aStatus);
   if (XRE_IsParentProcess()) {
@@ -216,7 +208,9 @@ void BaseHistory::SendPendingVisitedResultsToChildProcesses() {
         resultsForProcess.AppendElement(result.mResult);
       }
     }
-    Unused << NS_WARN_IF(!cp->SendNotifyVisited(resultsForProcess));
+    if (!resultsForProcess.IsEmpty()) {
+      Unused << NS_WARN_IF(!cp->SendNotifyVisited(resultsForProcess));
+    }
   }
 }
 

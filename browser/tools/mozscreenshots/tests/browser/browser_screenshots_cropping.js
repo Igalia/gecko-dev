@@ -6,7 +6,9 @@
 
 /* import-globals-from ../../head.js */
 
-const { Rect } = ChromeUtils.import("resource://gre/modules/Geometry.jsm");
+const { Rect } = ChromeUtils.importESModule(
+  "resource://gre/modules/Geometry.sys.mjs"
+);
 
 async function draw(window, src) {
   const { document, Image } = window;
@@ -14,7 +16,7 @@ async function draw(window, src) {
   const promise = new Promise((resolve, reject) => {
     const img = new Image();
 
-    img.onload = function() {
+    img.onload = function () {
       // Create a new offscreen canvas
       const canvas = document.createElementNS(
         "http://www.w3.org/1999/xhtml",
@@ -29,7 +31,7 @@ async function draw(window, src) {
       resolve(canvas);
     };
 
-    img.onerror = function() {
+    img.onerror = function () {
       reject(`error loading image ${src}`);
     };
 
@@ -78,7 +80,7 @@ async function cropAndCompare(window, src, expected, test, region, subregions) {
 add_task(async function crop() {
   const window = Services.wm.getMostRecentWindow("navigator:browser");
 
-  const tmp = PathUtils.osTempDir;
+  const tmp = PathUtils.tempDir;
   is(
     await cropAndCompare(
       window,

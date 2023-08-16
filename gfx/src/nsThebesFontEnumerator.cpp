@@ -14,7 +14,6 @@
 #include "nsError.h"              // for NS_OK, NS_FAILED, nsresult
 #include "nsAtom.h"               // for nsAtom, NS_Atomize
 #include "nsID.h"
-#include "nsMemory.h"  // for nsMemory
 #include "nsString.h"  // for nsAutoCString, nsAutoString, etc
 #include "nsTArray.h"  // for nsTArray, nsTArray_Impl, etc
 #include "nscore.h"    // for char16_t, NS_IMETHODIMP
@@ -211,13 +210,6 @@ nsThebesFontEnumerator::GetDefaultFont(const char* aLangGroup,
   if (!defaultFontName.IsEmpty()) {
     *aResult = UTF8ToNewUnicode(defaultFontName);
   }
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-nsThebesFontEnumerator::UpdateFontList(bool* _retval) {
-  gfxPlatform::GetPlatform()->UpdateFontList();
-  *_retval = false;  // always return false for now
   return NS_OK;
 }
 

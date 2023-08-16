@@ -4,16 +4,17 @@
 
 "use strict";
 
-const Services = require("Services");
-const ChromeUtils = require("ChromeUtils");
 const { runTest, testSetup, testTeardown } = require("../head");
 
 const { DevToolsClient } = require("devtools/client/devtools-client");
+const {
+  CommandsFactory,
+} = require("devtools/shared/commands/commands-factory");
 
 const TEST_URL =
   "data:text/html,browser-toolbox-test<script>console.log('test page message');</script>";
 
-module.exports = async function() {
+module.exports = async function () {
   Services.prefs.setBoolPref("devtools.chrome.enabled", true);
   Services.prefs.setBoolPref("devtools.debugger.remote-enabled", true);
   Services.prefs.setBoolPref("devtools.debugger.prompt-connection", false);
@@ -21,10 +22,8 @@ module.exports = async function() {
     "devtools.browsertoolbox.enable-test-server",
     true
   );
-  Services.prefs.setBoolPref("devtools.browsertoolbox.fission", true);
-  Services.prefs.setCharPref("devtools.browsertoolbox.scope", "everything");
   // Ensure that the test page message will be visible
-  Services.prefs.setBoolPref("devtools.browserconsole.contentMessages", true);
+  Services.prefs.setCharPref("devtools.browsertoolbox.scope", "everything");
 
   // Open the browser toolbox on the options panel,
   // so that we can switch to all other panel individually and measure their opening time
@@ -33,8 +32,8 @@ module.exports = async function() {
   await testSetup(TEST_URL);
 
   let test = runTest(`browser-toolbox.start-process.DAMP`, true);
-  const { BrowserToolboxLauncher } = ChromeUtils.import(
-    "resource://devtools/client/framework/browser-toolbox/Launcher.jsm"
+  const { BrowserToolboxLauncher } = ChromeUtils.importESModule(
+    "resource://devtools/client/framework/browser-toolbox/Launcher.sys.mjs"
   );
   const process = await new Promise(resolve => {
     BrowserToolboxLauncher.init({
@@ -47,14 +46,14 @@ module.exports = async function() {
   test = runTest(`browser-toolbox.connect.DAMP`, true);
   const consoleFront = await connectToBrowserToolbox();
   // Wait for the options panel to be fully initialized
-  await evaluateInBrowserToolbox(consoleFront, [], async function() {
+  await evaluateInBrowserToolbox(consoleFront, [], async function () {
     /* global gToolbox */
     await gToolbox.selectTool("options");
   });
   test.done();
 
   test = runTest(`browser-toolbox.debugger-ready.DAMP`, true);
-  await evaluateInBrowserToolbox(consoleFront, [], function() {
+  await evaluateInBrowserToolbox(consoleFront, [], function () {
     /* global waitFor, findSource */
     this.findSource = (dbg, url) => {
       const sources = dbg.selectors.getSourceList(dbg.store.getState());
@@ -84,54 +83,58 @@ module.exports = async function() {
     };
   });
 
-  await evaluateInBrowserToolbox(consoleFront, [TEST_URL], async function(
-    testUrl
-  ) {
-    dump("Wait for debugger to initialize\n");
-    const panel = await gToolbox.selectTool("jsdebugger");
-    const { dbg } = panel.panelWin;
-    dump("Wait for tab source in the content process\n");
-    const source = await waitFor(() => findSource(dbg, testUrl));
+  await evaluateInBrowserToolbox(
+    consoleFront,
+    [TEST_URL],
+    async function (testUrl) {
+      const {
+        createLocation,
+      } = require("devtools/client/debugger/src/utils/location");
+      dump("Wait for debugger to initialize\n");
+      const panel = await gToolbox.selectTool("jsdebugger");
+      const { dbg } = panel.panelWin;
+      dump("Wait for tab source in the content process\n");
+      const source = await waitFor(() => findSource(dbg, testUrl));
 
-    dump("Select this source\n");
-    const cx = dbg.selectors.getContext(dbg.store.getState());
-    dbg.actions.selectLocation(cx, { sourceId: source.id, line: 1 });
-    await waitFor(() => {
-      const source = dbg.selectors.getSelectedSource(dbg.store.getState());
-      if (!source) {
-        return false;
-      }
-      const sourceTextContent = dbg.selectors.getSelectedSourceTextContent(
-        dbg.store.getState()
-      );
-      if (!sourceTextContent) {
-        return false;
-      }
-      return true;
-    });
-  });
+      dump("Select this source\n");
+      dbg.actions.selectLocation(createLocation({ source, line: 1 }));
+      await waitFor(() => {
+        const source = dbg.selectors.getSelectedSource(dbg.store.getState());
+        if (!source) {
+          return false;
+        }
+        const sourceTextContent = dbg.selectors.getSelectedSourceTextContent(
+          dbg.store.getState()
+        );
+        if (!sourceTextContent) {
+          return false;
+        }
+        return true;
+      });
+    }
+  );
   test.done();
 
   test = runTest(`browser-toolbox.inspector-ready.DAMP`, true);
-  await evaluateInBrowserToolbox(consoleFront, [], async function() {
+  await evaluateInBrowserToolbox(consoleFront, [], async function () {
     await gToolbox.selectTool("inspector");
   });
   test.done();
 
   test = runTest(`browser-toolbox.webconsole-ready.DAMP`, true);
-  await evaluateInBrowserToolbox(consoleFront, [], async function() {
+  await evaluateInBrowserToolbox(consoleFront, [], async function () {
     const { hud } = await gToolbox.selectTool("webconsole");
     dump("Wait for test page console message to appear\n");
     await waitFor(() =>
-      Array.from(
-        hud.ui.window.document.querySelectorAll(".message-body")
-      ).some(el => el.innerText.includes("test page message"))
+      Array.from(hud.ui.window.document.querySelectorAll(".message-body")).some(
+        el => el.innerText.includes("test page message")
+      )
     );
   });
   test.done();
 
   test = runTest(`browser-toolbox.styleeditor-ready.DAMP`, true);
-  await evaluateInBrowserToolbox(consoleFront, [], async function() {
+  await evaluateInBrowserToolbox(consoleFront, [], async function () {
     await gToolbox.selectTool("styleeditor");
   });
   test.done();
@@ -144,9 +147,7 @@ module.exports = async function() {
   Services.prefs.clearUserPref("devtools.debugger.remote-enabled");
   Services.prefs.clearUserPref("devtools.debugger.prompt-connection");
   Services.prefs.clearUserPref("devtools.browsertoolbox.enable-test-server");
-  Services.prefs.clearUserPref("devtools.browsertoolbox.fission");
   Services.prefs.clearUserPref("devtools.browsertoolbox.panel");
-  Services.prefs.clearUserPref("devtools.browserconsole.contentMessages");
   Services.prefs.clearUserPref("devtools.browsertoolbox.scope");
 
   await testTeardown();
@@ -170,8 +171,8 @@ async function connectToBrowserToolbox() {
   const client = new DevToolsClient(transport);
   await client.connect();
 
-  const descriptorFront = await client.mainRoot.getMainProcess();
-  const target = await descriptorFront.getTarget();
+  const commands = await CommandsFactory.forMainProcess({ client });
+  const target = await commands.descriptorFront.getTarget();
   return target.getFront("console");
 }
 

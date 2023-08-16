@@ -519,8 +519,7 @@ int32_t gfxMacFont::GetGlyphWidth(uint16_t aGID) {
   return advance.width * 0x10000;
 }
 
-bool gfxMacFont::GetGlyphBounds(uint16_t aGID, gfxRect* aBounds,
-                                bool aTight) const {
+bool gfxMacFont::GetGlyphBounds(uint16_t aGID, gfxRect* aBounds, bool aTight) {
   CGRect bb;
   if (!::CGFontGetGlyphBBoxes(mCGFont, &aGID, 1, &bb)) {
     return false;
@@ -610,6 +609,18 @@ bool gfxMacFont::ShouldRoundXOffset(cairo_t* aCairo) const {
   // Quartz surfaces implement show_glyphs for Quartz fonts
   return aCairo && cairo_surface_get_type(cairo_get_target(aCairo)) !=
                        CAIRO_SURFACE_TYPE_QUARTZ;
+}
+
+bool gfxMacFont::UseNativeColrFontSupport() const {
+  /*
+    if (nsCocoaFeatures::OnHighSierraOrLater()) {
+      auto* colr = GetFontEntry()->GetCOLR();
+      if (colr && COLRFonts::GetColrTableVersion(colr) == 0) {
+        return true;
+      }
+    }
+  */
+  return false;
 }
 
 void gfxMacFont::AddSizeOfExcludingThis(MallocSizeOf aMallocSizeOf,

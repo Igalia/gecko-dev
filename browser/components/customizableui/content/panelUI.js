@@ -2,21 +2,11 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this file,
  * You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "AppMenuNotifications",
-  "resource://gre/modules/AppMenuNotifications.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "NewTabUtils",
-  "resource://gre/modules/NewTabUtils.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "PanelMultiView",
-  "resource:///modules/PanelMultiView.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AppMenuNotifications: "resource://gre/modules/AppMenuNotifications.sys.mjs",
+  NewTabUtils: "resource://gre/modules/NewTabUtils.sys.mjs",
+  PanelMultiView: "resource:///modules/PanelMultiView.sys.mjs",
+});
 ChromeUtils.defineModuleGetter(
   this,
   "ToolbarPanelHub",
@@ -103,7 +93,7 @@ const PanelUI = {
     this.overflowFixedList.hidden = false;
     // Also unhide the separator. We use CSS to hide/show it based on the panel's content.
     this.overflowFixedList.previousElementSibling.hidden = false;
-    CustomizableUI.registerMenuPanel(
+    CustomizableUI.registerPanelNode(
       this.overflowFixedList,
       CustomizableUI.AREA_FIXED_OVERFLOW_PANEL
     );
@@ -123,7 +113,7 @@ const PanelUI = {
       // Need to do fresh let-bindings per iteration
       let getKey = k;
       let id = v;
-      this.__defineGetter__(getKey, function() {
+      this.__defineGetter__(getKey, function () {
         delete this[getKey];
         return (this[getKey] = document.getElementById(id));
       });
@@ -234,7 +224,7 @@ const PanelUI = {
       await PanelMultiView.openPopup(this.panel, anchor, {
         triggerEvent: domEvent,
       });
-    })().catch(Cu.reportError);
+    })().catch(console.error);
   },
 
   /**
@@ -414,13 +404,14 @@ const PanelUI = {
 
     let viewNode = PanelMultiView.getViewNode(document, aViewId);
     if (!viewNode) {
-      Cu.reportError("Could not show panel subview with id: " + aViewId);
+      console.error("Could not show panel subview with id: ", aViewId);
       return;
     }
 
     if (!aAnchor) {
-      Cu.reportError(
-        "Expected an anchor when opening subview with id: " + aViewId
+      console.error(
+        "Expected an anchor when opening subview with id: ",
+        aViewId
       );
       return;
     }
@@ -429,7 +420,7 @@ const PanelUI = {
     this.ensurePanicViewInitialized(viewNode);
 
     let container = aAnchor.closest("panelmultiview");
-    if (container) {
+    if (container && !viewNode.hasAttribute("disallowSubView")) {
       container.showSubView(aViewId, aAnchor);
     } else if (!aAnchor.open) {
       aAnchor.open = true;
@@ -489,11 +480,11 @@ const PanelUI = {
 
       try {
         viewShown = await PanelMultiView.openPopup(tempPanel, anchor, {
-          position: "bottomcenter topright",
+          position: "bottomright topright",
           triggerEvent: aEvent,
         });
       } catch (ex) {
-        Cu.reportError(ex);
+        console.error(ex);
       }
 
       if (viewShown) {
@@ -653,7 +644,7 @@ const PanelUI = {
       // their localization IDs are set on "appmenu-data-l10n-id" attributes.
       let l10nId = node.getAttribute("appmenu-data-l10n-id");
       if (l10nId) {
-        button.setAttribute("data-l10n-id", l10nId);
+        document.l10n.setAttributes(button, l10nId);
       }
 
       if (node.id) {
@@ -855,7 +846,7 @@ const PanelUI = {
         el.removeAttribute("data-lazy-l10n-id");
       });
 
-    this.notificationPanel.openPopup(anchor, "bottomcenter topright");
+    this.notificationPanel.openPopup(anchor, "bottomright topright");
   },
 
   _clearNotificationPanel() {
@@ -944,6 +935,12 @@ const PanelUI = {
     if (notification.options.popupIconURL) {
       popupnotification.setAttribute("icon", notification.options.popupIconURL);
       popupnotification.setAttribute("hasicon", true);
+    }
+    if (notification.options.learnMoreURL) {
+      popupnotification.setAttribute(
+        "learnmoreurl",
+        notification.options.learnMoreURL
+      );
     }
 
     popupnotification.notification = notification;

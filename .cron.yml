@@ -29,8 +29,6 @@ jobs:
           - mozilla-central
       when:
           by-project:
-              # `l10n-bumper` job should have enough time to finish before this
-              # job runs
               mozilla-central: [{hour: 10, minute: 0}, {hour: 22, minute: 0}]
               # No default
 
@@ -94,7 +92,7 @@ jobs:
           - mozilla-central
       when:
           by-project:
-              mozilla-central: [{hour: 10, minute: 0}]
+              mozilla-central: [{hour: 10, minute: 0}, {hour: 22, minute: 0}]
 
     - name: general-perf-testing
       job:
@@ -109,6 +107,18 @@ jobs:
           - {weekday: 'Wednesday', hour: 10, minute: 30}
           - {weekday: 'Friday', hour: 10, minute: 30}
 
+    - name: custom-car-perf-testing
+      job:
+          type: decision-task
+          treeherder-symbol: ccar
+          target-tasks-method: custom-car_perf_testing
+          include-push-tasks: true
+      run-on-projects:
+          - mozilla-central
+      when:
+          by-project:
+              mozilla-central: [{hour: 20, minute: 30}]
+
     # For more context on this job, see:
     # https://github.com/mozsearch/mozsearch-mozilla#how-searchfoxorg-stays-up-to-date
     # Note that searchfox now runs on-push for mozilla-central, but continues
@@ -121,8 +131,8 @@ jobs:
       run-on-projects:
           - mozilla-beta
           - mozilla-release
-          - mozilla-esr91
           - mozilla-esr102
+          - mozilla-esr115
           - elm
       # For all non m-c jobs we just run once daily matching the 10 UTC
       # nightly which is designed to align with searchfox's AWS cron
@@ -195,8 +205,8 @@ jobs:
           - mozilla-central
           - mozilla-beta
           - mozilla-release
-          - mozilla-esr91
           - mozilla-esr102
+          - mozilla-esr115
       when:
           by-project:
               # No default branch
@@ -209,12 +219,10 @@ jobs:
               mozilla-release:
                   - {hour: 7, minute: 0}
                   - {hour: 19, minute: 0}
-              mozilla-esr91:
-                  - {hour: 7, minute: 0}
-                  - {hour: 19, minute: 0}
               mozilla-esr102:
                   - {hour: 7, minute: 0}
                   - {hour: 19, minute: 0}
+              mozilla-esr115: []
 
     - name: periodic-update
       job:
@@ -225,11 +233,33 @@ jobs:
           - mozilla-central
           - mozilla-beta
           - mozilla-release
-          - mozilla-esr91
           - mozilla-esr102
+          - mozilla-esr115
       when:
           - {weekday: 'Monday', hour: 8, minute: 0}
           - {weekday: 'Thursday', hour: 8, minute: 0}
+
+    - name: daily-beta-perf
+      job:
+          type: decision-task
+          treeherder-symbol: d-perf
+          target-tasks-method: daily_beta_perf
+          include-push-tasks: true
+      run-on-projects:
+          - mozilla-beta
+      when:
+          - {hour: 16, minute: 0}
+
+    - name: weekly-release-perf
+      job:
+          type: decision-task
+          treeherder-symbol: w-perf
+          target-tasks-method: weekly_release_perf
+          include-push-tasks: true
+      run-on-projects:
+          - mozilla-release
+      when:
+          - {weekday: 'Friday', hour: 16, minute: 0}
 
     - name: raptor-tp6m
       job:
@@ -277,14 +307,16 @@ jobs:
           treeherder-symbol: l10n-bump
           target-tasks-method: l10n_bump
       run-on-projects:
+          - autoland
           - mozilla-central
           - mozilla-beta
       when:
           by-project:
               # 3h15m before launch of `nightly-desktop`
-              mozilla-central: [{hour: 6, minute: 45}, {hour: 18, minute: 45}]
+              autoland: [{hour: 6, minute: 45}, {hour: 18, minute: 45}]
+              mozilla-central: []
               # 3h15m before launch of `daily-releases`
-              mozilla-beta: [{hour: 18, minute: 45}]
+              mozilla-beta: [{hour: 17, minute: 45}]
               # No default
 
     - name: system-symbols
@@ -312,10 +344,7 @@ jobs:
           type: decision-task
           treeherder-symbol: perftest-auto
           target-tasks-method: perftest-on-autoland
-      run-on-projects:
-          - autoland
-      when:
-          - {hour: 4, minute: 00}
+      when: []
 
     - name: scriptworker-canary
       job:
@@ -345,3 +374,33 @@ jobs:
           - mozilla-central
       when:
           - {hour: 0, minute: 00}
+
+    - name: eslint-build
+      job:
+          type: decision-task
+          treeherder-symbol: eslint-build
+          target-tasks-method: eslint-build
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {hour: 0, minute: 00}
+
+    - name: sp-perftests
+      job:
+          type: decision-task
+          treeherder-symbol: sp-perftests
+          target-tasks-method: sp-perftests
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {hour: 0, minute: 00}
+
+    - name: snap-upstream
+      job:
+          type: decision-task
+          treeherder-symbol: snap-upstream
+          target-tasks-method: snap_upstream_build
+      run-on-projects:
+          - mozilla-central
+      when:
+          - {hour: 0, minute: 0}

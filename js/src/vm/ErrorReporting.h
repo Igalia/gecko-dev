@@ -8,17 +8,17 @@
 #define vm_ErrorReporting_h
 
 #include <stdarg.h>
-#include <utility>
 
 #include "jsfriendapi.h"  // for ScriptEnvironmentPreparer
 
-#include "js/ErrorReport.h"  // for JSErrorNotes, JSErrorReport
-#include "js/UniquePtr.h"    // for UniquePtr
-#include "js/Utility.h"      // for UniqueTwoByteChars
+#include "js/CharacterEncoding.h"  // JS::ConstUTF8CharsZ
+#include "js/ErrorReport.h"        // for JSErrorNotes, JSErrorReport
+#include "js/UniquePtr.h"          // for UniquePtr
+#include "js/Utility.h"            // for UniqueTwoByteChars
 
 namespace js {
 
-class ErrorContext;
+class FrontendContext;
 
 /**
  * Use this type instead of JSContext when the object is only used for its
@@ -32,7 +32,7 @@ using JSAllocator = JSContext;
  */
 struct ErrorMetadata {
   // The file/URL where the error occurred.
-  const char* filename;
+  JS::ConstUTF8CharsZ filename;
 
   // The line and column numbers where the error occurred.  If the error
   // is with respect to the entire script and not with respect to a
@@ -71,7 +71,7 @@ struct ErrorMetadata {
 
 class CompileError : public JSErrorReport {
  public:
-  void throwError(JSContext* cx);
+  bool throwError(JSContext* cx);
 };
 
 class MOZ_STACK_CLASS ReportExceptionClosure final
@@ -91,20 +91,32 @@ extern void CallWarningReporter(JSContext* cx, JSErrorReport* report);
  * Report a compile error during script processing prior to execution of the
  * script.
  */
-extern void ReportCompileErrorLatin1(ErrorContext* ec, ErrorMetadata&& metadata,
+extern void ReportCompileErrorLatin1VA(FrontendContext* fc,
+                                       ErrorMetadata&& metadata,
+                                       UniquePtr<JSErrorNotes> notes,
+                                       unsigned errorNumber, va_list* args);
+
+extern void ReportCompileErrorUTF8VA(FrontendContext* fc,
+                                     ErrorMetadata&& metadata,
                                      UniquePtr<JSErrorNotes> notes,
                                      unsigned errorNumber, va_list* args);
 
-extern void ReportCompileErrorUTF8(ErrorContext* ec, ErrorMetadata&& metadata,
+extern void ReportCompileErrorLatin1(FrontendContext* fc,
+                                     ErrorMetadata&& metadata,
+                                     UniquePtr<JSErrorNotes> notes,
+                                     unsigned errorNumber, ...);
+
+extern void ReportCompileErrorUTF8(FrontendContext* fc,
+                                   ErrorMetadata&& metadata,
                                    UniquePtr<JSErrorNotes> notes,
-                                   unsigned errorNumber, va_list* args);
+                                   unsigned errorNumber, ...);
 
 /**
  * Report a compile warning during script processing prior to execution of the
  * script.  Returns true if the warning was successfully reported, false if an
  * error occurred.
  */
-[[nodiscard]] extern bool ReportCompileWarning(ErrorContext* ec,
+[[nodiscard]] extern bool ReportCompileWarning(FrontendContext* fc,
                                                ErrorMetadata&& metadata,
                                                UniquePtr<JSErrorNotes> notes,
                                                unsigned errorNumber,
@@ -120,13 +132,6 @@ class GlobalObject;
 extern void ReportErrorToGlobal(JSContext* cx,
                                 JS::Handle<js::GlobalObject*> global,
                                 JS::HandleValue error);
-
-enum ErrorArgumentsType {
-  ArgumentsAreUnicode,
-  ArgumentsAreASCII,
-  ArgumentsAreLatin1,
-  ArgumentsAreUTF8
-};
 
 enum class IsWarning { No, Yes };
 
@@ -153,14 +158,16 @@ extern bool ReportErrorNumberUTF8Array(JSContext* cx, IsWarning isWarning,
                                        const unsigned errorNumber,
                                        const char** args);
 
-extern bool ExpandErrorArgumentsVA(ErrorContext* ec, JSErrorCallback callback,
-                                   void* userRef, const unsigned errorNumber,
+extern bool ExpandErrorArgumentsVA(FrontendContext* fc,
+                                   JSErrorCallback callback, void* userRef,
+                                   const unsigned errorNumber,
                                    const char16_t** messageArgs,
                                    ErrorArgumentsType argumentsType,
                                    JSErrorReport* reportp, va_list ap);
 
-extern bool ExpandErrorArgumentsVA(ErrorContext* ec, JSErrorCallback callback,
-                                   void* userRef, const unsigned errorNumber,
+extern bool ExpandErrorArgumentsVA(FrontendContext* fc,
+                                   JSErrorCallback callback, void* userRef,
+                                   const unsigned errorNumber,
                                    const char** messageArgs,
                                    ErrorArgumentsType argumentsType,
                                    JSErrorReport* reportp, va_list ap);
@@ -168,13 +175,15 @@ extern bool ExpandErrorArgumentsVA(ErrorContext* ec, JSErrorCallback callback,
 /*
  * For cases when we do not have an arguments array.
  */
-extern bool ExpandErrorArgumentsVA(ErrorContext* ec, JSErrorCallback callback,
-                                   void* userRef, const unsigned errorNumber,
+extern bool ExpandErrorArgumentsVA(FrontendContext* fc,
+                                   JSErrorCallback callback, void* userRef,
+                                   const unsigned errorNumber,
                                    ErrorArgumentsType argumentsType,
                                    JSErrorReport* reportp, va_list ap);
 
-extern bool ExpandErrorArgumentsVA(ErrorContext* ec, JSErrorCallback callback,
-                                   void* userRef, const unsigned errorNumber,
+extern bool ExpandErrorArgumentsVA(FrontendContext* fc,
+                                   JSErrorCallback callback, void* userRef,
+                                   const unsigned errorNumber,
                                    const char16_t** messageArgs,
                                    ErrorArgumentsType argumentsType,
                                    JSErrorNotes::Note* notep, va_list ap);

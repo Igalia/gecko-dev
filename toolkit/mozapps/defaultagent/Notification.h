@@ -31,33 +31,19 @@ enum class NotificationAction {
   NoAction,  // Should not be used with NotificationShown::Shown
 };
 
-enum class NotificationNotShownReason {
-  NotApplicable,  // The notification was shown (or at least attempted)
-  NoValueSet,  // Indicates a logic error where we never set the notShownReason.
-  WrongOS,
-  UserRequest,
-  NoDefaultBrowserTransition,
-  FollowupSuppressed,
-  NotTimeForFollowup,
-  NoFollowupScheduled,
-};
-
 struct NotificationActivities {
   NotificationType type;
   NotificationShown shown;
   NotificationAction action;
-  NotificationNotShownReason notShownReason;
 };
 
 NotificationActivities MaybeShowNotification(
-    const DefaultBrowserInfo& browserInfo, const wchar_t* aumi);
+    const DefaultBrowserInfo& browserInfo, const wchar_t* aumi, bool force);
 
 // These take enum values and get strings suitable for telemetry
 std::string GetStringForNotificationType(NotificationType type);
 std::string GetStringForNotificationShown(NotificationShown shown);
 std::string GetStringForNotificationAction(NotificationAction action);
-std::string GetStringForNotificationNotShownReason(
-    NotificationNotShownReason notShownAction);
 // If actionString is a valid action string (i.e. corresponds to one of the
 // NotificationAction values), this function has no effect. If actionString is
 // not a valid action string, its value will be replaced with the string for

@@ -1,5 +1,4 @@
 #!/usr/bin/env python
-from __future__ import absolute_import
 from collections import OrderedDict
 
 
@@ -430,23 +429,28 @@ with modules["NETWORK"]:
     # These are really not "results", they're statuses, used by nsITransport and
     # friends.  This is abuse of nsresult, but we'll put up with it for now.
     # nsITransport
-    errors["NS_NET_STATUS_READING"] = FAILURE(8)
-    errors["NS_NET_STATUS_WRITING"] = FAILURE(9)
+    errors["NS_NET_STATUS_READING"] = SUCCESS(8)
+    errors["NS_NET_STATUS_WRITING"] = SUCCESS(9)
 
     # nsISocketTransport
-    errors["NS_NET_STATUS_RESOLVING_HOST"] = FAILURE(3)
-    errors["NS_NET_STATUS_RESOLVED_HOST"] = FAILURE(11)
-    errors["NS_NET_STATUS_CONNECTING_TO"] = FAILURE(7)
-    errors["NS_NET_STATUS_CONNECTED_TO"] = FAILURE(4)
-    errors["NS_NET_STATUS_TLS_HANDSHAKE_STARTING"] = FAILURE(12)
-    errors["NS_NET_STATUS_TLS_HANDSHAKE_ENDED"] = FAILURE(13)
-    errors["NS_NET_STATUS_SENDING_TO"] = FAILURE(5)
-    errors["NS_NET_STATUS_WAITING_FOR"] = FAILURE(10)
-    errors["NS_NET_STATUS_RECEIVING_FROM"] = FAILURE(6)
+    errors["NS_NET_STATUS_RESOLVING_HOST"] = SUCCESS(3)
+    errors["NS_NET_STATUS_RESOLVED_HOST"] = SUCCESS(11)
+    errors["NS_NET_STATUS_CONNECTING_TO"] = SUCCESS(7)
+    errors["NS_NET_STATUS_CONNECTED_TO"] = SUCCESS(4)
+    errors["NS_NET_STATUS_TLS_HANDSHAKE_STARTING"] = SUCCESS(12)
+    errors["NS_NET_STATUS_TLS_HANDSHAKE_ENDED"] = SUCCESS(13)
+    errors["NS_NET_STATUS_SENDING_TO"] = SUCCESS(5)
+    errors["NS_NET_STATUS_WAITING_FOR"] = SUCCESS(10)
+    errors["NS_NET_STATUS_RECEIVING_FROM"] = SUCCESS(6)
 
     # nsIInterceptedChannel
     # Generic error for non-specific failures during service worker interception
     errors["NS_ERROR_INTERCEPTION_FAILED"] = FAILURE(100)
+
+    errors["NS_ERROR_WEBTRANSPORT_CODE_BASE"] = FAILURE(200)
+    errors["NS_ERROR_WEBTRANSPORT_CODE_END"] = (
+        errors["NS_ERROR_WEBTRANSPORT_CODE_BASE"] + 255
+    )
 
     # All Http proxy CONNECT response codes
     errors["NS_ERROR_PROXY_CODE_BASE"] = FAILURE(1000)
@@ -559,8 +563,6 @@ with modules["PLUGINS"]:
 with modules["LAYOUT"]:
     # Return code for SheetLoadData::VerifySheetReadyToParse
     errors["NS_OK_PARSE_SHEET"] = SUCCESS(1)
-    # Return code for nsFrame::GetNextPrevLineFromeBlockFrame
-    errors["NS_POSITION_BEFORE_TABLE"] = SUCCESS(3)
 
 
 # =======================================================================
@@ -699,14 +701,8 @@ with modules["DOM"]:
     # https://heycam.github.io/webidl/#notallowederror
     errors["NS_ERROR_DOM_NOT_ALLOWED_ERR"] = FAILURE(33)
     # DOM error codes defined by us
-    errors["NS_ERROR_DOM_SECMAN_ERR"] = FAILURE(1001)
     errors["NS_ERROR_DOM_WRONG_TYPE_ERR"] = FAILURE(1002)
-    errors["NS_ERROR_DOM_NOT_OBJECT_ERR"] = FAILURE(1003)
-    errors["NS_ERROR_DOM_NOT_XPC_OBJECT_ERR"] = FAILURE(1004)
     errors["NS_ERROR_DOM_NOT_NUMBER_ERR"] = FAILURE(1005)
-    errors["NS_ERROR_DOM_NOT_BOOLEAN_ERR"] = FAILURE(1006)
-    errors["NS_ERROR_DOM_NOT_FUNCTION_ERR"] = FAILURE(1007)
-    errors["NS_ERROR_DOM_TOO_FEW_PARAMETERS_ERR"] = FAILURE(1008)
     errors["NS_ERROR_DOM_PROP_ACCESS_DENIED"] = FAILURE(1010)
     errors["NS_ERROR_DOM_XPCONNECT_ACCESS_DENIED"] = FAILURE(1011)
     errors["NS_ERROR_DOM_BAD_URI"] = FAILURE(1012)
@@ -1076,10 +1072,8 @@ with modules["DOM_INDEXEDDB"]:
     errors["NS_ERROR_DOM_INDEXEDDB_TRANSACTION_INACTIVE_ERR"] = FAILURE(7)
     errors["NS_ERROR_DOM_INDEXEDDB_ABORT_ERR"] = FAILURE(8)
     errors["NS_ERROR_DOM_INDEXEDDB_READ_ONLY_ERR"] = FAILURE(9)
-    errors["NS_ERROR_DOM_INDEXEDDB_TIMEOUT_ERR"] = FAILURE(10)
     errors["NS_ERROR_DOM_INDEXEDDB_QUOTA_ERR"] = FAILURE(11)
     errors["NS_ERROR_DOM_INDEXEDDB_VERSION_ERR"] = FAILURE(12)
-    errors["NS_ERROR_DOM_INDEXEDDB_RECOVERABLE_ERR"] = FAILURE(1001)
     errors["NS_ERROR_DOM_INDEXEDDB_KEY_ERR"] = FAILURE(1002)
     errors["NS_ERROR_DOM_INDEXEDDB_RENAME_OBJECT_STORE_ERR"] = FAILURE(1003)
     errors["NS_ERROR_DOM_INDEXEDDB_RENAME_INDEX_ERR"] = FAILURE(1004)
@@ -1134,13 +1128,11 @@ with modules["SIGNED_APP"]:
 # 40: NS_ERROR_MODULE_DOM_PUSH
 # =======================================================================
 with modules["DOM_PUSH"]:
-    errors["NS_ERROR_DOM_PUSH_INVALID_REGISTRATION_ERR"] = FAILURE(1)
     errors["NS_ERROR_DOM_PUSH_DENIED_ERR"] = FAILURE(2)
     errors["NS_ERROR_DOM_PUSH_ABORT_ERR"] = FAILURE(3)
     errors["NS_ERROR_DOM_PUSH_SERVICE_UNREACHABLE"] = FAILURE(4)
     errors["NS_ERROR_DOM_PUSH_INVALID_KEY_ERR"] = FAILURE(5)
     errors["NS_ERROR_DOM_PUSH_MISMATCHED_KEY_ERR"] = FAILURE(6)
-    errors["NS_ERROR_DOM_PUSH_GCM_DISABLED"] = FAILURE(7)
 
 
 # =======================================================================
@@ -1168,10 +1160,22 @@ with modules["DOM_MEDIA"]:
     errors["NS_ERROR_DOM_MEDIA_INITIALIZING_DECODER"] = FAILURE(15)
     errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_RDD_OR_GPU_ERR"] = FAILURE(16)
     errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_UTILITY_ERR"] = FAILURE(17)
+    errors["NS_ERROR_DOM_MEDIA_REMOTE_DECODER_CRASHED_MF_CDM_ERR"] = FAILURE(18)
+
+    # QuotaExceededError specializations
+    errors["NS_ERROR_DOM_MEDIA_KEY_QUOTA_EXCEEDED_ERR"] = FAILURE(30)
+    errors["NS_ERROR_DOM_MEDIA_SOURCE_MAX_BUFFER_QUOTA_EXCEEDED_ERR"] = FAILURE(31)
+    errors["NS_ERROR_DOM_MEDIA_SOURCE_FULL_BUFFER_QUOTA_EXCEEDED_ERR"] = FAILURE(32)
+
+    # Internal CDM error
+    errors["NS_ERROR_DOM_MEDIA_CDM_NO_SESSION_ERR"] = FAILURE(50)
+    errors["NS_ERROR_DOM_MEDIA_CDM_SESSION_OPERATION_ERR"] = FAILURE(51)
 
     # Internal platform-related errors
     errors["NS_ERROR_DOM_MEDIA_CUBEB_INITIALIZATION_ERR"] = FAILURE(101)
     errors["NS_ERROR_DOM_MEDIA_EXTERNAL_ENGINE_NOT_SUPPORTED_ERR"] = FAILURE(102)
+    errors["NS_ERROR_DOM_MEDIA_CDM_PROXY_NOT_SUPPORTED_ERR"] = FAILURE(103)
+    errors["NS_ERROR_DOM_MEDIA_DENIED_IN_NON_UTILITY"] = FAILURE(104)
 
 # =======================================================================
 # 42: NS_ERROR_MODULE_URL_CLASSIFIER
@@ -1381,8 +1385,9 @@ use super::nsresult;
 def gen_jinja(output, input_filename):
     # This is used to generate Java code for error lists, and can be expanded to
     # other required contexts in the future if desired.
-    from jinja2 import Environment, FileSystemLoader, StrictUndefined
     import os
+
+    from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
     # FileSystemLoader requires the path to the directory containing templates,
     # not the file name of the template itself.

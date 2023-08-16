@@ -10,13 +10,12 @@ var doc = null,
   toolbox = null,
   panelWin = null,
   modifiedPrefs = [];
-const { LocalizationHelper } = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/toolbox.properties"
 );
-const { PrefObserver } = require("devtools/client/shared/prefs");
+const { PrefObserver } = require("resource://devtools/client/shared/prefs.js");
 
-add_task(async function() {
+add_task(async function () {
   const URL =
     "data:text/html;charset=utf8,test for dynamically registering " +
     "and unregistering tools";
@@ -221,7 +220,7 @@ async function testMouseClick(node, prefValue) {
 
   // We use executeSoon here to ensure that the element is in view and
   // clickable.
-  executeSoon(function() {
+  executeSoon(function () {
     info("Click event synthesized for pref " + pref);
     EventUtils.synthesizeMouseAtCenter(node, {}, panelWin);
   });
@@ -349,7 +348,7 @@ async function testToggleWebExtensions() {
   // ones have been unregistered, and the remaining onea are still listed.
   for (const ext of toggleableWebExtensions) {
     ok(
-      toolbox.listWebExtensions().length > 0,
+      !!toolbox.listWebExtensions().length,
       "There should still be extensions registered"
     );
     toolbox.unregisterWebExtension(ext.uuid);

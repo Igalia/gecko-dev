@@ -84,7 +84,8 @@ class FakeSocketTransportProvider : public nsISocketTransport {
     MOZ_ASSERT(false);
     return NS_OK;
   }
-  NS_IMETHOD GetSecurityInfo(nsISupports** aSecurityInfo) override {
+  NS_IMETHOD GetTlsSocketControl(
+      nsITLSSocketControl** aTLSSocketControl) override {
     MOZ_ASSERT(false);
     return NS_OK;
   }
@@ -181,6 +182,15 @@ class FakeSocketTransportProvider : public nsISocketTransport {
     return NS_OK;
   }
   NS_IMETHOD ResolvedByTRR(bool* _retval) override {
+    MOZ_ASSERT(false);
+    return NS_OK;
+  }
+  NS_IMETHOD GetEffectiveTRRMode(
+      nsIRequest::TRRMode* aEffectiveTRRMode) override {
+    MOZ_ASSERT(false);
+    return NS_OK;
+  }
+  NS_IMETHOD GetTrrSkipReason(nsITRRSkipReason::value* aSkipReason) override {
     MOZ_ASSERT(false);
     return NS_OK;
   }
@@ -319,6 +329,8 @@ nsresult WebrtcTCPSocketTestInputStream::Available(uint64_t* aAvailable) {
   return NS_OK;
 }
 
+nsresult WebrtcTCPSocketTestInputStream::StreamStatus() { return NS_OK; }
+
 nsresult WebrtcTCPSocketTestInputStream::Read(char* aBuffer, uint32_t aCount,
                                               uint32_t* aRead) {
   std::lock_guard<std::mutex> guard(mDataMutex);
@@ -406,6 +418,10 @@ nsresult WebrtcTCPSocketTestOutputStream::CloseWithStatus(nsresult aStatus) {
 nsresult WebrtcTCPSocketTestOutputStream::Close() { return NS_OK; }
 
 nsresult WebrtcTCPSocketTestOutputStream::Flush() { return NS_OK; }
+
+nsresult WebrtcTCPSocketTestOutputStream::StreamStatus() {
+  return mMustFail ? NS_ERROR_FAILURE : NS_OK;
+}
 
 nsresult WebrtcTCPSocketTestOutputStream::Write(const char* aBuffer,
                                                 uint32_t aCount,

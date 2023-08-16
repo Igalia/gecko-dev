@@ -168,8 +168,8 @@ class RequestHeaders {
   void MergeOrSet(const char* aName, const nsACString& aValue);
   void MergeOrSet(const nsACString& aName, const nsACString& aValue);
   void Clear();
-  void ApplyToChannel(nsIHttpChannel* aChannel,
-                      bool aStripRequestBodyHeader) const;
+  void ApplyToChannel(nsIHttpChannel* aChannel, bool aStripRequestBodyHeader,
+                      bool aStripAuth) const;
   void GetCORSUnsafeHeaders(nsTArray<nsCString>& aArray) const;
 };
 
@@ -204,7 +204,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   };
 
   // Make sure that any additions done to ErrorType enum are also mirrored in
-  // XHR_ERROR_TYPE enum of TelemetrySend.jsm.
+  // XHR_ERROR_TYPE enum of TelemetrySend.sys.mjs.
   enum class ErrorType : uint16_t {
     eOK,
     eRequest,
@@ -333,7 +333,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void Abort() {
     IgnoredErrorResult rv;
     AbortInternal(rv);
-    MOZ_ASSERT(!rv.Failed());
+    MOZ_ASSERT(!rv.Failed() || rv.ErrorCodeIs(NS_ERROR_DOM_ABORT_ERR));
   }
 
   virtual void Abort(ErrorResult& aRv) override;
@@ -409,6 +409,8 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
 
   void SetSource(UniquePtr<ProfileChunkedBuffer> aSource);
 
+  nsresult ErrorDetail() const { return mErrorLoadDetail; }
+
   virtual uint16_t ErrorCode() const override {
     return static_cast<uint16_t>(mErrorLoad);
   }
@@ -430,8 +432,6 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void DispatchProgressEvent(DOMEventTargetHelper* aTarget,
                              const ProgressEventType aType, int64_t aLoaded,
                              int64_t aTotal);
-
-  void SetRequestObserver(nsIRequestObserver* aObserver);
 
   NS_DECL_CYCLE_COLLECTION_SCRIPT_HOLDER_CLASS_INHERITED(
       XMLHttpRequestMainThread, XMLHttpRequest)
@@ -493,7 +493,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
 
   void MaybeCreateBlobStorage();
 
-  nsresult OnRedirectVerifyCallback(nsresult result);
+  nsresult OnRedirectVerifyCallback(nsresult result, bool stripAuth = false);
 
   nsIEventTarget* GetTimerEventTarget();
 
@@ -643,8 +643,6 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   nsCOMPtr<nsIChannelEventSink> mChannelEventSink;
   nsCOMPtr<nsIProgressEventSink> mProgressEventSink;
 
-  nsIRequestObserver* mRequestObserver;
-
   nsCOMPtr<nsIURI> mBaseURI;
   nsCOMPtr<nsILoadGroup> mLoadGroup;
 
@@ -684,6 +682,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   nsCOMPtr<nsITimer> mTimeoutTimer;
   void StartTimeoutTimer();
   void HandleTimeoutCallback();
+  void CancelTimeoutTimer();
 
   nsCOMPtr<nsIRunnable> mResumeTimeoutRunnable;
 
@@ -696,6 +695,7 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   void CancelSyncTimeoutTimer();
 
   ErrorType mErrorLoad;
+  nsresult mErrorLoadDetail;
   bool mErrorParsingXML;
   bool mWaitingForOnStopRequest;
   bool mProgressTimerIsActive;
@@ -719,9 +719,9 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
   /**
    * Close the XMLHttpRequest's channels.
    */
-  void CloseRequest();
+  void CloseRequest(nsresult detail);
 
-  void TerminateOngoingFetch();
+  void TerminateOngoingFetch(nsresult detail);
 
   /**
    * Close the XMLHttpRequest's channels and dispatch appropriate progress
@@ -730,9 +730,6 @@ class XMLHttpRequestMainThread final : public XMLHttpRequest,
    * @param aType The progress event type.
    */
   void CloseRequestWithError(const ProgressEventType aType);
-
-  bool mFirstStartRequestSeen;
-  bool mInLoadProgressEvent;
 
   nsCOMPtr<nsIAsyncVerifyRedirectCallback> mRedirectCallback;
   nsCOMPtr<nsIChannel> mNewRedirectChannel;

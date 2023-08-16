@@ -7,26 +7,13 @@
 // This is exported by preferences.js but we can't import that in a subdialog.
 let { LangPackMatcher } = window.top;
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "AddonManager",
-  "resource://gre/modules/AddonManager.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "AddonRepository",
-  "resource://gre/modules/addons/AddonRepository.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "RemoteSettings",
-  "resource://services-settings/remote-settings.js"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "SelectionChangedMenulist",
-  "resource:///modules/SelectionChangedMenulist.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
+  RemoteSettings: "resource://services-settings/remote-settings.sys.mjs",
+  SelectionChangedMenulist:
+    "resource:///modules/SelectionChangedMenulist.sys.mjs",
+});
 
 document
   .getElementById("BrowserLanguagesDialog")
@@ -310,7 +297,7 @@ class SortedItemSelectList {
    * reverted with `enableWithMessageId()`.
    */
   disableWithMessageId(messageId) {
-    this.menulist.setAttribute("data-l10n-id", messageId);
+    document.l10n.setAttributes(this.menulist, messageId);
     this.menulist.setAttribute(
       "image",
       "chrome://browser/skin/tabbrowser/tab-connecting.png"
@@ -324,7 +311,7 @@ class SortedItemSelectList {
    * reverted with `disableWithMessageId()`.
    */
   enableWithMessageId(messageId) {
-    this.menulist.setAttribute("data-l10n-id", messageId);
+    document.l10n.setAttributes(this.menulist, messageId);
     this.menulist.removeAttribute("image");
     this.menulist.disabled = this.menulist.itemCount == 0;
     this.button.disabled = !this.menulist.selectedItem;
@@ -447,11 +434,8 @@ var gBrowserLanguagesDialog = {
      */
 
     /** @type {Options} */
-    let {
-      telemetryId,
-      selectedLocalesForRestart,
-      search,
-    } = window.arguments[0];
+    let { telemetryId, selectedLocalesForRestart, search } =
+      window.arguments[0];
 
     this._telemetryId = telemetryId;
 
@@ -693,7 +677,7 @@ var gBrowserLanguagesDialog = {
         addonInfos.map(info => installFromUrl(info.sourceURI.spec))
       );
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
     }
   },
 

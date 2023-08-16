@@ -81,12 +81,10 @@ void Link::VisitedQueryFinished(bool aVisited) {
   // Tell the element to update its visited state.
   mElement->UpdateState(true);
 
-  if (StaticPrefs::layout_css_always_repaint_on_unvisited()) {
-    // Even if the state didn't actually change, we need to repaint in order for
-    // the visited state not to be observable.
-    nsLayoutUtils::PostRestyleEvent(GetElement(), RestyleHint::RestyleSubtree(),
-                                    nsChangeHint_RepaintFrame);
-  }
+  // Even if the state didn't actually change, we need to repaint in order for
+  // the visited state not to be observable.
+  nsLayoutUtils::PostRestyleEvent(GetElement(), RestyleHint::RestyleSubtree(),
+                                  nsChangeHint_RepaintFrame);
 }
 
 ElementState Link::LinkState() const {
@@ -154,19 +152,10 @@ void Link::SetProtocol(const nsAString& aProtocol) {
     // Ignore failures to be compatible with NS4.
     return;
   }
-
-  nsAString::const_iterator start, end;
-  aProtocol.BeginReading(start);
-  aProtocol.EndReading(end);
-  nsAString::const_iterator iter(start);
-  (void)FindCharInReadable(':', iter, end);
-  nsresult rv = NS_MutateURI(uri)
-                    .SetScheme(NS_ConvertUTF16toUTF8(Substring(start, iter)))
-                    .Finalize(uri);
-  if (NS_FAILED(rv)) {
+  uri = net::TryChangeProtocol(uri, aProtocol);
+  if (!uri) {
     return;
   }
-
   SetHrefAttribute(uri);
 }
 
@@ -232,8 +221,7 @@ void Link::SetHostname(const nsAString& aHostname) {
 
 void Link::SetPathname(const nsAString& aPathname) {
   nsCOMPtr<nsIURI> uri(GetURI());
-  nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
-  if (!url) {
+  if (!uri) {
     // Ignore failures to be compatible with NS4.
     return;
   }
@@ -249,8 +237,7 @@ void Link::SetPathname(const nsAString& aPathname) {
 
 void Link::SetSearch(const nsAString& aSearch) {
   nsCOMPtr<nsIURI> uri(GetURI());
-  nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
-  if (!url) {
+  if (!uri) {
     // Ignore failures to be compatible with NS4.
     return;
   }
@@ -317,7 +304,7 @@ void Link::GetOrigin(nsAString& aOrigin) {
   }
 
   nsString origin;
-  nsContentUtils::GetUTFOrigin(uri, origin);
+  nsContentUtils::GetWebExposedOriginSerialization(uri, origin);
   aOrigin.Assign(origin);
 }
 
@@ -389,15 +376,13 @@ void Link::GetPathname(nsAString& _pathname) {
   _pathname.Truncate();
 
   nsCOMPtr<nsIURI> uri(GetURI());
-  nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
-  if (!url) {
-    // Do not throw!  Not having a valid URI or URL should result in an empty
-    // string.
+  if (!uri) {
+    // Do not throw!  Not having a valid URI should result in an empty string.
     return;
   }
 
   nsAutoCString file;
-  nsresult rv = url->GetFilePath(file);
+  nsresult rv = uri->GetFilePath(file);
   if (NS_SUCCEEDED(rv)) {
     CopyUTF8toUTF16(file, _pathname);
   }
@@ -407,15 +392,14 @@ void Link::GetSearch(nsAString& _search) {
   _search.Truncate();
 
   nsCOMPtr<nsIURI> uri(GetURI());
-  nsCOMPtr<nsIURL> url(do_QueryInterface(uri));
-  if (!url) {
+  if (!uri) {
     // Do not throw!  Not having a valid URI or URL should result in an empty
     // string.
     return;
   }
 
   nsAutoCString search;
-  nsresult rv = url->GetQuery(search);
+  nsresult rv = uri->GetQuery(search);
   if (NS_SUCCEEDED(rv) && !search.IsEmpty()) {
     _search.Assign(u'?');
     AppendUTF8toUTF16(search, _search);

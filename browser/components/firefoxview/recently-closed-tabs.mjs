@@ -2,38 +2,45 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 const lazy = {};
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "SessionStore",
-  "resource:///modules/sessionstore/SessionStore.jsm"
-);
+ChromeUtils.defineESModuleGetters(lazy, {
+  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
+});
 
 import {
   formatURIForDisplay,
   convertTimestamp,
-  createFaviconElement,
-  toggleContainer,
+  getImageUrl,
+  onToggleContainer,
   NOW_THRESHOLD_MS,
 } from "./helpers.mjs";
+
+import {
+  html,
+  ifDefined,
+  styleMap,
+} from "chrome://global/content/vendor/lit.all.mjs";
+import { MozLitElement } from "chrome://global/content/lit-utils.mjs";
 
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 
 const SS_NOTIFY_CLOSED_OBJECTS_CHANGED = "sessionstore-closed-objects-changed";
+const SS_NOTIFY_BROWSER_SHUTDOWN_FLUSH = "sessionstore-browser-shutdown-flush";
+const UI_OPEN_STATE =
+  "browser.tabs.firefox-view.ui-state.recently-closed-tabs.open";
 
 function getWindow() {
   return window.browsingContext.embedderWindowGlobal.browsingContext.window;
 }
 
-class RecentlyClosedTabsList extends HTMLElement {
+class RecentlyClosedTabsList extends MozLitElement {
   constructor() {
     super();
     this.maxTabsLength = 25;
-    this.closedTabsData = [];
+    this.recentlyClosedTabs = [];
+    this.lastFocusedIndex = -1;
 
     // The recency timestamp update period is stored in a pref to allow tests to easily change it
     XPCOMUtils.defineLazyPreferenceGetter(
@@ -41,13 +48,22 @@ class RecentlyClosedTabsList extends HTMLElement {
       "timeMsPref",
       "browser.tabs.firefox-view.updateTimeMs",
       NOW_THRESHOLD_MS,
-      () => this.updateTime()
+      timeMsPref => {
+        clearInterval(this.intervalID);
+        this.intervalID = setInterval(() => this.requestUpdate(), timeMsPref);
+        this.requestUpdate();
+      }
     );
   }
 
-  get tabsList() {
-    return this.querySelector("ol");
+  createRenderRoot() {
+    return this;
   }
+
+  static queries = {
+    tabsList: "ol",
+    timeElements: { all: "span.closed-tab-li-time" },
+  };
 
   get fluentStrings() {
     if (!this._fluentStrings) {
@@ -56,43 +72,19 @@ class RecentlyClosedTabsList extends HTMLElement {
     return this._fluentStrings;
   }
 
-  get timeElements() {
-    return this.querySelectorAll("span.closed-tab-li-time");
-  }
-
   connectedCallback() {
-    this.addEventListener("click", this);
-    this.addEventListener("keydown", this);
-    this.intervalID = setInterval(() => this.updateTime(), lazy.timeMsPref);
+    super.connectedCallback();
+    this.intervalID = setInterval(() => this.requestUpdate(), lazy.timeMsPref);
   }
 
   disconnectedCallback() {
     clearInterval(this.intervalID);
   }
 
-  handleEvent(event) {
-    if (
-      event.type == "click" ||
-      (event.type == "keydown" && event.keyCode == KeyEvent.DOM_VK_RETURN)
-    ) {
-      this.openTabAndUpdate(event);
-    }
-  }
-
-  updateTime() {
-    for (let timeEl of this.timeElements) {
-      timeEl.textContent = convertTimestamp(
-        parseInt(timeEl.getAttribute("data-timestamp")),
-        this.fluentStrings,
-        lazy.timeMsPref
-      );
-    }
-  }
-
   getTabStateValue(tab, key) {
     let value = "";
-    const tabEntries = tab.state.entries;
-    const activeIndex = tabEntries.length - 1;
+    const tabEntries = tab.entries;
+    const activeIndex = tab.index - 1;
 
     if (activeIndex >= 0 && tabEntries[activeIndex]) {
       value = tabEntries[activeIndex][key];
@@ -102,135 +94,272 @@ class RecentlyClosedTabsList extends HTMLElement {
   }
 
   openTabAndUpdate(event) {
+    if (
+      (event.type == "click" && !event.altKey) ||
+      (event.type == "keydown" && event.code == "Enter") ||
+      (event.type == "keydown" && event.code == "Space")
+    ) {
+      const item = event.target.closest(".closed-tab-li");
+      // only used for telemetry
+      const position = [...this.tabsList.children].indexOf(item) + 1;
+      const closedId = item.dataset.tabid;
+
+      lazy.SessionStore.undoCloseById(closedId, undefined, getWindow());
+
+      // record telemetry
+      let tabClosedAt = parseInt(
+        item.querySelector(".closed-tab-li-time").getAttribute("data-timestamp")
+      );
+
+      let now = Date.now();
+      let deltaSeconds = (now - tabClosedAt) / 1000;
+      Services.telemetry.recordEvent(
+        "firefoxview",
+        "recently_closed",
+        "tabs",
+        null,
+        {
+          position: position.toString(),
+          delta: deltaSeconds.toString(),
+        }
+      );
+    }
+  }
+
+  dismissTabAndUpdate(event) {
     event.preventDefault();
     const item = event.target.closest(".closed-tab-li");
-    let index = [...this.tabsList.children].indexOf(item);
+    this.dismissTabAndUpdateForElement(item);
+  }
 
-    lazy.SessionStore.undoCloseTab(getWindow(), index);
-    this.tabsList.removeChild(item);
+  dismissTabAndUpdateForElement(item) {
+    const sourceWindow = lazy.SessionStore.getWindowById(
+      item.dataset.sourceWindowId
+    );
+    let recentlyClosedList =
+      lazy.SessionStore.getClosedTabDataForWindow(sourceWindow);
+    let closedTabIndex = recentlyClosedList.findIndex(closedTab => {
+      return closedTab.closedId === parseInt(item.dataset.tabid, 10);
+    });
+    if (closedTabIndex < 0) {
+      // Tab not found in recently closed list
+      return;
+    }
+    // in order forget a closed tab, we need to pass the window the closed tab data is associated with
+    lazy.SessionStore.forgetClosedTab(sourceWindow, closedTabIndex);
 
     // record telemetry
     let tabClosedAt = parseInt(
-      item.querySelector(".closed-tab-li-time").getAttribute("data-timestamp")
+      item.querySelector(".closed-tab-li-time").dataset.timestamp
     );
 
     let now = Date.now();
     let deltaSeconds = (now - tabClosedAt) / 1000;
     Services.telemetry.recordEvent(
       "firefoxview",
-      "recently_closed",
+      "dismiss_closed_tab",
       "tabs",
       null,
       {
-        position: (++index).toString(),
         delta: deltaSeconds.toString(),
       }
     );
   }
 
-  initiateTabsList() {
-    let closedTabs = lazy.SessionStore.getClosedTabData(getWindow());
-    closedTabs = closedTabs.slice(0, this.maxTabsLength);
-    this.closedTabsData = closedTabs;
-
-    for (const tab of closedTabs) {
-      const li = this.generateListItem(tab);
-      this.tabsList.append(li);
-    }
-    this.tabsList.hidden = false;
+  getClosedTabsDataForOpenWindows() {
+    // get closed tabs in currently-open windows
+    const closedTabsData = lazy.SessionStore.getClosedTabData(getWindow()).map(
+      tabData => {
+        // flatten the object; move properties of `.state` into the top-level object
+        const stateData = tabData.state;
+        delete tabData.state;
+        return {
+          ...tabData,
+          ...stateData,
+        };
+      }
+    );
+    return closedTabsData;
   }
 
-  updateTabsList() {
-    let newClosedTabs = lazy.SessionStore.getClosedTabData(getWindow());
-    newClosedTabs = newClosedTabs.slice(0, this.maxTabsLength);
+  updateRecentlyClosedTabs() {
+    // add recently-closed tabs from currently-open windows
+    const recentlyClosedTabsData = this.getClosedTabsDataForOpenWindows();
 
-    if (this.closedTabsData.length && !newClosedTabs.length) {
-      // if a user purges history, clear the list
-      [...this.tabsList.children].forEach(node =>
-        this.tabsList.removeChild(node)
-      );
-      document
-        .getElementById("recently-closed-tabs-container")
-        .togglePlaceholderVisibility(true);
-      this.tabsList.hidden = true;
-      this.closedTabsData = [];
-      return;
-    }
+    recentlyClosedTabsData.sort((a, b) => a.closedAt < b.closedAt);
+    this.recentlyClosedTabs = recentlyClosedTabsData.slice(
+      0,
+      this.maxTabsLength
+    );
+    this.requestUpdate();
+  }
 
-    const tabsToAdd = newClosedTabs.filter(
-      newTab =>
-        !this.closedTabsData.some(tab => {
-          return (
-            this.getTabStateValue(tab, "ID") ==
-            this.getTabStateValue(newTab, "ID")
-          );
-        })
+  render() {
+    let { recentlyClosedTabs } = this;
+    let closedTabsContainer = document.getElementById(
+      "recently-closed-tabs-container"
     );
 
-    if (!tabsToAdd.length) {
-      return;
+    if (!recentlyClosedTabs.length) {
+      // Show empty message if no recently closed tabs
+      closedTabsContainer.toggleContainerStyleForEmptyMsg(true);
+      return html` ${this.emptyMessageTemplate()} `;
     }
 
-    for (let tab of tabsToAdd.reverse()) {
-      if (this.tabsList.children.length == this.maxTabsLength) {
-        this.tabsList.lastChild.remove();
-      }
-      let li = this.generateListItem(tab);
-      this.tabsList.prepend(li);
-    }
+    closedTabsContainer.toggleContainerStyleForEmptyMsg(false);
 
-    this.closedTabsData = newClosedTabs;
+    return html`
+      <ol class="closed-tabs-list">
+        ${recentlyClosedTabs.map((tab, i) =>
+          this.recentlyClosedTabTemplate(tab, !i)
+        )}
+      </ol>
+    `;
+  }
 
-    // for situations where the tab list will initially be empty (such as
-    // with new profiles or automatic session restore is disabled) and
-    // this.initiateTabsList won't be called
-    if (this.tabsList.hidden) {
-      this.tabsList.hidden = false;
-      document
-        .getElementById("recently-closed-tabs-container")
-        .togglePlaceholderVisibility(false);
+  willUpdate() {
+    if (this.tabsList && this.tabsList.contains(document.activeElement)) {
+      let activeLi = document.activeElement.closest(".closed-tab-li");
+      this.lastFocusedIndex = [...this.tabsList.children].indexOf(activeLi);
+    } else {
+      this.lastFocusedIndex = -1;
     }
   }
 
-  generateListItem(tab) {
-    const li = document.createElement("li");
-    li.classList.add("closed-tab-li");
-    li.setAttribute("tabindex", 0);
-    li.setAttribute("role", "button");
-
-    const title = document.createElement("span");
-    title.textContent = `${tab.title}`;
-    title.classList.add("closed-tab-li-title");
-
-    const favicon = createFaviconElement(tab.image);
-    li.append(favicon);
-
-    const targetURI = this.getTabStateValue(tab, "url");
-    li.dataset.targetURI = targetURI;
-    document.l10n.setAttributes(li, "firefoxview-tabs-list-tab-button", {
-      targetURI,
-    });
-
-    const url = document.createElement("span");
-
-    if (targetURI) {
-      url.textContent = formatURIForDisplay(targetURI);
-      url.title = targetURI;
-      url.classList.add("closed-tab-li-url");
+  updated() {
+    let focusRestored = false;
+    if (
+      this.lastFocusedIndex >= 0 &&
+      (!this.tabsList || this.lastFocusedIndex >= this.tabsList.children.length)
+    ) {
+      if (this.tabsList) {
+        let items = [...this.tabsList.children];
+        let newFocusIndex = items.length - 1;
+        let newFocus = items[newFocusIndex];
+        if (newFocus) {
+          focusRestored = true;
+          newFocus.querySelector(".closed-tab-li-main").focus();
+        }
+      }
+      if (!focusRestored) {
+        document.getElementById("recently-closed-tabs-header-section").focus();
+      }
     }
+    this.lastFocusedIndex = -1;
+  }
 
-    const time = document.createElement("span");
-    time.textContent = convertTimestamp(tab.closedAt, this.fluentStrings);
-    time.setAttribute("data-timestamp", tab.closedAt);
-    time.classList.add("closed-tab-li-time");
+  emptyMessageTemplate() {
+    return html`
+      <div
+        id="recently-closed-tabs-placeholder"
+        class="placeholder-content"
+        role="presentation"
+      >
+        <img
+          id="recently-closed-empty-image"
+          src="chrome://browser/content/firefoxview/recently-closed-empty.svg"
+          role="presentation"
+          alt=""
+        />
+        <div class="placeholder-text">
+          <h4
+            data-l10n-id="firefoxview-closed-tabs-placeholder-header"
+            class="placeholder-header"
+          ></h4>
+          <p
+            data-l10n-id="firefoxview-closed-tabs-placeholder-body2"
+            class="placeholder-body"
+          ></p>
+        </div>
+      </div>
+    `;
+  }
 
-    li.append(title, url, time);
-    return li;
+  recentlyClosedTabTemplate(tab, primary) {
+    const targetURI = this.getTabStateValue(tab, "url");
+    const convertedTime = convertTimestamp(
+      tab.closedAt,
+      this.fluentStrings,
+      lazy.timeMsPref
+    );
+    return html`
+      <li
+        class="closed-tab-li"
+        data-tabid=${tab.closedId}
+        data-source-window-id=${tab.sourceWindowId}
+        data-targeturi=${targetURI}
+        tabindex=${ifDefined(primary ? null : "-1")}
+        @contextmenu=${e => (this.contextTriggerNode = e.currentTarget)}
+      >
+        <span
+          class="closed-tab-li-main"
+          role="button"
+          tabindex="0"
+          @click=${e => this.openTabAndUpdate(e)}
+          @keydown=${e => this.openTabAndUpdate(e)}
+        >
+          <div
+            class="favicon"
+            style=${styleMap({
+              backgroundImage: `url(${getImageUrl(tab.icon, targetURI)})`,
+            })}
+          ></div>
+          <a
+            href=${targetURI}
+            class="closed-tab-li-title"
+            tabindex="-1"
+            @click=${e => e.preventDefault()}
+          >
+            ${tab.title}
+          </a>
+          <a
+            href=${targetURI}
+            class="closed-tab-li-url"
+            data-l10n-id="firefoxview-tabs-list-tab-button"
+            data-l10n-args=${JSON.stringify({ targetURI })}
+            tabindex="-1"
+            @click=${e => e.preventDefault()}
+          >
+            ${formatURIForDisplay(targetURI)}
+          </a>
+          <span class="closed-tab-li-time" data-timestamp=${tab.closedAt}>
+            ${convertedTime}
+          </span>
+        </span>
+        <button
+          class="closed-tab-li-dismiss"
+          data-l10n-id="firefoxview-closed-tabs-dismiss-tab"
+          data-l10n-args=${JSON.stringify({ tabTitle: tab.title })}
+          @click=${e => this.dismissTabAndUpdate(e)}
+        ></button>
+      </li>
+    `;
+  }
+
+  // Update the URL for a new or previously-populated list item.
+  // This is needed because when tabs get closed we don't necessarily
+  // have all the requisite information for them immediately.
+  updateURLForListItem(li, targetURI) {
+    li.dataset.targetURI = targetURI;
+    let urlElement = li.querySelector(".closed-tab-li-url");
+    document.l10n.setAttributes(
+      urlElement,
+      "firefoxview-tabs-list-tab-button",
+      {
+        targetURI,
+      }
+    );
+    if (targetURI) {
+      urlElement.textContent = formatURIForDisplay(targetURI);
+      urlElement.title = targetURI;
+    } else {
+      urlElement.textContent = urlElement.title = "";
+    }
   }
 }
 customElements.define("recently-closed-tabs-list", RecentlyClosedTabsList);
 
-class RecentlyClosedTabsContainer extends HTMLElement {
+class RecentlyClosedTabsContainer extends HTMLDetailsElement {
   constructor() {
     super();
     this.observerAdded = false;
@@ -245,20 +374,49 @@ class RecentlyClosedTabsContainer extends HTMLElement {
     this.collapsibleContainer = this.querySelector(
       "#collapsible-tabs-container"
     );
-    this.collapsibleButton = this.querySelector("#collapsible-tabs-button");
-    this.collapsibleButton.addEventListener("click", this);
-
+    this.addEventListener("toggle", this);
     getWindow().gBrowser.tabContainer.addEventListener("TabSelect", this);
+    getWindow().addEventListener("command", this, true);
+    getWindow()
+      .document.getElementById("contentAreaContextMenu")
+      .addEventListener("popuphiding", this);
+    this.open = Services.prefs.getBoolPref(UI_OPEN_STATE, true);
   }
 
   cleanup() {
     getWindow().gBrowser.tabContainer.removeEventListener("TabSelect", this);
+    getWindow().removeEventListener("command", this, true);
+    getWindow()
+      .document.getElementById("contentAreaContextMenu")
+      .removeEventListener("popuphiding", this);
+    this.removeObserversIfNeeded();
+  }
 
+  addObserversIfNeeded() {
+    if (!this.observerAdded) {
+      Services.obs.addObserver(
+        this.boundObserve,
+        SS_NOTIFY_CLOSED_OBJECTS_CHANGED
+      );
+      Services.obs.addObserver(
+        this.boundObserve,
+        SS_NOTIFY_BROWSER_SHUTDOWN_FLUSH
+      );
+      this.observerAdded = true;
+    }
+  }
+
+  removeObserversIfNeeded() {
     if (this.observerAdded) {
       Services.obs.removeObserver(
         this.boundObserve,
         SS_NOTIFY_CLOSED_OBJECTS_CHANGED
       );
+      Services.obs.removeObserver(
+        this.boundObserve,
+        SS_NOTIFY_BROWSER_SHUTDOWN_FLUSH
+      );
+      this.observerAdded = false;
     }
   }
 
@@ -266,57 +424,52 @@ class RecentlyClosedTabsContainer extends HTMLElement {
   // all windows, we remove the observer when another tab is selected; we check for changes
   // to the session store once the user return to this tab.
   handleObservers(contentDocument) {
-    if (
-      !this.observerAdded &&
-      contentDocument &&
-      contentDocument.URL == "about:firefoxview"
-    ) {
-      Services.obs.addObserver(
-        this.boundObserve,
-        SS_NOTIFY_CLOSED_OBJECTS_CHANGED
-      );
-      this.observerAdded = true;
-      this.list.updateTabsList();
-    } else if (this.observerAdded) {
-      Services.obs.removeObserver(
-        this.boundObserve,
-        SS_NOTIFY_CLOSED_OBJECTS_CHANGED
-      );
-      this.observerAdded = false;
+    if (contentDocument?.URL == "about:firefoxview") {
+      this.addObserversIfNeeded();
+      this.list.updateRecentlyClosedTabs();
+    } else {
+      this.removeObserversIfNeeded();
     }
   }
 
-  observe = () => this.list.updateTabsList();
+  observe(subject, topic, data) {
+    if (
+      topic == SS_NOTIFY_CLOSED_OBJECTS_CHANGED ||
+      (topic == SS_NOTIFY_BROWSER_SHUTDOWN_FLUSH &&
+        subject.ownerGlobal == getWindow())
+    ) {
+      this.list.updateRecentlyClosedTabs();
+    }
+  }
 
   onLoad() {
-    if (this.getClosedTabCount() == 0) {
-      this.togglePlaceholderVisibility(true);
-    } else {
-      this.list.initiateTabsList();
-    }
-    Services.obs.addObserver(
-      this.boundObserve,
-      SS_NOTIFY_CLOSED_OBJECTS_CHANGED
-    );
-    this.observerAdded = true;
+    this.list.updateRecentlyClosedTabs();
+    this.addObserversIfNeeded();
   }
 
   handleEvent(event) {
-    if (event.type == "click" && event.target == this.collapsibleButton) {
-      toggleContainer(this.collapsibleButton, this.collapsibleContainer);
+    if (event.type == "toggle") {
+      onToggleContainer(this);
     } else if (event.type == "TabSelect") {
       this.handleObservers(event.target.linkedBrowser.contentDocument);
+    } else if (
+      event.type === "command" &&
+      event.target.closest(".context-menu-open-link") &&
+      this.list.contextTriggerNode
+    ) {
+      this.list.dismissTabAndUpdateForElement(this.list.contextTriggerNode);
+    } else if (event.type === "popuphiding") {
+      delete this.list.contextTriggerNode;
     }
   }
 
-  togglePlaceholderVisibility(visible) {
-    this.noTabsElement.toggleAttribute("hidden", !visible);
+  toggleContainerStyleForEmptyMsg(visible) {
     this.collapsibleContainer.classList.toggle("empty-container", visible);
   }
 
   getClosedTabCount = () => {
     try {
-      return lazy.SessionStore.getClosedTabCount(getWindow());
+      return lazy.SessionStore.getClosedTabCountForWindow(getWindow());
     } catch (ex) {
       return 0;
     }
@@ -324,5 +477,8 @@ class RecentlyClosedTabsContainer extends HTMLElement {
 }
 customElements.define(
   "recently-closed-tabs-container",
-  RecentlyClosedTabsContainer
+  RecentlyClosedTabsContainer,
+  {
+    extends: "details",
+  }
 );

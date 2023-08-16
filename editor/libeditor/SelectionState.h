@@ -10,6 +10,7 @@
 #include "mozilla/EditorForwards.h"
 #include "mozilla/Maybe.h"
 #include "mozilla/OwningNonNull.h"
+#include "mozilla/dom/Document.h"
 #include "nsCOMPtr.h"
 #include "nsDirection.h"
 #include "nsINode.h"
@@ -67,17 +68,13 @@ struct RangeItem final {
            mStartOffset == aOther.mStartOffset &&
            mEndOffset == aOther.mEndOffset;
   }
-  EditorDOMPoint StartPoint() const {
-    return EditorDOMPoint(mStartContainer, mStartOffset);
+  template <typename EditorDOMPointType = EditorDOMPoint>
+  EditorDOMPointType StartPoint() const {
+    return EditorDOMPointType(mStartContainer, mStartOffset);
   }
-  EditorDOMPoint EndPoint() const {
-    return EditorDOMPoint(mEndContainer, mEndOffset);
-  }
-  EditorRawDOMPoint StartRawPoint() const {
-    return EditorRawDOMPoint(mStartContainer, mStartOffset);
-  }
-  EditorRawDOMPoint EndRawPoint() const {
-    return EditorRawDOMPoint(mEndContainer, mEndOffset);
+  template <typename EditorDOMPointType = EditorDOMPoint>
+  EditorDOMPointType EndPoint() const {
+    return EditorDOMPointType(mEndContainer, mEndOffset);
   }
 
   NS_INLINE_DECL_MAIN_THREAD_ONLY_CYCLE_COLLECTING_NATIVE_REFCOUNTING(RangeItem)
@@ -239,12 +236,13 @@ class MOZ_STACK_CLASS RangeUpdater final {
    *                                in aRemovedContent.  And this points where
    *                                the joined position.
    * @param aRemovedContent         The removed content.
-   * @param aOffsetOfRemovedContent The offset which aRemovedContent was in
-   *                                its ex-parent.
+   * @param aOldPointAtRightContent The point where the right content node was
+   *                                before joining them.  The offset must have
+   *                                been initialized before the joining.
    */
   nsresult SelAdjJoinNodes(const EditorRawDOMPoint& aStartOfRightContent,
                            const nsIContent& aRemovedContent,
-                           uint32_t aOffsetOfRemovedContent,
+                           const EditorDOMPoint& aOldPointAtRightContent,
                            JoinNodesDirection aJoinNodesDirection);
   void SelAdjInsertText(const dom::Text& aTextNode, uint32_t aOffset,
                         uint32_t aInsertedLength);
@@ -303,11 +301,13 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
       : mRangeUpdater(aRangeUpdater),
         mNode(aNode),
         mOffset(aOffset),
-        mRangeItem(do_AddRef(new RangeItem())) {
+        mRangeItem(do_AddRef(new RangeItem())),
+        mWasConnected(aNode && (*aNode)->IsInComposedDoc()) {
     mRangeItem->mStartContainer = *mNode;
     mRangeItem->mEndContainer = *mNode;
     mRangeItem->mStartOffset = *mOffset;
     mRangeItem->mEndOffset = *mOffset;
+    mDocument = (*mNode)->OwnerDoc();
     mRangeUpdater.RegisterRangeItem(mRangeItem);
   }
 
@@ -316,27 +316,42 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
         mNode(nullptr),
         mOffset(nullptr),
         mPoint(Some(aPoint->IsSet() ? aPoint : nullptr)),
-        mRangeItem(do_AddRef(new RangeItem())) {
+        mRangeItem(do_AddRef(new RangeItem())),
+        mWasConnected(aPoint && aPoint->IsInComposedDoc()) {
     if (!aPoint->IsSet()) {
+      mIsTracking = false;
       return;  // Nothing should be tracked.
     }
     mRangeItem->mStartContainer = aPoint->GetContainer();
     mRangeItem->mEndContainer = aPoint->GetContainer();
     mRangeItem->mStartOffset = aPoint->Offset();
     mRangeItem->mEndOffset = aPoint->Offset();
+    mDocument = aPoint->GetContainer()->OwnerDoc();
     mRangeUpdater.RegisterRangeItem(mRangeItem);
   }
 
-  ~AutoTrackDOMPoint() {
+  ~AutoTrackDOMPoint() { FlushAndStopTracking(); }
+
+  void FlushAndStopTracking() {
+    if (!mIsTracking) {
+      return;
+    }
+    mIsTracking = false;
     if (mPoint.isSome()) {
-      if (!mPoint.ref()) {
-        return;  // We don't track anything.
-      }
       mRangeUpdater.DropRangeItem(mRangeItem);
       // Setting `mPoint` with invalid DOM point causes hitting `NS_ASSERTION()`
       // and the number of times may be too many.  (E.g., 1533913.html hits
       // over 700 times!)  We should just put warning instead.
       if (NS_WARN_IF(!mRangeItem->mStartContainer)) {
+        mPoint.ref()->Clear();
+        return;
+      }
+      // If the node was removed from the original document, clear the instance
+      // since the user should not keep handling the adopted or orphan node
+      // anymore.
+      if (NS_WARN_IF(mWasConnected &&
+                     !mRangeItem->mStartContainer->IsInComposedDoc()) ||
+          NS_WARN_IF(mRangeItem->mStartContainer->OwnerDoc() != mDocument)) {
         mPoint.ref()->Clear();
         return;
       }
@@ -351,7 +366,20 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
     mRangeUpdater.DropRangeItem(mRangeItem);
     *mNode = mRangeItem->mStartContainer;
     *mOffset = mRangeItem->mStartOffset;
+    if (!(*mNode)) {
+      return;
+    }
+    // If the node was removed from the original document, clear the instances
+    // since the user should not keep handling the adopted or orphan node
+    // anymore.
+    if (NS_WARN_IF(mWasConnected && !(*mNode)->IsInComposedDoc()) ||
+        NS_WARN_IF((*mNode)->OwnerDoc() != mDocument)) {
+      *mNode = nullptr;
+      *mOffset = 0;
+    }
   }
+
+  void StopTracking() { mIsTracking = false; }
 
  private:
   RangeUpdater& mRangeUpdater;
@@ -360,6 +388,9 @@ class MOZ_STACK_CLASS AutoTrackDOMPoint final {
   uint32_t* mOffset;
   Maybe<EditorDOMPoint*> mPoint;
   OwningNonNull<RangeItem> mRangeItem;
+  RefPtr<dom::Document> mDocument;
+  bool mIsTracking = true;
+  bool mWasConnected;
 };
 
 class MOZ_STACK_CLASS AutoTrackDOMRange final {
@@ -394,26 +425,74 @@ class MOZ_STACK_CLASS AutoTrackDOMRange final {
     mStartPointTracker.emplace(aRangeUpdater, &mStartPoint);
     mEndPointTracker.emplace(aRangeUpdater, &mEndPoint);
   }
-  ~AutoTrackDOMRange() {
-    if (!mRangeRefPtr && !mRangeOwningNonNull) {
-      // The destructor of the trackers will update automatically.
+  ~AutoTrackDOMRange() { FlushAndStopTracking(); }
+
+  void FlushAndStopTracking() {
+    if (!mStartPointTracker && !mEndPointTracker) {
       return;
     }
-    // Otherwise, destroy them now.
     mStartPointTracker.reset();
     mEndPointTracker.reset();
+    if (!mRangeRefPtr && !mRangeOwningNonNull) {
+      // This must be created with EditorDOMRange or EditorDOMPoints.  In the
+      // cases, destroying mStartPointTracker and mEndPointTracker has done
+      // everything which we need to do.
+      return;
+    }
+    // Otherwise, update the DOM ranges by ourselves.
     if (mRangeRefPtr) {
+      if (!mStartPoint.IsSet() || !mEndPoint.IsSet()) {
+        (*mRangeRefPtr)->Reset();
+        return;
+      }
       (*mRangeRefPtr)
           ->SetStartAndEnd(mStartPoint.ToRawRangeBoundary(),
                            mEndPoint.ToRawRangeBoundary());
       return;
     }
     if (mRangeOwningNonNull) {
+      if (!mStartPoint.IsSet() || !mEndPoint.IsSet()) {
+        (*mRangeOwningNonNull)->Reset();
+        return;
+      }
       (*mRangeOwningNonNull)
           ->SetStartAndEnd(mStartPoint.ToRawRangeBoundary(),
                            mEndPoint.ToRawRangeBoundary());
       return;
     }
+  }
+
+  void StopTracking() {
+    if (mStartPointTracker) {
+      mStartPointTracker->StopTracking();
+    }
+    if (mEndPointTracker) {
+      mEndPointTracker->StopTracking();
+    }
+  }
+  void StopTrackingStartBoundary() {
+    MOZ_ASSERT(!mRangeRefPtr,
+               "StopTrackingStartBoundary() is not available when tracking "
+               "RefPtr<nsRange>");
+    MOZ_ASSERT(!mRangeOwningNonNull,
+               "StopTrackingStartBoundary() is not available when tracking "
+               "OwningNonNull<nsRange>");
+    if (!mStartPointTracker) {
+      return;
+    }
+    mStartPointTracker->StopTracking();
+  }
+  void StopTrackingEndBoundary() {
+    MOZ_ASSERT(!mRangeRefPtr,
+               "StopTrackingEndBoundary() is not available when tracking "
+               "RefPtr<nsRange>");
+    MOZ_ASSERT(!mRangeOwningNonNull,
+               "StopTrackingEndBoundary() is not available when tracking "
+               "OwningNonNull<nsRange>");
+    if (!mEndPointTracker) {
+      return;
+    }
+    mEndPointTracker->StopTracking();
   }
 
  private:

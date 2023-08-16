@@ -84,7 +84,7 @@ static inline AllocKind GetGCObjectKindForBytes(size_t nbytes) {
 }
 
 /* Get the number of fixed slots and initial capacity associated with a kind. */
-static inline size_t GetGCKindSlots(AllocKind thingKind) {
+static constexpr inline size_t GetGCKindSlots(AllocKind thingKind) {
   // Using a switch in hopes that thingKind will usually be a compile-time
   // constant.
   switch (thingKind) {
@@ -99,7 +99,7 @@ static inline size_t GetGCKindSlots(AllocKind thingKind) {
     case AllocKind::OBJECT4_BACKGROUND:
       return 4;
     case AllocKind::FUNCTION_EXTENDED:
-      return 6;
+      return 7;
     case AllocKind::OBJECT8:
     case AllocKind::OBJECT8_BACKGROUND:
       return 8;

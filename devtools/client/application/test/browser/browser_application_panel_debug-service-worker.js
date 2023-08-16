@@ -3,7 +3,6 @@
 
 "use strict";
 
-/* import-globals-from ../../../debugger/test/mochitest/shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/devtools/client/debugger/test/mochitest/shared-head.js",
   this
@@ -11,7 +10,7 @@ Services.scriptloader.loadSubScript(
 
 const TAB_URL = URL_ROOT + "resources/service-workers/debug.html";
 
-add_task(async function() {
+add_task(async function () {
   await enableApplicationPanel();
 
   const { panel, tab, toolbox, commands } = await openNewTabAndApplicationPanel(
@@ -43,7 +42,7 @@ add_task(async function() {
 
   // force a pause at the breakpoint
   info("Invoke fetch, expect the service worker script to pause on line 11");
-  await ContentTask.spawn(tab.linkedBrowser, {}, async function() {
+  await ContentTask.spawn(tab.linkedBrowser, {}, async function () {
     content.wrappedJSObject.fetchFromWorker();
   });
   await waitForPaused(debuggerContext);

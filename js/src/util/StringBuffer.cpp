@@ -13,6 +13,7 @@
 
 #include "frontend/ParserAtom.h"  // frontend::{ParserAtomsTable, TaggedParserAtomIndex
 #include "js/friend/ErrorMessages.h"  // js::GetErrorMessage, JSMSG_*
+#include "vm/BigIntType.h"
 #include "vm/StaticStrings.h"
 
 #include "vm/JSObject-inl.h"
@@ -31,9 +32,15 @@ static CharT* ExtractWellSized(Buffer& cb) {
     return nullptr;
   }
 
-  /* For medium/big buffers, avoid wasting more than 1/4 of the memory. */
+  // For medium/big buffers, avoid wasting more than 1/4 of the memory. Very
+  // small strings will not reach here because they will have been stored in a
+  // JSInlineString. Don't bother shrinking the allocation unless at least 80
+  // bytes will be saved, which is a somewhat arbitrary number (though it does
+  // correspond to a mozjemalloc size class.)
   MOZ_ASSERT(capacity >= length);
-  if (length > Buffer::sMaxInlineStorage && capacity - length > length / 4) {
+  constexpr size_t minCharsToReclaim = 80 / sizeof(CharT);
+  if (capacity - length >= minCharsToReclaim &&
+      capacity - length > capacity / 4) {
     CharT* tmp = allocPolicy.pod_realloc<CharT>(buf, capacity, length);
     if (!tmp) {
       allocPolicy.free_(buf);
@@ -56,7 +63,7 @@ char16_t* StringBuffer::stealChars() {
 bool StringBuffer::inflateChars() {
   MOZ_ASSERT(isLatin1());
 
-  TwoByteCharBuffer twoByte(StringBufferAllocPolicy{cx_, arenaId_});
+  TwoByteCharBuffer twoByte(latin1Chars().allocPolicy());
 
   /*
    * Note: we don't use Vector::capacity() because it always returns a
@@ -111,12 +118,14 @@ JSLinearString* StringBuffer::finishStringInternal(JSContext* cx) {
 }
 
 JSLinearString* JSStringBuilder::finishString() {
+  MOZ_ASSERT(maybeCx_);
+
   size_t len = length();
   if (len == 0) {
-    return cx_->names().empty;
+    return maybeCx_->names().empty;
   }
 
-  if (MOZ_UNLIKELY(!JSString::validateLength(cx_, len))) {
+  if (MOZ_UNLIKELY(!JSString::validateLength(maybeCx_, len))) {
     return nullptr;
   }
 
@@ -125,41 +134,43 @@ JSLinearString* JSStringBuilder::finishString() {
   static_assert(JSFatInlineString::MAX_LENGTH_LATIN1 <
                 Latin1CharBuffer::InlineLength);
 
-  return isLatin1() ? finishStringInternal<Latin1Char>(cx_)
-                    : finishStringInternal<char16_t>(cx_);
+  return isLatin1() ? finishStringInternal<Latin1Char>(maybeCx_)
+                    : finishStringInternal<char16_t>(maybeCx_);
 }
 
 JSAtom* StringBuffer::finishAtom() {
+  MOZ_ASSERT(maybeCx_);
+
   size_t len = length();
   if (len == 0) {
-    return cx_->names().empty;
+    return maybeCx_->names().empty;
   }
 
   if (isLatin1()) {
-    JSAtom* atom = AtomizeChars(cx_, latin1Chars().begin(), len);
+    JSAtom* atom = AtomizeChars(maybeCx_, latin1Chars().begin(), len);
     latin1Chars().clear();
     return atom;
   }
 
-  JSAtom* atom = AtomizeChars(cx_, twoByteChars().begin(), len);
+  JSAtom* atom = AtomizeChars(maybeCx_, twoByteChars().begin(), len);
   twoByteChars().clear();
   return atom;
 }
 
 frontend::TaggedParserAtomIndex StringBuffer::finishParserAtom(
-    frontend::ParserAtomsTable& parserAtoms) {
+    frontend::ParserAtomsTable& parserAtoms, FrontendContext* fc) {
   size_t len = length();
   if (len == 0) {
     return frontend::TaggedParserAtomIndex::WellKnown::empty();
   }
 
   if (isLatin1()) {
-    auto result = parserAtoms.internLatin1(cx_, latin1Chars().begin(), len);
+    auto result = parserAtoms.internLatin1(fc, latin1Chars().begin(), len);
     latin1Chars().clear();
     return result;
   }
 
-  auto result = parserAtoms.internChar16(cx_, twoByteChars().begin(), len);
+  auto result = parserAtoms.internChar16(fc, twoByteChars().begin(), len);
   twoByteChars().clear();
   return result;
 }

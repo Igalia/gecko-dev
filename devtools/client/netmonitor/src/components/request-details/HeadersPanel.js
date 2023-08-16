@@ -1,87 +1,101 @@
+/* eslint-disable complexity */
 /* This Source Code Form is subject to the terms of the Mozilla Public
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
 "use strict";
 
-const Services = require("Services");
 const {
   Component,
   createFactory,
-} = require("devtools/client/shared/vendor/react");
+} = require("resource://devtools/client/shared/vendor/react.js");
 const {
   connect,
-} = require("devtools/client/shared/redux/visibility-handler-connect");
-const Actions = require("devtools/client/netmonitor/src/actions/index");
-const PropTypes = require("devtools/client/shared/vendor/react-prop-types");
-const dom = require("devtools/client/shared/vendor/react-dom-factories");
+} = require("resource://devtools/client/shared/redux/visibility-handler-connect.js");
+const Actions = require("resource://devtools/client/netmonitor/src/actions/index.js");
+const PropTypes = require("resource://devtools/client/shared/vendor/react-prop-types.js");
+const dom = require("resource://devtools/client/shared/vendor/react-dom-factories.js");
 const {
   getFormattedIPAndPort,
   getFormattedSize,
   getRequestPriorityAsText,
-} = require("devtools/client/netmonitor/src/utils/format-utils");
-const { L10N } = require("devtools/client/netmonitor/src/utils/l10n");
+} = require("resource://devtools/client/netmonitor/src/utils/format-utils.js");
+const {
+  L10N,
+} = require("resource://devtools/client/netmonitor/src/utils/l10n.js");
 const {
   getHeadersURL,
   getTrackingProtectionURL,
   getHTTPStatusCodeURL,
-} = require("devtools/client/netmonitor/src/utils/doc-utils");
+} = require("resource://devtools/client/netmonitor/src/utils/doc-utils.js");
 const {
   fetchNetworkUpdatePacket,
   writeHeaderText,
   getRequestHeadersRawText,
-} = require("devtools/client/netmonitor/src/utils/request-utils");
+} = require("resource://devtools/client/netmonitor/src/utils/request-utils.js");
 const {
   HeadersProvider,
   HeaderList,
-} = require("devtools/client/netmonitor/src/utils/headers-provider");
+} = require("resource://devtools/client/netmonitor/src/utils/headers-provider.js");
 const {
   FILTER_SEARCH_DELAY,
-} = require("devtools/client/netmonitor/src/constants");
+} = require("resource://devtools/client/netmonitor/src/constants.js");
 // Components
 const PropertiesView = createFactory(
-  require("devtools/client/netmonitor/src/components/request-details/PropertiesView")
+  require("resource://devtools/client/netmonitor/src/components/request-details/PropertiesView.js")
 );
 const SearchBox = createFactory(
-  require("devtools/client/shared/components/SearchBox")
+  require("resource://devtools/client/shared/components/SearchBox.js")
 );
 const Accordion = createFactory(
-  require("devtools/client/shared/components/Accordion")
+  require("resource://devtools/client/shared/components/Accordion.js")
 );
 const UrlPreview = createFactory(
-  require("devtools/client/netmonitor/src/components/previews/UrlPreview")
+  require("resource://devtools/client/netmonitor/src/components/previews/UrlPreview.js")
 );
-const HeadersPanelContextMenu = require("devtools/client/netmonitor/src/widgets/HeadersPanelContextMenu");
+const HeadersPanelContextMenu = require("resource://devtools/client/netmonitor/src/widgets/HeadersPanelContextMenu.js");
 const StatusCode = createFactory(
-  require("devtools/client/netmonitor/src/components/StatusCode")
+  require("resource://devtools/client/netmonitor/src/components/StatusCode.js")
 );
 
-loader.lazyGetter(this, "MDNLink", function() {
-  return createFactory(require("devtools/client/shared/components/MdnLink"));
-});
-loader.lazyGetter(this, "Rep", function() {
-  return require("devtools/client/shared/components/reps/index").REPS.Rep;
-});
-loader.lazyGetter(this, "MODE", function() {
-  return require("devtools/client/shared/components/reps/index").MODE;
-});
-loader.lazyGetter(this, "TreeRow", function() {
+loader.lazyGetter(this, "MDNLink", function () {
   return createFactory(
-    require("devtools/client/shared/components/tree/TreeRow")
+    require("resource://devtools/client/shared/components/MdnLink.js")
+  );
+});
+loader.lazyGetter(this, "Rep", function () {
+  return require("resource://devtools/client/shared/components/reps/index.js")
+    .REPS.Rep;
+});
+loader.lazyGetter(this, "MODE", function () {
+  return require("resource://devtools/client/shared/components/reps/index.js")
+    .MODE;
+});
+loader.lazyGetter(this, "TreeRow", function () {
+  return createFactory(
+    require("resource://devtools/client/shared/components/tree/TreeRow.js")
   );
 });
 loader.lazyRequireGetter(
   this,
   "showMenu",
-  "devtools/client/shared/components/menu/utils",
+  "resource://devtools/client/shared/components/menu/utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "openContentLink",
-  "devtools/client/shared/link",
+  "resource://devtools/client/shared/link.js",
   true
 );
+
+loader.lazyGetter(this, "HEADERS_PROXY_STATUS", function () {
+  return L10N.getStr("netmonitor.headers.proxyStatus");
+});
+
+loader.lazyGetter(this, "HEADERS_PROXY_VERSION", function () {
+  return L10N.getStr("netmonitor.headers.proxyVersion");
+});
 
 const { div, input, label, span, textarea, tr, td, button } = dom;
 
@@ -108,7 +122,7 @@ const HEADERS_ETP = L10N.getStr(
   "netmonitor.trackingResource.enhancedTrackingProtection"
 );
 const HEADERS_PRIORITY = L10N.getStr("netmonitor.headers.requestPriority");
-
+const HEADERS_DNS = L10N.getStr("netmonitor.headers.dns");
 /**
  * Headers panel component
  * Lists basic information about the request
@@ -281,11 +295,11 @@ class HeadersPanel extends Component {
   /**
    * Renders the top part of the headers detail panel - Summary.
    */
-  renderSummary(summaryLabel, value) {
+  renderSummary(summaryLabel, value, summaryClass = "") {
     return div(
       {
         key: summaryLabel,
-        className: "tabpanel-summary-container headers-summary",
+        className: "tabpanel-summary-container headers-summary " + summaryClass,
       },
       span(
         { className: "tabpanel-summary-label headers-summary-label" },
@@ -401,6 +415,9 @@ class HeadersPanel extends Component {
           key: path,
           role: "treeitem",
           className: "raw-headers-container",
+          onClick: event => {
+            event.stopPropagation();
+          },
         },
         td(
           {
@@ -548,6 +565,10 @@ class HeadersPanel extends Component {
         isThirdPartyTrackingResource,
         contentSize,
         transferredSize,
+        isResolvedByTRR,
+        proxyHttpVersion,
+        proxyStatus,
+        proxyStatusText,
       },
       openRequestBlockingAndAddUrl,
       openHTTPCustomRequestTab,
@@ -708,6 +729,42 @@ class HeadersPanel extends Component {
       );
     }
 
+    let summaryProxyStatus;
+    if (proxyStatus) {
+      summaryProxyStatus = div(
+        {
+          key: "headers-summary ",
+          className:
+            "tabpanel-summary-container headers-summary headers-proxy-status",
+        },
+        span(
+          {
+            className: "tabpanel-summary-label headers-summary-label",
+          },
+          HEADERS_PROXY_STATUS
+        ),
+        span(
+          {
+            className: "tabpanel-summary-value status",
+            "data-code": proxyStatus,
+          },
+          StatusCode({
+            item: {
+              fromCache,
+              fromServiceWorker,
+              status: proxyStatus,
+              statusText: proxyStatusText,
+            },
+          }),
+          proxyStatusText,
+          MDNLink({
+            url: getHTTPStatusCodeURL(proxyStatus),
+            title: SUMMARY_STATUS_LEARN_MORE,
+          })
+        )
+      );
+    }
+
     let trackingProtectionStatus;
     let trackingProtectionDetails = "";
     if (isThirdPartyTrackingResource) {
@@ -739,6 +796,14 @@ class HeadersPanel extends Component {
       ? this.renderSummary(HEADERS_VERSION, httpVersion)
       : null;
 
+    const summaryProxyHttpVersion = proxyHttpVersion
+      ? this.renderSummary(
+          HEADERS_PROXY_VERSION,
+          proxyHttpVersion,
+          "headers-proxy-version"
+        )
+      : null;
+
     const summaryReferrerPolicy = referrerPolicy
       ? this.renderSummary(HEADERS_REFERRER, referrerPolicy)
       : null;
@@ -747,12 +812,24 @@ class HeadersPanel extends Component {
       ? this.renderSummary(HEADERS_PRIORITY, getRequestPriorityAsText(priority))
       : null;
 
+    const summaryDNS = this.renderSummary(
+      HEADERS_DNS,
+      L10N.getStr(
+        isResolvedByTRR
+          ? "netmonitor.headers.dns.overHttps"
+          : "netmonitor.headers.dns.basic"
+      )
+    );
+
     const summaryItems = [
       summaryStatus,
+      summaryProxyStatus,
       summaryVersion,
+      summaryProxyHttpVersion,
       summarySize,
       summaryReferrerPolicy,
       summaryPriority,
+      summaryDNS,
       trackingProtectionStatus,
       trackingProtectionDetails,
     ].filter(summaryItem => summaryItem !== null);
@@ -810,6 +887,7 @@ class HeadersPanel extends Component {
               : null,
             shouldExpandPreview,
             onTogglePreview: expanded => setHeadersUrlPreviewExpanded(expanded),
+            proxyStatus,
           }),
           div(
             {
@@ -837,7 +915,6 @@ module.exports = connect(
     openHTTPCustomRequestTab: () =>
       dispatch(Actions.openHTTPCustomRequest(true)),
     cloneRequest: id => dispatch(Actions.cloneRequest(id)),
-    sendCustomRequest: () =>
-      dispatch(Actions.sendCustomRequest(props.connector)),
+    sendCustomRequest: () => dispatch(Actions.sendCustomRequest()),
   })
 )(HeadersPanel);

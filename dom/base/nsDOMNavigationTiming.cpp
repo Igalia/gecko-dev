@@ -174,12 +174,9 @@ void nsDOMNavigationTiming::NotifyLoadEventEnd() {
         PAGELOAD_LOG_ENABLED()) {
       TimeDuration elapsed = mLoadEventEnd - mNavigationStart;
       TimeDuration duration = mLoadEventEnd - mLoadEventStart;
-      nsAutoCString spec;
-      if (mLoadedURI) {
-        mLoadedURI->GetSpec(spec);
-      }
       nsPrintfCString marker(
-          "Document %s loaded after %dms, load event duration %dms", spec.get(),
+          "Document %s loaded after %dms, load event duration %dms",
+          nsContentUtils::TruncatedURLForDisplay(mLoadedURI).get(),
           int(elapsed.ToMilliseconds()), int(duration.ToMilliseconds()));
       PAGELOAD_LOG(("%s", marker.get()));
       PROFILER_MARKER_TEXT(
@@ -375,13 +372,10 @@ void nsDOMNavigationTiming::TTITimeout(nsITimer* aTimer) {
     MOZ_ASSERT(elapsed.ToMilliseconds() > 0);
     TimeDuration elapsedLongTask =
         lastLongTaskEnded.IsNull() ? 0 : lastLongTaskEnded - mNavigationStart;
-    nsAutoCString spec;
-    if (mLoadedURI) {
-      mLoadedURI->GetSpec(spec);
-    }
-    nsPrintfCString marker("TTFI after %dms (LongTask was at %dms) for URL %s",
-                           int(elapsed.ToMilliseconds()),
-                           int(elapsedLongTask.ToMilliseconds()), spec.get());
+    nsPrintfCString marker(
+        "TTFI after %dms (LongTask was at %dms) for URL %s",
+        int(elapsed.ToMilliseconds()), int(elapsedLongTask.ToMilliseconds()),
+        nsContentUtils::TruncatedURLForDisplay(mLoadedURI).get());
 
     PROFILER_MARKER_TEXT(
         "TimeToFirstInteractive (TTFI)", DOM,
@@ -404,13 +398,10 @@ void nsDOMNavigationTiming::NotifyNonBlankPaintForRootContentDocument() {
   if (profiler_thread_is_being_profiled_for_markers() ||
       PAGELOAD_LOG_ENABLED()) {
     TimeDuration elapsed = mNonBlankPaint - mNavigationStart;
-    nsAutoCString spec;
-    if (mLoadedURI) {
-      mLoadedURI->GetSpec(spec);
-    }
     nsPrintfCString marker(
         "Non-blank paint after %dms for URL %s, %s",
-        int(elapsed.ToMilliseconds()), spec.get(),
+        int(elapsed.ToMilliseconds()),
+        nsContentUtils::TruncatedURLForDisplay(mLoadedURI).get(),
         mDocShellHasBeenActiveSinceNavigationStart
             ? "foreground tab"
             : "this tab was inactive some of the time between navigation start "
@@ -453,13 +444,10 @@ void nsDOMNavigationTiming::NotifyContentfulCompositeForRootContentDocument(
   if (profiler_thread_is_being_profiled_for_markers() ||
       PAGELOAD_LOG_ENABLED()) {
     TimeDuration elapsed = mContentfulComposite - mNavigationStart;
-    nsAutoCString spec;
-    if (mLoadedURI) {
-      mLoadedURI->GetSpec(spec);
-    }
     nsPrintfCString marker(
-        "Contentful paint after %dms for URL %s, %s",
-        int(elapsed.ToMilliseconds()), spec.get(),
+        "Contentful composite after %dms for URL %s, %s",
+        int(elapsed.ToMilliseconds()),
+        nsContentUtils::TruncatedURLForDisplay(mLoadedURI).get(),
         mDocShellHasBeenActiveSinceNavigationStart
             ? "foreground tab"
             : "this tab was inactive some of the time between navigation start "
@@ -503,13 +491,10 @@ void nsDOMNavigationTiming::NotifyDOMContentFlushedForRootContentDocument() {
   if (profiler_thread_is_being_profiled_for_markers() ||
       PAGELOAD_LOG_ENABLED()) {
     TimeDuration elapsed = mDOMContentFlushed - mNavigationStart;
-    nsAutoCString spec;
-    if (mLoadedURI) {
-      mLoadedURI->GetSpec(spec);
-    }
     nsPrintfCString marker(
         "DOMContentFlushed after %dms for URL %s, %s",
-        int(elapsed.ToMilliseconds()), spec.get(),
+        int(elapsed.ToMilliseconds()),
+        nsContentUtils::TruncatedURLForDisplay(mLoadedURI).get(),
         mDocShellHasBeenActiveSinceNavigationStart
             ? "foreground tab"
             : "this tab was inactive some of the time between navigation start "
@@ -591,6 +576,12 @@ nsDOMNavigationTiming::nsDOMNavigationTiming(nsDocShell* aDocShell,
 void mozilla::ipc::IPDLParamTraits<nsDOMNavigationTiming*>::Write(
     IPC::MessageWriter* aWriter, IProtocol* aActor,
     nsDOMNavigationTiming* aParam) {
+  bool isNull = !aParam;
+  WriteIPDLParam(aWriter, aActor, isNull);
+  if (isNull) {
+    return;
+  }
+
   RefPtr<nsIURI> unloadedURI = aParam->mUnloadedURI.get();
   RefPtr<nsIURI> loadedURI = aParam->mLoadedURI.get();
   WriteIPDLParam(aWriter, aActor, unloadedURI ? Some(unloadedURI) : Nothing());
@@ -620,6 +611,15 @@ void mozilla::ipc::IPDLParamTraits<nsDOMNavigationTiming*>::Write(
 bool mozilla::ipc::IPDLParamTraits<nsDOMNavigationTiming*>::Read(
     IPC::MessageReader* aReader, IProtocol* aActor,
     RefPtr<nsDOMNavigationTiming>* aResult) {
+  bool isNull;
+  if (!ReadIPDLParam(aReader, aActor, &isNull)) {
+    return false;
+  }
+  if (isNull) {
+    *aResult = nullptr;
+    return true;
+  }
+
   auto timing = MakeRefPtr<nsDOMNavigationTiming>(nullptr);
   uint32_t type;
   Maybe<RefPtr<nsIURI>> unloadedURI;

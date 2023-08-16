@@ -4,16 +4,10 @@
 
 SimpleTest.requestCompleteLog();
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "SessionStore",
-  "resource:///modules/sessionstore/SessionStore.jsm"
-);
-ChromeUtils.defineModuleGetter(
-  this,
-  "TabStateFlusher",
-  "resource:///modules/sessionstore/TabStateFlusher.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  SessionStore: "resource:///modules/sessionstore/SessionStore.sys.mjs",
+  TabStateFlusher: "resource:///modules/sessionstore/TabStateFlusher.sys.mjs",
+});
 
 add_task(async function test_sessions_restore() {
   function background() {
@@ -39,7 +33,7 @@ add_task(async function test_sessions_restore() {
           error => {
             browser.test.assertTrue(
               error.message.includes(
-                "Could not restore object using sessionId not-a-valid-session-id."
+                "Invalid sessionId: not-a-valid-session-id."
               )
             );
             browser.test.sendMessage("restore-rejected");
@@ -72,7 +66,7 @@ add_task(async function test_sessions_restore() {
     Management: {
       global: { windowTracker, tabTracker },
     },
-  } = ChromeUtils.import("resource://gre/modules/Extension.jsm");
+  } = ChromeUtils.importESModule("resource://gre/modules/Extension.sys.mjs");
 
   function checkLocalTab(tab, expectedUrl) {
     let realTab = tabTracker.getTab(tab.id);
@@ -87,7 +81,7 @@ add_task(async function test_sessions_restore() {
   await extension.awaitMessage("ready");
 
   let win = await BrowserTestUtils.openNewBrowserWindow();
-  BrowserTestUtils.loadURI(win.gBrowser.selectedBrowser, "about:config");
+  BrowserTestUtils.loadURIString(win.gBrowser.selectedBrowser, "about:config");
   await BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
   for (let url of ["about:robots", "about:mozilla"]) {
     await BrowserTestUtils.openNewForegroundTab(win.gBrowser, url);
@@ -200,7 +194,7 @@ add_task(async function test_sessions_event_page() {
   let extension = ExtensionTestUtils.loadExtension({
     useAddonManager: "permanent",
     manifest: {
-      applications: { gecko: { id: "eventpage@sessions" } },
+      browser_specific_settings: { gecko: { id: "eventpage@sessions" } },
       permissions: ["sessions", "tabs"],
       background: { persistent: false },
     },
@@ -218,7 +212,7 @@ add_task(async function test_sessions_event_page() {
   // test events waken background
   await extension.terminateBackground();
   let win = await BrowserTestUtils.openNewBrowserWindow();
-  BrowserTestUtils.loadURI(win.gBrowser.selectedBrowser, "about:config");
+  BrowserTestUtils.loadURIString(win.gBrowser.selectedBrowser, "about:config");
   await BrowserTestUtils.browserLoaded(win.gBrowser.selectedBrowser);
   for (let url of ["about:robots", "about:mozilla"]) {
     await BrowserTestUtils.openNewForegroundTab(win.gBrowser, url);

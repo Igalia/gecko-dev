@@ -15,6 +15,8 @@ enum RTCStatsType {
   "outbound-rtp",
   "remote-inbound-rtp",
   "remote-outbound-rtp",
+  "media-source",
+  "peer-connection",
   "csrc",
   "data-channel",
   "session",
@@ -32,9 +34,9 @@ dictionary RTCStats {
 };
 
 dictionary RTCRtpStreamStats : RTCStats {
-  unsigned long ssrc;
+  required unsigned long ssrc;
+  required DOMString kind;
   DOMString mediaType;
-  DOMString kind;
   DOMString transportId;
   DOMString codecId;
 };
@@ -55,34 +57,56 @@ enum RTCCodecType {
 };
 
 dictionary RTCReceivedRtpStreamStats: RTCRtpStreamStats {
-  unsigned long packetsReceived;
-  unsigned long packetsLost;
+  unsigned long long packetsReceived;
+  long long packetsLost;
   double jitter;
   unsigned long discardedPackets; // non-standard alias for packetsDiscarded
   unsigned long packetsDiscarded;
 };
 
 dictionary RTCInboundRtpStreamStats : RTCReceivedRtpStreamStats {
+  required DOMString trackIdentifier;
   DOMString remoteId;
   unsigned long framesDecoded;
+  unsigned long framesDropped;
   unsigned long frameWidth;
   unsigned long frameHeight;
   double framesPerSecond;
+  unsigned long long qpSum;
+  double totalDecodeTime;
+  double totalInterFrameDelay;
+  double totalSquaredInterFrameDelay;
+  DOMHighResTimeStamp lastPacketReceivedTimestamp;
+  unsigned long long headerBytesReceived;
+  unsigned long long fecPacketsReceived;
+  unsigned long long fecPacketsDiscarded;
   unsigned long long bytesReceived;
   unsigned long nackCount;
   unsigned long firCount;
   unsigned long pliCount;
+  double totalProcessingDelay;
+  // Always missing from libwebrtc
+  // DOMHighResTimeStamp  estimatedPlayoutTimestamp;
   double jitterBufferDelay;
   unsigned long long jitterBufferEmittedCount;
   unsigned long long totalSamplesReceived;
   unsigned long long concealedSamples;
   unsigned long long silentConcealedSamples;
+  unsigned long long concealmentEvents;
+  unsigned long long insertedSamplesForDeceleration;
+  unsigned long long removedSamplesForAcceleration;
+  double audioLevel;
+  double totalAudioEnergy;
+  double totalSamplesDuration;
   unsigned long framesReceived;
 };
 
 dictionary RTCRemoteInboundRtpStreamStats : RTCReceivedRtpStreamStats {
   DOMString localId;
   double roundTripTime;
+  double totalRoundTripTime;
+  double fractionLost;
+  unsigned long long roundTripTimeMeasurements;
 };
 
 dictionary RTCSentRtpStreamStats : RTCRtpStreamStats {
@@ -103,6 +127,7 @@ dictionary RTCOutboundRtpStreamStats : RTCSentRtpStreamStats {
   unsigned long long totalEncodedBytesTarget;
   unsigned long frameWidth;
   unsigned long frameHeight;
+  double framesPerSecond;
   unsigned long framesSent;
   unsigned long hugeFramesSent;
   double totalEncodeTime;
@@ -111,6 +136,23 @@ dictionary RTCOutboundRtpStreamStats : RTCSentRtpStreamStats {
 dictionary RTCRemoteOutboundRtpStreamStats : RTCSentRtpStreamStats {
   DOMString localId;
   DOMHighResTimeStamp remoteTimestamp;
+};
+
+dictionary RTCMediaSourceStats : RTCStats {
+  required DOMString trackIdentifier;
+  required DOMString kind;
+};
+
+dictionary RTCVideoSourceStats : RTCMediaSourceStats {
+  unsigned long   width;
+  unsigned long   height;
+  unsigned long   frames;
+  double          framesPerSecond;
+};
+
+dictionary RTCPeerConnectionStats : RTCStats {
+  unsigned long dataChannelsOpened;
+  unsigned long dataChannelsClosed;
 };
 
 dictionary RTCRTPContributingSourceStats : RTCStats {
@@ -231,6 +273,9 @@ dictionary RTCStatsCollection {
   sequence<RTCOutboundRtpStreamStats>       outboundRtpStreamStats = [];
   sequence<RTCRemoteInboundRtpStreamStats>  remoteInboundRtpStreamStats = [];
   sequence<RTCRemoteOutboundRtpStreamStats> remoteOutboundRtpStreamStats = [];
+  sequence<RTCMediaSourceStats>             mediaSourceStats = [];
+  sequence<RTCVideoSourceStats>             videoSourceStats = [];
+  sequence<RTCPeerConnectionStats>          peerConnectionStats = [];
   sequence<RTCRTPContributingSourceStats>   rtpContributingSourceStats = [];
   sequence<RTCIceCandidatePairStats>        iceCandidatePairStats = [];
   sequence<RTCIceCandidateStats>            iceCandidateStats = [];
@@ -263,6 +308,11 @@ dictionary RTCConfigurationInternal {
   DOMString                      sdpSemantics;
 };
 
+dictionary RTCSdpHistoryInternal {
+  required DOMString pcid;
+  sequence<RTCSdpHistoryEntryInternal> sdpHistory = [];
+};
+
 // A collection of RTCStats dictionaries, plus some other info. Used by
 // WebrtcGlobalInformation for about:webrtc, and telemetry.
 dictionary RTCStatsReportInternal : RTCStatsCollection {
@@ -270,8 +320,7 @@ dictionary RTCStatsReportInternal : RTCStatsCollection {
   required unsigned long                    browserId;
   RTCConfigurationInternal                  configuration;
   DOMString                                 jsepSessionErrors;
-  DOMString                                 localSdp;
-  DOMString                                 remoteSdp;
+  // TODO demux from RTCStatsReportInternal in bug 1830824
   sequence<RTCSdpHistoryEntryInternal>      sdpHistory = [];
   required DOMHighResTimeStamp              timestamp;
   double                                    callDurationMs;

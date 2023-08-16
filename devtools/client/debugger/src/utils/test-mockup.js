@@ -14,6 +14,7 @@ import * as asyncValue from "./async-value";
 import { initialState } from "../reducers/index";
 
 import { getDisplayURL } from "./sources-tree/getURL";
+import { createLocation } from "./location";
 
 function makeMockSource(url = "url", id = "source", thread = "FakeThread") {
   return {
@@ -135,9 +136,7 @@ function mockScopeAddVariable(scope, name) {
 }
 
 function makeMockBreakpoint(source = makeMockSource(), line = 1, column) {
-  const location = column
-    ? { sourceId: source.id, line, column }
-    : { sourceId: source.id, line };
+  const location = column ? { source, line, column } : { source, line };
   return {
     id: "breakpoint",
     location,
@@ -157,7 +156,13 @@ function makeMockFrame(
   displayName = `display-${id}`,
   index = 0
 ) {
-  const location = { sourceId: source.id, line };
+  const sourceActor = {
+    id: `${source.id}-actor`,
+    actor: `${source.id}-actor`,
+    source: source.id,
+    sourceObject: source,
+  };
+  const location = createLocation({ source, sourceActor, line });
   return {
     id,
     thread: "FakeThread",

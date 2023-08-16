@@ -7,11 +7,19 @@
 with Files("**"):
     BUG_COMPONENT = ("Core", "Privacy: Anti-Tracking")
 
+JAR_MANIFESTS += ["jar.mn"]
+
+DIRS += [
+    "bouncetrackingprotection",
+]
+
 XPIDL_SOURCES += [
+    "nsIContentBlockingAllowList.idl",
     "nsIPartitioningExceptionListService.idl",
     "nsIPurgeTrackerService.idl",
     "nsITrackingDBService.idl",
     "nsIURLDecorationAnnotationsService.idl",
+    "nsIURLQueryStringStripper.idl",
     "nsIURLQueryStrippingListService.idl",
 ]
 
@@ -22,12 +30,12 @@ EXTRA_COMPONENTS += [
 ]
 
 EXTRA_JS_MODULES += [
-    "ContentBlockingAllowList.jsm",
-    "PartitioningExceptionListService.jsm",
-    "PurgeTrackerService.jsm",
-    "TrackingDBService.jsm",
-    "URLDecorationAnnotationsService.jsm",
-    "URLQueryStrippingListService.jsm",
+    "ContentBlockingAllowList.sys.mjs",
+    "PartitioningExceptionListService.sys.mjs",
+    "PurgeTrackerService.sys.mjs",
+    "TrackingDBService.sys.mjs",
+    "URLDecorationAnnotationsService.sys.mjs",
+    "URLQueryStrippingListService.sys.mjs",
 ]
 
 XPCOM_MANIFESTS += [
@@ -92,4 +100,4 @@ XPCSHELL_TESTS_MANIFESTS += ["test/xpcshell/xpcshell.ini"]
 
 TEST_DIRS += ["test/gtest"]
 
-REQUIRES_UNIFIED_BUILD = True
+SPHINX_TREES["anti-tracking"] = "docs"

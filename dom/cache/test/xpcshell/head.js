@@ -42,11 +42,7 @@ class RequestError extends Error {
   }
 }
 
-function run_test() {
-  runTest();
-}
-
-function runTest() {
+add_setup(function () {
   do_get_profile();
 
   enableTesting();
@@ -54,23 +50,8 @@ function runTest() {
   // Expose Cache and Fetch symbols on the global
   Cu.importGlobalProperties(["caches", "fetch"]);
 
-  Assert.ok(
-    typeof testSteps === "function",
-    "There should be a testSteps function"
-  );
-  Assert.ok(
-    testSteps.constructor.name === "AsyncFunction",
-    "testSteps should be an async function"
-  );
-
   registerCleanupFunction(resetTesting);
-
-  add_task(testSteps);
-
-  // Since we defined run_test, we must invoke run_next_test() to start the
-  // async test.
-  run_next_test();
-}
+});
 
 function enableTesting() {
   Services.prefs.setBoolPref("dom.simpleDB.enabled", true);
@@ -109,8 +90,8 @@ function reset() {
 }
 
 async function requestFinished(request) {
-  await new Promise(function(resolve) {
-    request.callback = function() {
+  await new Promise(function (resolve) {
+    request.callback = function () {
       resolve();
     };
   });
@@ -144,7 +125,7 @@ function create_test_profile(zipFileName) {
     var zipentry = zipReader.getEntry(entryName);
 
     var file = profileDir.clone();
-    entryName.split(pathDelimiter).forEach(function(part) {
+    entryName.split(pathDelimiter).forEach(function (part) {
       file.append(part);
     });
 
@@ -201,7 +182,7 @@ function getRelativeFile(relativePath) {
     winFile.useDOSDevicePathSyntax = true;
   }
 
-  relativePath.split(pathDelimiter).forEach(function(component) {
+  relativePath.split(pathDelimiter).forEach(function (component) {
     if (component == "..") {
       file = file.parent;
     } else {

@@ -34,6 +34,8 @@ class nsIScrollableFrame;
 class nsITimer;
 class nsPresContext;
 
+enum class FormControlType : uint8_t;
+
 namespace mozilla {
 
 class EditorBase;
@@ -133,6 +135,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
 
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void NotifyDestroyPresContext(
       nsPresContext* aPresContext);
+
+  void ResetHoverState();
+
   void SetPresContext(nsPresContext* aPresContext);
   void ClearFrameRefs(nsIFrame* aFrame);
 
@@ -158,6 +163,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    *                  affect the return value.
    */
   bool SetContentState(nsIContent* aContent, ElementState aState);
+
+  nsIContent* GetActiveContent() const { return mActiveContent; }
 
   void NativeAnonymousContentRemoved(nsIContent* aAnonContent);
   MOZ_CAN_RUN_SCRIPT_BOUNDARY void ContentRemoved(dom::Document* aDocument,
@@ -339,7 +346,8 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
    * larger than this value, the computed scroll amount isn't rounded down to
    * the page width or height.
    */
-  enum { MIN_MULTIPLIER_VALUE_ALLOWING_OVER_ONE_PAGE_SCROLL = 1000 };
+  static constexpr double MIN_MULTIPLIER_VALUE_ALLOWING_OVER_ONE_PAGE_SCROLL =
+      1000.0;
 
   /**
    * HandleMiddleClickPaste() handles middle mouse button event as pasting
@@ -1143,6 +1151,14 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   already_AddRefed<EventStateManager> ESMFromContentOrThis(
       nsIContent* aContent);
 
+  struct LastMouseDownInfo {
+    nsCOMPtr<nsIContent> mLastMouseDownContent;
+    Maybe<FormControlType> mLastMouseDownInputControlType;
+    uint32_t mClickCount = 0;
+  };
+
+  LastMouseDownInfo& GetLastMouseDownInfo(int16_t aButton);
+
   StyleCursorKind mLockCursor;
   bool mLastFrameConsumedSetCursor;
 
@@ -1180,9 +1196,9 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   Modifiers mGestureModifiers;
   uint16_t mGestureDownButtons;
 
-  nsCOMPtr<nsIContent> mLastLeftMouseDownContent;
-  nsCOMPtr<nsIContent> mLastMiddleMouseDownContent;
-  nsCOMPtr<nsIContent> mLastRightMouseDownContent;
+  LastMouseDownInfo mLastLeftMouseDownInfo;
+  LastMouseDownInfo mLastMiddleMouseDownInfo;
+  LastMouseDownInfo mLastRightMouseDownInfo;
 
   nsCOMPtr<nsIContent> mActiveContent;
   nsCOMPtr<nsIContent> mHoverContent;
@@ -1193,10 +1209,6 @@ class EventStateManager : public nsSupportsWeakReference, public nsIObserver {
   RefPtr<dom::Document> mDocument;  // Doesn't necessarily need to be owner
 
   RefPtr<IMEContentObserver> mIMEContentObserver;
-
-  uint32_t mLClickCount;
-  uint32_t mMClickCount;
-  uint32_t mRClickCount;
 
   bool mShouldAlwaysUseLineDeltas : 1;
   bool mShouldAlwaysUseLineDeltasInitialized : 1;

@@ -5,7 +5,6 @@ http://creativecommons.org/publicdomain/zero/1.0/ */
 
 // Test adding and removing custom devices via the modal.
 
-const { LocalizationHelper } = require("devtools/shared/l10n");
 const L10N = new LocalizationHelper(
   "devtools/client/locales/device.properties",
   true
@@ -33,7 +32,7 @@ const TEST_URL = "data:text/html;charset=utf-8,";
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { document } = toolWindow;
 
@@ -91,7 +90,7 @@ addRDMTask(
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { store, document } = toolWindow;
 
@@ -119,7 +118,7 @@ addRDMTask(
 
     const deviceRemoveButton = document.querySelector(".device-remove-button");
     const removed = Promise.all([
-      waitUntilState(store, state => state.devices.custom.length == 0),
+      waitUntilState(store, state => !state.devices.custom.length),
       once(ui, "device-association-removed"),
     ]);
     deviceRemoveButton.click();
@@ -152,7 +151,7 @@ addRDMTask(
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { document } = toolWindow;
 
@@ -189,7 +188,7 @@ addRDMTask(
 
 addRDMTask(
   TEST_URL,
-  async function({ ui }) {
+  async function ({ ui }) {
     const { toolWindow } = ui;
     const { document } = toolWindow;
 

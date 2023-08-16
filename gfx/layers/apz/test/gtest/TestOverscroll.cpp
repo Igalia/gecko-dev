@@ -68,10 +68,6 @@ class APZCOverscrollTester : public APZCBasicTester {
 
   ScrollableLayerGuid CreateSimpleRootScrollableForWebRender() {
     ScrollableLayerGuid guid;
-    if (!gfx::gfxVars::UseWebRender()) {
-      return guid;
-    }
-
     guid.mScrollId = ScrollableLayerGuid::START_SCROLL_ID;
     guid.mLayersId = LayersId{0};
 
@@ -124,76 +120,6 @@ TEST_F(APZCOverscrollTester, FlingIntoOverscroll) {
   EXPECT_TRUE(recoveredFromOverscroll);
 }
 #endif
-
-TEST_F(APZCOverscrollTester, PanningTransformNotifications) {
-  SCOPED_GFX_PREF_BOOL("apz.overscroll.enabled", true);
-
-  // Scroll down by 25 px. Ensure we only get one set of
-  // state change notifications.
-  //
-  // Then, scroll back up by 20px, this time flinging after.
-  // The fling should cover the remaining 5 px of room to scroll, then
-  // go into overscroll, and finally snap-back to recover from overscroll.
-  // Again, ensure we only get one set of state change notifications for
-  // this entire procedure.
-
-  MockFunction<void(std::string checkPointName)> check;
-  {
-    InSequence s;
-    EXPECT_CALL(check, Call("Simple pan"));
-    EXPECT_CALL(*mcc,
-                NotifyAPZStateChange(
-                    _, GeckoContentController::APZStateChange::eStartTouch, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc,
-        NotifyAPZStateChange(
-            _, GeckoContentController::APZStateChange::eTransformBegin, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc, NotifyAPZStateChange(
-                  _, GeckoContentController::APZStateChange::eStartPanning, _))
-        .Times(1);
-    EXPECT_CALL(*mcc,
-                NotifyAPZStateChange(
-                    _, GeckoContentController::APZStateChange::eEndTouch, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc, NotifyAPZStateChange(
-                  _, GeckoContentController::APZStateChange::eTransformEnd, _))
-        .Times(1);
-    EXPECT_CALL(check, Call("Complex pan"));
-    EXPECT_CALL(*mcc,
-                NotifyAPZStateChange(
-                    _, GeckoContentController::APZStateChange::eStartTouch, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc,
-        NotifyAPZStateChange(
-            _, GeckoContentController::APZStateChange::eTransformBegin, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc, NotifyAPZStateChange(
-                  _, GeckoContentController::APZStateChange::eStartPanning, _))
-        .Times(1);
-    EXPECT_CALL(*mcc,
-                NotifyAPZStateChange(
-                    _, GeckoContentController::APZStateChange::eEndTouch, _))
-        .Times(1);
-    EXPECT_CALL(
-        *mcc, NotifyAPZStateChange(
-                  _, GeckoContentController::APZStateChange::eTransformEnd, _))
-        .Times(1);
-    EXPECT_CALL(check, Call("Done"));
-  }
-
-  check.Call("Simple pan");
-  Pan(apzc, 50, 25, PanOptions::NoFling);
-  check.Call("Complex pan");
-  Pan(apzc, 25, 45);
-  apzc->AdvanceAnimationsUntilEnd();
-  check.Call("Done");
-}
 
 #ifndef MOZ_WIDGET_ANDROID  // Currently fails on Android
 TEST_F(APZCOverscrollTester, OverScrollPanning) {
@@ -344,6 +270,48 @@ TEST_F(APZCOverscrollTester, OverscrollByVerticalPanGestures) {
   apzc->AdvanceAnimations(mcc->GetSampleTime());
   PanGesture(PanGestureInput::PANGESTURE_END, apzc, ScreenIntPoint(50, 80),
              ScreenPoint(0, 0), mcc->Time());
+
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // Check that we recover from overscroll via an animation.
+  ParentLayerPoint expectedScrollOffset(0, 0);
+  SampleAnimationUntilRecoveredFromOverscroll(expectedScrollOffset);
+}
+#endif
+
+#ifndef MOZ_WIDGET_ANDROID  // Currently fails on Android
+TEST_F(APZCOverscrollTester, StuckInOverscroll_Bug1767337) {
+  SCOPED_GFX_PREF_BOOL("apz.overscroll.enabled", true);
+
+  PanGesture(PanGestureInput::PANGESTURE_START, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -2), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  apzc->AdvanceAnimations(mcc->GetSampleTime());
+  PanGesture(PanGestureInput::PANGESTURE_PAN, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -10), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  PanGesture(PanGestureInput::PANGESTURE_PAN, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -10), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  PanGesture(PanGestureInput::PANGESTURE_PAN, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -10), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  PanGesture(PanGestureInput::PANGESTURE_PAN, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -10), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  apzc->AdvanceAnimations(mcc->GetSampleTime());
+  PanGesture(PanGestureInput::PANGESTURE_PAN, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, -2), mcc->Time());
+  mcc->AdvanceByMillis(5);
+  apzc->AdvanceAnimations(mcc->GetSampleTime());
+
+  // Send two PANGESTURE_END in a row, to see if the second one gets us
+  // stuck in overscroll.
+  PanGesture(PanGestureInput::PANGESTURE_END, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, 0), mcc->Time(), MODIFIER_NONE, true);
+  SampleAnimationOnce();
+  PanGesture(PanGestureInput::PANGESTURE_END, apzc, ScreenIntPoint(50, 80),
+             ScreenPoint(0, 0), mcc->Time(), MODIFIER_NONE, true);
 
   EXPECT_TRUE(apzc->IsOverscrolled());
 
@@ -1307,19 +1275,14 @@ TEST_F(
 
 #ifndef MOZ_WIDGET_ANDROID  // Currently fails on Android
 TEST_F(APZCOverscrollTester, OverscrollByPanGesturesInterruptedByReflowZoom) {
-  if (!gfx::gfxVars::UseWebRender()) {
-    // This test is only available with WebRender.
-    return;
-  }
-
   SCOPED_GFX_PREF_BOOL("apz.overscroll.enabled", true);
   SCOPED_GFX_PREF_INT("mousewheel.with_control.action", 3);  // reflow zoom.
 
   // A sanity check that pan gestures with ctrl modifier will not be handled by
   // APZ.
-  PanGestureInput panInput(
-      PanGestureInput::PANGESTURE_START, MillisecondsSinceStartup(mcc->Time()),
-      mcc->Time(), ScreenIntPoint(5, 5), ScreenPoint(0, -2), MODIFIER_CONTROL);
+  PanGestureInput panInput(PanGestureInput::PANGESTURE_START, mcc->Time(),
+                           ScreenIntPoint(5, 5), ScreenPoint(0, -2),
+                           MODIFIER_CONTROL);
   WidgetWheelEvent wheelEvent = panInput.ToWidgetEvent(nullptr);
   EXPECT_FALSE(APZInputBridge::ActionForWheelEvent(&wheelEvent).isSome());
 
@@ -1599,6 +1562,42 @@ TEST_F(APZCOverscrollTester, SmallAmountOfOverscroll) {
 }
 #endif
 
+#ifdef MOZ_WIDGET_ANDROID  // Only applies to WidgetOverscrollEffect
+TEST_F(APZCOverscrollTester, StuckInOverscroll_Bug1786452) {
+  SCOPED_GFX_PREF_BOOL("apz.overscroll.enabled", true);
+
+  ScrollMetadata metadata;
+  FrameMetrics& metrics = metadata.GetMetrics();
+  metrics.SetCompositionBounds(ParentLayerRect(0, 0, 100, 100));
+  metrics.SetScrollableRect(CSSRect(0, 0, 100, 1000));
+
+  // Over the course of the test, expect one or more calls to
+  // UpdateOverscrollOffset(), followed by a call to UpdateOverscrollVelocity().
+  // The latter ensures the widget has a chance to end its overscroll effect.
+  InSequence s;
+  EXPECT_CALL(*mcc, UpdateOverscrollOffset(_, _, _, _)).Times(AtLeast(1));
+  EXPECT_CALL(*mcc, UpdateOverscrollVelocity(_, _, _, _)).Times(1);
+
+  // Pan into overscroll, keeping the finger down
+  ScreenIntPoint startPoint(10, 500);
+  ScreenIntPoint endPoint(10, 10);
+  Pan(apzc, startPoint, endPoint, PanOptions::KeepFingerDown);
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // Linger a while to cause the velocity to drop to very low or zero
+  mcc->AdvanceByMillis(100);
+  TouchMove(apzc, endPoint, mcc->Time());
+  EXPECT_LT(apzc->GetVelocityVector().Length(),
+            StaticPrefs::apz_fling_min_velocity_threshold());
+  EXPECT_TRUE(apzc->IsOverscrolled());
+
+  // Lift the finger
+  mcc->AdvanceByMillis(20);
+  TouchUp(apzc, endPoint, mcc->Time());
+  EXPECT_FALSE(apzc->IsOverscrolled());
+}
+#endif
+
 class APZCOverscrollTesterMock : public APZCTreeManagerTester {
  public:
   APZCOverscrollTesterMock() { CreateMockHitTester(); }
@@ -1785,8 +1784,15 @@ TEST_F(APZCOverscrollTesterMock,
   // Start a new horizontal pan gesture on the child scroller which should be
   // handled by the child APZC now.
   QueueMockHitResult(ScrollableLayerGuid::START_SCROLL_ID + 1);
-  PanGesture(PanGestureInput::PANGESTURE_START, manager, panPoint,
-             ScreenPoint(-2, 0), mcc->Time());
+  APZEventResult result = PanGesture(PanGestureInput::PANGESTURE_START, manager,
+                                     panPoint, ScreenPoint(-2, 0), mcc->Time());
+  // The above horizontal pan start event was flagged as "this event may trigger
+  // swipe" and either the root scrollable frame or the horizontal child
+  // scrollable frame is not scrollable in the pan start direction, thus the pan
+  // start event run into the short circuit path for swipe-to-navigation in
+  // InputQueue::ReceivePanGestureInput, which means it's waiting for the
+  // content response, so we need to respond explicitly here.
+  manager->ContentReceivedInputBlock(result.mInputBlockId, false);
   mcc->AdvanceByMillis(10);
   QueueMockHitResult(ScrollableLayerGuid::START_SCROLL_ID + 1);
   PanGesture(PanGestureInput::PANGESTURE_PAN, manager, panPoint,

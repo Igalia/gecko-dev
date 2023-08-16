@@ -11,8 +11,8 @@ const { ASRouterPreferences } = ChromeUtils.import(
   "resource://activity-stream/lib/ASRouterPreferences.jsm"
 );
 
-const { MESSAGE_TYPE_HASH: msg } = ChromeUtils.import(
-  "resource://activity-stream/common/ActorConstants.jsm"
+const { MESSAGE_TYPE_HASH: msg } = ChromeUtils.importESModule(
+  "resource://activity-stream/common/ActorConstants.sys.mjs"
 );
 
 class ASRouterParentProcessMessageHandler {
@@ -70,10 +70,6 @@ class ASRouterParentProcessMessageHandler {
           .then(() => !data.preventDismiss);
       }
       case msg.USER_ACTION: {
-        // This is to support ReturnToAMO
-        if (data.type === "INSTALL_ADDON_FROM_URL") {
-          this._router._updateOnboardingState();
-        }
         return this._specialMessageActions.handleAction(data, browser);
       }
       case msg.IMPRESSION: {
@@ -146,6 +142,9 @@ class ASRouterParentProcessMessageHandler {
       }
       case msg.FORCE_ATTRIBUTION: {
         return this._router.forceAttribution(data);
+      }
+      case msg.FORCE_PRIVATE_BROWSING_WINDOW: {
+        return this._router.forcePBWindow(browser, data.message);
       }
       case msg.FORCE_WHATSNEW_PANEL: {
         return this._router.forceWNPanel(browser);

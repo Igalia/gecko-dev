@@ -4,77 +4,78 @@
 
 "use strict";
 
-const Services = require("Services");
-const flags = require("devtools/shared/flags");
-const nodeConstants = require("devtools/shared/dom-node-constants");
-const nodeFilterConstants = require("devtools/shared/dom-node-filter-constants");
-const EventEmitter = require("devtools/shared/event-emitter");
-const { LocalizationHelper } = require("devtools/shared/l10n");
-const { PluralForm } = require("devtools/shared/plural-form");
-const AutocompletePopup = require("devtools/client/shared/autocomplete-popup");
-const KeyShortcuts = require("devtools/client/shared/key-shortcuts");
-const { scrollIntoViewIfNeeded } = require("devtools/client/shared/scroll");
-const { PrefObserver } = require("devtools/client/shared/prefs");
-const MarkupElementContainer = require("devtools/client/inspector/markup/views/element-container");
-const MarkupReadOnlyContainer = require("devtools/client/inspector/markup/views/read-only-container");
-const MarkupTextContainer = require("devtools/client/inspector/markup/views/text-container");
-const RootContainer = require("devtools/client/inspector/markup/views/root-container");
-const WalkerEventListener = require("devtools/client/inspector/shared/walker-event-listener");
+const flags = require("resource://devtools/shared/flags.js");
+const nodeConstants = require("resource://devtools/shared/dom-node-constants.js");
+const nodeFilterConstants = require("resource://devtools/shared/dom-node-filter-constants.js");
+const EventEmitter = require("resource://devtools/shared/event-emitter.js");
+const { LocalizationHelper } = require("resource://devtools/shared/l10n.js");
+const { PluralForm } = require("resource://devtools/shared/plural-form.js");
+const AutocompletePopup = require("resource://devtools/client/shared/autocomplete-popup.js");
+const KeyShortcuts = require("resource://devtools/client/shared/key-shortcuts.js");
+const {
+  scrollIntoViewIfNeeded,
+} = require("resource://devtools/client/shared/scroll.js");
+const { PrefObserver } = require("resource://devtools/client/shared/prefs.js");
+const MarkupElementContainer = require("resource://devtools/client/inspector/markup/views/element-container.js");
+const MarkupReadOnlyContainer = require("resource://devtools/client/inspector/markup/views/read-only-container.js");
+const MarkupTextContainer = require("resource://devtools/client/inspector/markup/views/text-container.js");
+const RootContainer = require("resource://devtools/client/inspector/markup/views/root-container.js");
+const WalkerEventListener = require("resource://devtools/client/inspector/shared/walker-event-listener.js");
 
 loader.lazyRequireGetter(
   this,
   ["createDOMMutationBreakpoint", "deleteDOMMutationBreakpoint"],
-  "devtools/client/framework/actions/index",
+  "resource://devtools/client/framework/actions/index.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "MarkupContextMenu",
-  "devtools/client/inspector/markup/markup-context-menu"
+  "resource://devtools/client/inspector/markup/markup-context-menu.js"
 );
 loader.lazyRequireGetter(
   this,
   "SlottedNodeContainer",
-  "devtools/client/inspector/markup/views/slotted-node-container"
+  "resource://devtools/client/inspector/markup/views/slotted-node-container.js"
 );
 loader.lazyRequireGetter(
   this,
   "getLongString",
-  "devtools/client/inspector/shared/utils",
+  "resource://devtools/client/inspector/shared/utils.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "openContentLink",
-  "devtools/client/shared/link",
+  "resource://devtools/client/shared/link.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "HTMLTooltip",
-  "devtools/client/shared/widgets/tooltip/HTMLTooltip",
+  "resource://devtools/client/shared/widgets/tooltip/HTMLTooltip.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "UndoStack",
-  "devtools/client/shared/undo",
+  "resource://devtools/client/shared/undo.js",
   true
 );
 loader.lazyRequireGetter(
   this,
   "clipboardHelper",
-  "devtools/shared/platform/clipboard"
+  "resource://devtools/shared/platform/clipboard.js"
 );
 loader.lazyRequireGetter(
   this,
   "beautify",
-  "devtools/shared/jsbeautify/beautify"
+  "resource://devtools/shared/jsbeautify/beautify.js"
 );
 loader.lazyRequireGetter(
   this,
   "getTabPrefs",
-  "devtools/shared/indentation",
+  "resource://devtools/shared/indentation.js",
   true
 );
 
@@ -257,6 +258,8 @@ function MarkupView(inspector, frame, controllerWindow) {
   this.doc = this._frame.contentDocument;
   this._elt = this.doc.getElementById("root");
   this.telemetry = this.inspector.telemetry;
+  this._breakpointIDsInLocalState = new Map();
+  this._containersToUpdate = new Map();
 
   this.maxChildren = Services.prefs.getIntPref(
     "devtools.markup.pagesize",
@@ -282,17 +285,15 @@ function MarkupView(inspector, frame, controllerWindow) {
   this._slottedContainerKeys = new WeakMap();
 
   // Binding functions that need to be called in scope.
-  this._handleRejectionIfNotDestroyed = this._handleRejectionIfNotDestroyed.bind(
-    this
-  );
+  this._handleRejectionIfNotDestroyed =
+    this._handleRejectionIfNotDestroyed.bind(this);
   this._isImagePreviewTarget = this._isImagePreviewTarget.bind(this);
   this._onWalkerMutations = this._onWalkerMutations.bind(this);
   this._onBlur = this._onBlur.bind(this);
   this._onContextMenu = this._onContextMenu.bind(this);
   this._onCopy = this._onCopy.bind(this);
-  this._onCollapseAttributesPrefChange = this._onCollapseAttributesPrefChange.bind(
-    this
-  );
+  this._onCollapseAttributesPrefChange =
+    this._onCollapseAttributesPrefChange.bind(this);
   this._onWalkerNodeStatesChanged = this._onWalkerNodeStatesChanged.bind(this);
   this._onFocus = this._onFocus.bind(this);
   this._onResourceAvailable = this._onResourceAvailable.bind(this);
@@ -305,6 +306,7 @@ function MarkupView(inspector, frame, controllerWindow) {
   this._onNewSelection = this._onNewSelection.bind(this);
   this._onToolboxPickerCanceled = this._onToolboxPickerCanceled.bind(this);
   this._onToolboxPickerHover = this._onToolboxPickerHover.bind(this);
+  this._onDomMutation = this._onDomMutation.bind(this);
 
   // Listening to various events.
   this._elt.addEventListener("blur", this._onBlur, true);
@@ -314,6 +316,9 @@ function MarkupView(inspector, frame, controllerWindow) {
   this._elt.addEventListener("mouseout", this._onMouseOut);
   this._frame.addEventListener("focus", this._onFocus);
   this.inspector.selection.on("new-node-front", this._onNewSelection);
+  this._unsubscribeFromToolboxStore = this.inspector.toolbox.store.subscribe(
+    this._onDomMutation
+  );
 
   if (flags.testing) {
     // In tests, we start listening immediately to avoid having to simulate a mousemove.
@@ -360,6 +365,7 @@ function MarkupView(inspector, frame, controllerWindow) {
   this._initShortcuts();
 
   this._walkerEventListener = new WalkerEventListener(this.inspector, {
+    "container-type-change": this._onWalkerNodeStatesChanged,
     "display-change": this._onWalkerNodeStatesChanged,
     "scrollable-change": this._onWalkerNodeStatesChanged,
     "overflow-change": this._onWalkerNodeStatesChanged,
@@ -418,6 +424,47 @@ MarkupView.prototype = {
     }
 
     return this._undo;
+  },
+
+  _onDomMutation() {
+    const domMutationBreakpoints =
+      this.inspector.toolbox.store.getState().domMutationBreakpoints
+        .breakpoints;
+    const breakpointIDsInCurrentState = [];
+    for (const breakpoint of domMutationBreakpoints) {
+      const nodeFront = breakpoint.nodeFront;
+      const mutationType = breakpoint.mutationType;
+      const enabledStatus = breakpoint.enabled;
+      breakpointIDsInCurrentState.push(breakpoint.id);
+      // If breakpoint is not in local state
+      if (!this._breakpointIDsInLocalState.has(breakpoint.id)) {
+        this._breakpointIDsInLocalState.set(breakpoint.id, breakpoint);
+        if (!this._containersToUpdate.has(nodeFront)) {
+          this._containersToUpdate.set(nodeFront, new Map());
+        }
+      }
+      this._containersToUpdate.get(nodeFront).set(mutationType, enabledStatus);
+    }
+    // If a breakpoint is in local state but not current state, it has been
+    // removed by the user.
+    for (const id of this._breakpointIDsInLocalState.keys()) {
+      if (breakpointIDsInCurrentState.includes(id) === false) {
+        const nodeFront = this._breakpointIDsInLocalState.get(id).nodeFront;
+        const mutationType =
+          this._breakpointIDsInLocalState.get(id).mutationType;
+        this._containersToUpdate.get(nodeFront).delete(mutationType);
+        this._breakpointIDsInLocalState.delete(id);
+      }
+    }
+    // Update each container
+    for (const nodeFront of this._containersToUpdate.keys()) {
+      const mutationBreakpoints = this._containersToUpdate.get(nodeFront);
+      const container = this.getContainer(nodeFront);
+      container.update(mutationBreakpoints);
+      if (this._containersToUpdate.get(nodeFront).size === 0) {
+        this._containersToUpdate.delete(nodeFront);
+      }
+    }
   },
 
   /**
@@ -786,7 +833,8 @@ MarkupView.prototype = {
         if (data.type === this.inspector.highlighters.TYPES.GRID) {
           // Matches badges for "grid", "inline-grid" and "subgrid"
           const selector = "[data-display*='grid']:not(.active)";
-          const isLimited = this.inspector.highlighters.isGridHighlighterLimitReached();
+          const isLimited =
+            this.inspector.highlighters.isGridHighlighterLimitReached();
           Array.from(this._elt.querySelectorAll(selector)).map(el => {
             el.classList.toggle("interactive", !isLimited);
           });
@@ -963,6 +1011,10 @@ MarkupView.prototype = {
     // TODO: use resource api listeners?
     if (nodeFront) {
       nodeFront.walkerFront.on(
+        "container-type-change",
+        this._onWalkerNodeStatesChanged
+      );
+      nodeFront.walkerFront.on(
         "display-change",
         this._onWalkerNodeStatesChanged
       );
@@ -1063,7 +1115,7 @@ MarkupView.prototype = {
     const walker = this.doc.createTreeWalker(
       start || this._elt,
       nodeFilterConstants.SHOW_ELEMENT,
-      function(element) {
+      function (element) {
         if (
           element.container &&
           element.container.elt === element &&
@@ -1519,13 +1571,11 @@ MarkupView.prototype = {
         type === "characterData" ||
         type === "customElementDefined" ||
         type === "events" ||
-        type === "pseudoClassLock" ||
-        type === "mutationBreakpoint"
+        type === "pseudoClassLock"
       ) {
         container.update();
       } else if (
         type === "childList" ||
-        type === "nativeAnonymousChildList" ||
         type === "slotchange" ||
         type === "shadowRootAttached"
       ) {
@@ -1976,7 +2026,7 @@ MarkupView.prototype = {
       }
       // Load load and create HTML Editor as it is rarely used and fetch complex deps
       if (!this.htmlEditor) {
-        const HTMLEditor = require("devtools/client/inspector/markup/views/html-editor");
+        const HTMLEditor = require("resource://devtools/client/inspector/markup/views/html-editor.js");
         this.htmlEditor = new HTMLEditor(this.doc);
       }
       this.htmlEditor.show(container.tagLine, oldValue);
@@ -1998,7 +2048,6 @@ MarkupView.prototype = {
         this.telemetry.recordEvent("edit_html", "inspector", null, {
           made_changes: commit,
           time_open: end - start,
-          session_id: this.toolbox.sessionId,
         });
       });
 
@@ -2437,6 +2486,7 @@ MarkupView.prototype = {
     this._elt.removeEventListener("mousemove", this._onMouseMove);
     this._elt.removeEventListener("mouseout", this._onMouseOut);
     this._frame.removeEventListener("focus", this._onFocus);
+    this._unsubscribeFromToolboxStore();
     this.inspector.selection.off("new-node-front", this._onNewSelection);
     this.resourceCommand.unwatchResources(
       [this.resourceCommand.TYPES.ROOT_NODE],
@@ -2579,8 +2629,8 @@ MarkupView.prototype = {
         nextSibling.isMarkerPseudoElement ||
         nextSibling.isBeforePseudoElement
       ) {
-        nextSibling = this.getContainer(nextSibling).elt.nextSibling.container
-          .node;
+        nextSibling =
+          this.getContainer(nextSibling).elt.nextSibling.container.node;
       }
       if (nextSibling.isAfterPseudoElement) {
         parent = target.parentNode.container.node.parentNode();

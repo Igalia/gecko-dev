@@ -2,18 +2,15 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * This module exports a component used to register search providers and manage
  * the connection between such providers and a UrlbarController.
  */
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
+  ObjectUtils: "resource://gre/modules/ObjectUtils.sys.mjs",
   PlacesUtils: "resource://gre/modules/PlacesUtils.sys.mjs",
   SkippableTimer: "resource:///modules/UrlbarUtils.sys.mjs",
   UrlbarMuxer: "resource:///modules/UrlbarUtils.sys.mjs",
@@ -24,16 +21,13 @@ ChromeUtils.defineESModuleGetters(lazy, {
   UrlbarUtils: "resource:///modules/UrlbarUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  ObjectUtils: "resource://gre/modules/ObjectUtils.jsm",
-});
-
-XPCOMUtils.defineLazyGetter(lazy, "logger", () =>
+ChromeUtils.defineLazyGetter(lazy, "logger", () =>
   lazy.UrlbarUtils.getLogger({ prefix: "ProvidersManager" })
 );
 
 // List of available local providers, each is implemented in its own jsm module
 // and will track different queries internally by queryContext.
+// When adding new providers please remember to update the list in metrics.yaml.
 var localProviderModules = {
   UrlbarProviderAboutPages:
     "resource:///modules/UrlbarProviderAboutPages.sys.mjs",
@@ -44,16 +38,18 @@ var localProviderModules = {
     "resource:///modules/UrlbarProviderBookmarkKeywords.sys.mjs",
   UrlbarProviderCalculator:
     "resource:///modules/UrlbarProviderCalculator.sys.mjs",
+  UrlbarProviderContextualSearch:
+    "resource:///modules/UrlbarProviderContextualSearch.sys.mjs",
   UrlbarProviderHeuristicFallback:
     "resource:///modules/UrlbarProviderHeuristicFallback.sys.mjs",
+  UrlbarProviderHistoryUrlHeuristic:
+    "resource:///modules/UrlbarProviderHistoryUrlHeuristic.sys.mjs",
   UrlbarProviderInputHistory:
     "resource:///modules/UrlbarProviderInputHistory.sys.mjs",
   UrlbarProviderInterventions:
     "resource:///modules/UrlbarProviderInterventions.sys.mjs",
   UrlbarProviderOmnibox: "resource:///modules/UrlbarProviderOmnibox.sys.mjs",
   UrlbarProviderPlaces: "resource:///modules/UrlbarProviderPlaces.sys.mjs",
-  UrlbarProviderPreloadedSites:
-    "resource:///modules/UrlbarProviderPreloadedSites.sys.mjs",
   UrlbarProviderPrivateSearch:
     "resource:///modules/UrlbarProviderPrivateSearch.sys.mjs",
   UrlbarProviderQuickActions:
@@ -73,6 +69,7 @@ var localProviderModules = {
   UrlbarProviderTopSites: "resource:///modules/UrlbarProviderTopSites.sys.mjs",
   UrlbarProviderUnitConversion:
     "resource:///modules/UrlbarProviderUnitConversion.sys.mjs",
+  UrlbarProviderWeather: "resource:///modules/UrlbarProviderWeather.sys.mjs",
 };
 
 // List of available local muxers, each is implemented in its own jsm module.
@@ -80,11 +77,6 @@ var localMuxerModules = {
   UrlbarMuxerUnifiedComplete:
     "resource:///modules/UrlbarMuxerUnifiedComplete.sys.mjs",
 };
-
-// To improve dataflow and reduce UI work, when a result is added by a
-// non-heuristic provider, we notify it to the controller after a delay, so
-// that we can chunk results coming in that timeframe into a single call.
-const CHUNK_RESULTS_DELAY_MS = 16;
 
 const DEFAULT_MUXER = "UnifiedComplete";
 
@@ -116,11 +108,23 @@ class ProvidersManager {
       let { [symbol]: muxer } = ChromeUtils.importESModule(module);
       this.registerMuxer(muxer);
     }
+
+    // These can be set by tests to increase or reduce the chunk delays.
+    // See _notifyResultsFromProvider for additional details.
+    // To improve dataflow and reduce UI work, when a result is added we may notify
+    // it to the controller after a delay, so that we can chunk results in that
+    // timeframe into a single call. See _notifyResultsFromProvider for details.
+    // Note: to avoid handling events too early, the heuristic timer should be
+    // smaller than UrlbarEventBufferer.DEFERRING_TIMEOUT_MS.
+    this.CHUNK_HEURISTIC_RESULTS_DELAY_MS = 200;
+    this.CHUNK_OTHER_RESULTS_DELAY_MS = 16;
   }
 
   /**
    * Registers a provider object with the manager.
+   *
    * @param {object} provider
+   *   The provider object to register.
    */
   registerProvider(provider) {
     if (!provider || !(provider instanceof lazy.UrlbarProvider)) {
@@ -148,7 +152,9 @@ class ProvidersManager {
 
   /**
    * Unregisters a previously registered provider object.
+   *
    * @param {object} provider
+   *   The provider object to unregister.
    */
   unregisterProvider(provider) {
     lazy.logger.info(`Unregistering provider ${provider.name}`);
@@ -160,7 +166,9 @@ class ProvidersManager {
 
   /**
    * Returns the provider with the given name.
-   * @param {string} name The provider name.
+   *
+   * @param {string} name
+   *   The provider name.
    * @returns {UrlbarProvider} The provider.
    */
   getProvider(name) {
@@ -169,7 +177,9 @@ class ProvidersManager {
 
   /**
    * Registers a muxer object with the manager.
-   * @param {object} muxer a UrlbarMuxer object
+   *
+   * @param {object} muxer
+   *   a UrlbarMuxer object
    */
   registerMuxer(muxer) {
     if (!muxer || !(muxer instanceof lazy.UrlbarMuxer)) {
@@ -181,7 +191,9 @@ class ProvidersManager {
 
   /**
    * Unregisters a previously registered muxer object.
-   * @param {object} muxer a UrlbarMuxer object or name.
+   *
+   * @param {object} muxer
+   *   a UrlbarMuxer object or name.
    */
   unregisterMuxer(muxer) {
     let muxerName = typeof muxer == "string" ? muxer : muxer.name;
@@ -191,15 +203,18 @@ class ProvidersManager {
 
   /**
    * Starts querying.
-   * @param {object} queryContext The query context object
-   * @param {object} [controller] a UrlbarController instance
+   *
+   * @param {object} queryContext
+   *   The query context object
+   * @param {object} [controller]
+   *   a UrlbarController instance
    */
   async startQuery(queryContext, controller = null) {
-    lazy.logger.info(`Query start ${queryContext.searchString}`);
+    lazy.logger.info(`Query start "${queryContext.searchString}"`);
 
     // Define the muxer to use.
     let muxerName = queryContext.muxer || DEFAULT_MUXER;
-    lazy.logger.info(`Using muxer ${muxerName}`);
+    lazy.logger.debug(`Using muxer ${muxerName}`);
     let muxer = this.muxers.get(muxerName);
     if (!muxer) {
       throw new Error(`Muxer with name ${muxerName} not found`);
@@ -241,7 +256,13 @@ class ProvidersManager {
     // The muxer and many providers depend on the search service and our search
     // utils.  Make sure they're initialized now (via UrlbarSearchUtils) so that
     // all query-related urlbar modules don't need to do it.
-    await lazy.UrlbarSearchUtils.init();
+    try {
+      await lazy.UrlbarSearchUtils.init();
+    } catch {
+      // We continue anyway, because we want the user to be able to search their
+      // history and bookmarks even if search engines are not available.
+    }
+
     if (query.canceled) {
       return;
     }
@@ -270,7 +291,8 @@ class ProvidersManager {
 
   /**
    * Cancels a running query.
-   * @param {object} queryContext
+   *
+   * @param {object} queryContext The query context object
    */
   cancelQuery(queryContext) {
     lazy.logger.info(`Query cancel "${queryContext.searchString}"`);
@@ -292,7 +314,8 @@ class ProvidersManager {
    * A provider can use this util when it needs to run a SQL query that can't
    * be interrupted. Otherwise, when a query is canceled any running SQL query
    * is interrupted abruptly.
-   * @param {function} taskFn a Task to execute in the critical section.
+   *
+   * @param {Function} taskFn a Task to execute in the critical section.
    */
   async runInCriticalSection(taskFn) {
     this.interruptLevel++;
@@ -307,8 +330,6 @@ class ProvidersManager {
    * Notifies all providers when the user starts and ends an engagement with the
    * urlbar.  For details on parameters, see UrlbarProvider.onEngagement().
    *
-   * @param {boolean} isPrivate
-   *   True if the engagement is in a private context.
    * @param {string} state
    *   The state of the engagement, one of: start, engagement, abandonment,
    *   discard
@@ -316,15 +337,17 @@ class ProvidersManager {
    *   The engagement's query context, if available.
    * @param {object} details
    *   An object that describes the search string and the picked result, if any.
+   * @param {UrlbarController} controller
+   *   The controller associated with the engagement
    */
-  notifyEngagementChange(isPrivate, state, queryContext, details) {
+  notifyEngagementChange(state, queryContext, details = {}, controller) {
     for (let provider of this.providers) {
       provider.tryMethod(
         "onEngagement",
-        isPrivate,
         state,
         queryContext,
-        details
+        details,
+        controller
       );
     }
   }
@@ -341,6 +364,7 @@ export var UrlbarProvidersManager = new ProvidersManager();
 class Query {
   /**
    * Initializes the query object.
+   *
    * @param {object} queryContext
    *        The query context
    * @param {object} controller
@@ -357,6 +381,7 @@ class Query {
     // caller and we don't want to port previous query state over.
     this.context.pendingHeuristicProviders.clear();
     this.context.deferUserSelectionProviders.clear();
+    this.unsortedResults = [];
     this.muxer = muxer;
     this.controller = controller;
     this.providers = providers;
@@ -431,7 +456,9 @@ class Query {
 
     // Start querying active providers.
     let startQuery = async provider => {
-      provider.logger.info(`Starting query for "${this.context.searchString}"`);
+      provider.logger.debug(
+        `Starting query for "${this.context.searchString}"`
+      );
       let addedResult = false;
       await provider.tryMethod("startQuery", this.context, (...args) => {
         addedResult = true;
@@ -444,9 +471,20 @@ class Query {
 
     let queryPromises = [];
     for (let provider of activeProviders) {
-      if (provider.type == lazy.UrlbarUtils.PROVIDER_TYPE.HEURISTIC) {
+      // Track heuristic providers. later we'll use this Set to wait for them
+      // before returning results to the user. We skip the Omnibox provider
+      // because being implemented in an add-on we have no control over its
+      // performance characteristics.
+      if (
+        provider.type == lazy.UrlbarUtils.PROVIDER_TYPE.HEURISTIC &&
+        provider.name != "Omnibox"
+      ) {
         this.context.pendingHeuristicProviders.add(provider.name);
-        queryPromises.push(startQuery(provider));
+        queryPromises.push(
+          startQuery(provider).finally(() => {
+            this.context.pendingHeuristicProviders.delete(provider.name);
+          })
+        );
         continue;
       }
       if (!this._sleepTimer) {
@@ -466,17 +504,22 @@ class Query {
       );
     }
 
-    lazy.logger.info(`Queried ${queryPromises.length} providers`);
-    await Promise.all(queryPromises);
+    lazy.logger.info(
+      `Queried ${queryPromises.length} providers: ${activeProviders.map(
+        p => p.name
+      )}`
+    );
+
+    // Normally we wait for all the queries, but in case this is canceled we can
+    // return earlier.
+    let cancelPromise = new Promise(resolve => {
+      this._cancelQueries = resolve;
+    });
+    await Promise.race([Promise.all(queryPromises), cancelPromise]);
 
     // All the providers are done returning results, so we can stop chunking.
     if (!this.canceled) {
-      if (this._heuristicProviderTimer) {
-        await this._heuristicProviderTimer.fire();
-      }
-      if (this._chunkTimer) {
-        await this._chunkTimer.fire();
-      }
+      await this._chunkTimer?.fire();
     }
 
     // Break cycles with the controller to avoid leaks.
@@ -484,8 +527,7 @@ class Query {
   }
 
   /**
-   * Cancels this query.
-   * @note Invoking cancel multiple times is a no-op.
+   * Cancels this query. Note: Invoking cancel multiple times is a no-op.
    */
   cancel() {
     if (this.canceled) {
@@ -494,28 +536,23 @@ class Query {
     this.canceled = true;
     this.context.deferUserSelectionProviders.clear();
     for (let provider of this.providers) {
-      provider.logger.info(
+      provider.logger.debug(
         `Canceling query for "${this.context.searchString}"`
       );
       // Mark the instance as no more valid, see start() for details.
       provider.queryInstance = null;
       provider.tryMethod("cancelQuery", this.context);
     }
-    if (this._heuristicProviderTimer) {
-      this._heuristicProviderTimer.cancel().catch(ex => lazy.logger.error(ex));
-    }
-    if (this._chunkTimer) {
-      this._chunkTimer.cancel().catch(ex => lazy.logger.error(ex));
-    }
-    if (this._sleepTimer) {
-      this._sleepTimer.fire().catch(ex => lazy.logger.error(ex));
-    }
+    this._chunkTimer?.cancel().catch(ex => lazy.logger.error(ex));
+    this._sleepTimer?.fire().catch(ex => lazy.logger.error(ex));
+    this._cancelQueries?.();
   }
 
   /**
    * Adds a result returned from a provider to the results set.
-   * @param {object} provider
-   * @param {object} result
+   *
+   * @param {UrlbarProvider} provider The provider that returned the result.
+   * @param {object} result The result object.
    */
   add(provider, result) {
     if (!(provider instanceof lazy.UrlbarProvider)) {
@@ -574,67 +611,58 @@ class Query {
 
     result.providerName = provider.name;
     result.providerType = provider.type;
-    this.context.results.push(result);
+    this.unsortedResults.push(result);
 
     this._notifyResultsFromProvider(provider);
   }
 
   _notifyResultsFromProvider(provider) {
-    // We create two chunking timers: one for heuristic results, and one for
-    // other results. We expect heuristic providers to return their heuristic
-    // results before other results/providers in most cases. When all heuristic
-    // providers have returned some results, we fire the heuristic timer early.
-    // If the timer fires first, we stop waiting on the remaining heuristic
-    // providers.
-    // Both timers are used to reduce UI flicker.
-    if (provider.type == lazy.UrlbarUtils.PROVIDER_TYPE.HEURISTIC) {
-      if (!this._heuristicProviderTimer) {
-        this._heuristicProviderTimer = new lazy.SkippableTimer({
-          name: "Heuristic provider timer",
-          callback: () => this._notifyResults(),
-          time: CHUNK_RESULTS_DELAY_MS,
-          logger: provider.logger,
-        });
-      }
-    } else if (!this._chunkTimer) {
+    // We use a timer to reduce UI flicker, by adding results in chunks.
+    if (!this._chunkTimer && this.context.pendingHeuristicProviders.size) {
+      // This is the first time we see a result, and some heuristic providers
+      // are still pending. We start a longer "heuristic" timeout, because we
+      // don't want to surprise the user with an unexpected default action (e.g.
+      // searching instead of handling a bookmark keyword).
+      // Since heuristic providers return results pretty quickly, this timer
+      // will often be skipped early.
+      // Note that if the heuristic timer elapses, we may still cause an
+      // imperfect default action, but that's still better than looking stale.
       this._chunkTimer = new lazy.SkippableTimer({
-        name: "Query chunk timer",
+        name: "heuristic",
         callback: () => this._notifyResults(),
-        time: CHUNK_RESULTS_DELAY_MS,
+        time: UrlbarProvidersManager.CHUNK_HEURISTIC_RESULTS_DELAY_MS,
         logger: provider.logger,
       });
-    }
-    // If all active heuristic providers have returned results, we can skip the
-    // heuristic results timer and start showing results immediately.
-    if (
-      this._heuristicProviderTimer &&
+    } else if (!this._chunkTimer || this._chunkTimer.done) {
+      // Either there's no heuristic provider pending at all, or the previous
+      // timer is done, but we're still getting results. Start a short timer
+      // to chunk remaining results.
+      this._chunkTimer = new lazy.SkippableTimer({
+        name: "chunking",
+        callback: () => this._notifyResults(),
+        time: UrlbarProvidersManager.CHUNK_OTHER_RESULTS_DELAY_MS,
+        logger: provider.logger,
+      });
+    } else if (
+      this._chunkTimer.name == "heuristic" &&
+      !this._chunkTimer.done &&
       !this.context.pendingHeuristicProviders.size
     ) {
-      this._heuristicProviderTimer.fire().catch(ex => lazy.logger.error(ex));
+      // All the active heuristic providers have returned results, we can skip
+      // the heuristic chunk timer and start showing results immediately.
+      this._chunkTimer.fire().catch(ex => lazy.logger.error(ex));
     }
+
+    // Otherwise some timer is still ongoing and we'll wait for it.
   }
 
   _notifyResults() {
-    this.muxer.sort(this.context);
+    this.muxer.sort(this.context, this.unsortedResults);
 
-    if (this._heuristicProviderTimer) {
-      this._heuristicProviderTimer.cancel().catch(ex => lazy.logger.error(ex));
-      this._heuristicProviderTimer = null;
-    }
-
-    if (this._chunkTimer) {
-      this._chunkTimer.cancel().catch(ex => lazy.logger.error(ex));
-      this._chunkTimer = null;
-    }
-
-    // Before the muxer.sort call above, this.context.results should never be
-    // empty since this method is called when results are added.  But the muxer
-    // may have excluded one or more results from the final sorted list.  For
-    // example, it excludes the "Search in a Private Window" result if it's the
-    // only result that's been added so far.  We don't want to notify consumers
-    // if there are no results since they generally expect at least one result
-    // when notified, so bail, but only after nulling out the chunk timer above
-    // so that it will be restarted the next time results are added.
+    // We don't want to notify consumers if there are no results since they
+    // generally expect at least one result when notified, so bail, but only
+    // after nulling out the chunk timer above so that it will be restarted
+    // the next time results are added.
     if (!this.context.results.length) {
       return;
     }
@@ -653,6 +681,7 @@ class Query {
 
 /**
  * Updates in place the sources for a given UrlbarQueryContext.
+ *
  * @param {UrlbarQueryContext} context The query context to examine
  * @returns {object} The restriction token that was used to set sources, or
  *          undefined if there's no restriction token.
@@ -735,6 +764,7 @@ function updateSourcesIfEmpty(context) {
         }
         break;
       case lazy.UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL:
+      case lazy.UrlbarUtils.RESULT_SOURCE.ADDON:
       default:
         if (!restrictTokenType) {
           acceptedSources.push(source);

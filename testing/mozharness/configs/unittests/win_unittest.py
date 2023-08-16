@@ -2,7 +2,6 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-from __future__ import absolute_import
 import os
 import platform
 import sys
@@ -19,9 +18,7 @@ REQUIRE_GPU = False
 if "REQUIRE_GPU" in os.environ:
     REQUIRE_GPU = os.environ["REQUIRE_GPU"] == "1"
 
-PYWIN32 = "pypiwin32==219"
-if sys.version_info > (3, 0):
-    PYWIN32 = "pywin32==300"
+PYWIN32 = "pywin32==306"
 
 XPCSHELL_NAME = "xpcshell.exe"
 EXE_SUFFIX = ".exe"
@@ -101,7 +98,6 @@ config = {
                 "--symbols-path=%(symbols_path)s",
                 "--certificate-path=tests/certs",
                 "--quiet",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--screenshot-on-fail",
                 "--cleanup-crashes",
@@ -116,7 +112,6 @@ config = {
                 "--utility-path=tests/bin",
                 "--extra-profile-file=tests/bin/plugins",
                 "--symbols-path=%(symbols_path)s",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--cleanup-crashes",
                 "--marionette-startup-timeout=180",
@@ -129,10 +124,9 @@ config = {
             "options": [
                 "--self-test",
                 "--symbols-path=%(symbols_path)s",
-                "--test-plugin-path=%(test_plugin_path)s",
-                "--log-raw=%(raw_log_file)s",
                 "--log-errorsummary=%(error_summary_file)s",
                 "--utility-path=tests/bin",
+                "--manifest=tests/xpcshell/tests/xpcshell.ini",
             ],
             "run_filename": "runxpcshelltests.py",
             "testsdir": "xpcshell",
@@ -172,6 +166,7 @@ config = {
             "--chunk-by-runtime",
         ],
         "mochitest-browser-a11y": ["--flavor=browser", "--subsuite=a11y"],
+        "mochitest-browser-media": ["--flavor=browser", "--subsuite=media-bc"],
         "mochitest-a11y": ["--flavor=a11y", "--disable-e10s"],
         "mochitest-remote": ["--flavor=browser", "--subsuite=remote"],
     },
@@ -206,7 +201,14 @@ config = {
         "xpcshell": {
             "options": [
                 "--xpcshell=%(abs_app_dir)s/" + XPCSHELL_NAME,
-                "--manifest=tests/xpcshell/tests/xpcshell.ini",
+            ],
+            "tests": [],
+        },
+        "xpcshell-msix": {
+            "options": [
+                "--app-binary=%(binary_path)s",
+                "--app-path=%(install_dir)s",
+                "--xre-path=%(install_dir)s",
             ],
             "tests": [],
         },
@@ -273,6 +275,17 @@ config = {
             ],
             "architectures": ["32bit", "64bit"],
             "halt_on_failure": True,
+            "enabled": True,
+        },
+        {
+            "name": "create scrollbars always show key",
+            "cmd": [
+                "powershell",
+                "-command",
+                "New-ItemProperty -Path 'HKCU:\Control Panel\Accessibility' -Name 'DynamicScrollbars' -Value 0",
+            ],
+            "architectures": ["32bit", "64bit"],
+            "halt_on_failure": False,
             "enabled": True,
         },
         {

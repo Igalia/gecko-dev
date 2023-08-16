@@ -20,10 +20,12 @@
 #include "mozilla/Attributes.h"
 #include "mozilla/GlobalKeyListener.h"
 #include "mozilla/IMEStateManager.h"
+#include "mozilla/Logging.h"
 #include "mozilla/MouseEvents.h"
 #include "mozilla/NativeKeyBindingsType.h"
 #include "mozilla/Preferences.h"
 #include "mozilla/PresShell.h"
+#include "mozilla/ScopeExit.h"
 #include "mozilla/Sprintf.h"
 #include "mozilla/StaticPrefs_apz.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -57,6 +59,7 @@
 #include "mozilla/layers/InputAPZContext.h"
 #include "mozilla/layers/WebRenderLayerManager.h"
 #include "mozilla/webrender/WebRenderTypes.h"
+#include "mozilla/widget/ScreenManager.h"
 #include "nsAppDirectoryServiceDefs.h"
 #include "nsCOMPtr.h"
 #include "nsContentUtils.h"
@@ -85,6 +88,8 @@
 #include "nsView.h"
 #include "nsViewManager.h"
 
+static mozilla::LazyLogModule sBaseWidgetLog("BaseWidget");
+
 #ifdef DEBUG
 #  include "nsIObserver.h"
 
@@ -99,8 +104,6 @@ static int32_t gNumWidgets;
 #ifdef XP_MACOSX
 #  include "nsCocoaFeatures.h"
 #endif
-
-nsIRollupListener* nsBaseWidget::gRollupListener = nullptr;
 
 using namespace mozilla::dom;
 using namespace mozilla::layers;
@@ -132,19 +135,18 @@ NS_IMPL_ISUPPORTS(nsBaseWidget, nsIWidget, nsISupportsWeakReference)
 //
 //-------------------------------------------------------------------------
 
-nsBaseWidget::nsBaseWidget() : nsBaseWidget(eBorderStyle_none) {}
+nsBaseWidget::nsBaseWidget() : nsBaseWidget(BorderStyle::None) {}
 
-nsBaseWidget::nsBaseWidget(nsBorderStyle aBorderStyle)
+nsBaseWidget::nsBaseWidget(BorderStyle aBorderStyle)
     : mWidgetListener(nullptr),
       mAttachedWidgetListener(nullptr),
       mPreviouslyAttachedWidgetListener(nullptr),
       mCompositorVsyncDispatcher(nullptr),
       mBorderStyle(aBorderStyle),
       mBounds(0, 0, 0, 0),
-      mOriginalBounds(nullptr),
       mIsTiled(false),
-      mPopupLevel(ePopupLevelTop),
-      mPopupType(ePopupTypeAny),
+      mPopupLevel(PopupLevel::Top),
+      mPopupType(PopupType::Any),
       mHasRemoteContent(false),
       mUpdateCursor(true),
       mUseAttachedEvents(false),
@@ -152,7 +154,8 @@ nsBaseWidget::nsBaseWidget(nsBorderStyle aBorderStyle)
       mIMEHasQuit(false),
       mIsFullyOccluded(false),
       mNeedFastSnaphot(false),
-      mCurrentPanGestureBelongsToSwipe(false) {
+      mCurrentPanGestureBelongsToSwipe(false),
+      mIsPIPWindow(false) {
 #ifdef NOISY_WIDGET_LEAKS
   gNumWidgets++;
   printf("WIDGETS+ = %d\n", gNumWidgets);
@@ -403,8 +406,6 @@ nsBaseWidget::~nsBaseWidget() {
   gNumWidgets--;
   printf("WIDGETS- = %d\n", gNumWidgets);
 #endif
-
-  delete mOriginalBounds;
 }
 
 //-------------------------------------------------------------------------
@@ -412,13 +413,14 @@ nsBaseWidget::~nsBaseWidget() {
 // Basic create.
 //
 //-------------------------------------------------------------------------
-void nsBaseWidget::BaseCreate(nsIWidget* aParent, nsWidgetInitData* aInitData) {
+void nsBaseWidget::BaseCreate(nsIWidget* aParent, widget::InitData* aInitData) {
   if (aInitData) {
     mWindowType = aInitData->mWindowType;
     mBorderStyle = aInitData->mBorderStyle;
     mPopupLevel = aInitData->mPopupLevel;
     mPopupType = aInitData->mPopupHint;
     mHasRemoteContent = aInitData->mHasRemoteContent;
+    mIsPIPWindow = aInitData->mPIPWindow;
   }
 
   if (aParent) {
@@ -441,7 +443,7 @@ void nsBaseWidget::SetWidgetListener(nsIWidgetListener* aWidgetListener) {
 }
 
 already_AddRefed<nsIWidget> nsBaseWidget::CreateChild(
-    const LayoutDeviceIntRect& aRect, nsWidgetInitData* aInitData,
+    const LayoutDeviceIntRect& aRect, widget::InitData* aInitData,
     bool aForceUseIWidgetParent) {
   nsIWidget* parent = this;
   nsNativeWidget nativeParent = nullptr;
@@ -456,7 +458,7 @@ already_AddRefed<nsIWidget> nsBaseWidget::CreateChild(
   }
 
   nsCOMPtr<nsIWidget> widget;
-  if (aInitData && aInitData->mWindowType == eWindowType_popup) {
+  if (aInitData && aInitData->mWindowType == WindowType::Popup) {
     widget = AllocateChildPopupWidget();
   } else {
     widget = nsIWidget::CreateChildWindow();
@@ -476,10 +478,10 @@ already_AddRefed<nsIWidget> nsBaseWidget::CreateChild(
 
 // Attach a view to our widget which we'll send events to.
 void nsBaseWidget::AttachViewToTopLevel(bool aUseAttachedEvents) {
-  NS_ASSERTION((mWindowType == eWindowType_toplevel ||
-                mWindowType == eWindowType_dialog ||
-                mWindowType == eWindowType_invisible ||
-                mWindowType == eWindowType_child),
+  NS_ASSERTION((mWindowType == WindowType::TopLevel ||
+                mWindowType == WindowType::Dialog ||
+                mWindowType == WindowType::Invisible ||
+                mWindowType == WindowType::Child),
                "Can't attach to window of that type");
 
   mUseAttachedEvents = aUseAttachedEvents;
@@ -508,6 +510,8 @@ void nsBaseWidget::SetAttachedWidgetListener(nsIWidgetListener* aListener) {
 //
 //-------------------------------------------------------------------------
 void nsBaseWidget::Destroy() {
+  DestroyCompositor();
+
   // Just in case our parent is the only ref to us
   nsCOMPtr<nsIWidget> kungFuDeathGrip(this);
   // disconnect from the parent
@@ -565,6 +569,15 @@ nsIntSize nsIWidget::CustomCursorSize(const Cursor& aCursor) {
   aCursor.mContainer->GetHeight(&height);
   aCursor.mResolution.ApplyTo(width, height);
   return {width, height};
+}
+
+LayoutDeviceIntSize nsIWidget::ClientToWindowSizeDifference() {
+  auto margin = ClientToWindowMargin();
+  MOZ_ASSERT(margin.top >= 0, "Window should be bigger than client area");
+  MOZ_ASSERT(margin.left >= 0, "Window should be bigger than client area");
+  MOZ_ASSERT(margin.right >= 0, "Window should be bigger than client area");
+  MOZ_ASSERT(margin.bottom >= 0, "Window should be bigger than client area");
+  return {margin.LeftRight(), margin.TopBottom()};
 }
 
 RefPtr<mozilla::VsyncDispatcher> nsIWidget::GetVsyncDispatcher() {
@@ -698,10 +711,10 @@ void nsBaseWidget::SetCursor(const Cursor& aCursor) { mCursor = aCursor; }
 //
 //-------------------------------------------------------------------------
 
-void nsBaseWidget::SetTransparencyMode(nsTransparencyMode aMode) {}
+void nsBaseWidget::SetTransparencyMode(TransparencyMode aMode) {}
 
-nsTransparencyMode nsBaseWidget::GetTransparencyMode() {
-  return eTransparencyOpaque;
+TransparencyMode nsBaseWidget::GetTransparencyMode() {
+  return TransparencyMode::Opaque;
 }
 
 /* virtual */
@@ -719,33 +732,217 @@ void nsBaseWidget::PerformFullscreenTransition(FullscreenTransitionStage aStage,
 //
 //-------------------------------------------------------------------------
 void nsBaseWidget::InfallibleMakeFullScreen(bool aFullScreen) {
-  HideWindowChrome(aFullScreen);
+#define MOZ_FORMAT_RECT(fmtstr) "[" fmtstr "," fmtstr " " fmtstr "x" fmtstr "]"
+#define MOZ_SPLAT_RECT(rect) \
+  (rect).X(), (rect).Y(), (rect).Width(), (rect).Height()
+
+  // Windows which can be made fullscreen are exactly those which are located on
+  // the desktop, rather than being a child of some other window.
+  MOZ_DIAGNOSTIC_ASSERT(BoundsUseDesktopPixels(),
+                        "non-desktop windows cannot be made fullscreen");
+
+  // Ensure that the OS chrome is hidden/shown before we resize and/or exit the
+  // function.
+  //
+  // HideWindowChrome() may (depending on platform, implementation details, and
+  // OS-level user preferences) alter the reported size of the window. The
+  // obvious and principled solution is socks-and-shoes:
+  //   - On entering fullscreen mode: hide window chrome, then perform resize.
+  //   - On leaving fullscreen mode: unperform resize, then show window chrome.
+  //
+  // ... unfortunately, HideWindowChrome() requires Resize() to be called
+  // afterwards (see bug 498835), which prevents this from being done in a
+  // straightforward way.
+  //
+  // Instead, we always call HideWindowChrome() just before we call Resize().
+  // This at least ensures that our measurements are consistently taken in a
+  // pre-transition state.
+  //
+  // ... unfortunately again, coupling HideWindowChrome() to Resize() means that
+  // we have to worry about the possibility of control flows that don't call
+  // Resize() at all. (That shouldn't happen, but it's not trivial to rule out.)
+  // We therefore set up a fallback to fix up the OS chrome if it hasn't been
+  // done at exit time.
+  bool hasAdjustedOSChrome = false;
+  const auto adjustOSChrome = [&]() {
+    if (hasAdjustedOSChrome) {
+      MOZ_ASSERT_UNREACHABLE("window chrome should only be adjusted once");
+      return;
+    }
+    HideWindowChrome(aFullScreen);
+    hasAdjustedOSChrome = true;
+  };
+  const auto adjustChromeOnScopeExit = MakeScopeExit([&]() {
+    if (hasAdjustedOSChrome) {
+      return;
+    }
+
+    MOZ_LOG(sBaseWidgetLog, LogLevel::Warning,
+            ("window was not resized within InfallibleMakeFullScreen()"));
+
+    // Hide chrome and "resize" the window to its current size.
+    auto rect = GetBounds();
+    adjustOSChrome();
+    Resize(rect.X(), rect.Y(), rect.Width(), rect.Height(), true);
+  });
+
+  // Attempt to resize to `rect`.
+  //
+  // Returns the actual rectangle resized to. (This may differ from `rect`, if
+  // the OS is unhappy with it. See bug 1786226.)
+  const auto doReposition = [&](auto rect) -> void {
+    static_assert(std::is_base_of_v<DesktopPixel,
+                                    std::remove_reference_t<decltype(rect)>>,
+                  "doReposition requires a rectangle using desktop pixels");
+
+    if (MOZ_LOG_TEST(sBaseWidgetLog, LogLevel::Debug)) {
+      const DesktopRect previousSize =
+          GetScreenBounds() / GetDesktopToDeviceScale();
+      MOZ_LOG(sBaseWidgetLog, LogLevel::Debug,
+              ("before resize: " MOZ_FORMAT_RECT("%f"),
+               MOZ_SPLAT_RECT(previousSize)));
+    }
+
+    adjustOSChrome();
+    Resize(rect.X(), rect.Y(), rect.Width(), rect.Height(), true);
+
+    if (MOZ_LOG_TEST(sBaseWidgetLog, LogLevel::Warning)) {
+      // `rect` may have any underlying data type; coerce to float to
+      // simplify printf-style logging
+      const gfx::RectTyped<DesktopPixel, float> rectAsFloat{rect};
+
+      // The OS may have objected to the target position. That's not necessarily
+      // a problem -- it'll happen regularly on Macs with camera notches in the
+      // monitor, for instance (see bug 1786226) -- but it probably deserves to
+      // be called out.
+      //
+      // Since there's floating-point math involved, the actual values may be
+      // off by a few ulps -- as an upper bound, perhaps 8 * FLT_EPSILON *
+      // max(MOZ_SPLAT_RECT(rect)) -- but 0.01 should be several orders of
+      // magnitude bigger than that.
+
+      const auto postResizeRectRaw = GetScreenBounds();
+      const auto postResizeRect = postResizeRectRaw / GetDesktopToDeviceScale();
+      const bool succeeded = postResizeRect.WithinEpsilonOf(rectAsFloat, 0.01);
+
+      if (succeeded) {
+        MOZ_LOG(sBaseWidgetLog, LogLevel::Debug,
+                ("resized to: " MOZ_FORMAT_RECT("%f"),
+                 MOZ_SPLAT_RECT(rectAsFloat)));
+      } else {
+        MOZ_LOG(sBaseWidgetLog, LogLevel::Warning,
+                ("attempted to resize to: " MOZ_FORMAT_RECT("%f"),
+                 MOZ_SPLAT_RECT(rectAsFloat)));
+        MOZ_LOG(sBaseWidgetLog, LogLevel::Warning,
+                ("... but ended up at: " MOZ_FORMAT_RECT("%f"),
+                 MOZ_SPLAT_RECT(postResizeRect)));
+      }
+
+      MOZ_LOG(
+          sBaseWidgetLog, LogLevel::Verbose,
+          ("(... which, before DPI adjustment, is:" MOZ_FORMAT_RECT("%d") ")",
+           MOZ_SPLAT_RECT(postResizeRectRaw)));
+    }
+  };
 
   if (aFullScreen) {
-    if (!mOriginalBounds) {
-      mOriginalBounds = new LayoutDeviceIntRect();
+    if (!mSavedBounds) {
+      mSavedBounds = Some(FullscreenSavedState());
     }
-    *mOriginalBounds = GetScreenBounds();
+    // save current position
+    mSavedBounds->windowRect = GetScreenBounds() / GetDesktopToDeviceScale();
 
-    // Move to top-left corner of screen and size to the screen dimensions
     nsCOMPtr<nsIScreen> screen = GetWidgetScreen();
-    if (screen) {
-      int32_t left, top, width, height;
-      if (NS_SUCCEEDED(
-              screen->GetRectDisplayPix(&left, &top, &width, &height))) {
-        Resize(left, top, width, height, true);
-      }
+    if (!screen) {
+      return;
     }
-  } else if (mOriginalBounds) {
-    if (BoundsUseDesktopPixels()) {
-      DesktopRect deskRect = *mOriginalBounds / GetDesktopToDeviceScale();
-      Resize(deskRect.X(), deskRect.Y(), deskRect.Width(), deskRect.Height(),
-             true);
-    } else {
-      Resize(mOriginalBounds->X(), mOriginalBounds->Y(),
-             mOriginalBounds->Width(), mOriginalBounds->Height(), true);
+
+    // Move to fill the screen.
+    doReposition(screen->GetRectDisplayPix());
+    // Save off the new position. (This may differ from GetRectDisplayPix(), if
+    // the OS was unhappy with it. See bug 1786226.)
+    mSavedBounds->screenRect = GetScreenBounds() / GetDesktopToDeviceScale();
+  } else {
+    if (!mSavedBounds) {
+      // This should never happen, at present, since we don't make windows
+      // fullscreen at their creation time; but it's not logically impossible.
+      MOZ_ASSERT(false, "fullscreen window did not have saved position");
+      return;
     }
+
+    // Figure out where to go from here.
+    //
+    // Fortunately, since we're currently fullscreen (and other code should be
+    // handling _keeping_ us fullscreen even after display-layout changes),
+    // there's an obvious choice for which display we should attach to; all we
+    // need to determine is where on that display we should go.
+
+    const DesktopRect currentWinRect =
+        GetScreenBounds() / GetDesktopToDeviceScale();
+
+    // Optimization: if where we are is where we were, then where we originally
+    // came from is where we're going to go.
+    if (currentWinRect == DesktopRect(mSavedBounds->screenRect)) {
+      MOZ_LOG(sBaseWidgetLog, LogLevel::Debug,
+              ("no location change detected; returning to saved location"));
+      doReposition(mSavedBounds->windowRect);
+      return;
+    }
+
+    /*
+      General case: figure out where we're going to go by dividing where we are
+      by where we were, and then multiplying by where we originally came from.
+
+      Less abstrusely: resize so that we occupy the same proportional position
+      on our current display after leaving fullscreen as we occupied on our
+      previous display before entering fullscreen.
+
+      (N.B.: We do not clamp. If we were only partially on the old display,
+      we'll be only partially on the new one, too.)
+    */
+
+    MOZ_LOG(sBaseWidgetLog, LogLevel::Debug,
+            ("location change detected; computing new destination"));
+
+    // splat: convert an arbitrary Rect into a tuple, for syntactic convenience.
+    const auto splat = [](auto rect) {
+      return std::tuple(rect.X(), rect.Y(), rect.Width(), rect.Height());
+    };
+
+    // remap: find the unique affine mapping which transforms `src` to `dst`,
+    // and apply it to `val`.
+    using Range = std::pair<float, float>;
+    const auto remap = [](Range dst, Range src, float val) {
+      // linear interpolation and its inverse: lerp(a, b, invlerp(a, b, t)) == t
+      const auto lerp = [](float lo, float hi, float t) {
+        return lo + t * (hi - lo);
+      };
+      const auto invlerp = [](float lo, float hi, float mid) {
+        return (mid - lo) / (hi - lo);
+      };
+
+      const auto [dst_a, dst_b] = dst;
+      const auto [src_a, src_b] = src;
+      return lerp(dst_a, dst_b, invlerp(src_a, src_b, val));
+    };
+
+    // original position
+    const auto [px, py, pw, ph] = splat(mSavedBounds->windowRect);
+    // source desktop rect
+    const auto [sx, sy, sw, sh] = splat(mSavedBounds->screenRect);
+    // target desktop rect
+    const auto [tx, ty, tw, th] = splat(currentWinRect);
+
+    const float nx = remap({tx, tx + tw}, {sx, sx + sw}, px);
+    const float ny = remap({ty, ty + th}, {sy, sy + sh}, py);
+    const float nw = remap({0, tw}, {0, sw}, pw);
+    const float nh = remap({0, th}, {0, sh}, ph);
+
+    doReposition(DesktopRect{nx, ny, nw, nh});
   }
+
+#undef MOZ_SPLAT_RECT
+#undef MOZ_FORMAT_RECT
 }
 
 nsresult nsBaseWidget::MakeFullScreen(bool aFullScreen) {
@@ -770,7 +967,7 @@ nsBaseWidget::AutoLayerManagerSetup::~AutoLayerManagerSetup() {
 }
 
 bool nsBaseWidget::IsSmallPopup() const {
-  return mWindowType == eWindowType_popup && mPopupType != ePopupTypePanel;
+  return mWindowType == WindowType::Popup && mPopupType != PopupType::Panel;
 }
 
 bool nsBaseWidget::ComputeShouldAccelerate() {
@@ -781,16 +978,28 @@ bool nsBaseWidget::ComputeShouldAccelerate() {
 
 bool nsBaseWidget::UseAPZ() {
   return (gfxPlatform::AsyncPanZoomEnabled() &&
-          (WindowType() == eWindowType_toplevel ||
-           WindowType() == eWindowType_child ||
-           ((WindowType() == eWindowType_popup ||
-             WindowType() == eWindowType_dialog) &&
+          (mWindowType == WindowType::TopLevel ||
+           mWindowType == WindowType::Child ||
+           ((mWindowType == WindowType::Popup ||
+             mWindowType == WindowType::Dialog) &&
             HasRemoteContent() && StaticPrefs::apz_popups_enabled())));
 }
 
 void nsBaseWidget::CreateCompositor() {
   LayoutDeviceIntRect rect = GetBounds();
   CreateCompositor(rect.Width(), rect.Height());
+}
+
+void nsIWidget::PauseOrResumeCompositor(bool aPause) {
+  auto* renderer = GetRemoteRenderer();
+  if (!renderer) {
+    return;
+  }
+  if (aPause) {
+    renderer->SendPause();
+  } else {
+    renderer->SendResume();
+  }
 }
 
 already_AddRefed<GeckoContentController>
@@ -885,8 +1094,10 @@ nsEventStatus nsBaseWidget::ProcessUntransformedAPZEvent(
   UniquePtr<WidgetEvent> original(aEvent->Duplicate());
   DispatchEvent(aEvent, status);
 
-  if (mAPZC && !InputAPZContext::WasRoutedToChildProcess() && inputBlockId) {
-    // EventStateManager did not route the event into the child process.
+  if (mAPZC && !InputAPZContext::WasRoutedToChildProcess() &&
+      !InputAPZContext::WasDropped() && inputBlockId) {
+    // EventStateManager did not route the event into the child process and
+    // the event was dispatched in the parent process.
     // It's safe to communicate to APZ that the event has been processed.
     // Note that here aGuid.mLayersId might be different from
     // mCompositorSession->RootLayerTreeId() because the event might have gotten
@@ -1161,23 +1372,19 @@ already_AddRefed<WebRenderLayerManager> nsBaseWidget::CreateCompositorSession(
     // Make sure GPU process is ready for use.
     // If it failed to connect to GPU process, GPU process usage is disabled in
     // EnsureGPUReady(). It could update gfxVars and gfxConfigs.
-    gpu->EnsureGPUReady();
+    nsresult rv = gpu->EnsureGPUReady();
+    if (NS_WARN_IF(rv == NS_ERROR_ILLEGAL_DURING_SHUTDOWN)) {
+      return nullptr;
+    }
 
     // If widget type does not supports acceleration, we may be allowed to use
-    // software WebRender instead. If not, then we use ClientLayerManager even
-    // when gfxVars::UseWebRender() is true. WebRender could coexist only with
-    // BasicCompositor.
+    // software WebRender instead.
     bool supportsAcceleration = WidgetTypeSupportsAcceleration();
-    bool enableWR;
-    bool enableSWWR;
+    bool enableSWWR = true;
     if (supportsAcceleration ||
         StaticPrefs::gfx_webrender_unaccelerated_widget_force()) {
-      enableWR = gfx::gfxVars::UseWebRender();
       enableSWWR = gfx::gfxVars::UseSoftwareWebRender();
-    } else {
-      enableWR = enableSWWR = gfx::gfxVars::UseWebRender();
     }
-    MOZ_RELEASE_ASSERT(enableWR);
     bool enableAPZ = UseAPZ();
     CompositorOptions options(enableAPZ, enableSWWR);
 
@@ -1192,11 +1399,11 @@ already_AddRefed<WebRenderLayerManager> nsBaseWidget::CreateCompositorSession(
 #elif defined(MOZ_WIDGET_ANDROID)
     MOZ_ASSERT(supportsAcceleration);
     options.SetAllowSoftwareWebRenderOGL(
-        StaticPrefs::gfx_webrender_software_opengl_AtStartup());
+        gfx::gfxVars::AllowSoftwareWebRenderOGL());
 #elif defined(MOZ_WIDGET_GTK)
     if (supportsAcceleration) {
       options.SetAllowSoftwareWebRenderOGL(
-          StaticPrefs::gfx_webrender_software_opengl_AtStartup());
+          gfx::gfxVars::AllowSoftwareWebRenderOGL());
     }
 #endif
 
@@ -1317,7 +1524,7 @@ void nsBaseWidget::CreateCompositor(int aWidth, int aHeight) {
 #if defined(XP_MACOSX)
   bool getCompositorFromThisWindow = true;
 #else
-  bool getCompositorFromThisWindow = (mWindowType == eWindowType_toplevel);
+  bool getCompositorFromThisWindow = mWindowType == WindowType::TopLevel;
 #endif
 
   if (getCompositorFromThisWindow) {
@@ -1421,7 +1628,8 @@ void nsBaseWidget::MoveClient(const DesktopPoint& aOffset) {
     Move(aOffset.x - desktopOffset.x, aOffset.y - desktopOffset.y);
   } else {
     LayoutDevicePoint layoutOffset = aOffset * GetDesktopToDeviceScale();
-    Move(layoutOffset.x - clientOffset.x, layoutOffset.y - clientOffset.y);
+    Move(layoutOffset.x - LayoutDeviceCoord(clientOffset.x),
+         layoutOffset.y - LayoutDeviceCoord(clientOffset.y));
   }
 }
 
@@ -1513,7 +1721,7 @@ LayoutDeviceIntPoint nsBaseWidget::GetClientOffset() {
   return LayoutDeviceIntPoint(0, 0);
 }
 
-nsresult nsBaseWidget::SetNonClientMargins(LayoutDeviceIntMargin& margins) {
+nsresult nsBaseWidget::SetNonClientMargins(const LayoutDeviceIntMargin&) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 
@@ -1595,7 +1803,7 @@ void nsBaseWidget::SetSizeConstraints(const SizeConstraints& aConstraints) {
   //
   // The right fix here is probably making constraint changes go through the
   // view manager and such.
-  if (mWindowType == eWindowType_popup) {
+  if (mWindowType == WindowType::Popup) {
     return;
   }
 
@@ -1625,9 +1833,7 @@ const widget::SizeConstraints nsBaseWidget::GetSizeConstraints() {
 
 // static
 nsIRollupListener* nsBaseWidget::GetActiveRollupListener() {
-  // If set, then this is likely an <html:select> dropdown.
-  if (gRollupListener) return gRollupListener;
-
+  // TODO: Simplify this.
   return nsXULPopupManager::GetInstance();
 }
 
@@ -1641,9 +1847,10 @@ void nsBaseWidget::NotifyWindowDestroyed() {
   }
 }
 
-void nsBaseWidget::NotifyWindowMoved(int32_t aX, int32_t aY) {
+void nsBaseWidget::NotifyWindowMoved(int32_t aX, int32_t aY,
+                                     ByMoveToRect aByMoveToRect) {
   if (mWidgetListener) {
-    mWidgetListener->WindowMoved(this, aX, aY);
+    mWidgetListener->WindowMoved(this, aX, aY, aByMoveToRect);
   }
 
   if (mIMEHasFocus && IMENotificationRequestsRef().WantPositionChanged()) {
@@ -1662,14 +1869,6 @@ void nsBaseWidget::NotifySizeMoveDone() {
 
 void nsBaseWidget::NotifyThemeChanged(ThemeChangeKind aKind) {
   LookAndFeel::NotifyChangedAllWindows(aKind);
-}
-
-void nsBaseWidget::NotifyUIStateChanged(UIStateChangeType aShowFocusRings) {
-  if (Document* doc = GetDocument()) {
-    if (nsPIDOMWindowOuter* win = doc->GetWindow()) {
-      win->SetKeyboardIndicators(aShowFocusRings);
-    }
-  }
 }
 
 nsresult nsBaseWidget::NotifyIME(const IMENotification& aIMENotification) {
@@ -1820,20 +2019,11 @@ LayersId nsBaseWidget::GetRootLayerTreeId() {
                             : LayersId{0};
 }
 
-already_AddRefed<nsIScreen> nsBaseWidget::GetWidgetScreen() {
-  nsCOMPtr<nsIScreenManager> screenManager;
-  screenManager = do_GetService("@mozilla.org/gfx/screenmanager;1");
-  if (!screenManager) {
-    return nullptr;
-  }
-
+already_AddRefed<widget::Screen> nsBaseWidget::GetWidgetScreen() {
+  ScreenManager& screenManager = ScreenManager::GetSingleton();
   LayoutDeviceIntRect bounds = GetScreenBounds();
   DesktopIntRect deskBounds = RoundedToInt(bounds / GetDesktopToDeviceScale());
-  nsCOMPtr<nsIScreen> screen;
-  screenManager->ScreenForRect(deskBounds.X(), deskBounds.Y(),
-                               deskBounds.Width(), deskBounds.Height(),
-                               getter_AddRefs(screen));
-  return screen.forget();
+  return screenManager.ScreenForRect(deskBounds);
 }
 
 mozilla::DesktopToLayoutDeviceScale
@@ -1925,6 +2115,17 @@ void nsIWidget::OnLongTapTimerCallback(nsITimer* aTimer, void* aClosure) {
   self->mLongTapTouchPoint = nullptr;
 }
 
+float nsIWidget::GetFallbackDPI() {
+  RefPtr<const Screen> primaryScreen =
+      ScreenManager::GetSingleton().GetPrimaryScreen();
+  return primaryScreen->GetDPI();
+}
+
+CSSToLayoutDeviceScale nsIWidget::GetFallbackDefaultScale() {
+  RefPtr<const Screen> s = ScreenManager::GetSingleton().GetPrimaryScreen();
+  return s->GetCSSToLayoutDeviceScale(Screen::IncludeOSZoom::No);
+}
+
 nsresult nsIWidget::ClearNativeTouchSequence(nsIObserver* aObserver) {
   AutoObserverNotifier notifier(aObserver, "cleartouch");
 
@@ -1943,10 +2144,9 @@ nsresult nsIWidget::ClearNativeTouchSequence(nsIObserver* aObserver) {
 }
 
 MultiTouchInput nsBaseWidget::UpdateSynthesizedTouchState(
-    MultiTouchInput* aState, uint32_t aTime, mozilla::TimeStamp aTimeStamp,
-    uint32_t aPointerId, TouchPointerState aPointerState,
-    LayoutDeviceIntPoint aPoint, double aPointerPressure,
-    uint32_t aPointerOrientation) {
+    MultiTouchInput* aState, mozilla::TimeStamp aTimeStamp, uint32_t aPointerId,
+    TouchPointerState aPointerState, LayoutDeviceIntPoint aPoint,
+    double aPointerPressure, uint32_t aPointerOrientation) {
   ScreenIntPoint pointerScreenPoint = ViewAs<ScreenPixel>(
       aPoint, PixelCastJustification::LayoutDeviceIsScreenForBounds);
 
@@ -1957,7 +2157,6 @@ MultiTouchInput nsBaseWidget::UpdateSynthesizedTouchState(
   // touch(es). We use |inputToDispatch| for this purpose.
   MultiTouchInput inputToDispatch;
   inputToDispatch.mInputType = MULTITOUCH_INPUT;
-  inputToDispatch.mTime = aTime;
   inputToDispatch.mTimeStamp = aTimeStamp;
 
   int32_t index = aState->IndexOfTouch((int32_t)aPointerId);
@@ -2034,17 +2233,25 @@ nsresult nsBaseWidget::AsyncEnableDragDrop(bool aEnable) {
       kAsyncDragDropTimeout, EventQueuePriority::Idle);
 }
 
-void nsBaseWidget::SwipeFinished() { mSwipeTracker = nullptr; }
+void nsBaseWidget::SwipeFinished() {
+  mSwipeTracker->Destroy();
+  mSwipeTracker = nullptr;
+}
 
 void nsBaseWidget::ReportSwipeStarted(uint64_t aInputBlockId,
                                       bool aStartSwipe) {
   if (mSwipeEventQueue && mSwipeEventQueue->inputBlockId == aInputBlockId) {
     if (aStartSwipe) {
       PanGestureInput& startEvent = mSwipeEventQueue->queuedEvents[0];
-      TrackScrollEventAsSwipe(startEvent, mSwipeEventQueue->allowedDirections);
+      TrackScrollEventAsSwipe(startEvent, mSwipeEventQueue->allowedDirections,
+                              aInputBlockId);
       for (size_t i = 1; i < mSwipeEventQueue->queuedEvents.Length(); i++) {
         mSwipeTracker->ProcessEvent(mSwipeEventQueue->queuedEvents[i]);
       }
+    } else if (mAPZC) {
+      // If the event wasn't start swipe, we need to notify it to APZ.
+      mAPZC->SetBrowserGestureResponse(aInputBlockId,
+                                       BrowserGestureResponse::NotConsumed);
     }
     mSwipeEventQueue = nullptr;
   }
@@ -2052,7 +2259,7 @@ void nsBaseWidget::ReportSwipeStarted(uint64_t aInputBlockId,
 
 void nsBaseWidget::TrackScrollEventAsSwipe(
     const mozilla::PanGestureInput& aSwipeStartEvent,
-    uint32_t aAllowedDirections) {
+    uint32_t aAllowedDirections, uint64_t aInputBlockId) {
   // If a swipe is currently being tracked kill it -- it's been interrupted
   // by another gesture event.
   if (mSwipeTracker) {
@@ -2071,6 +2278,11 @@ void nsBaseWidget::TrackScrollEventAsSwipe(
 
   if (!mAPZC) {
     mCurrentPanGestureBelongsToSwipe = true;
+  } else {
+    // Now SwipeTracker has started consuming pan events, notify it to APZ so
+    // that APZ can discard queued events.
+    mAPZC->SetBrowserGestureResponse(aInputBlockId,
+                                     BrowserGestureResponse::Consumed);
   }
 }
 
@@ -2101,11 +2313,15 @@ nsBaseWidget::SwipeInfo nsBaseWidget::SendMayStartSwipe(
 }
 
 WidgetWheelEvent nsBaseWidget::MayStartSwipeForAPZ(
-    const PanGestureInput& aPanInput, const APZEventResult& aApzResult,
-    CanTriggerSwipe aCanTriggerSwipe) {
+    const PanGestureInput& aPanInput, const APZEventResult& aApzResult) {
   WidgetWheelEvent event = aPanInput.ToWidgetEvent(this);
-  if (aCanTriggerSwipe == CanTriggerSwipe::Yes &&
-      aPanInput.mOverscrollBehaviorAllowsSwipe) {
+
+  // Ignore swipe-to-navigation in PiP window.
+  if (mIsPIPWindow) {
+    return event;
+  }
+
+  if (aPanInput.AllowsSwipe()) {
     SwipeInfo swipeInfo = SendMayStartSwipe(aPanInput);
     event.mCanTriggerSwipe = swipeInfo.wantsSwipe;
     if (swipeInfo.wantsSwipe) {
@@ -2115,8 +2331,10 @@ WidgetWheelEvent nsBaseWidget::MayStartSwipeForAPZ(
         // scrolling for the event.
         // We know now that MayStartSwipe wants a swipe, so we can start
         // the swipe now.
-        TrackScrollEventAsSwipe(aPanInput, swipeInfo.allowedDirections);
-      } else {
+        TrackScrollEventAsSwipe(aPanInput, swipeInfo.allowedDirections,
+                                aApzResult.mInputBlockId);
+      } else if (!aApzResult.GetHandledResult() ||
+                 !aApzResult.GetHandledResult()->IsHandledByRoot()) {
         // We don't know whether this event can start a swipe, so we need
         // to queue up events and wait for a call to ReportSwipeStarted.
         // APZ might already have started scrolling in response to the
@@ -2126,6 +2344,12 @@ WidgetWheelEvent nsBaseWidget::MayStartSwipeForAPZ(
         mSwipeEventQueue = MakeUnique<SwipeEventQueue>(
             swipeInfo.allowedDirections, aApzResult.mInputBlockId);
       }
+    } else {
+      // Inform that the browser gesture didn't use the pan event (pan-start
+      // precisely), so that APZ can now start using the event for
+      // scrolling/overscrolling.
+      mAPZC->SetBrowserGestureResponse(aApzResult.mInputBlockId,
+                                       BrowserGestureResponse::NotConsumed);
     }
   }
 
@@ -2137,8 +2361,12 @@ WidgetWheelEvent nsBaseWidget::MayStartSwipeForAPZ(
   return event;
 }
 
-bool nsBaseWidget::MayStartSwipeForNonAPZ(const PanGestureInput& aPanInput,
-                                          CanTriggerSwipe aCanTriggerSwipe) {
+bool nsBaseWidget::MayStartSwipeForNonAPZ(const PanGestureInput& aPanInput) {
+  // Ignore swipe-to-navigation in PiP window.
+  if (mIsPIPWindow) {
+    return false;
+  }
+
   if (aPanInput.mType == PanGestureInput::PANGESTURE_MAYSTART ||
       aPanInput.mType == PanGestureInput::PANGESTURE_START) {
     mCurrentPanGestureBelongsToSwipe = false;
@@ -2154,7 +2382,7 @@ bool nsBaseWidget::MayStartSwipeForNonAPZ(const PanGestureInput& aPanInput,
     return true;
   }
 
-  if (aCanTriggerSwipe == CanTriggerSwipe::No) {
+  if (!aPanInput.MayTriggerSwipe()) {
     return false;
   }
 
@@ -2164,7 +2392,8 @@ bool nsBaseWidget::MayStartSwipeForNonAPZ(const PanGestureInput& aPanInput,
   // the event was routed to a child process, so we use InputAPZContext
   // to get that piece of information.
   ScrollableLayerGuid guid;
-  InputAPZContext context(guid, 0, nsEventStatus_eIgnore);
+  uint64_t blockId = 0;
+  InputAPZContext context(guid, blockId, nsEventStatus_eIgnore);
 
   WidgetWheelEvent event = aPanInput.ToWidgetEvent(this);
   event.mCanTriggerSwipe = swipeInfo.wantsSwipe;
@@ -2175,9 +2404,9 @@ bool nsBaseWidget::MayStartSwipeForNonAPZ(const PanGestureInput& aPanInput,
       // We don't know whether this event can start a swipe, so we need
       // to queue up events and wait for a call to ReportSwipeStarted.
       mSwipeEventQueue =
-          MakeUnique<SwipeEventQueue>(swipeInfo.allowedDirections, 0);
+          MakeUnique<SwipeEventQueue>(swipeInfo.allowedDirections, blockId);
     } else if (event.TriggersSwipe()) {
-      TrackScrollEventAsSwipe(aPanInput, swipeInfo.allowedDirections);
+      TrackScrollEventAsSwipe(aPanInput, swipeInfo.allowedDirections, blockId);
     }
   }
 
@@ -3200,7 +3429,8 @@ void nsBaseWidget::debug_DumpEvent(FILE* aFileOut, nsIWidget* aWidget,
 
   fprintf(aFileOut, "%4d %-26s widget=%-8p name=%-12s id=0x%-6x refpt=%d,%d\n",
           _GetPrintCount(), tempString.get(), (void*)aWidget, aWidgetName,
-          aWindowID, aGuiEvent->mRefPoint.x, aGuiEvent->mRefPoint.y);
+          aWindowID, aGuiEvent->mRefPoint.x.value,
+          aGuiEvent->mRefPoint.y.value);
 }
 //////////////////////////////////////////////////////////////
 /* static */

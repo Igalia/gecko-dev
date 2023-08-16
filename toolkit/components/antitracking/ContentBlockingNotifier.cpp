@@ -12,6 +12,7 @@
 #include "mozilla/StaticPrefs_privacy.h"
 #include "mozilla/dom/BrowserChild.h"
 #include "mozilla/dom/BrowsingContext.h"
+#include "mozilla/dom/Document.h"
 #include "mozilla/dom/ContentParent.h"
 #include "mozilla/dom/WindowGlobalParent.h"
 #include "nsIClassifiedChannel.h"
@@ -24,6 +25,7 @@
 #include "mozIThirdPartyUtil.h"
 
 using namespace mozilla;
+using namespace mozilla::dom;
 using mozilla::dom::BrowsingContext;
 using mozilla::dom::ContentChild;
 using mozilla::dom::Document;
@@ -85,14 +87,15 @@ void ReportUnblockingToConsole(
             break;
         }
 
-        nsAutoString origin;
-        nsresult rv = nsContentUtils::GetUTFOrigin(principal, origin);
+        nsAutoCString origin;
+        nsresult rv = principal->GetOriginNoSuffix(origin);
         if (NS_WARN_IF(NS_FAILED(rv))) {
           return;
         }
 
         // Not adding grantedOrigin yet because we may not want it later.
-        AutoTArray<nsString, 2> params = {origin, trackingOrigin};
+        AutoTArray<nsString, 2> params = {NS_ConvertUTF8toUTF16(origin),
+                                          trackingOrigin};
 
         nsAutoString errorText;
         rv = nsContentUtils::FormatLocalizedString(
@@ -135,6 +138,13 @@ void ReportBlockingToConsole(uint64_t aWindowID, nsIURI* aURI,
               nsIWebProgressListener::STATE_COOKIES_BLOCKED_FOREIGN));
 
   if (aURI->SchemeIs("chrome") || aURI->SchemeIs("about")) {
+    return;
+  }
+  bool hasFlags;
+  nsresult rv = NS_URIChainHasFlags(
+      aURI, nsIProtocolHandler::URI_FORBIDS_COOKIE_ACCESS, &hasFlags);
+  if (NS_FAILED(rv) || hasFlags) {
+    // If the protocol doesn't support cookies, no need to report them blocked.
     return;
   }
 
@@ -276,7 +286,11 @@ void NotifyBlockingDecision(nsIChannel* aTrackingChannel,
 
   nsAutoCString trackingOrigin;
   if (aURI) {
-    Unused << nsContentUtils::GetASCIIOrigin(aURI, trackingOrigin);
+    // Using an empty OriginAttributes is OK here, as we'll only be accessing
+    // OriginNoSuffix.
+    nsCOMPtr<nsIPrincipal> principal =
+        BasePrincipal::CreateContentPrincipal(aURI, OriginAttributes{});
+    principal->GetOriginNoSuffix(trackingOrigin);
   }
 
   if (aDecision == ContentBlockingNotifier::BlockingDecision::eBlock) {
@@ -536,7 +550,11 @@ void ContentBlockingNotifier::OnEvent(nsIChannel* aTrackingChannel,
 
   nsAutoCString trackingOrigin;
   if (uri) {
-    Unused << nsContentUtils::GetASCIIOrigin(uri, trackingOrigin);
+    // Using empty OriginAttributes is OK here, as we only want to access
+    // OriginNoSuffix.
+    nsCOMPtr<nsIPrincipal> trackingPrincipal =
+        BasePrincipal::CreateContentPrincipal(uri, OriginAttributes{});
+    trackingPrincipal->GetOriginNoSuffix(trackingOrigin);
   }
 
   return ContentBlockingNotifier::OnEvent(aTrackingChannel, aBlocked,

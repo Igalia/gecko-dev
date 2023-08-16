@@ -4,9 +4,12 @@
 
 "use strict";
 
-const { extend } = require("devtools/shared/extend");
-var { findPlaceholders, getPath } = require("devtools/shared/protocol/utils");
-var { types } = require("devtools/shared/protocol/types");
+const { extend } = require("resource://devtools/shared/extend.js");
+var {
+  findPlaceholders,
+  getPath,
+} = require("resource://devtools/shared/protocol/utils.js");
+var { types } = require("resource://devtools/shared/protocol/types.js");
 
 /**
  * Manages a request template.
@@ -15,7 +18,7 @@ var { types } = require("devtools/shared/protocol/types");
  *    The request template.
  * @construcor
  */
-var Request = function(template = {}) {
+var Request = function (template = {}) {
   this.type = template.type;
   this.template = template;
   this.args = findPlaceholders(template, Arg);
@@ -96,10 +99,10 @@ exports.Request = Request;
  *    The argument should be marshalled as this type.
  * @constructor
  */
-var Arg = function(index, type) {
+var Arg = function (index, type) {
   this.index = index;
   // Prevent force loading all Arg types by accessing it only when needed
-  loader.lazyGetter(this, "type", function() {
+  loader.lazyGetter(this, "type", function () {
     return types.getType(type);
   });
 };
@@ -115,7 +118,7 @@ Arg.prototype = {
 };
 
 // Outside of protocol.js, Arg is called as factory method, without the new keyword.
-exports.Arg = function(index, type) {
+exports.Arg = function (index, type) {
   return new Arg(index, type);
 };
 
@@ -136,7 +139,7 @@ exports.Arg = function(index, type) {
  *    The argument should be marshalled as this type.
  * @constructor
  */
-var Option = function(index, type) {
+var Option = function (index, type) {
   Arg.call(this, index, type);
 };
 
@@ -161,6 +164,6 @@ Option.prototype = extend(Arg.prototype, {
 });
 
 // Outside of protocol.js, Option is called as factory method, without the new keyword.
-exports.Option = function(index, type) {
+exports.Option = function (index, type) {
   return new Option(index, type);
 };

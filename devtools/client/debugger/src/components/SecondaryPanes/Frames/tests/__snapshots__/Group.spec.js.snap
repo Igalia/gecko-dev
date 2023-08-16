@@ -21,15 +21,95 @@ exports[`Group displays a group 1`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -103,15 +183,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "renderFoo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "1",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -168,15 +328,6 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
       key="frame-indent-0"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -184,15 +335,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "renderFoo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "1",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -229,12 +460,10 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       getFrameTitle={[Function]}
       hideLocation={true}
       key="1"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -242,15 +471,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -288,22 +597,11 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
     <FrameIndent
       key="frame-indent-1"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -311,15 +609,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "a",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "2",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -356,12 +734,10 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       getFrameTitle={[Function]}
       hideLocation={true}
       key="2"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -369,15 +745,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -415,22 +871,11 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
     <FrameIndent
       key="frame-indent-2"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -438,15 +883,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "b",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "3",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -483,12 +1008,10 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       getFrameTitle={[Function]}
       hideLocation={true}
       key="3"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -496,15 +1019,95 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -542,8 +1145,6 @@ exports[`Group passes the getFrameTitle prop to the Frame components 1`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
   </div>
 </div>
@@ -570,15 +1171,95 @@ exports[`Group renders group with anonymous functions 1`] = `
           "asyncCause": null,
           "displayName": "display-1",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "1",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -652,15 +1333,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "display-1",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "1",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -717,15 +1478,6 @@ exports[`Group renders group with anonymous functions 2`] = `
       key="frame-indent-0"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -733,15 +1485,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "display-1",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "1",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "mahscripts.js",
+                "group": "myfile.com",
+                "path": "/mahscripts.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/mahscripts.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "mahscripts.js",
+                  "group": "myfile.com",
+                  "path": "/mahscripts.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/mahscripts.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -778,11 +1610,9 @@ exports[`Group renders group with anonymous functions 2`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       hideLocation={true}
       key="1"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -790,15 +1620,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -836,22 +1746,11 @@ exports[`Group renders group with anonymous functions 2`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
     <FrameIndent
       key="frame-indent-1"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -859,15 +1758,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "display-2",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "2",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -904,11 +1883,9 @@ exports[`Group renders group with anonymous functions 2`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       hideLocation={true}
       key="2"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -916,15 +1893,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -962,22 +2019,11 @@ exports[`Group renders group with anonymous functions 2`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
     <FrameIndent
       key="frame-indent-2"
     />
     <Frame
-      copyStackTrace={[MockFunction]}
-      cx={
-        Object {
-          "isPaused": false,
-          "navigateCounter": 0,
-          "pauseCounter": 0,
-          "thread": "FakeThread",
-        }
-      }
       disableContextMenu={false}
       displayFullUrl={false}
       frame={
@@ -985,15 +2031,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "display-3",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "3",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 55,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "js",
+                "filename": "back.js",
+                "group": "myfile.com",
+                "path": "/back.js",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "http://myfile.com/back.js",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "js",
+                  "filename": "back.js",
+                  "group": "myfile.com",
+                  "path": "/back.js",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "http://myfile.com/back.js",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -1030,11 +2156,9 @@ exports[`Group renders group with anonymous functions 2`] = `
           "type": "call",
         }
       }
-      frameworkGroupingOn={true}
       hideLocation={true}
       key="3"
       panel="webconsole"
-      restart={[MockFunction]}
       selectFrame={[MockFunction]}
       selectLocation={[MockFunction]}
       selectedFrame={
@@ -1042,15 +2166,95 @@ exports[`Group renders group with anonymous functions 2`] = `
           "asyncCause": null,
           "displayName": "foo",
           "generatedLocation": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "id": "frame",
           "index": 0,
           "library": "Back",
           "location": Object {
+            "column": undefined,
             "line": 4,
-            "sourceId": "source",
+            "source": Object {
+              "displayURL": Object {
+                "fileExtension": "",
+                "filename": "url",
+                "group": "",
+                "path": "url",
+                "search": "",
+              },
+              "extensionName": null,
+              "id": "source",
+              "isExtension": false,
+              "isOriginal": false,
+              "isPrettyPrinted": false,
+              "isWasm": false,
+              "thread": "FakeThread",
+              "url": "url",
+            },
+            "sourceActor": Object {
+              "actor": "source-actor",
+              "id": "source-actor",
+              "source": "source",
+              "sourceObject": Object {
+                "displayURL": Object {
+                  "fileExtension": "",
+                  "filename": "url",
+                  "group": "",
+                  "path": "url",
+                  "search": "",
+                },
+                "extensionName": null,
+                "id": "source",
+                "isExtension": false,
+                "isOriginal": false,
+                "isPrettyPrinted": false,
+                "isWasm": false,
+                "thread": "FakeThread",
+                "url": "url",
+              },
+            },
+            "sourceActorId": "source-actor",
           },
           "scope": Object {
             "actor": "scope-actor",
@@ -1088,8 +2292,6 @@ exports[`Group renders group with anonymous functions 2`] = `
         }
       }
       shouldMapDisplayName={false}
-      toggleBlackBox={[MockFunction]}
-      toggleFrameworkGrouping={[MockFunction]}
     />
   </div>
 </div>

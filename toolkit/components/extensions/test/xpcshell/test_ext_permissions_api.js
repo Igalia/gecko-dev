@@ -1,17 +1,15 @@
 "use strict";
 
-const { AddonManager } = ChromeUtils.import(
-  "resource://gre/modules/AddonManager.jsm"
+const { AddonManager } = ChromeUtils.importESModule(
+  "resource://gre/modules/AddonManager.sys.mjs"
 );
-const { ExtensionPermissions } = ChromeUtils.import(
-  "resource://gre/modules/ExtensionPermissions.jsm"
+const { ExtensionPermissions } = ChromeUtils.importESModule(
+  "resource://gre/modules/ExtensionPermissions.sys.mjs"
 );
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "ExtensionParent",
-  "resource://gre/modules/ExtensionParent.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
+});
 
 AddonTestUtils.init(this);
 AddonTestUtils.overrideCertDB();
@@ -49,6 +47,7 @@ add_task(async function setup() {
     "activeTab",
     "clipboardRead",
     "clipboardWrite",
+    "declarativeNetRequestFeedback",
     "devtools",
     "downloads.open",
     "geolocation",
@@ -60,6 +59,7 @@ add_task(async function setup() {
     "tabHide",
     "tabs",
     "webRequestBlocking",
+    "webRequestFilterResponse",
     "webRequestFilterResponse.serviceWorkerScript",
   ];
   OptionalPermissions = Schemas.getPermissionNames([
@@ -217,7 +217,7 @@ add_task(async function test_geo_permissions() {
   let extension = ExtensionTestUtils.loadExtension({
     background,
     manifest: {
-      applications: { gecko: { id: "geo-test@test" } },
+      browser_specific_settings: { gecko: { id: "geo-test@test" } },
       optional_permissions: ["geolocation"],
     },
     useAddonManager: "permanent",
@@ -263,7 +263,7 @@ add_task(async function test_geo_permissions() {
   // We should not have geo permission after this upgrade.
   await extension.upgrade({
     manifest: {
-      applications: { gecko: { id: "geo-test@test" } },
+      browser_specific_settings: { gecko: { id: "geo-test@test" } },
     },
     useAddonManager: "permanent",
   });

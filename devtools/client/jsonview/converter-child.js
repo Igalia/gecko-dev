@@ -4,32 +4,18 @@
 
 "use strict";
 
-const { components, Ci, Cr, Cu, CC } = require("chrome");
-const ChromeUtils = require("ChromeUtils");
-const Services = require("Services");
-
-loader.lazyRequireGetter(
-  this,
-  "NetworkHelper",
-  "devtools/shared/webconsole/network-helper"
-);
-loader.lazyGetter(this, "debugJsModules", function() {
-  const { AppConstants } = require("resource://gre/modules/AppConstants.jsm");
-  return !!AppConstants.DEBUG_JS_MODULES;
-});
-
 const {
   getTheme,
   addThemeObserver,
   removeThemeObserver,
-} = require("devtools/client/shared/theme");
+} = require("resource://devtools/client/shared/theme.js");
 
-const BinaryInput = CC(
+const BinaryInput = Components.Constructor(
   "@mozilla.org/binaryinputstream;1",
   "nsIBinaryInputStream",
   "setInputStream"
 );
-const BufferStream = CC(
+const BufferStream = Components.Constructor(
   "@mozilla.org/io/arraybuffer-input-stream;1",
   "nsIArrayBufferInputStream",
   "setData"
@@ -129,8 +115,8 @@ Converter.prototype = {
     this.listener.onStartRequest(request);
 
     // Initialize stuff.
-    const win = NetworkHelper.getWindowForRequest(request);
-    if (!win || !components.isSuccessCode(request.status)) {
+    const win = getWindowForRequest(request);
+    if (!win || !Components.isSuccessCode(request.status)) {
       return;
     }
 
@@ -156,7 +142,7 @@ Converter.prototype = {
 
   onStopRequest(request, statusCode) {
     // Flush data if we haven't been canceled.
-    if (components.isSuccessCode(statusCode)) {
+    if (Components.isSuccessCode(statusCode)) {
       this.decodeAndInsertBuffer(new ArrayBuffer(0), true);
     }
 
@@ -237,12 +223,57 @@ function getAllStrings() {
   return jsonViewStringDict;
 }
 
+// The two following methods are duplicated from NetworkHelper.sys.mjs
+// to avoid pulling the whole NetworkHelper as a dependency during
+// initialization.
+
+/**
+ * Gets the nsIDOMWindow that is associated with request.
+ *
+ * @param nsIHttpChannel request
+ * @returns nsIDOMWindow or null
+ */
+function getWindowForRequest(request) {
+  try {
+    return getRequestLoadContext(request).associatedWindow;
+  } catch (ex) {
+    // On some request notificationCallbacks and loadGroup are both null,
+    // so that we can't retrieve any nsILoadContext interface.
+    // Fallback on nsILoadInfo to try to retrieve the request's window.
+    // (this is covered by test_network_get.html and its CSS request)
+    return request.loadInfo.loadingDocument?.defaultView;
+  }
+}
+
+/**
+ * Gets the nsILoadContext that is associated with request.
+ *
+ * @param nsIHttpChannel request
+ * @returns nsILoadContext or null
+ */
+function getRequestLoadContext(request) {
+  try {
+    return request.notificationCallbacks.getInterface(Ci.nsILoadContext);
+  } catch (ex) {
+    // Ignore.
+  }
+
+  try {
+    return request.loadGroup.notificationCallbacks.getInterface(
+      Ci.nsILoadContext
+    );
+  } catch (ex) {
+    // Ignore.
+  }
+
+  return null;
+}
+
 // Exports variables that will be accessed by the non-privileged scripts.
 function exportData(win, headers) {
   const json = new win.Text();
   const JSONView = Cu.cloneInto(
     {
-      debugJsModules,
       headers,
       json,
       readyState: "uninitialized",
@@ -261,7 +292,7 @@ function exportData(win, headers) {
       writable: true,
     });
   } catch (error) {
-    Cu.reportError(error);
+    console.error(error);
   }
   return { json };
 }
@@ -328,7 +359,7 @@ function initialHTML(doc) {
 // However, the HTML parser is not synchronous, so this function uses a mutation
 // observer to detect the creation of the element. Then the text node is appended.
 function insertJsonData(win, json) {
-  new win.MutationObserver(function(mutations, observer) {
+  new win.MutationObserver(function (mutations, observer) {
     for (const { target, addedNodes } of mutations) {
       if (target.nodeType == 1 && target.id == "content") {
         for (const node of addedNodes) {
@@ -347,13 +378,13 @@ function insertJsonData(win, json) {
 }
 
 function keepThemeUpdated(win) {
-  const listener = function() {
+  const listener = function () {
     win.document.documentElement.className = "theme-" + getTheme();
   };
   addThemeObserver(listener);
   win.addEventListener(
     "unload",
-    function(event) {
+    function (event) {
       removeThemeObserver(listener);
       win = null;
     },

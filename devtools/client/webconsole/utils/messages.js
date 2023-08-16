@@ -4,12 +4,11 @@
 
 "use strict";
 
-const Services = require("Services");
-const l10n = require("devtools/client/webconsole/utils/l10n");
-const ResourceCommand = require("devtools/shared/commands/resource/resource-command");
+const l10n = require("resource://devtools/client/webconsole/utils/l10n.js");
+const ResourceCommand = require("resource://devtools/shared/commands/resource/resource-command.js");
 const {
   isSupportedByConsoleTable,
-} = require("devtools/shared/webconsole/messages");
+} = require("resource://devtools/shared/webconsole/messages.js");
 
 // URL Regex, common idioms:
 //
@@ -59,7 +58,8 @@ const {
 //                       (so also '%')
 // )
 // eslint-disable-next-line max-len
-const urlRegex = /(^|[\s(,;'"`“])((?:https?:\/\/|www\d{0,3}[.][a-z0-9.\-]{2,249}|[a-z0-9.\-]{2,250}[.][a-z]{2,4}\/)[-\w.!~*'();,/?:@&=+$#%]*)/im;
+const urlRegex =
+  /(^|[\s(,;'"`“])((?:https?:\/\/|www\d{0,3}[.][a-z0-9.\-]{2,249}|[a-z0-9.\-]{2,250}[.][a-z]{2,4}\/)[-\w.!~*'();,/?:@&=+$#%]*)/im;
 
 // Set of terminators that are likely to have been part of the context rather
 // than part of the URL and so should be uneaten. This is '(', ',', ';', plus
@@ -71,15 +71,15 @@ const {
   MESSAGE_SOURCE,
   MESSAGE_TYPE,
   MESSAGE_LEVEL,
-} = require("devtools/client/webconsole/constants");
+} = require("resource://devtools/client/webconsole/constants.js");
 const {
   ConsoleMessage,
   NetworkEventMessage,
-} = require("devtools/client/webconsole/types");
+} = require("resource://devtools/client/webconsole/types.js");
 
-function prepareMessage(resource, idGenerator) {
+function prepareMessage(resource, idGenerator, persistLogs) {
   if (!resource.source) {
-    resource = transformResource(resource);
+    resource = transformResource(resource, persistLogs);
   }
 
   resource.id = idGenerator.getNextId(resource);
@@ -91,11 +91,12 @@ function prepareMessage(resource, idGenerator) {
  *
  * @param {Object} resource: This can be either a simple RDP packet or an object emitted
  *                           by the Resource API.
+ * @param {Boolean} persistLogs: Value of the "Persist logs" setting
  */
-function transformResource(resource) {
+function transformResource(resource, persistLogs) {
   switch (resource.resourceType || resource.type) {
     case ResourceCommand.TYPES.CONSOLE_MESSAGE: {
-      return transformConsoleAPICallResource(resource);
+      return transformConsoleAPICallResource(resource, persistLogs);
     }
 
     case ResourceCommand.TYPES.PLATFORM_MESSAGE: {
@@ -126,7 +127,7 @@ function transformResource(resource) {
 }
 
 // eslint-disable-next-line complexity
-function transformConsoleAPICallResource(consoleMessageResource) {
+function transformConsoleAPICallResource(consoleMessageResource, persistLogs) {
   const { message, targetFront } = consoleMessageResource;
 
   let parameters = message.arguments;
@@ -139,7 +140,9 @@ function transformConsoleAPICallResource(consoleMessageResource) {
   switch (type) {
     case "clear":
       // We show a message to users when calls console.clear() is called.
-      parameters = [l10n.getStr("consoleCleared")];
+      parameters = [
+        l10n.getStr(persistLogs ? "preventedConsoleClear" : "consoleCleared"),
+      ];
       break;
     case "count":
     case "countReset":
@@ -655,6 +658,10 @@ function getWarningGroupLabel(firstMessage) {
     return l10n.getStr("webconsole.group.cookieSameSiteLaxByDefaultDisabled2");
   }
 
+  if (isCSPMessage(firstMessage)) {
+    return l10n.getStr("webconsole.group.csp");
+  }
+
   return "";
 }
 
@@ -710,6 +717,13 @@ function replaceURL(text, replacementText = "") {
  * @returns {String|null} null if the message can't be part of a warningGroup.
  */
 function getWarningGroupType(message) {
+  // We got report that this can be called with `undefined` (See Bug 1801462 and Bug 1810109).
+  // Until we manage to reproduce and find why this happens, guard on message so at least
+  // we don't crash the console.
+  if (!message) {
+    return null;
+  }
+
   if (
     message.level !== MESSAGE_LEVEL.WARN &&
     // CookieSameSite messages are not warnings but infos
@@ -732,6 +746,10 @@ function getWarningGroupType(message) {
 
   if (isCookieSameSiteMessage(message)) {
     return MESSAGE_TYPE.COOKIE_SAMESITE_GROUP;
+  }
+
+  if (isCSPMessage(message)) {
+    return MESSAGE_TYPE.CSP_GROUP;
   }
 
   return null;
@@ -812,6 +830,16 @@ function isTrackingProtectionMessage(message) {
 function isCookieSameSiteMessage(message) {
   const { category } = message;
   return category == "cookieSameSite";
+}
+
+/**
+ * Returns true if the message is a Content Security Policy (CSP) message.
+ * @param {ConsoleMessage} message
+ * @returns {Boolean}
+ */
+function isCSPMessage(message) {
+  const { category } = message;
+  return typeof category == "string" && category.startsWith("CSP_");
 }
 
 function getDescriptorValue(descriptor) {

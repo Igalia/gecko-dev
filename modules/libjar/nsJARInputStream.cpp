@@ -9,10 +9,14 @@
 #include "zipstruct.h"  // defines ZIP compression codes
 #include "nsZipArchive.h"
 #include "mozilla/MmapFaultHandler.h"
+#include "mozilla/StaticPrefs_network.h"
+#include "mozilla/UniquePtr.h"
+#include "mozilla/UniquePtrExtensions.h"
 
 #include "nsEscape.h"
 #include "nsDebug.h"
 #include <algorithm>
+#include <limits>
 #if defined(XP_WIN)
 #  include <windows.h>
 #endif
@@ -31,7 +35,10 @@ NS_IMPL_ISUPPORTS(nsJARInputStream, nsIInputStream)
 nsresult nsJARInputStream::InitFile(nsZipHandle* aFd, const uint8_t* aData,
                                     nsZipItem* aItem) {
   nsresult rv = NS_OK;
-  MOZ_ASSERT(aFd, "Argument may not be null");
+  MOZ_DIAGNOSTIC_ASSERT(aFd, "Argument may not be null");
+  if (!aFd) {
+    return NS_ERROR_INVALID_ARG;
+  }
   MOZ_ASSERT(aItem, "Argument may not be null");
 
   // Mark it as closed, in case something fails in initialisation
@@ -81,7 +88,7 @@ nsresult nsJARInputStream::InitDirectory(nsJAR* aJar,
   // Keep the zipReader for getting the actual zipItems
   mJar = aJar;
   mJar->mLock.AssertCurrentThreadIn();
-  UniquePtr<nsZipFind> find;
+  mozilla::UniquePtr<nsZipFind> find;
   nsresult rv;
   // We can get aDir's contents as strings via FindEntries
   // with the following pattern (see nsIZipReader.findEntries docs)
@@ -152,6 +159,8 @@ nsJARInputStream::Available(uint64_t* _retval) {
   // They just use the _retval value.
   *_retval = 0;
 
+  uint64_t maxAvailableSize = 0;
+
   switch (mMode) {
     case MODE_NOTINITED:
       break;
@@ -165,11 +174,20 @@ nsJARInputStream::Available(uint64_t* _retval) {
 
     case MODE_INFLATE:
     case MODE_COPY:
-      *_retval = mOutSize - mZs.total_out;
+      maxAvailableSize = mozilla::StaticPrefs::network_jar_max_available_size();
+      if (!maxAvailableSize) {
+        maxAvailableSize = std::numeric_limits<uint64_t>::max();
+      }
+      *_retval = std::min<uint64_t>(mOutSize - mZs.total_out, maxAvailableSize);
       break;
   }
 
   return NS_OK;
+}
+
+NS_IMETHODIMP
+nsJARInputStream::StreamStatus() {
+  return mMode == MODE_CLOSED ? NS_BASE_STREAM_CLOSED : NS_OK;
 }
 
 NS_IMETHODIMP
@@ -270,7 +288,9 @@ nsresult nsJARInputStream::ContinueInflate(char* aBuffer, uint32_t aCount,
     if ((zerr != Z_OK) && (zerr != Z_STREAM_END)) {
       return NS_ERROR_FILE_CORRUPTED;
     }
-    finished = (zerr == Z_STREAM_END);
+    // If inflating did not read anything more, then the stream is finished.
+    finished = (zerr == Z_STREAM_END) ||
+               (mZs.avail_out && mZs.total_out == oldTotalOut);
   }
 
   *aBytesRead = (mZs.total_out - oldTotalOut);
@@ -280,9 +300,19 @@ nsresult nsJARInputStream::ContinueInflate(char* aBuffer, uint32_t aCount,
 
   // be aggressive about ending the inflation
   // for some reason we don't always get Z_STREAM_END
-  if (finished || mZs.total_out == mOutSize) {
+  if (finished || mZs.total_out >= mOutSize) {
     if (mMode == MODE_INFLATE) {
-      inflateEnd(&mZs);
+      int zerr = inflateEnd(&mZs);
+      if (zerr != Z_OK) {
+        return NS_ERROR_FILE_CORRUPTED;
+      }
+
+      // Stream is finished but has a different size from what
+      // we expected.
+      if (mozilla::StaticPrefs::network_jar_require_size_match() &&
+          mZs.total_out != mOutSize) {
+        return NS_ERROR_FILE_CORRUPTED;
+      }
     }
 
     // stop returning valid data as soon as we know we have a bad CRC
@@ -304,7 +334,7 @@ nsresult nsJARInputStream::ReadDirectory(char* aBuffer, uint32_t aCount,
   uint32_t numRead = CopyDataToBuffer(aBuffer, aCount);
 
   if (aCount > 0) {
-    RecursiveMutexAutoLock lock(mJar->mLock);
+    mozilla::RecursiveMutexAutoLock lock(mJar->mLock);
     // empty the buffer and start writing directory entry lines to it
     mBuffer.Truncate();
     mCurPos = 0;

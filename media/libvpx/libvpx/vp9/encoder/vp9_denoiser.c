@@ -233,7 +233,7 @@ static VP9_DENOISER_DECISION perform_motion_compensation(
         frame == ALTREF_FRAME ||
         (frame == GOLDEN_FRAME && use_gf_temporal_ref) ||
         (frame != LAST_FRAME &&
-         ((ctx->zeromv_lastref_sse<(5 * ctx->zeromv_sse)>> 2) ||
+         ((ctx->zeromv_lastref_sse < (5 * ctx->zeromv_sse) >> 2) ||
           denoiser->denoising_level >= kDenHigh))) {
       frame = LAST_FRAME;
       ctx->newmv_sse = ctx->zeromv_lastref_sse;
@@ -634,11 +634,11 @@ int vp9_denoiser_alloc(VP9_COMMON *cm, struct SVC *svc, VP9_DENOISER *denoiser,
   denoiser->num_ref_frames = use_svc ? SVC_REF_FRAMES : NONSVC_REF_FRAMES;
   init_num_ref_frames = use_svc ? MAX_REF_FRAMES : NONSVC_REF_FRAMES;
   denoiser->num_layers = num_layers;
-  CHECK_MEM_ERROR(cm, denoiser->running_avg_y,
+  CHECK_MEM_ERROR(&cm->error, denoiser->running_avg_y,
                   vpx_calloc(denoiser->num_ref_frames * num_layers,
                              sizeof(denoiser->running_avg_y[0])));
   CHECK_MEM_ERROR(
-      cm, denoiser->mc_running_avg_y,
+      &cm->error, denoiser->mc_running_avg_y,
       vpx_calloc(num_layers, sizeof(denoiser->mc_running_avg_y[0])));
 
   for (layer = 0; layer < num_layers; ++layer) {
@@ -764,8 +764,9 @@ int64_t vp9_scale_acskip_thresh(int64_t threshold,
                                 VP9_DENOISER_LEVEL noise_level, int abs_sumdiff,
                                 int temporal_layer_id) {
   if (noise_level >= kDenLow && abs_sumdiff < 5)
-    return threshold *=
-           (noise_level == kDenLow) ? 2 : (temporal_layer_id == 2) ? 10 : 6;
+    return threshold *= (noise_level == kDenLow)   ? 2
+                        : (temporal_layer_id == 2) ? 10
+                                                   : 6;
   else
     return threshold;
 }

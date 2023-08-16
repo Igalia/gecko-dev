@@ -9,7 +9,7 @@
 // Fission.
 const TEST_URI = URL_ROOT_COM_SSL + "doc_print_media_simulation.html";
 
-add_task(async function() {
+add_task(async function () {
   await addTab(TEST_URI);
   const { inspector, view } = await openRuleView();
 
@@ -50,7 +50,7 @@ add_task(async function() {
   );
   is(
     getRuleViewAncestorRulesDataTextByIndex(view, 1),
-    "@media print",
+    "@media print {",
     "Media queries information are displayed"
   );
 
@@ -63,7 +63,7 @@ add_task(async function() {
   );
   is(
     getRuleViewAncestorRulesDataTextByIndex(view, 1),
-    "@media print",
+    "@media print {",
     "Media queries information are displayed for the node on the remote iframe as well"
   );
 

@@ -17,6 +17,7 @@
 #include "mozilla/fallible.h"
 #include "nsDebug.h"
 #include "nsError.h"
+#include "nsIAsyncOutputStream.h"
 
 namespace mozilla::dom::quota {
 template <typename CipherStrategy>
@@ -35,12 +36,20 @@ EncryptingOutputStream<CipherStrategy>::EncryptingOutputStream(
       CipherStrategy::BlockPrefixLength % CipherStrategy::BasicBlockSize == 0);
 
   // This implementation only supports sync base streams.  Verify this in debug
-  // builds.
+  // builds.  Note, this is a bit complicated because the streams we support
+  // advertise different capabilities:
+  //  - nsFileOutputStream - blocking and sync
+  //  - FixedBufferOutputStream - non-blocking and sync
+  //  - nsPipeOutputStream - can be blocking, but provides async interface
 #ifdef DEBUG
   bool baseNonBlocking;
   nsresult rv = (*mBaseStream)->IsNonBlocking(&baseNonBlocking);
   MOZ_ASSERT(NS_SUCCEEDED(rv));
-  MOZ_ASSERT(!baseNonBlocking);
+  if (baseNonBlocking) {
+    nsCOMPtr<nsIAsyncOutputStream> async =
+        do_QueryInterface((*mBaseStream).get());
+    MOZ_ASSERT(!async);
+  }
 #endif
 }
 
@@ -102,6 +111,14 @@ NS_IMETHODIMP EncryptingOutputStream<CipherStrategy>::Flush() {
   }
 
   return (*mBaseStream)->Flush();
+}
+
+template <typename CipherStrategy>
+NS_IMETHODIMP EncryptingOutputStream<CipherStrategy>::StreamStatus() {
+  if (!mBaseStream) {
+    return NS_BASE_STREAM_CLOSED;
+  }
+  return (*mBaseStream)->StreamStatus();
 }
 
 template <typename CipherStrategy>

@@ -16,9 +16,11 @@ RUN apt-get -qqy update \
     fluxbox \
     gdebi \
     git \
+    glib-networking-services \
     gstreamer1.0-plugins-bad \
     gstreamer1.0-gl \
     libosmesa6-dev \
+    libproxy1-plugin-webkit \
     libvirt-daemon-system \
     libvirt-clients \
     libunwind8 \
@@ -29,6 +31,7 @@ RUN apt-get -qqy update \
     python3 \
     python3-dev \
     python3-pip \
+    python3-venv \
     software-properties-common \
     qemu-kvm \
     tzdata \
@@ -37,7 +40,7 @@ RUN apt-get -qqy update \
     wget \
     xvfb
 
-# python3.6 is not available by default in new versions of Ubuntu.
+# Ensure all Python versions are available
 RUN apt-add-repository -y ppa:deadsnakes/ppa
 
 # Ensure a `python` binary exists
@@ -62,7 +65,6 @@ RUN apt-get -qqy install \
 RUN apt-get -y autoremove
 
 RUN pip install --upgrade pip
-RUN pip install virtualenv
 
 ENV TZ "UTC"
 RUN echo "${TZ}" > /etc/timezone \

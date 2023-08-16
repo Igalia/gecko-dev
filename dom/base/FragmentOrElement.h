@@ -14,11 +14,13 @@
 #define FragmentOrElement_h___
 
 #include "mozilla/Attributes.h"
+#include "mozilla/EnumSet.h"
 #include "mozilla/MemoryReporting.h"
 #include "mozilla/UniquePtr.h"
 #include "nsCycleCollectionParticipant.h"  // NS_DECL_CYCLE_*
 #include "nsIContent.h"                    // base class
 #include "nsIHTMLCollection.h"
+#include "nsIWeakReferenceUtils.h"
 
 class ContentUnbinder;
 class nsContentList;
@@ -33,9 +35,13 @@ class nsIURI;
 
 namespace mozilla {
 class DeclarationBlock;
+enum class ContentRelevancyReason;
+using ContentRelevancy = EnumSet<ContentRelevancyReason, uint8_t>;
+class ElementAnimationData;
 namespace dom {
 struct CustomElementData;
 class Element;
+class PopoverData;
 }  // namespace dom
 }  // namespace mozilla
 
@@ -91,14 +97,13 @@ class FragmentOrElement : public nsIContent {
                                       mozilla::ErrorResult& aError) override;
 
   // nsIContent interface methods
-  virtual already_AddRefed<nsINodeList> GetChildren(uint32_t aFilter) override;
-  virtual const nsTextFragment* GetText() override;
-  virtual uint32_t TextLength() const override;
-  virtual bool TextIsOnlyWhitespace() override;
-  virtual bool ThreadSafeTextIsOnlyWhitespace() const override;
+  const nsTextFragment* GetText() override;
+  uint32_t TextLength() const override;
+  bool TextIsOnlyWhitespace() override;
+  bool ThreadSafeTextIsOnlyWhitespace() const override;
 
-  virtual void DestroyContent() override;
-  virtual void SaveSubtreeState() override;
+  void DestroyContent() override;
+  void SaveSubtreeState() override;
 
   nsIHTMLCollection* Children();
   uint32_t ChildElementCount() {
@@ -114,16 +119,10 @@ class FragmentOrElement : public nsIContent {
    * aNodes
    */
   static void FireNodeInserted(Document* aDoc, nsINode* aParent,
-                               nsTArray<nsCOMPtr<nsIContent> >& aNodes);
+                               const nsTArray<nsCOMPtr<nsIContent>>& aNodes);
 
-  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_SCRIPT_HOLDER_CLASS_INHERITED(
+  NS_DECL_CYCLE_COLLECTION_SKIPPABLE_WRAPPERCACHE_CLASS_INHERITED(
       FragmentOrElement, nsIContent)
-
-  /**
-   * Fire a DOMNodeRemoved mutation event for all children of this node
-   * TODO: Convert this to MOZ_CAN_RUN_SCRIPT (bug 1415230)
-   */
-  MOZ_CAN_RUN_SCRIPT_BOUNDARY void FireNodeRemovedForChildren();
 
   static void ClearContentUnbinder();
   static bool CanSkip(nsINode* aNode, bool aRemovingAllowed);
@@ -163,7 +162,7 @@ class FragmentOrElement : public nsIContent {
     ~nsExtendedDOMSlots();
 
     void TraverseExtendedSlots(nsCycleCollectionTraversalCallback&) final;
-    void UnlinkExtendedSlots() final;
+    void UnlinkExtendedSlots(nsIContent&) final;
 
     size_t SizeOfExcludingThis(MallocSizeOf aMallocSizeOf) const final;
 
@@ -197,6 +196,41 @@ class FragmentOrElement : public nsIContent {
      * Web components custom element data.
      */
     UniquePtr<CustomElementData> mCustomElementData;
+
+    /**
+     * Web animations data.
+     */
+    UniquePtr<ElementAnimationData> mAnimations;
+
+    /**
+     * PopoverData for the element.
+     */
+    UniquePtr<PopoverData> mPopoverData;
+
+    /**
+     * Last remembered size (in CSS pixels) for the element.
+     * @see {@link https://drafts.csswg.org/css-sizing-4/#last-remembered}
+     */
+    Maybe<float> mLastRememberedBSize;
+    Maybe<float> mLastRememberedISize;
+
+    /**
+     * Whether the content of this element is relevant for the purposes
+     * of `content-visibility: auto.
+     */
+    Maybe<ContentRelevancy> mContentRelevancy;
+
+    /**
+     * Whether the content of this element is considered visible for
+     * the purposes of `content-visibility: auto.
+     */
+    Maybe<bool> mVisibleForContentVisibility;
+
+    /**
+     * Explicitly set attr-elements, see
+     * https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#explicitly-set-attr-element
+     */
+    nsTHashMap<nsRefPtrHashKey<nsAtom>, nsWeakPtr> mExplicitlySetAttrElements;
   };
 
   class nsDOMSlots : public nsIContent::nsContentSlots {
@@ -205,7 +239,7 @@ class FragmentOrElement : public nsIContent {
     ~nsDOMSlots();
 
     void Traverse(nsCycleCollectionTraversalCallback&) final;
-    void Unlink() final;
+    void Unlink(nsINode&) final;
 
     size_t SizeOfIncludingThis(mozilla::MallocSizeOf aMallocSizeOf) const;
 

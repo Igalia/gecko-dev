@@ -58,7 +58,8 @@ struct CSSAnimationMarker {
   static MarkerSchema MarkerTypeDisplay() {
     using MS = MarkerSchema;
     MS schema{MS::Location::MarkerChart, MS::Location::MarkerTable};
-    schema.AddKeyFormat("Name", MS::Format::String);
+    schema.AddKeyFormatSearchable("Name", MS::Format::String,
+                                  MS::Searchable::Searchable);
     schema.AddKeyLabelFormat("properties", "Animated Properties",
                              MS::Format::String);
     schema.AddKeyLabelFormat("oncompositor", "Can Run on Compositor",
@@ -278,6 +279,18 @@ struct AnimationEventInfo {
 
     MOZ_ASSERT(mEvent.is<InternalTransitionEvent>() ||
                mEvent.is<InternalAnimationEvent>());
+
+    if (mEvent.is<InternalTransitionEvent>() && target->IsNode()) {
+      nsPIDOMWindowInner* inner =
+          target->AsNode()->OwnerDoc()->GetInnerWindow();
+      if (inner && !inner->HasTransitionEventListeners()) {
+        MOZ_ASSERT(AsWidgetEvent()->mMessage == eTransitionStart ||
+                   AsWidgetEvent()->mMessage == eTransitionRun ||
+                   AsWidgetEvent()->mMessage == eTransitionEnd ||
+                   AsWidgetEvent()->mMessage == eTransitionCancel);
+        return;
+      }
+    }
 
     EventDispatcher::Dispatch(target, aPresContext, AsWidgetEvent());
   }

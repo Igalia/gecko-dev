@@ -2,32 +2,17 @@
 # License, v. 2.0. If a copy of the MPL was not distributed with this
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
-import sys
 import json
 import os
-
-import mozpack.path as mozpath
-import mozunit
-
-import pytest
-
 from textwrap import dedent
 
-# Import test helpers module.
-OUR_DIR = mozpath.abspath(mozpath.dirname(__file__))
-sys.path.append(OUR_DIR)
-
-import helpers
+import helpers  # Import test helpers module.
+import mozunit
+import pytest
 
 helpers.setup()
 
-from GenerateWebIDLBindings import (
-    APIEvent,
-    APIFunction,
-    APINamespace,
-    APIType,
-    Schemas,
-)
+from GenerateWebIDLBindings import APIEvent, APIFunction, APINamespace, APIType, Schemas
 
 
 def test_parse_simple_single_api_namespace(write_jsonschema_fixtures):

@@ -79,17 +79,16 @@ ifdef ENABLE_MOZSEARCH_PLUGIN
 	$(RM) $(MOZSEARCH_ARCHIVE_BASENAME).zip
 	cd $(topobjdir)/mozsearch_index && \
           zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_ARCHIVE_BASENAME).zip' .
-	@echo 'Generating mozsearch rust-analysis tarball...'
-	$(RM) $(MOZSEARCH_RUST_ANALYSIS_BASENAME).zip
-	cd $(topobjdir)/ && \
-          find . -type d -name save-analysis | xargs zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_RUST_ANALYSIS_BASENAME).zip'
-	@echo 'Generating mozsearch rust stdlib analysis tarball ($(RUST_TARGET))...'
-	$(RM) $(MOZSEARCH_RUST_STDLIB_BASENAME).zip
-	cd $(MOZ_FETCHES_DIR)/rustc/lib && \
-          zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_RUST_STDLIB_BASENAME).zip' \
-          rustlib/$(RUST_TARGET)/analysis/ rustlib/src/
 	@echo 'Generating mozsearch distinclude map...'
 	cd $(topobjdir)/ && cp _build_manifests/install/dist_include '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_INCLUDEMAP_BASENAME).map'
+	@echo 'Generating mozsearch scip index...'
+	$(RM) $(MOZSEARCH_SCIP_INDEX_BASENAME).zip
+	cd $(topsrcdir)/ && \
+          CARGO=$(MOZ_FETCHES_DIR)/rustc/bin/cargo \
+          RUSTC=$(MOZ_FETCHES_DIR)/rustc/bin/rustc \
+          $(MOZ_FETCHES_DIR)/rustc/bin/rust-analyzer scip . && \
+          zip -r5D '$(ABS_DIST)/$(PKG_PATH)$(MOZSEARCH_SCIP_INDEX_BASENAME).zip' \
+          index.scip
 endif
 ifeq (Darwin, $(OS_ARCH))
 	@echo 'Generating macOS codesigning bundle ($(MACOS_CODESIGN_ARCHIVE_BASENAME).zip)'
@@ -100,6 +99,13 @@ ifneq (,$(MOZ_ASAN)$(LIBFUZZER)$(MOZ_UBSAN))
 	$(PYTHON3) $(MOZILLA_DIR)/build/unix/rewrite_sanitizer_dylib.py '$(DIST)/$(MOZ_PKG_DIR)/$(_BINPATH)'
 endif # MOZ_ASAN || LIBFUZZER || MOZ_UBSAN
 endif # Darwin
+ifndef MOZ_ARTIFACT_BUILDS
+	@echo 'Generating XPT artifacts archive ($(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip)'
+	$(call py_action,zip,-C $(topobjdir)/config/makefiles/xpidl '$(ABS_DIST)/$(PKG_PATH)$(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip' '*.xpt')
+else
+	@echo 'Packaging existing XPT artifacts from artifact build into archive ($(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip)'
+	$(call py_action,zip,-C $(ABS_DIST)/xpt_artifacts '$(ABS_DIST)/$(PKG_PATH)$(XPT_ARTIFACTS_ARCHIVE_BASENAME).zip' '*.xpt')
+endif # MOZ_ARTIFACT_BUILDS
 
 prepare-package: stage-package
 
@@ -123,16 +129,6 @@ ifdef MOZ_AUTOMATION
 		--package=$(DIST)/$(PACKAGE) --installer=$(INSTALLER_PACKAGE), \
 		--no-download \
 	  )
-endif
-ifdef MOZ_NORMANDY
-ifndef CROSS_COMPILE
-ifndef FUZZING_SNAPSHOT
-	# Generate a file that describes the local Normandy client.
-	env LD_LIBRARY_PATH="$(LD_LIBRARY_PATH):$(DIST)/$(PKG_PATH)/bin" \
-		$(DIST)/$(PKG_PATH)/bin/xpcshell \
-		$(MOZILLA_DIR)/toolkit/components/normandy/metadata-script.js $(MOZ_NORMANDY_JSON)
-endif
-endif
 endif
 	$(TOUCH) $@
 

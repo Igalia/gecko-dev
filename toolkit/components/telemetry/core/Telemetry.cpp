@@ -85,11 +85,9 @@
 #include "nsXPCOMCIDInternal.h"
 #include "other/CombinedStacks.h"
 #include "other/TelemetryIOInterposeObserver.h"
-#include "plstr.h"
 #include "TelemetryCommon.h"
 #include "TelemetryEvent.h"
 #include "TelemetryHistogram.h"
-#include "TelemetryOrigin.h"
 #include "TelemetryScalar.h"
 #include "TelemetryUserInteraction.h"
 
@@ -247,10 +245,6 @@ TelemetryImpl::CollectReports(nsIHandleReportCallback* aHandleReport,
   COLLECT_REPORT("explicit/telemetry/event/data",
                  TelemetryEvent::SizeOfIncludingThis(aMallocSizeOf),
                  "Memory used by Telemetry Event data");
-
-  COLLECT_REPORT("explicit/telemetry/origin/data",
-                 TelemetryOrigin::SizeOfIncludingThis(aMallocSizeOf),
-                 "Memory used by Telemetry Origin data");
 
 #undef COLLECT_REPORT
 
@@ -664,6 +658,16 @@ TelemetryImpl::GetUntrustedModuleLoadEvents(uint32_t aFlags, JSContext* cx,
                                             Promise** aPromise) {
 #if defined(XP_WIN)
   return Telemetry::GetUntrustedModuleLoadEvents(aFlags, cx, aPromise);
+#else
+  return NS_ERROR_NOT_IMPLEMENTED;
+#endif
+}
+
+NS_IMETHODIMP
+TelemetryImpl::GetAreUntrustedModuleLoadEventsReady(bool* ret) {
+#if defined(XP_WIN)
+  *ret = DllServices::Get()->IsReadyForBackgroundProcessing();
+  return NS_OK;
 #else
   return NS_ERROR_NOT_IMPLEMENTED;
 #endif
@@ -1132,7 +1136,7 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
   bool useTelemetry = false;
 #ifndef FUZZING
   if (XRE_IsParentProcess() || XRE_IsContentProcess() || XRE_IsGPUProcess() ||
-      XRE_IsSocketProcess()) {
+      XRE_IsRDDProcess() || XRE_IsSocketProcess() || XRE_IsUtilityProcess()) {
     useTelemetry = true;
   }
 #endif
@@ -1150,7 +1154,7 @@ already_AddRefed<nsITelemetry> TelemetryImpl::CreateTelemetryInstance() {
   // Only record events from the parent process.
   TelemetryEvent::InitializeGlobalState(XRE_IsParentProcess(),
                                         XRE_IsParentProcess());
-  TelemetryOrigin::InitializeGlobalState();
+
   // Currently, only UserInteractions from the parent process are recorded.
   TelemetryUserInteraction::InitializeGlobalState(useTelemetry, useTelemetry);
 
@@ -1189,7 +1193,7 @@ void TelemetryImpl::ShutdownTelemetry() {
   TelemetryHistogram::DeInitializeGlobalState();
   TelemetryScalar::DeInitializeGlobalState();
   TelemetryEvent::DeInitializeGlobalState();
-  TelemetryOrigin::DeInitializeGlobalState();
+
   TelemetryUserInteraction::DeInitializeGlobalState();
   TelemetryIPCAccumulator::DeInitializeGlobalState();
 }
@@ -1642,48 +1646,6 @@ TelemetryImpl::SetEventRecordingEnabled(const nsACString& aCategory,
 }
 
 NS_IMETHODIMP
-TelemetryImpl::GetOriginSnapshot(bool aClear, JSContext* aCx,
-                                 JS::MutableHandle<JS::Value> aResult) {
-  return TelemetryOrigin::GetOriginSnapshot(aClear, aCx, aResult);
-}
-
-NS_IMETHODIMP
-TelemetryImpl::GetEncodedOriginSnapshot(bool aClear, JSContext* aCx,
-                                        Promise** aResult) {
-  if (!XRE_IsParentProcess()) {
-    return NS_ERROR_FAILURE;
-  }
-  NS_ENSURE_ARG_POINTER(aResult);
-  nsIGlobalObject* global = xpc::CurrentNativeGlobal(aCx);
-  if (NS_WARN_IF(!global)) {
-    return NS_ERROR_FAILURE;
-  }
-  ErrorResult erv;
-  RefPtr<Promise> promise = Promise::Create(global, erv);
-  if (NS_WARN_IF(erv.Failed())) {
-    return erv.StealNSResult();
-  }
-
-  // TODO: Put this all on a Worker Thread
-
-  JS::Rooted<JS::Value> snapshot(aCx);
-  nsresult rv;
-  rv = TelemetryOrigin::GetEncodedOriginSnapshot(aClear, aCx, &snapshot);
-  if (NS_WARN_IF(NS_FAILED(rv))) {
-    return rv;
-  }
-  promise->MaybeResolve(snapshot);
-  promise.forget(aResult);
-  return NS_OK;
-}
-
-NS_IMETHODIMP
-TelemetryImpl::ClearOrigins() {
-  TelemetryOrigin::ClearOrigins();
-  return NS_OK;
-}
-
-NS_IMETHODIMP
 TelemetryImpl::FlushBatchedChildTelemetry() {
   TelemetryIPCAccumulator::IPCTimerFired(nullptr, nullptr);
   return NS_OK;
@@ -1952,14 +1914,15 @@ void WriteFailedProfileLock(nsIFile* aProfileDir) {
   if (NS_FAILED(rv) && rv != NS_ERROR_FILE_NOT_FOUND) {
     return;
   }
-  nsCOMPtr<nsIFileStream> fileStream;
-  rv = NS_NewLocalFileStream(getter_AddRefs(fileStream), file,
-                             PR_RDWR | PR_CREATE_FILE, 0640);
+  nsCOMPtr<nsIRandomAccessStream> fileRandomAccessStream;
+  rv = NS_NewLocalFileRandomAccessStream(getter_AddRefs(fileRandomAccessStream),
+                                         file, PR_RDWR | PR_CREATE_FILE, 0640);
   NS_ENSURE_SUCCESS_VOID(rv);
   NS_ENSURE_TRUE_VOID(fileSize <= kMaxFailedProfileLockFileSize);
   unsigned int failedLockCount = 0;
   if (fileSize > 0) {
-    nsCOMPtr<nsIInputStream> inStream = do_QueryInterface(fileStream);
+    nsCOMPtr<nsIInputStream> inStream =
+        do_QueryInterface(fileRandomAccessStream);
     NS_ENSURE_TRUE_VOID(inStream);
     if (!GetFailedLockCount(inStream, fileSize, failedLockCount)) {
       failedLockCount = 0;
@@ -1968,14 +1931,13 @@ void WriteFailedProfileLock(nsIFile* aProfileDir) {
   ++failedLockCount;
   nsAutoCString bufStr;
   bufStr.AppendInt(static_cast<int>(failedLockCount));
-  nsCOMPtr<nsISeekableStream> seekStream = do_QueryInterface(fileStream);
-  NS_ENSURE_TRUE_VOID(seekStream);
   // If we read in an existing failed lock count, we need to reset the file ptr
   if (fileSize > 0) {
-    rv = seekStream->Seek(nsISeekableStream::NS_SEEK_SET, 0);
+    rv = fileRandomAccessStream->Seek(nsISeekableStream::NS_SEEK_SET, 0);
     NS_ENSURE_SUCCESS_VOID(rv);
   }
-  nsCOMPtr<nsIOutputStream> outStream = do_QueryInterface(fileStream);
+  nsCOMPtr<nsIOutputStream> outStream =
+      do_QueryInterface(fileRandomAccessStream);
   uint32_t bytesLeft = bufStr.Length();
   const char* bytes = bufStr.get();
   do {
@@ -1987,7 +1949,7 @@ void WriteFailedProfileLock(nsIFile* aProfileDir) {
     bytes += written;
     bytesLeft -= written;
   } while (bytesLeft > 0);
-  seekStream->SetEOF();
+  fileRandomAccessStream->SetEOF();
 }
 
 void InitIOReporting(nsIFile* aXreDir) {
@@ -2063,11 +2025,6 @@ void RecordEvent(
 
 void SetEventRecordingEnabled(const nsACString& aCategory, bool aEnabled) {
   TelemetryEvent::SetEventRecordingEnabled(aCategory, aEnabled);
-}
-
-void RecordOrigin(mozilla::Telemetry::OriginMetricID aId,
-                  const nsACString& aOrigin) {
-  TelemetryOrigin::RecordOrigin(aId, aOrigin);
 }
 
 void ShutdownTelemetry() { TelemetryImpl::ShutdownTelemetry(); }

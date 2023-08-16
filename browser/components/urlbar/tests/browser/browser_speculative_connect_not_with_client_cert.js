@@ -7,8 +7,8 @@
 
 // Tests that we don't speculatively connect when user certificates are installed
 
-const { MockRegistrar } = ChromeUtils.import(
-  "resource://testing-common/MockRegistrar.jsm"
+const { MockRegistrar } = ChromeUtils.importESModule(
+  "resource://testing-common/MockRegistrar.sys.mjs"
 );
 
 const certOverrideService = Cc[
@@ -40,12 +40,62 @@ const clientAuthDialogs = {
     is(certList.length, 1, "should have only one client certificate available");
     selectedIndex.value = 0;
     rememberClientAuthCertificate.value = false;
+    ok(
+      !chooseCertificateCalled,
+      "chooseCertificate should only be called once"
+    );
     chooseCertificateCalled = true;
     return true;
   },
 
   QueryInterface: ChromeUtils.generateQI(["nsIClientAuthDialogs"]),
 };
+
+/**
+ * A helper class to use with nsITLSServerConnectionInfo.setSecurityObserver.
+ * Implements nsITLSServerSecurityObserver and simulates an extremely
+ * rudimentary HTTP server that expects an HTTP/1.1 GET request and responds
+ * with a 200 OK.
+ */
+class SecurityObserver {
+  constructor(input, output) {
+    this.input = input;
+    this.output = output;
+  }
+
+  onHandshakeDone(socket, status) {
+    info("TLS handshake done");
+    handshakeDone = true;
+
+    let output = this.output;
+    this.input.asyncWait(
+      {
+        onInputStreamReady(readyInput) {
+          try {
+            let request = NetUtil.readInputStreamToString(
+              readyInput,
+              readyInput.available()
+            );
+            ok(
+              request.startsWith("GET /") && request.includes("HTTP/1.1"),
+              "expecting an HTTP/1.1 GET request"
+            );
+            let response =
+              "HTTP/1.1 200 OK\r\nContent-Type:text/plain\r\n" +
+              "Connection:Close\r\nContent-Length:2\r\n\r\nOK";
+            output.write(response, response.length);
+          } catch (e) {
+            console.log(e.message);
+            // This will fail when we close the speculative connection.
+          }
+        },
+      },
+      0,
+      0,
+      Services.tm.currentThread
+    );
+  }
+}
 
 function startServer(cert) {
   let tlsServer = Cc["@mozilla.org/network/tls-server-socket;1"].createInstance(
@@ -54,54 +104,25 @@ function startServer(cert) {
   tlsServer.init(-1, true, -1);
   tlsServer.serverCert = cert;
 
-  let input, output;
+  let securityObservers = [];
 
   let listener = {
     onSocketAccepted(socket, transport) {
       info("Accepted TLS client connection");
-      let connectionInfo = transport.securityInfo.QueryInterface(
+      let connectionInfo = transport.securityCallbacks.getInterface(
         Ci.nsITLSServerConnectionInfo
       );
-      connectionInfo.setSecurityObserver(listener);
-      input = transport.openInputStream(0, 0, 0);
-      output = transport.openOutputStream(0, 0, 0);
-    },
-
-    onHandshakeDone(socket, status) {
-      info("TLS handshake done");
-      handshakeDone = true;
-
-      input.asyncWait(
-        {
-          onInputStreamReady(readyInput) {
-            try {
-              let request = NetUtil.readInputStreamToString(
-                readyInput,
-                readyInput.available()
-              );
-              ok(
-                request.startsWith("GET /") && request.includes("HTTP/1.1"),
-                "expecting an HTTP/1.1 GET request"
-              );
-              let response =
-                "HTTP/1.1 200 OK\r\nContent-Type:text/plain\r\n" +
-                "Connection:Close\r\nContent-Length:2\r\n\r\nOK";
-              output.write(response, response.length);
-            } catch (e) {
-              // This will fail when we close the speculative connection.
-            }
-          },
-        },
-        0,
-        0,
-        Services.tm.currentThread
-      );
+      let input = transport.openInputStream(0, 0, 0);
+      let output = transport.openOutputStream(0, 0, 0);
+      connectionInfo.setSecurityObserver(new SecurityObserver(input, output));
     },
 
     onStopListening() {
       info("onStopListening");
-      input.close();
-      output.close();
+      for (let securityObserver of securityObservers) {
+        securityObserver.input.close();
+        securityObserver.output.close();
+      }
     },
   };
 
@@ -127,7 +148,7 @@ function getTestServerCertificate() {
   return null;
 }
 
-add_setup(async function() {
+add_setup(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [
       ["browser.urlbar.autoFill", true],
@@ -160,19 +181,15 @@ add_setup(async function() {
     },
   ]);
 
-  let overrideBits =
-    Ci.nsICertOverrideService.ERROR_UNTRUSTED |
-    Ci.nsICertOverrideService.ERROR_MISMATCH;
   certOverrideService.rememberValidityOverride(
     "localhost",
     server.port,
     {},
     cert,
-    overrideBits,
     true
   );
 
-  registerCleanupFunction(async function() {
+  registerCleanupFunction(async function () {
     await PlacesUtils.history.clear();
     MockRegistrar.unregister(clientAuthDialogsCID);
     certOverrideService.clearValidityOverride("localhost", server.port, {});

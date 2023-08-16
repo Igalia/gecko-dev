@@ -91,12 +91,12 @@ static void DoSessionStoreUpdate(CanonicalBrowsingContext* aBrowsingContext,
     if (aZoom) {
       GECKOBUNDLE_START(zoomBundle);
       GECKOBUNDLE_PUT(zoomBundle, "resolution",
-                      java::sdk::Double::New(Get<0>(*aZoom)));
+                      java::sdk::Double::New(std::get<0>(*aZoom)));
       GECKOBUNDLE_START(displaySizeBundle);
       GECKOBUNDLE_PUT(displaySizeBundle, "width",
-                      java::sdk::Integer::ValueOf(Get<1>(*aZoom)));
+                      java::sdk::Integer::ValueOf(std::get<1>(*aZoom)));
       GECKOBUNDLE_PUT(displaySizeBundle, "height",
-                      java::sdk::Integer::ValueOf(Get<2>(*aZoom)));
+                      java::sdk::Integer::ValueOf(std::get<2>(*aZoom)));
       GECKOBUNDLE_FINISH(displaySizeBundle);
       GECKOBUNDLE_PUT(zoomBundle, "displaySize", displaySizeBundle);
       GECKOBUNDLE_FINISH(zoomBundle);
@@ -146,8 +146,8 @@ static void DoSessionStoreUpdate(CanonicalBrowsingContext* aBrowsingContext,
     data.mScroll.Construct(aScroll);
   }
 
-  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportModule(
-      "resource://gre/modules/SessionStoreFunctions.jsm", fallible);
+  nsCOMPtr<nsISessionStoreFunctions> funcs = do_ImportESModule(
+      "resource://gre/modules/SessionStoreFunctions.sys.mjs", fallible);
   nsCOMPtr<nsIXPConnectWrappedJS> wrapped = do_QueryInterface(funcs);
   if (!wrapped) {
     return;
@@ -316,5 +316,3 @@ void SessionStoreParent::ResetSessionStore(
 }
 
 NS_IMPL_CYCLE_COLLECTION(SessionStoreParent, mBrowsingContext, mSessionStore)
-NS_IMPL_CYCLE_COLLECTION_ROOT_NATIVE(SessionStoreParent, AddRef)
-NS_IMPL_CYCLE_COLLECTION_UNROOT_NATIVE(SessionStoreParent, Release)

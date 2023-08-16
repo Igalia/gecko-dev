@@ -65,7 +65,12 @@ class PersistentBufferProvider : public RefCounted<PersistentBufferProvider>,
    */
   virtual bool ReturnDrawTarget(already_AddRefed<gfx::DrawTarget> aDT) = 0;
 
-  virtual already_AddRefed<gfx::SourceSurface> BorrowSnapshot() = 0;
+  /**
+   * Temporarily borrow a snapshot of the provider. If a target is supplied,
+   * the snapshot will be optimized for it, if applicable.
+   */
+  virtual already_AddRefed<gfx::SourceSurface> BorrowSnapshot(
+      gfx::DrawTarget* aTarget = nullptr) = 0;
 
   virtual void ReturnSnapshot(
       already_AddRefed<gfx::SourceSurface> aSnapshot) = 0;
@@ -76,7 +81,8 @@ class PersistentBufferProvider : public RefCounted<PersistentBufferProvider>,
 
   virtual void OnShutdown() {}
 
-  virtual bool SetKnowsCompositor(KnowsCompositor* aKnowsCompositor) {
+  virtual bool SetKnowsCompositor(KnowsCompositor* aKnowsCompositor,
+                                  bool& aOutLostFrontTexture) {
     return true;
   }
 
@@ -122,7 +128,8 @@ class PersistentBufferProviderBasic : public PersistentBufferProvider {
 
   bool ReturnDrawTarget(already_AddRefed<gfx::DrawTarget> aDT) override;
 
-  already_AddRefed<gfx::SourceSurface> BorrowSnapshot() override;
+  already_AddRefed<gfx::SourceSurface> BorrowSnapshot(
+      gfx::DrawTarget* aTarget) override;
 
   void ReturnSnapshot(already_AddRefed<gfx::SourceSurface> aSnapshot) override;
 
@@ -156,7 +163,8 @@ class PersistentBufferProviderAccelerated
 
   bool ReturnDrawTarget(already_AddRefed<gfx::DrawTarget> aDT) override;
 
-  already_AddRefed<gfx::SourceSurface> BorrowSnapshot() override;
+  already_AddRefed<gfx::SourceSurface> BorrowSnapshot(
+      gfx::DrawTarget* aTarget) override;
 
   bool RequiresRefresh() const override;
 
@@ -180,7 +188,7 @@ class PersistentBufferProviderShared : public PersistentBufferProvider,
 
   static already_AddRefed<PersistentBufferProviderShared> Create(
       gfx::IntSize aSize, gfx::SurfaceFormat aFormat,
-      KnowsCompositor* aKnowsCompositor);
+      KnowsCompositor* aKnowsCompositor, bool aWillReadFrequently = false);
 
   bool IsShared() const override { return true; }
 
@@ -189,7 +197,8 @@ class PersistentBufferProviderShared : public PersistentBufferProvider,
 
   bool ReturnDrawTarget(already_AddRefed<gfx::DrawTarget> aDT) override;
 
-  already_AddRefed<gfx::SourceSurface> BorrowSnapshot() override;
+  already_AddRefed<gfx::SourceSurface> BorrowSnapshot(
+      gfx::DrawTarget* aTarget) override;
 
   void ReturnSnapshot(already_AddRefed<gfx::SourceSurface> aSnapshot) override;
 
@@ -199,16 +208,20 @@ class PersistentBufferProviderShared : public PersistentBufferProvider,
 
   void OnShutdown() override { Destroy(); }
 
-  bool SetKnowsCompositor(KnowsCompositor* aKnowsCompositor) override;
+  bool SetKnowsCompositor(KnowsCompositor* aKnowsCompositor,
+                          bool& aOutLostFrontTexture) override;
 
   void ClearCachedResources() override;
 
   bool PreservesDrawingState() const override { return false; }
 
+  bool IsAccelerated() const override;
+
  protected:
   PersistentBufferProviderShared(gfx::IntSize aSize, gfx::SurfaceFormat aFormat,
                                  KnowsCompositor* aKnowsCompositor,
-                                 RefPtr<TextureClient>& aTexture);
+                                 RefPtr<TextureClient>& aTexture,
+                                 bool aWillReadFrequently);
 
   ~PersistentBufferProviderShared();
 
@@ -231,6 +244,8 @@ class PersistentBufferProviderShared : public PersistentBufferProvider,
   Maybe<uint32_t> mBack;
   // Offset of the texture in mTextures that is presented to the compositor.
   Maybe<uint32_t> mFront;
+  // Whether to avoid acceleration.
+  bool mWillReadFrequently = false;
 
   RefPtr<gfx::DrawTarget> mDrawTarget;
   RefPtr<gfx::SourceSurface> mSnapshot;

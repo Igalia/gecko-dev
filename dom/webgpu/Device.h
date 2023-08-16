@@ -12,6 +12,7 @@
 #include "mozilla/RefPtr.h"
 #include "mozilla/WeakPtr.h"
 #include "mozilla/webgpu/WebGPUTypes.h"
+#include "mozilla/webgpu/PWebGPUTypes.h"
 #include "mozilla/webrender/WebRenderAPI.h"
 #include "mozilla/DOMEventTargetHelper.h"
 
@@ -50,11 +51,7 @@ class GPULogCallback;
 }  // namespace dom
 namespace ipc {
 enum class ResponseRejectReason;
-class Shmem;
 }  // namespace ipc
-namespace layers {
-class CompositableHandle;
-}  // namespace layers
 
 namespace webgpu {
 namespace ffi {
@@ -79,7 +76,8 @@ class SupportedLimits;
 class Texture;
 class WebGPUChild;
 
-using MappingPromise = MozPromise<ipc::Shmem, ipc::ResponseRejectReason, true>;
+using MappingPromise =
+    MozPromise<BufferMapResult, ipc::ResponseRejectReason, true>;
 
 class Device final : public DOMEventTargetHelper, public SupportsWeakPtr {
  public:
@@ -91,27 +89,20 @@ class Device final : public DOMEventTargetHelper, public SupportsWeakPtr {
   RefPtr<SupportedFeatures> mFeatures;
   RefPtr<SupportedLimits> mLimits;
 
-  explicit Device(Adapter* const aParent, RawId aId,
-                  UniquePtr<ffi::WGPULimits> aRawLimits);
+  explicit Device(Adapter* const aParent, RawId aId, const ffi::WGPULimits&);
 
   RefPtr<WebGPUChild> GetBridge();
-  static JSObject* CreateExternalArrayBuffer(JSContext* aCx, size_t aOffset,
-                                             size_t aSize,
-                                             const ipc::Shmem& aShmem);
-  RefPtr<MappingPromise> MapBufferAsync(RawId aId, uint32_t aMode,
-                                        size_t aOffset, size_t aSize,
-                                        ErrorResult& aRv);
-  void UnmapBuffer(RawId aId, ipc::Shmem&& aShmem, bool aFlush,
-                   bool aKeepShmem);
   already_AddRefed<Texture> InitSwapChain(
       const dom::GPUCanvasConfiguration& aDesc,
-      const layers::CompositableHandle& aHandle, gfx::SurfaceFormat aFormat,
-      gfx::IntSize* aDefaultSize);
+      const layers::RemoteTextureOwnerId aOwnerId, gfx::SurfaceFormat aFormat,
+      gfx::IntSize aCanvasSize);
   bool CheckNewWarning(const nsACString& aMessage);
 
   void CleanupUnregisteredInParent();
 
-  void GenerateError(const nsCString& aMessage);
+  void GenerateValidationError(const nsCString& aMessage);
+
+  bool IsLost() const;
 
  private:
   ~Device();
@@ -154,7 +145,7 @@ class Device final : public DOMEventTargetHelper, public SupportsWeakPtr {
   already_AddRefed<BindGroup> CreateBindGroup(
       const dom::GPUBindGroupDescriptor& aDesc);
 
-  already_AddRefed<ShaderModule> CreateShaderModule(
+  MOZ_CAN_RUN_SCRIPT already_AddRefed<ShaderModule> CreateShaderModule(
       JSContext* aCx, const dom::GPUShaderModuleDescriptor& aDesc);
   already_AddRefed<ComputePipeline> CreateComputePipeline(
       const dom::GPUComputePipelineDescriptor& aDesc);

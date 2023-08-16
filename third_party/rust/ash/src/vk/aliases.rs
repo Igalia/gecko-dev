@@ -166,6 +166,8 @@ pub type PhysicalDeviceShaderAtomicInt64FeaturesKHR = PhysicalDeviceShaderAtomic
 pub type PhysicalDeviceDepthStencilResolvePropertiesKHR =
     PhysicalDeviceDepthStencilResolveProperties;
 pub type SubpassDescriptionDepthStencilResolveKHR = SubpassDescriptionDepthStencilResolve;
+pub type PhysicalDeviceFragmentShaderBarycentricFeaturesNV =
+    PhysicalDeviceFragmentShaderBarycentricFeaturesKHR;
 pub type ImageStencilUsageCreateInfoEXT = ImageStencilUsageCreateInfo;
 pub type PhysicalDeviceScalarBlockLayoutFeaturesEXT = PhysicalDeviceScalarBlockLayoutFeatures;
 pub type PhysicalDeviceUniformBufferStandardLayoutFeaturesKHR =
@@ -188,6 +190,7 @@ pub type PhysicalDeviceSeparateDepthStencilLayoutsFeaturesKHR =
     PhysicalDeviceSeparateDepthStencilLayoutsFeatures;
 pub type AttachmentReferenceStencilLayoutKHR = AttachmentReferenceStencilLayout;
 pub type AttachmentDescriptionStencilLayoutKHR = AttachmentDescriptionStencilLayout;
+pub type PipelineInfoEXT = PipelineInfoKHR;
 pub type PhysicalDeviceShaderDemoteToHelperInvocationFeaturesEXT =
     PhysicalDeviceShaderDemoteToHelperInvocationFeatures;
 pub type PhysicalDeviceTexelBufferAlignmentPropertiesEXT =
@@ -196,6 +199,8 @@ pub type PhysicalDeviceSubgroupSizeControlFeaturesEXT = PhysicalDeviceSubgroupSi
 pub type PhysicalDeviceSubgroupSizeControlPropertiesEXT =
     PhysicalDeviceSubgroupSizeControlProperties;
 pub type PipelineShaderStageRequiredSubgroupSizeCreateInfoEXT =
+    PipelineShaderStageRequiredSubgroupSizeCreateInfo;
+pub type ShaderRequiredSubgroupSizeCreateInfoEXT =
     PipelineShaderStageRequiredSubgroupSizeCreateInfo;
 pub type MemoryOpaqueCaptureAddressAllocateInfoKHR = MemoryOpaqueCaptureAddressAllocateInfo;
 pub type DeviceMemoryOpaqueCaptureAddressInfoKHR = DeviceMemoryOpaqueCaptureAddressInfo;
@@ -221,6 +226,10 @@ pub type CopyImageToBufferInfo2KHR = CopyImageToBufferInfo2;
 pub type ResolveImageInfo2KHR = ResolveImageInfo2;
 pub type PhysicalDeviceShaderTerminateInvocationFeaturesKHR =
     PhysicalDeviceShaderTerminateInvocationFeatures;
+pub type PhysicalDeviceMutableDescriptorTypeFeaturesVALVE =
+    PhysicalDeviceMutableDescriptorTypeFeaturesEXT;
+pub type MutableDescriptorTypeListVALVE = MutableDescriptorTypeListEXT;
+pub type MutableDescriptorTypeCreateInfoVALVE = MutableDescriptorTypeCreateInfoEXT;
 pub type MemoryBarrier2KHR = MemoryBarrier2;
 pub type ImageMemoryBarrier2KHR = ImageMemoryBarrier2;
 pub type BufferMemoryBarrier2KHR = BufferMemoryBarrier2;
@@ -240,3 +249,5 @@ pub type RenderingAttachmentInfoKHR = RenderingAttachmentInfo;
 pub type PhysicalDeviceDynamicRenderingFeaturesKHR = PhysicalDeviceDynamicRenderingFeatures;
 pub type CommandBufferInheritanceRenderingInfoKHR = CommandBufferInheritanceRenderingInfo;
 pub type AttachmentSampleCountInfoNV = AttachmentSampleCountInfoAMD;
+pub type PhysicalDeviceRasterizationOrderAttachmentAccessFeaturesARM =
+    PhysicalDeviceRasterizationOrderAttachmentAccessFeaturesEXT;

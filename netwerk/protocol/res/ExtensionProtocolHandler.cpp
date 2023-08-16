@@ -279,12 +279,12 @@ ExtensionStreamGetter::Cancel(nsresult aStatus) {
   mStatus = aStatus;
 
   if (mPump) {
-    mPump->Cancel(aStatus);
+    mPump->CancelWithReason(aStatus, "ExtensionStreamGetter::Cancel"_ns);
     mPump = nullptr;
   }
 
   if (mIsJarChannel && mJarChannel) {
-    mJarChannel->Cancel(aStatus);
+    mJarChannel->CancelWithReason(aStatus, "ExtensionStreamGetter::Cancel"_ns);
   }
 
   return NS_OK;
@@ -299,7 +299,8 @@ void ExtensionStreamGetter::CancelRequest(nsIStreamListener* aListener,
 
   aListener->OnStartRequest(aChannel);
   aListener->OnStopRequest(aChannel, aResult);
-  aChannel->Cancel(NS_BINDING_ABORTED);
+  aChannel->CancelWithReason(NS_BINDING_ABORTED,
+                             "ExtensionStreamGetter::CancelRequest"_ns);
 }
 
 // Handle an input stream sent from the parent.
@@ -426,6 +427,11 @@ nsresult ExtensionProtocolHandler::GetFlagsForURI(nsIURI* aURI,
       } else {
         flags |= WEBEXT_URI_WEB_ACCESSIBLE;
       }
+    } else if (policy->Type() == nsGkAtoms::theme) {
+      // Static themes cannot set web accessible resources, however using this
+      // flag here triggers SourceMayAccessPath calls necessary to allow another
+      // extension to access static theme resources in this extension.
+      flags |= WEBEXT_URI_WEB_ACCESSIBLE;
     } else {
       flags |= URI_DANGEROUS_TO_LOAD;
     }
@@ -626,11 +632,11 @@ Result<bool, nsresult> ExtensionProtocolHandler::AllowExternalResource(
   MOZ_ASSERT(!IsNeckoChild());
 
 #if defined(XP_WIN)
-  // On Windows, dev builds don't use symlinks so we never need to
+  // On Windows, non-package builds don't use symlinks so we never need to
   // allow a resource from outside of the extension dir.
   return false;
 #else
-  if (!mozilla::IsDevelopmentBuild()) {
+  if (mozilla::IsPackagedBuild()) {
     return false;
   }
 
@@ -660,7 +666,7 @@ Result<bool, nsresult> ExtensionProtocolHandler::AllowExternalResource(
 // The |aRequestedFile| argument must already be Normalize()'d
 Result<bool, nsresult> ExtensionProtocolHandler::DevRepoContains(
     nsIFile* aRequestedFile) {
-  MOZ_ASSERT(mozilla::IsDevelopmentBuild());
+  MOZ_ASSERT(!mozilla::IsPackagedBuild());
   MOZ_ASSERT(!IsNeckoChild());
 
   // On the first invocation, set mDevRepo
@@ -685,7 +691,7 @@ Result<bool, nsresult> ExtensionProtocolHandler::DevRepoContains(
 #if !defined(XP_WIN)
 Result<bool, nsresult> ExtensionProtocolHandler::AppDirContains(
     nsIFile* aExtensionDir) {
-  MOZ_ASSERT(mozilla::IsDevelopmentBuild());
+  MOZ_ASSERT(!mozilla::IsPackagedBuild());
   MOZ_ASSERT(!IsNeckoChild());
 
   // On the first invocation, set mAppDir
@@ -877,7 +883,7 @@ Result<Ok, nsresult> ExtensionProtocolHandler::NewFD(
 
   if (!mFileOpenerThread) {
     mFileOpenerThread = new LazyIdleThread(DEFAULT_THREAD_TIMEOUT_MS,
-                                           "ExtensionProtocolHandler"_ns);
+                                           "ExtensionProtocolHandler");
   }
 
   RefPtr<ExtensionJARFileOpener> fileOpener =

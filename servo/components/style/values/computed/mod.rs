@@ -14,14 +14,18 @@ use super::generics::transform::IsParallelTo;
 use super::generics::{self, GreaterThanOrEqualToOne, NonNegative, ZeroToOne};
 use super::specified;
 use super::{CSSFloat, CSSInteger};
+use crate::computed_value_flags::ComputedValueFlags;
 use crate::context::QuirksMode;
-use crate::stylesheets::container_rule::ContainerInfo;
-use crate::font_metrics::{get_metrics_provider_for_product, FontMetricsProvider};
+use crate::font_metrics::{FontMetrics, FontMetricsOrientation};
 use crate::media_queries::Device;
 #[cfg(feature = "gecko")]
 use crate::properties;
-use crate::properties::{ComputedValues, LonghandId, StyleBuilder};
+use crate::properties::{ComputedValues, StyleBuilder};
 use crate::rule_cache::RuleCacheConditions;
+use crate::stylesheets::container_rule::{
+    ContainerInfo, ContainerSizeQuery, ContainerSizeQueryResult,
+};
+use crate::values::specified::length::FontBaseSize;
 use crate::{ArcSlice, Atom, One};
 use euclid::{default, Point2D, Rect, Size2D};
 use servo_arc::Arc;
@@ -38,30 +42,35 @@ pub use self::align::{
 #[cfg(feature = "gecko")]
 pub use self::align::{AlignSelf, JustifySelf};
 pub use self::angle::Angle;
+pub use self::animation::{AnimationIterationCount, AnimationName, AnimationTimeline};
+pub use self::animation::{ScrollAxis, ScrollTimelineName, TransitionProperty, ViewTimelineInset};
 pub use self::background::{BackgroundRepeat, BackgroundSize};
 pub use self::basic_shape::FillRule;
-pub use self::border::{BorderCornerRadius, BorderRadius, BorderSpacing};
-pub use self::border::{BorderImageRepeat, BorderImageSideWidth};
-pub use self::border::{BorderImageSlice, BorderImageWidth};
-pub use self::box_::{AnimationIterationCount, AnimationName, AnimationTimeline, Contain, ContainerName, ContainerType};
-pub use self::box_::{Appearance, BreakBetween, BreakWithin, Clear, ContentVisibility, ContainIntrinsicSize, Float};
-pub use self::box_::{Display, Overflow, OverflowAnchor, TransitionProperty};
-pub use self::box_::{OverflowClipBox, OverscrollBehavior, Perspective, Resize, ScrollbarGutter};
-pub use self::box_::{ScrollAxis, ScrollSnapAlign, ScrollSnapAxis, ScrollSnapStop};
-pub use self::box_::{ScrollSnapStrictness, ScrollSnapType, ScrollTimelineName};
-pub use self::box_::{TouchAction, VerticalAlign, WillChange};
-pub use self::color::{Color, ColorOrAuto, ColorPropertyValue, ColorScheme, PrintColorAdjust};
+pub use self::border::{
+    BorderCornerRadius, BorderImageRepeat, BorderImageSideWidth, BorderImageSlice,
+    BorderImageWidth, BorderRadius, BorderSideWidth, BorderSpacing, LineWidth,
+};
+pub use self::box_::{
+    Appearance, BaselineSource, BreakBetween, BreakWithin, Clear, Contain, ContainIntrinsicSize,
+    ContainerName, ContainerType, ContentVisibility, Display, Float, LineClamp, Overflow,
+    OverflowAnchor, OverflowClipBox, OverscrollBehavior, Perspective, Resize, ScrollSnapAlign,
+    ScrollSnapAxis, ScrollSnapStop, ScrollSnapStrictness, ScrollSnapType, ScrollbarGutter,
+    TouchAction, VerticalAlign, WillChange,
+};
+pub use self::color::{
+    Color, ColorOrAuto, ColorPropertyValue, ColorScheme, ForcedColorAdjust, PrintColorAdjust,
+};
 pub use self::column::ColumnCount;
 pub use self::counters::{Content, ContentItem, CounterIncrement, CounterReset, CounterSet};
 pub use self::easing::TimingFunction;
 pub use self::effects::{BoxShadow, Filter, SimpleShadow};
 pub use self::flex::FlexBasis;
-pub use self::font::{FontFamily, FontLanguageOverride, FontStyle};
+pub use self::font::{FontFamily, FontLanguageOverride, FontPalette, FontStyle};
 pub use self::font::{FontFeatureSettings, FontVariantLigatures, FontVariantNumeric};
 pub use self::font::{FontSize, FontSizeAdjust, FontStretch, FontSynthesis};
 pub use self::font::{FontVariantAlternates, FontWeight};
 pub use self::font::{FontVariantEastAsian, FontVariationSettings};
-pub use self::font::{MathDepth, MozScriptMinSize, MozScriptSizeMultiplier, XLang, XTextZoom};
+pub use self::font::{MathDepth, MozScriptMinSize, MozScriptSizeMultiplier, XLang, XTextScale};
 pub use self::image::{Gradient, Image, ImageRendering, LineDirection, MozImageRect};
 pub use self::length::{CSSPixelLength, NonNegativeLength};
 pub use self::length::{Length, LengthOrNumber, LengthPercentage, NonNegativeLengthOrNumber};
@@ -70,9 +79,9 @@ pub use self::length::{NonNegativeLengthPercentage, NonNegativeLengthPercentageO
 #[cfg(feature = "gecko")]
 pub use self::list::ListStyleType;
 pub use self::list::Quotes;
-pub use self::motion::{OffsetPath, OffsetRotate};
+pub use self::motion::{OffsetPath, OffsetPosition, OffsetRotate};
 pub use self::outline::OutlineStyle;
-pub use self::page::{PageOrientation, PageName, PageSize, PaperSize};
+pub use self::page::{PageName, PageOrientation, PageSize, PageSizeOrientation, PaperSize};
 pub use self::percentage::{NonNegativePercentage, Percentage};
 pub use self::position::AspectRatio;
 pub use self::position::{
@@ -95,16 +104,16 @@ pub use self::transform::{Rotate, Scale, Transform, TransformOperation};
 pub use self::transform::{TransformOrigin, TransformStyle, Translate};
 #[cfg(feature = "gecko")]
 pub use self::ui::CursorImage;
-pub use self::ui::{Cursor, MozForceBrokenImageIcon, UserSelect};
+pub use self::ui::{BoolInteger, Cursor, UserSelect};
 pub use super::specified::TextTransform;
 pub use super::specified::ViewportVariant;
 pub use super::specified::{BorderStyle, TextDecorationLine};
-pub use super::{Auto, Either, None_};
 pub use app_units::Au;
 
 #[cfg(feature = "gecko")]
 pub mod align;
 pub mod angle;
+pub mod animation;
 pub mod background;
 pub mod basic_shape;
 pub mod border;
@@ -158,12 +167,11 @@ pub struct Context<'a> {
     #[cfg(feature = "servo")]
     pub cached_system_font: Option<()>,
 
-    /// A font metrics provider, used to access font metrics to implement
-    /// font-relative units.
-    pub font_metrics_provider: &'a dyn FontMetricsProvider,
-
-    /// Whether or not we are computing the media list in a media query
+    /// Whether or not we are computing the media list in a media query.
     pub in_media_query: bool,
+
+    /// Whether or not we are computing the container query condition.
+    pub in_container_query: bool,
 
     /// The quirks mode of this context.
     pub quirks_mode: QuirksMode,
@@ -177,19 +185,27 @@ pub struct Context<'a> {
     /// Returns the container information to evaluate a given container query.
     pub container_info: Option<ContainerInfo>,
 
-    /// The property we are computing a value for, if it is a non-inherited
-    /// property.  None if we are computed a value for an inherited property
-    /// or not computing for a property at all (e.g. in a media query
-    /// evaluation).
-    pub for_non_inherited_property: Option<LonghandId>,
+    /// Whether we're computing a value for a non-inherited property.
+    /// False if we are computed a value for an inherited property or not computing for a property
+    /// at all (e.g. in a media query evaluation).
+    pub for_non_inherited_property: bool,
 
     /// The conditions to cache a rule node on the rule cache.
     ///
     /// FIXME(emilio): Drop the refcell.
     pub rule_cache_conditions: RefCell<&'a mut RuleCacheConditions>,
+
+    /// Container size query for this context.
+    container_size_query: RefCell<ContainerSizeQuery<'a>>,
 }
 
 impl<'a> Context<'a> {
+    /// Lazily evaluate the container size query, returning the result.
+    pub fn get_container_size_query(&self) -> ContainerSizeQueryResult {
+        let mut resolved = self.container_size_query.borrow_mut();
+        resolved.get().clone()
+    }
+
     /// Creates a suitable context for media query evaluation, in which
     /// font-relative units compute against the system_font, and executes `f`
     /// with it.
@@ -198,20 +214,18 @@ impl<'a> Context<'a> {
         F: FnOnce(&Context) -> R,
     {
         let mut conditions = RuleCacheConditions::default();
-        let provider = get_metrics_provider_for_product();
-
         let context = Context {
             builder: StyleBuilder::for_inheritance(device, None, None),
-            font_metrics_provider: &provider,
             cached_system_font: None,
             in_media_query: true,
+            in_container_query: false,
             quirks_mode,
             for_smil_animation: false,
             container_info: None,
-            for_non_inherited_property: None,
+            for_non_inherited_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
+            container_size_query: RefCell::new(ContainerSizeQuery::none()),
         };
-
         f(&context)
     }
 
@@ -220,13 +234,13 @@ impl<'a> Context<'a> {
     pub fn for_container_query_evaluation<F, R>(
         device: &Device,
         container_info_and_style: Option<(ContainerInfo, Arc<ComputedValues>)>,
+        container_size_query: ContainerSizeQuery,
         f: F,
     ) -> R
     where
         F: FnOnce(&Context) -> R,
     {
         let mut conditions = RuleCacheConditions::default();
-        let provider = get_metrics_provider_for_product();
 
         let (container_info, style) = match container_info_and_style {
             Some((ci, s)) => (Some(ci), Some(s)),
@@ -237,22 +251,109 @@ impl<'a> Context<'a> {
         let quirks_mode = device.quirks_mode();
         let context = Context {
             builder: StyleBuilder::for_inheritance(device, style, None),
-            font_metrics_provider: &provider,
             cached_system_font: None,
-            in_media_query: true,
+            in_media_query: false,
+            in_container_query: true,
             quirks_mode,
             for_smil_animation: false,
             container_info,
-            for_non_inherited_property: None,
+            for_non_inherited_property: false,
             rule_cache_conditions: RefCell::new(&mut conditions),
+            container_size_query: RefCell::new(container_size_query),
         };
 
         f(&context)
     }
 
+    /// Creates a context suitable for more general cases.
+    pub fn new(
+        builder: StyleBuilder<'a>,
+        quirks_mode: QuirksMode,
+        rule_cache_conditions: &'a mut RuleCacheConditions,
+        container_size_query: ContainerSizeQuery<'a>,
+    ) -> Self {
+        Self {
+            builder,
+            cached_system_font: None,
+            in_media_query: false,
+            in_container_query: false,
+            quirks_mode,
+            container_info: None,
+            for_smil_animation: false,
+            for_non_inherited_property: false,
+            rule_cache_conditions: RefCell::new(rule_cache_conditions),
+            container_size_query: RefCell::new(container_size_query),
+        }
+    }
+
+    /// Creates a context suitable for computing animations.
+    pub fn new_for_animation(
+        builder: StyleBuilder<'a>,
+        for_smil_animation: bool,
+        quirks_mode: QuirksMode,
+        rule_cache_conditions: &'a mut RuleCacheConditions,
+        container_size_query: ContainerSizeQuery<'a>,
+    ) -> Self {
+        Self {
+            builder,
+            cached_system_font: None,
+            in_media_query: false,
+            in_container_query: false,
+            quirks_mode,
+            container_info: None,
+            for_smil_animation,
+            for_non_inherited_property: false,
+            rule_cache_conditions: RefCell::new(rule_cache_conditions),
+            container_size_query: RefCell::new(container_size_query),
+        }
+    }
+
     /// The current device.
     pub fn device(&self) -> &Device {
         self.builder.device
+    }
+
+    /// Queries font metrics.
+    pub fn query_font_metrics(
+        &self,
+        base_size: FontBaseSize,
+        orientation: FontMetricsOrientation,
+        retrieve_math_scales: bool,
+    ) -> FontMetrics {
+        if self.for_non_inherited_property {
+            self.rule_cache_conditions.borrow_mut().set_uncacheable();
+        }
+        self.builder.add_flags(match base_size {
+            FontBaseSize::CurrentStyle => ComputedValueFlags::DEPENDS_ON_SELF_FONT_METRICS,
+            FontBaseSize::InheritedStyle => ComputedValueFlags::DEPENDS_ON_INHERITED_FONT_METRICS,
+        });
+        let size = base_size.resolve(self).used_size();
+        let style = self.style();
+
+        let (wm, font) = match base_size {
+            FontBaseSize::CurrentStyle => (style.writing_mode, style.get_font()),
+            // This is only used for font-size computation.
+            FontBaseSize::InheritedStyle => {
+                (*style.inherited_writing_mode(), style.get_parent_font())
+            },
+        };
+
+        let vertical = match orientation {
+            FontMetricsOrientation::MatchContextPreferHorizontal => {
+                wm.is_vertical() && wm.is_upright()
+            },
+            FontMetricsOrientation::MatchContextPreferVertical => {
+                wm.is_vertical() && !wm.is_sideways()
+            },
+            FontMetricsOrientation::Horizontal => false,
+        };
+        self.device().query_font_metrics(
+            vertical,
+            font,
+            size,
+            self.in_media_or_container_query(),
+            retrieve_math_scales,
+        )
     }
 
     /// The current viewport size, used to resolve viewport units.
@@ -261,8 +362,15 @@ impl<'a> Context<'a> {
         variant: ViewportVariant,
     ) -> default::Size2D<Au> {
         self.builder
+            .add_flags(ComputedValueFlags::USES_VIEWPORT_UNITS);
+        self.builder
             .device
             .au_viewport_size_for_viewport_unit_resolution(variant)
+    }
+
+    /// Whether we're in a media or container query.
+    pub fn in_media_or_container_query(&self) -> bool {
+        self.in_media_query || self.in_container_query
     }
 
     /// The default computed style we're getting our reset style from.
@@ -278,10 +386,12 @@ impl<'a> Context<'a> {
     /// Apply text-zoom if enabled.
     #[cfg(feature = "gecko")]
     pub fn maybe_zoom_text(&self, size: CSSPixelLength) -> CSSPixelLength {
-        // We disable zoom for <svg:text> by unsetting the
-        // -x-text-zoom property, which leads to a false value
-        // in mAllowZoomAndMinSize
-        if self.style().get_font().gecko.mAllowZoomAndMinSize {
+        if self
+            .style()
+            .get_font()
+            .clone__x_text_scale()
+            .text_zoom_enabled()
+        {
             self.device().zoom_text(size)
         } else {
             size
@@ -305,10 +415,7 @@ pub struct ComputedVecIter<'a, 'cx, 'cx_a: 'cx, S: ToComputedValue + 'a> {
 impl<'a, 'cx, 'cx_a: 'cx, S: ToComputedValue + 'a> ComputedVecIter<'a, 'cx, 'cx_a, S> {
     /// Construct an iterator from a slice of specified values and a context
     pub fn new(cx: &'cx Context<'cx_a>, values: &'a [S]) -> Self {
-        ComputedVecIter {
-            cx,
-            values,
-        }
+        ComputedVecIter { cx, values }
     }
 }
 
@@ -564,6 +671,7 @@ trivial_to_computed_value!(String);
 trivial_to_computed_value!(Box<str>);
 trivial_to_computed_value!(crate::OwnedStr);
 trivial_to_computed_value!(style_traits::values::specified::AllowedNumericType);
+trivial_to_computed_value!(crate::values::generics::color::ColorMixFlags);
 
 #[allow(missing_docs)]
 #[derive(
@@ -838,9 +946,6 @@ impl From<CSSInteger> for PositiveInteger {
         GreaterThanOrEqualToOne::<CSSInteger>(int)
     }
 }
-
-/// A computed positive `<integer>` value or `none`.
-pub type PositiveIntegerOrNone = Either<PositiveInteger, None_>;
 
 /// rect(...) | auto
 pub type ClipRect = generics::GenericClipRect<LengthOrAuto>;

@@ -37,6 +37,7 @@
 #include "nsIDocShell.h"
 #include "nsIDocShellTreeItem.h"
 #include "nsINestedURI.h"
+#include "nsIHttpChannel.h"
 #include "nsIScriptContext.h"
 #include "nsIScriptError.h"
 #include "nsIScriptGlobalObject.h"
@@ -141,8 +142,8 @@ nsHtml5TreeOpExecutor::~nsHtml5TreeOpExecutor() {
       }
     }
   }
-  NS_ASSERTION(NS_FAILED(mBroken) || mOpQueue.IsEmpty(),
-               "Somehow there's stuff in the op queue.");
+  MOZ_ASSERT(NS_FAILED(mBroken) || mOpQueue.IsEmpty(),
+             "Somehow there's stuff in the op queue.");
 }
 
 // nsIContentSink
@@ -172,6 +173,13 @@ nsHtml5TreeOpExecutor::DidBuildModel(bool aTerminated) {
 
   MOZ_RELEASE_ASSERT(!IsInDocUpdate(),
                      "DidBuildModel from inside a doc update.");
+
+  RefPtr<nsHtml5TreeOpExecutor> pin(this);
+  auto queueClearer = MakeScopeExit([&] {
+    if (aTerminated && (mFlushState == eNotFlushing)) {
+      ClearOpQueue();  // clear in order to be able to assert in destructor
+    }
+  });
 
   // This comes from nsXMLContentSink and nsHTMLContentSink
   // If this parser has been marked as broken, treat the end of parse as
@@ -214,7 +222,7 @@ nsHtml5TreeOpExecutor::DidBuildModel(bool aTerminated) {
     // Gather telemetry only for top-level content navigations in order to
     // avoid noise from ad iframes.
     bool topLevel = false;
-    if (BrowsingContext* bc = mDocument->GetBrowsingContext()) {
+    if (mozilla::dom::BrowsingContext* bc = mDocument->GetBrowsingContext()) {
       topLevel = bc->IsTopContent();
     }
 
@@ -1197,9 +1205,9 @@ dom::ReferrerPolicy nsHtml5TreeOpExecutor::GetPreloadReferrerPolicy(
 void nsHtml5TreeOpExecutor::PreloadScript(
     const nsAString& aURL, const nsAString& aCharset, const nsAString& aType,
     const nsAString& aCrossOrigin, const nsAString& aMedia,
-    const nsAString& aIntegrity, dom::ReferrerPolicy aReferrerPolicy,
-    bool aScriptFromHead, bool aAsync, bool aDefer, bool aNoModule,
-    bool aLinkPreload) {
+    const nsAString& aNonce, const nsAString& aIntegrity,
+    dom::ReferrerPolicy aReferrerPolicy, bool aScriptFromHead, bool aAsync,
+    bool aDefer, bool aNoModule, bool aLinkPreload) {
   nsCOMPtr<nsIURI> uri = ConvertIfNotPreloadedYetAndMediaApplies(aURL, aMedia);
   if (!uri) {
     return;
@@ -1209,9 +1217,9 @@ void nsHtml5TreeOpExecutor::PreloadScript(
     return;
   }
   mDocument->ScriptLoader()->PreloadURI(
-      uri, aCharset, aType, aCrossOrigin, aIntegrity, aScriptFromHead, aAsync,
-      aDefer, aNoModule, aLinkPreload,
-      GetPreloadReferrerPolicy(aReferrerPolicy));
+      uri, aCharset, aType, aCrossOrigin, aNonce, aIntegrity, aScriptFromHead,
+      aAsync, aDefer, aNoModule, aLinkPreload,
+      GetPreloadReferrerPolicy(aReferrerPolicy), 0);
 }
 
 void nsHtml5TreeOpExecutor::PreloadStyle(const nsAString& aURL,
@@ -1240,7 +1248,8 @@ void nsHtml5TreeOpExecutor::PreloadStyle(const nsAString& aURL,
                           GetPreloadReferrerPolicy(aReferrerPolicy), aIntegrity,
                           aLinkPreload
                               ? css::StylePreloadKind::FromLinkRelPreloadElement
-                              : css::StylePreloadKind::FromParser);
+                              : css::StylePreloadKind::FromParser,
+                          0);
 }
 
 void nsHtml5TreeOpExecutor::PreloadImage(
@@ -1278,7 +1287,7 @@ void nsHtml5TreeOpExecutor::PreloadFont(const nsAString& aURL,
     return;
   }
 
-  mDocument->Preloads().PreloadFont(uri, aCrossOrigin, aReferrerPolicy);
+  mDocument->Preloads().PreloadFont(uri, aCrossOrigin, aReferrerPolicy, 0);
 }
 
 void nsHtml5TreeOpExecutor::PreloadFetch(const nsAString& aURL,
@@ -1290,7 +1299,7 @@ void nsHtml5TreeOpExecutor::PreloadFetch(const nsAString& aURL,
     return;
   }
 
-  mDocument->Preloads().PreloadFetch(uri, aCrossOrigin, aReferrerPolicy);
+  mDocument->Preloads().PreloadFetch(uri, aCrossOrigin, aReferrerPolicy, 0);
 }
 
 void nsHtml5TreeOpExecutor::PreloadOpenPicture() {
@@ -1314,11 +1323,44 @@ void nsHtml5TreeOpExecutor::SetSpeculationBase(const nsAString& aURL) {
     // the first one wins
     return;
   }
-  auto encoding = mDocument->GetDocumentCharacterSet();
-  DebugOnly<nsresult> rv = NS_NewURI(getter_AddRefs(mSpeculationBaseURI), aURL,
-                                     encoding, mDocument->GetDocumentURI());
-  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Failed to create a URI");
 
+  auto encoding = mDocument->GetDocumentCharacterSet();
+  nsCOMPtr<nsIURI> newBaseURI;
+  DebugOnly<nsresult> rv = NS_NewURI(getter_AddRefs(newBaseURI), aURL, encoding,
+                                     mDocument->GetDocumentURI());
+  NS_WARNING_ASSERTION(NS_SUCCEEDED(rv), "Failed to create a URI");
+  if (!newBaseURI) {
+    return;
+  }
+
+  // Check the document's CSP usually delivered via the CSP header.
+  if (nsCOMPtr<nsIContentSecurityPolicy> csp = mDocument->GetCsp()) {
+    // base-uri should not fallback to the default-src and preloads should not
+    // trigger violation reports.
+    bool cspPermitsBaseURI = true;
+    nsresult rv = csp->Permits(
+        nullptr, nullptr, newBaseURI,
+        nsIContentSecurityPolicy::BASE_URI_DIRECTIVE, true /* aSpecific */,
+        false /* aSendViolationReports */, &cspPermitsBaseURI);
+    if (NS_FAILED(rv) || !cspPermitsBaseURI) {
+      return;
+    }
+  }
+
+  // Also check the CSP discovered from the <meta> tag during speculative
+  // parsing.
+  if (nsCOMPtr<nsIContentSecurityPolicy> csp = mDocument->GetPreloadCsp()) {
+    bool cspPermitsBaseURI = true;
+    nsresult rv = csp->Permits(
+        nullptr, nullptr, newBaseURI,
+        nsIContentSecurityPolicy::BASE_URI_DIRECTIVE, true /* aSpecific */,
+        false /* aSendViolationReports */, &cspPermitsBaseURI);
+    if (NS_FAILED(rv) || !cspPermitsBaseURI) {
+      return;
+    }
+  }
+
+  mSpeculationBaseURI = newBaseURI;
   mDocument->Preloads().SetSpeculationBase(mSpeculationBaseURI);
 }
 
@@ -1333,13 +1375,14 @@ void nsHtml5TreeOpExecutor::AddSpeculationCSP(const nsAString& aCSP) {
   nsresult rv = NS_OK;
   nsCOMPtr<nsIContentSecurityPolicy> preloadCsp = mDocument->GetPreloadCsp();
   if (!preloadCsp) {
-    preloadCsp = new nsCSPContext();
+    RefPtr<nsCSPContext> csp = new nsCSPContext();
+    csp->SuppressParserLogMessages();
+    preloadCsp = csp;
     rv = preloadCsp->SetRequestContextWithDocument(mDocument);
     NS_ENSURE_SUCCESS_VOID(rv);
   }
 
-  // please note that meta CSPs and CSPs delivered through a header need
-  // to be joined together.
+  // Please note that multiple meta CSPs need to be joined together.
   rv = preloadCsp->AppendPolicy(
       aCSP,
       false,  // csp via meta tag can not be report only

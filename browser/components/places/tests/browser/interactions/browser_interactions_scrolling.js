@@ -29,7 +29,7 @@ async function waitForScrollEvent(aBrowser, aTask) {
 add_task(async function test_no_scrolling() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -45,7 +45,7 @@ add_task(async function test_no_scrolling() {
 add_task(async function test_arrow_key_down_scroll() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
-    await SpecialPowers.spawn(browser, [], function() {
+    await SpecialPowers.spawn(browser, [], function () {
       const heading = content.document.getElementById("heading");
       heading.focus();
     });
@@ -54,7 +54,7 @@ add_task(async function test_arrow_key_down_scroll() {
       EventUtils.synthesizeKey("KEY_ArrowDown")
     );
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     await assertDatabaseValues([
@@ -71,13 +71,13 @@ add_task(async function test_scrollIntoView() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
     await waitForScrollEvent(browser, () =>
-      SpecialPowers.spawn(browser, [], function() {
+      SpecialPowers.spawn(browser, [], function () {
         const heading = content.document.getElementById("middleHeading");
         heading.scrollIntoView();
       })
     );
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // JS-triggered scrolling should not be reported
@@ -95,13 +95,13 @@ add_task(async function test_anchor_click() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
     await waitForScrollEvent(browser, () =>
-      SpecialPowers.spawn(browser, [], function() {
+      SpecialPowers.spawn(browser, [], function () {
         const anchor = content.document.getElementById("to_bottom_anchor");
         anchor.click();
       })
     );
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from clicking on an anchor should not be reported
@@ -119,12 +119,12 @@ add_task(async function test_window_scrollBy() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
     await waitForScrollEvent(browser, () =>
-      SpecialPowers.spawn(browser, [], function() {
+      SpecialPowers.spawn(browser, [], function () {
         content.scrollBy(0, 100);
       })
     );
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from the window.scrollBy() call should not be reported
@@ -142,12 +142,12 @@ add_task(async function test_window_scrollTo() {
   await Interactions.reset();
   await BrowserTestUtils.withNewTab(TEST_URL, async browser => {
     await waitForScrollEvent(browser, () =>
-      SpecialPowers.spawn(browser, [], function() {
+      SpecialPowers.spawn(browser, [], function () {
         content.scrollTo(0, 200);
       })
     );
 
-    BrowserTestUtils.loadURI(browser, TEST_URL2);
+    BrowserTestUtils.loadURIString(browser, TEST_URL2);
     await BrowserTestUtils.browserLoaded(browser, false, TEST_URL2);
 
     // The scrolling resulting from the window.scrollTo() call should not be reported

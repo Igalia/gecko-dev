@@ -62,8 +62,6 @@
 #include "mozilla/gfx/2D.h"
 #include "mozilla/gfx/gfxVars.h"
 
-#include "nsMemory.h"
-
 #include <dwmapi.h>
 #include <d3d11.h>
 #include <d2d1_1.h>
@@ -275,6 +273,7 @@ NS_IMPL_ISUPPORTS(D3DSharedTexturesReporter, nsIMemoryReporter)
 
 gfxWindowsPlatform::gfxWindowsPlatform()
     : mRenderMode(RENDER_GDI),
+      mSupportsHDR(false),
       mDwmCompositionStatus(DwmCompositionStatus::Unknown) {
   // If win32k is locked down then we can't use COM STA and shouldn't need it.
   // Also, we won't be using any GPU memory in this process.
@@ -434,16 +433,14 @@ void gfxWindowsPlatform::InitAcceleration() {
   // CanUseHardwareVideoDecoding depends on DeviceManagerDx state,
   // so update the cached value now.
   UpdateCanUseHardwareVideoDecoding();
+  UpdateSupportsHDR();
 
   RecordStartupTelemetry();
 }
 
 void gfxWindowsPlatform::InitWebRenderConfig() {
   gfxPlatform::InitWebRenderConfig();
-
-  if (gfxVars::UseWebRender()) {
-    UpdateBackendPrefs();
-  }
+  UpdateBackendPrefs();
 }
 
 bool gfxWindowsPlatform::CanUseHardwareVideoDecoding() {
@@ -512,11 +509,6 @@ BackendPrefsData gfxWindowsPlatform::GetBackendPrefs() const {
   if (gfxConfig::IsEnabled(Feature::DIRECT2D)) {
     data.mCanvasBitmask |= BackendTypeBit(BackendType::DIRECT2D1_1);
     data.mCanvasDefault = BackendType::DIRECT2D1_1;
-    // We do not use d2d for content when WebRender is used.
-    if (!gfxVars::UseWebRender()) {
-      data.mContentBitmask |= BackendTypeBit(BackendType::DIRECT2D1_1);
-      data.mContentDefault = BackendType::DIRECT2D1_1;
-    }
   }
   return data;
 }
@@ -572,6 +564,57 @@ void gfxWindowsPlatform::UpdateRenderMode() {
   }
 }
 
+void gfxWindowsPlatform::UpdateSupportsHDR() {
+  // TODO: This function crashes content processes, for reasons that are not
+  // obvious from the crash reports. For now, this function can only be executed
+  // by the parent process. Therefore SupportsHDR() will always return false for
+  // content processes, as noted in the header.
+  if (!XRE_IsParentProcess()) {
+    return;
+  }
+
+  // Set mSupportsHDR to true if any of the DeviceManager outputs have both:
+  // 1) greater than 8-bit color
+  // 2) a colorspace that uses BT2020
+  DeviceManagerDx* dx = DeviceManagerDx::Get();
+  nsTArray<DXGI_OUTPUT_DESC1> outputs = dx->EnumerateOutputs();
+
+  for (auto& output : outputs) {
+    if (output.BitsPerColor <= 8) {
+      continue;
+    }
+
+    switch (output.ColorSpace) {
+      case DXGI_COLOR_SPACE_RGB_STUDIO_G22_NONE_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_LEFT_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_FULL_G22_LEFT_P2020:
+      case DXGI_COLOR_SPACE_RGB_FULL_G2084_NONE_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_LEFT_P2020:
+      case DXGI_COLOR_SPACE_RGB_STUDIO_G2084_NONE_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G22_TOPLEFT_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G2084_TOPLEFT_P2020:
+      case DXGI_COLOR_SPACE_RGB_FULL_G22_NONE_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_GHLG_TOPLEFT_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_FULL_GHLG_TOPLEFT_P2020:
+#ifndef __MINGW32__
+      // Windows MinGW has an older dxgicommon.h that doesn't define
+      // these enums. We'd like to define them ourselves in that case,
+      // but there's no compilable way to add new enums to an existing
+      // enum type. So instead we just don't check for these values.
+      case DXGI_COLOR_SPACE_RGB_STUDIO_G24_NONE_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_LEFT_P2020:
+      case DXGI_COLOR_SPACE_YCBCR_STUDIO_G24_TOPLEFT_P2020:
+#endif
+        mSupportsHDR = true;
+        return;
+      default:
+        break;
+    }
+  }
+
+  mSupportsHDR = false;
+}
+
 mozilla::gfx::BackendType gfxWindowsPlatform::GetContentBackendFor(
     mozilla::layers::LayersBackend aLayers) {
   mozilla::gfx::BackendType defaultBackend =
@@ -594,7 +637,7 @@ mozilla::gfx::BackendType gfxWindowsPlatform::GetPreferredCanvasBackend() {
   mozilla::gfx::BackendType backend = gfxPlatform::GetPreferredCanvasBackend();
 
   if (backend == BackendType::DIRECT2D1_1) {
-    if (gfx::gfxVars::UseWebRender() && !gfx::gfxVars::UseWebRenderANGLE()) {
+    if (!gfx::gfxVars::UseWebRenderANGLE()) {
       // We can't have D2D without ANGLE when WebRender is enabled, so fallback
       // to Skia.
       return BackendType::SKIA;
@@ -993,15 +1036,20 @@ nsTArray<uint8_t> gfxWindowsPlatform::GetPlatformCMSOutputProfileData() {
     return result;
   }
 
-  if (!mCachedOutputColorProfile.IsEmpty()) {
-    return mCachedOutputColorProfile.Clone();
-  }
+  return GetPlatformCMSOutputProfileData_Impl();
+}
 
-  mCachedOutputColorProfile = [&] {
-    nsTArray<uint8_t> prefProfileData = GetPrefCMSOutputProfileData();
+nsTArray<uint8_t> gfxWindowsPlatform::GetPlatformCMSOutputProfileData_Impl() {
+  static nsTArray<uint8_t> sCached = [&] {
+    // Check override pref first:
+    nsTArray<uint8_t> prefProfileData =
+        gfxPlatform::GetPrefCMSOutputProfileData();
     if (!prefProfileData.IsEmpty()) {
       return prefProfileData;
     }
+
+    // -
+    // Otherwise, create a dummy DC and pull from that.
 
     HDC dc = ::GetDC(nullptr);
     if (!dc) {
@@ -1035,7 +1083,7 @@ nsTArray<uint8_t> gfxWindowsPlatform::GetPlatformCMSOutputProfileData() {
     return result;
   }();
 
-  return mCachedOutputColorProfile.Clone();
+  return sCached.Clone();
 }
 
 void gfxWindowsPlatform::GetDLLVersion(char16ptr_t aDLLPath,

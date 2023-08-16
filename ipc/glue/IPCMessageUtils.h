@@ -10,11 +10,10 @@
 #include <cstdint>
 #include <string>
 #include <type_traits>
-#include "build/build_config.h"
 #include "chrome/common/ipc_message.h"
 #include "chrome/common/ipc_message_utils.h"
-#include "mozilla/MacroForEach.h"
 #include "mozilla/ipc/IPCCore.h"
+#include "mozilla/MacroForEach.h"
 
 class PickleIterator;
 
@@ -25,7 +24,7 @@ class PickleIterator;
 #  pragma warning(disable : 4800)
 #endif
 
-#if !defined(OS_POSIX)
+#if !defined(XP_UNIX)
 // This condition must be kept in sync with the one in
 // ipc_message_utils.h, but this dummy definition of
 // base::FileDescriptor acts as a static assert that we only get one
@@ -105,11 +104,6 @@ struct ParamTraits<int8_t> {
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return aReader->ReadBytesInto(aResult, sizeof(*aResult));
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    // Use 0xff to avoid sign extension.
-    aLog->append(StringPrintf(L"0x%02x", aParam & 0xff));
-  }
 };
 
 template <>
@@ -123,13 +117,9 @@ struct ParamTraits<uint8_t> {
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return aReader->ReadBytesInto(aResult, sizeof(*aResult));
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"0x%02x", aParam));
-  }
 };
 
-#if !defined(OS_POSIX)
+#if !defined(XP_UNIX)
 // See above re: keeping definitions in sync
 template <>
 struct ParamTraits<base::FileDescriptor> {
@@ -142,7 +132,7 @@ struct ParamTraits<base::FileDescriptor> {
     return false;
   }
 };
-#endif  // !defined(OS_POSIX)
+#endif  // !defined(XP_UNIX)
 
 template <>
 struct ParamTraits<mozilla::void_t> {

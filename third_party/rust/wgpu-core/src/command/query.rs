@@ -4,10 +4,14 @@ use hal::CommandEncoder as _;
 use crate::device::trace::Command as TraceCommand;
 use crate::{
     command::{CommandBuffer, CommandEncoderError},
-    hub::{Global, GlobalIdentityHandlerFactory, HalApi, Storage, Token},
+    global::Global,
+    hal_api::HalApi,
+    hub::Token,
     id::{self, Id, TypedId},
+    identity::GlobalIdentityHandlerFactory,
     init_tracker::MemoryInitKind,
     resource::QuerySet,
+    storage::Storage,
     Epoch, FastHashMap, Index,
 };
 use std::{iter, marker::PhantomData};
@@ -99,6 +103,7 @@ impl From<wgt::QueryType> for SimplifiedQueryType {
 
 /// Error encountered when dealing with queries
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum QueryError {
     #[error(transparent)]
     Encoder(#[from] CommandEncoderError),
@@ -112,8 +117,21 @@ pub enum QueryError {
     InvalidQuerySet(id::QuerySetId),
 }
 
+impl crate::error::PrettyError for QueryError {
+    fn fmt_pretty(&self, fmt: &mut crate::error::ErrorFormatter) {
+        fmt.error(self);
+        match *self {
+            Self::InvalidBuffer(id) => fmt.buffer_label(&id),
+            Self::InvalidQuerySet(id) => fmt.query_set_label(&id),
+
+            _ => {}
+        }
+    }
+}
+
 /// Error encountered while trying to use queries
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum QueryUseError {
     #[error("Query {query_index} is out of bounds for a query set of size {query_set_size}")]
     OutOfBounds {
@@ -138,8 +156,9 @@ pub enum QueryUseError {
 
 /// Error encountered while trying to resolve a query.
 #[derive(Clone, Debug, Error)]
+#[non_exhaustive]
 pub enum ResolveError {
-    #[error("Queries can only be resolved to buffers that contain the COPY_DST usage")]
+    #[error("Queries can only be resolved to buffers that contain the QUERY_RESOLVE usage")]
     MissingBufferUsage,
     #[error("Resolve buffer offset has to be aligned to `QUERY_RESOLVE_BUFFER_ALIGNMENT")]
     BufferOffsetAlignment,
@@ -168,7 +187,8 @@ impl<A: HalApi> QuerySet<A> {
         query_index: u32,
         reset_state: Option<&mut QueryResetMap<A>>,
     ) -> Result<&A::QuerySet, QueryUseError> {
-        // We need to defer our resets because we are in a renderpass, add the usage to the reset map.
+        // We need to defer our resets because we are in a renderpass,
+        // add the usage to the reset map.
         if let Some(reset) = reset_state {
             let used = reset.use_query_set(query_set_id, self, query_index);
             if used {
@@ -354,7 +374,7 @@ impl<G: GlobalIdentityHandlerFactory> Global<G> {
             .ok_or(QueryError::InvalidBuffer(destination))?;
         let dst_barrier = dst_pending.map(|pending| pending.into_hal(dst_buffer));
 
-        if !dst_buffer.usage.contains(wgt::BufferUsages::COPY_DST) {
+        if !dst_buffer.usage.contains(wgt::BufferUsages::QUERY_RESOLVE) {
             return Err(ResolveError::MissingBufferUsage.into());
         }
 

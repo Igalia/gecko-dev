@@ -7,13 +7,9 @@ defined in kind.yml
 """
 
 from taskgraph.transforms.base import TransformSequence
-from taskgraph.util.taskcluster import get_artifact_path
 from taskgraph.util.schema import Schema
-from voluptuous import (
-    Any,
-    Optional,
-    Required,
-)
+from taskgraph.util.taskcluster import get_artifact_path
+from voluptuous import Any, Optional, Required
 
 from gecko_taskgraph.transforms.task import task_description_schema
 
@@ -127,7 +123,7 @@ def fill_template(config, tasks):
                 "kind": "other",
                 "tier": task["tier"],
             },
-            "worker-type": "b-linux",
+            "worker-type": "b-linux-gcp",
             "worker": {
                 "docker-image": {"in-tree": "diffoscope"},
                 "artifacts": [

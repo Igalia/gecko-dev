@@ -8,7 +8,9 @@ ChromeUtils.defineESModuleGetters(this, {
     "resource:///modules/UrlbarProviderInterventions.sys.mjs",
 });
 
-add_task(async function init() {
+add_setup(async function () {
+  Services.telemetry.clearEvents();
+  Services.telemetry.clearScalars();
   makeProfileResettable();
 });
 
@@ -193,9 +195,8 @@ add_task(async function tipsAreEnglishOnly() {
   await UrlbarTestUtils.promisePopupClose(window, () => gURLBar.blur());
 
   // We will need to fetch new engines when we switch locales.
-  let enginesReloaded = SearchTestUtils.promiseSearchNotification(
-    "engines-reloaded"
-  );
+  let enginesReloaded =
+    SearchTestUtils.promiseSearchNotification("engines-reloaded");
 
   const originalAvailable = Services.locale.availableLocales;
   const originalRequested = Services.locale.requestedLocales;
@@ -203,9 +204,8 @@ add_task(async function tipsAreEnglishOnly() {
   Services.locale.requestedLocales = ["de"];
 
   registerCleanupFunction(async () => {
-    let enginesReloaded2 = SearchTestUtils.promiseSearchNotification(
-      "engines-reloaded"
-    );
+    let enginesReloaded2 =
+      SearchTestUtils.promiseSearchNotification("engines-reloaded");
     Services.locale.requestedLocales = originalRequested;
     Services.locale.availableLocales = originalAvailable;
     await enginesReloaded2;
@@ -238,9 +238,18 @@ add_task(async function pickHelpButton() {
       UrlbarUtils.RESULT_SOURCE.OTHER_LOCAL,
       {
         type: UrlbarProviderInterventions.TIP_TYPE.CLEAR,
-        text: "This is a test tip.",
-        buttonText: "Done",
+        titleL10n: { id: "intervention-clear-data" },
+        buttons: [
+          {
+            l10n: { id: "intervention-clear-data-confirm" },
+          },
+        ],
         helpUrl,
+        helpL10n: {
+          id: UrlbarPrefs.get("resultMenu")
+            ? "urlbar-result-menu-tip-get-help"
+            : "urlbar-tip-help-icon",
+        },
       }
     ),
   ];
@@ -261,12 +270,30 @@ add_task(async function pickHelpButton() {
       UrlbarProviderInterventions.TIP_TYPE.CLEAR
     );
 
-    let helpButton = element._elements.get("helpButton");
-    Assert.ok(BrowserTestUtils.is_visible(helpButton));
-    EventUtils.synthesizeMouseAtCenter(helpButton, {});
+    if (UrlbarPrefs.get("resultMenu")) {
+      let loadPromise = BrowserTestUtils.browserLoaded(
+        gBrowser.selectedBrowser,
+        false,
+        "http://example.com/"
+      );
+      await UrlbarTestUtils.openResultMenuAndPressAccesskey(window, "h", {
+        openByMouse: true,
+        resultIndex: 1,
+      });
+      info("Waiting for help URL to load in the current tab");
+      await loadPromise;
+    } else {
+      let helpButton = element._buttons.get("help");
+      Assert.ok(helpButton, "Help button exists");
+      Assert.ok(
+        BrowserTestUtils.is_visible(helpButton),
+        "Help button is visible"
+      );
+      EventUtils.synthesizeMouseAtCenter(helpButton, {});
 
-    BrowserTestUtils.loadURI(gBrowser.selectedBrowser, helpUrl);
-    await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+      BrowserTestUtils.loadURIString(gBrowser.selectedBrowser, helpUrl);
+      await BrowserTestUtils.browserLoaded(gBrowser.selectedBrowser);
+    }
 
     const scalars = TelemetryTestUtils.getProcessScalars("parent", true, true);
     TelemetryTestUtils.assertKeyedScalar(

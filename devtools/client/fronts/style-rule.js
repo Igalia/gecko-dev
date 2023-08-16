@@ -7,13 +7,15 @@
 const {
   FrontClassWithSpec,
   registerFront,
-} = require("devtools/shared/protocol");
-const { styleRuleSpec } = require("devtools/shared/specs/style-rule");
+} = require("resource://devtools/shared/protocol.js");
+const {
+  styleRuleSpec,
+} = require("resource://devtools/shared/specs/style-rule.js");
 
 loader.lazyRequireGetter(
   this,
   "RuleRewriter",
-  "devtools/client/fronts/inspector/rule-rewriter"
+  "resource://devtools/client/fronts/inspector/rule-rewriter.js"
 );
 
 /**
@@ -87,20 +89,33 @@ class StyleRuleFront extends FrontClassWithSpec(styleRuleSpec) {
     return this._form.selectors;
   }
 
+  /**
+   * When a rule is nested in another non-at-rule (aka CSS Nesting), this will return
+   * the "full" selectors, which includes ancestor rules selectors.
+   * To compute it, the parent selector (&) is recursively replaced by the parent
+   * rule selector wrapped in `:is()`.
+   * For example, with the following nested rule: `body { & > main {} }`,
+   * the desugared selectors will be [`:is(body) > main`],
+   * while the "regular" selectors will only be [`main`].
+   *
+   * See https://www.w3.org/TR/css-nesting-1/#nest-selector for more information.
+   *
+   * @returns {Array<String>} An array of the desugared selectors for this rule.
+   *                          This falls back to the regular list of selectors
+   *                          when desugared selectors are not sent by the server.
+   */
+  get desugaredSelectors() {
+    // We don't send the desugaredSelectors for top-level selectors, so fall back to
+    // the regular selectors in that case.
+    return this._form.desugaredSelectors || this._form.selectors;
+  }
+
   get parentStyleSheet() {
     const resourceCommand = this.targetFront.commands.resourceCommand;
-    if (
-      resourceCommand?.hasResourceCommandSupport(
-        resourceCommand.TYPES.STYLESHEET
-      )
-    ) {
-      return resourceCommand.getResourceById(
-        resourceCommand.TYPES.STYLESHEET,
-        this._form.parentStyleSheet
-      );
-    }
-
-    return this.conn.getFrontByID(this._form.parentStyleSheet);
+    return resourceCommand.getResourceById(
+      resourceCommand.TYPES.STYLESHEET,
+      this._form.parentStyleSheet
+    );
   }
 
   get element() {

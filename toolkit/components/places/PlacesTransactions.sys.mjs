@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * Overview
  * --------
@@ -38,8 +36,6 @@
  * |redo|, this API doesn't support item-ids at all, and only accepts bookmark
  * GUIDs, both for input (e.g. for setting the parent folder for a new bookmark)
  * and for output (when the GUID for such a bookmark is propagated).
- *
- * Should you need to convert GUIDs to item-ids, use PlacesUtils.promiseItemId.
  *
  * Constructing transactions
  * -------------------------
@@ -165,8 +161,6 @@
 const TRANSACTIONS_QUEUE_TIMEOUT_MS = 240000; // 4 Mins.
 
 import { PlacesUtils } from "resource://gre/modules/PlacesUtils.sys.mjs";
-
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
 
 function setTimeout(callback, ms) {
   let timer = Cc["@mozilla.org/timer;1"].createInstance(Ci.nsITimer);
@@ -295,7 +289,7 @@ class TransactionsHistoryArray extends Array {
 
 const lazy = {};
 
-XPCOMUtils.defineLazyGetter(
+ChromeUtils.defineLazyGetter(
   lazy,
   "TransactionsHistory",
   () => new TransactionsHistoryArray()
@@ -318,7 +312,7 @@ export var PlacesTransactions = {
       ) {
         throw new Error("Must pass only transaction entries");
       }
-      return TransactionsManager.batch(async function() {
+      return TransactionsManager.batch(async function () {
         for (let txn of transactionsToBatch) {
           try {
             await txn.transact();
@@ -655,7 +649,7 @@ var TransactionsManager = {
   },
 
   clearTransactionsHistory(undoEntries, redoEntries) {
-    let promise = this._mainEnqueuer.enqueue(function() {
+    let promise = this._mainEnqueuer.enqueue(function () {
       if (undoEntries && redoEntries) {
         lazy.TransactionsHistory.clearAllEntries();
       } else if (undoEntries) {
@@ -709,7 +703,7 @@ function DefineTransaction(requiredProps = [], optionalProps = []) {
     }
   }
 
-  let ctor = function(input) {
+  let ctor = function (input) {
     // We want to support both syntaxes:
     // let t = new PlacesTransactions.NewBookmark(),
     // let t = PlacesTransactions.NewBookmark()
@@ -763,7 +757,7 @@ function checkProperty(obj, prop, required, checkFn) {
   return !required;
 }
 
-DefineTransaction.childObjectValidate = function(obj) {
+DefineTransaction.childObjectValidate = function (obj) {
   if (
     obj &&
     checkProperty(obj, "title", false, v => typeof v == "string") &&
@@ -778,15 +772,19 @@ DefineTransaction.childObjectValidate = function(obj) {
   throw new Error("Invalid child object");
 };
 
-DefineTransaction.urlValidate = function(url) {
+DefineTransaction.urlValidate = function (url) {
   if (url instanceof Ci.nsIURI) {
-    return new URL(url.spec);
+    return URL.fromURI(url);
   }
   return new URL(url);
 };
 
 DefineTransaction.inputProps = new Map();
-DefineTransaction.defineInputProps = function(names, validateFn, defaultValue) {
+DefineTransaction.defineInputProps = function (
+  names,
+  validateFn,
+  defaultValue
+) {
   for (let name of names) {
     this.inputProps.set(name, {
       validateValue(value) {
@@ -812,7 +810,7 @@ DefineTransaction.defineInputProps = function(names, validateFn, defaultValue) {
   }
 };
 
-DefineTransaction.defineArrayInputProp = function(name, basePropertyName) {
+DefineTransaction.defineArrayInputProp = function (name, basePropertyName) {
   let baseProp = this.inputProps.get(basePropertyName);
   if (!baseProp) {
     throw new Error(`Unknown input property: ${basePropertyName}`);
@@ -873,11 +871,11 @@ DefineTransaction.defineArrayInputProp = function(name, basePropertyName) {
   });
 };
 
-DefineTransaction.validatePropertyValue = function(prop, input, required) {
+DefineTransaction.validatePropertyValue = function (prop, input, required) {
   return this.inputProps.get(prop).validateInput(input, required);
 };
 
-DefineTransaction.getInputObjectForSingleValue = function(
+DefineTransaction.getInputObjectForSingleValue = function (
   input,
   requiredProps,
   optionalProps
@@ -902,7 +900,7 @@ DefineTransaction.getInputObjectForSingleValue = function(
   return { [propName]: propValue };
 };
 
-DefineTransaction.verifyInput = function(
+DefineTransaction.verifyInput = function (
   input,
   requiredProps = [],
   optionalProps = []
@@ -1085,29 +1083,27 @@ PT.NewBookmark.prototype = Object.seal({
     let info = { parentGuid, index, url, title };
     // Filter tags to exclude already existing ones.
     if (tags.length) {
-      let currentTags = PlacesUtils.tagging.getTagsForURI(
-        Services.io.newURI(url.href)
-      );
+      let currentTags = PlacesUtils.tagging.getTagsForURI(url.URI);
       tags = tags.filter(t => !currentTags.includes(t));
     }
 
     async function createItem() {
       info = await PlacesUtils.bookmarks.insert(info);
       if (tags.length) {
-        PlacesUtils.tagging.tagURI(Services.io.newURI(url.href), tags);
+        PlacesUtils.tagging.tagURI(url.URI, tags);
       }
     }
 
     await createItem();
 
-    this.undo = async function() {
+    this.undo = async function () {
       // Pick up the removed info so we have the accurate last-modified value.
       await PlacesUtils.bookmarks.remove(info);
       if (tags.length) {
-        PlacesUtils.tagging.untagURI(Services.io.newURI(url.href), tags);
+        PlacesUtils.tagging.untagURI(url.URI, tags);
       }
     };
-    this.redo = async function() {
+    this.redo = async function () {
       await createItem();
     };
     return info.guid;
@@ -1169,10 +1165,10 @@ PT.NewFolder.prototype = Object.seal({
     }
     await createItem();
 
-    this.undo = async function() {
+    this.undo = async function () {
       await PlacesUtils.bookmarks.remove(folderGuid);
     };
-    this.redo = async function() {
+    this.redo = async function () {
       await createItem();
     };
     return folderGuid;
@@ -1223,7 +1219,7 @@ PT.Move.prototype = Object.seal({
 
     await PlacesUtils.bookmarks.moveToFolder(guids, newParentGuid, index);
 
-    this.undo = async function() {
+    this.undo = async function () {
       // Undo has the potential for moving multiple bookmarks to multiple different
       // folders and positions, which is very complicated to manage. Therefore we do
       // individual moves one at a time and hopefully everything is put back approximately
@@ -1285,8 +1281,8 @@ PT.EditUrl.prototype = Object.seal({
       throw new Error("Cannot edit url for non-bookmark items");
     }
 
-    let uri = Services.io.newURI(url.href);
-    let originalURI = Services.io.newURI(originalInfo.url.href);
+    let uri = url.URI;
+    let originalURI = originalInfo.url.URI;
     let originalTags = PlacesUtils.tagging.getTagsForURI(originalURI);
     let updatedInfo = { guid, url };
     let newURIAdditionalTags = null;
@@ -1310,7 +1306,7 @@ PT.EditUrl.prototype = Object.seal({
     }
     await updateItem();
 
-    this.undo = async function() {
+    this.undo = async function () {
       await PlacesUtils.bookmarks.update(originalInfo);
       // Move tags from new URI to original URI.
       if (originalTags.length) {
@@ -1326,7 +1322,7 @@ PT.EditUrl.prototype = Object.seal({
       }
     };
 
-    this.redo = async function() {
+    this.redo = async function () {
       updatedInfo = await updateItem();
     };
   },
@@ -1363,7 +1359,7 @@ PT.EditKeyword.prototype = Object.seal({
       });
     }
 
-    this.undo = async function() {
+    this.undo = async function () {
       if (keyword) {
         await PlacesUtils.keywords.remove(keyword);
       }
@@ -1425,10 +1421,10 @@ PT.SortByName.prototype = {
     }
     await PlacesUtils.bookmarks.reorder(guid, newOrderGuids);
 
-    this.undo = async function() {
+    this.undo = async function () {
       await PlacesUtils.bookmarks.reorder(guid, oldOrderGuids);
     };
-    this.redo = async function() {
+    this.redo = async function () {
       await PlacesUtils.bookmarks.reorder(guid, newOrderGuids);
     };
   },
@@ -1457,7 +1453,7 @@ PT.Remove.prototype = {
       }
     }
 
-    let removeThem = async function() {
+    let removeThem = async function () {
       if (removedItems.length) {
         // We have to pass just the guids as although remove() accepts full
         // info items, promiseBookmarksTree returns dateAdded and lastModified
@@ -1469,12 +1465,12 @@ PT.Remove.prototype = {
     };
     await removeThem();
 
-    this.undo = async function() {
+    this.undo = async function () {
       for (let info of removedItems) {
         try {
           await createItemsFromBookmarksTree(info, true);
         } catch (ex) {
-          Cu.reportError(`Unable to undo removal of ${info.guid}`);
+          console.error(`Unable to undo removal of ${info.guid}`);
         }
       }
     };
@@ -1506,7 +1502,7 @@ PT.Tag.prototype = {
         onUndo.unshift(createTxn.undo.bind(createTxn));
         onRedo.push(createTxn.redo.bind(createTxn));
       } else {
-        let uri = Services.io.newURI(url.href);
+        let uri = url.URI;
         let currentTags = PlacesUtils.tagging.getTagsForURI(uri);
         let newTags = tags.filter(t => !currentTags.includes(t));
         if (newTags.length) {
@@ -1520,12 +1516,12 @@ PT.Tag.prototype = {
         }
       }
     }
-    this.undo = async function() {
+    this.undo = async function () {
       for (let f of onUndo) {
         await f();
       }
     };
-    this.redo = async function() {
+    this.redo = async function () {
       for (let f of onRedo) {
         await f();
       }
@@ -1547,7 +1543,7 @@ PT.Untag.prototype = {
     let onUndo = [],
       onRedo = [];
     for (let url of urls) {
-      let uri = Services.io.newURI(url.href);
+      let uri = url.URI;
       let tagsToRemove;
       let tagsSet = PlacesUtils.tagging.getTagsForURI(uri);
       if (tags.length) {
@@ -1569,12 +1565,12 @@ PT.Untag.prototype = {
         }
       });
     }
-    this.undo = async function() {
+    this.undo = async function () {
       for (let f of onUndo) {
         await f();
       }
     };
-    this.redo = async function() {
+    this.redo = async function () {
       for (let f of onRedo) {
         await f();
       }
@@ -1648,7 +1644,7 @@ PT.RenameTag.prototype = {
             url = new URL(url.protocol + urlParams);
           }
         } catch (ex) {
-          Cu.reportError(
+          console.error(
             "Invalid bookmark url: " + row.getResultByName("url") + ": " + ex
           );
           continue;
@@ -1672,12 +1668,12 @@ PT.RenameTag.prototype = {
         }
       }
     }
-    this.undo = async function() {
+    this.undo = async function () {
       for (let f of onUndo) {
         await f();
       }
     };
-    this.redo = async function() {
+    this.redo = async function () {
       for (let f of onRedo) {
         await f();
       }
@@ -1710,13 +1706,13 @@ PT.Copy.prototype = {
 
     let newItemGuid = await createItemsFromBookmarksTree(creationInfo, false);
     let newItemInfo = null;
-    this.undo = async function() {
+    this.undo = async function () {
       if (!newItemInfo) {
         newItemInfo = await PlacesUtils.promiseBookmarksTree(newItemGuid);
       }
       await PlacesUtils.bookmarks.remove(newItemGuid);
     };
-    this.redo = async function() {
+    this.redo = async function () {
       await createItemsFromBookmarksTree(newItemInfo, true);
     };
 

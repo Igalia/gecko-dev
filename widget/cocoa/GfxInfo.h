@@ -27,7 +27,6 @@ class GfxInfo : public GfxInfoBase {
       bool* aEmbeddedInFirefoxReality) override;
   NS_IMETHOD GetHasBattery(bool* aHasBattery) override;
   NS_IMETHOD GetWindowProtocol(nsAString& aWindowProtocol) override;
-  NS_IMETHOD GetDesktopEnvironment(nsAString& aDesktopEnvironment) override;
   NS_IMETHOD GetTestType(nsAString& aTestType) override;
   NS_IMETHOD GetCleartypeParameters(nsAString& aCleartypeParams) override;
   NS_IMETHOD GetAdapterDescription(nsAString& aAdapterDescription) override;
@@ -67,6 +66,7 @@ class GfxInfo : public GfxInfoBase {
  protected:
   virtual ~GfxInfo() {}
 
+  OperatingSystem GetOperatingSystem() override;
   virtual nsresult GetFeatureStatusImpl(
       int32_t aFeature, int32_t* aStatus, nsAString& aSuggestedDriverVersion,
       const nsTArray<GfxDriverInfo>& aDriverInfo, nsACString& aFailureId,

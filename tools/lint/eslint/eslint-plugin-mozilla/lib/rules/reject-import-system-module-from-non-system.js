@@ -9,13 +9,13 @@
 module.exports = {
   meta: {
     docs: {
-      url:
-        "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-import-system-module-from-non-system.html",
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/reject-import-system-module-from-non-system.html",
     },
     messages: {
       rejectStaticImportSystemModuleFromNonSystem:
         "System modules (*.sys.mjs) can be imported with static import declaration only from system modules.",
     },
+    schema: [],
     type: "problem",
   },
 

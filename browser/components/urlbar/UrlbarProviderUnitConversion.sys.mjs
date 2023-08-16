@@ -2,8 +2,6 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-"use strict";
-
 /**
  * Provide unit converter.
  */
@@ -83,6 +81,7 @@ class ProviderUnitConversion extends UrlbarProvider {
 
   /**
    * Returns the name of this provider.
+   *
    * @returns {string} the name of this provider.
    */
   get name() {
@@ -91,6 +90,7 @@ class ProviderUnitConversion extends UrlbarProvider {
 
   /**
    * Returns the type of this provider.
+   *
    * @returns {integer} one of the types from UrlbarUtils.PROVIDER_TYPE.*
    */
   get type() {
@@ -130,9 +130,6 @@ class ProviderUnitConversion extends UrlbarProvider {
    * describing the view update.
    *
    * @param {UrlbarResult} result The result whose view will be updated.
-   * @param {Map} idsByName
-   *   A Map from an element's name, as defined by the provider; to its ID in
-   *   the DOM, as defined by the browser.
    * @returns {object} An object describing the view update.
    */
   getViewUpdate(result) {
@@ -152,7 +149,7 @@ class ProviderUnitConversion extends UrlbarProvider {
    *
    * @param {UrlbarQueryContext} queryContext
    *   The query context object.
-   * @param {function} addCallback
+   * @param {Function} addCallback
    *   The callback invoked by this method to add each result.
    */
   startQuery(queryContext, addCallback) {
@@ -172,11 +169,14 @@ class ProviderUnitConversion extends UrlbarProvider {
     addCallback(this, result);
   }
 
-  pickResult(result, element) {
-    const { textContent } = element.querySelector(
-      ".urlbarView-dynamic-unitConversion-output"
-    );
-    lazy.ClipboardHelper.copyString(textContent);
+  onEngagement(state, queryContext, details, controller) {
+    let { result, element } = details;
+    if (result?.providerName == this.name) {
+      const { textContent } = element.querySelector(
+        ".urlbarView-dynamic-unitConversion-output"
+      );
+      lazy.ClipboardHelper.copyString(textContent);
+    }
   }
 }
 

@@ -108,7 +108,7 @@ This diagram shows the primary process types in Firefox.
 
 The arrows point from the parent side to the child.  Bolded arrows indicate the
 first top-level actors for the various process types.  The other arrows show
-important actors that are usually the first connections establised between the
+important actors that are usually the first connections established between the
 two processes.  These relationships difficult to discern from code.  Processes
 should clearly document their top-level connections in their IPDL files.
 
@@ -156,7 +156,7 @@ Code for the complete demo can be found `here
 Common Architecture
 ~~~~~~~~~~~~~~~~~~~
 
-Every type of process (besides the launcher and main processses) needs two
+Every type of process (besides the launcher and main processes) needs two
 classes and an actor pair to launch.  This sample will be adding a process type
 we call **Demo**.
 
@@ -320,7 +320,7 @@ process there.
   <https://searchfox.org/mozilla-central/rev/d4b9c457db637fde655592d9e2048939b7ab2854/toolkit/locales/en-US/toolkit/global/processTypes.ftl#39-57>`_
   for your process, if needed
 - Hashmap from process type to user-facing string above in `const ProcessType
-  <https://searchfox.org/mozilla-central/rev/d4b9c457db637fde655592d9e2048939b7ab2854/toolkit/modules/ProcessType.jsm#14-20>`_
+  <https://searchfox.org/mozilla-central/rev/c5c002f81f08a73e04868e0c2bf0eb113f200b03/toolkit/modules/ProcessType.sys.mjs#10-16`_
 - For `about:processes` you will probably want to follow the following steps:
 
   + Add handling for your new process type producing a unique `fluentName <https://searchfox.org/mozilla-central/rev/be4604e4be8c71b3c1dbff2398a5b05f15411673/toolkit/components/aboutprocesses/content/aboutProcesses.js#472-539>`_, i.e., constructing a dynamic name is highly discouraged
@@ -418,6 +418,35 @@ Glean telemetry
 
 - Handle process shutdown in ``register_process_shutdown()`` of `glean
   <https://searchfox.org/mozilla-central/rev/d4b9c457db637fde655592d9e2048939b7ab2854/toolkit/components/glean/api/src/ipc.rs>`_
+
+Third-Party Modules
+###################
+
+- Ensure your new IPDL includes on the child side
+
+  + `GetUntrustedModulesData
+    <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/PUtilityProcess.ipdl#106>`_
+  + `UnblockUntrustedModulesThread
+    <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/PUtilityProcess.ipdl#113>`_
+
+- Provide a parent side implementation for both
+
+- Add handling of your new process type in ``MultiGetUntrustedModulesData::GetUntrustedModuleLoadEvents()`` `here <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/toolkit/components/telemetry/other/UntrustedModules.cpp#145-151>`_
+
+- `Update your IPDL <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/PUtilityProcess.ipdl#75>`_ and make sure your ``Init()`` can receive a boolean for
+  ``isReadyForBackgroundProcessing`` `like here <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/UtilityProcessChild.cpp#157-160>`_, then within the child's ``RecvInit()``
+  make sure a call to ``DllServices``'s ``StartUntrustedModulesProcessor()`` `is
+  performed <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/UtilityProcessChild.cpp#185-186>`_.
+
+- Ensure your new IPDL includes for the parent side
+
+  + `GetModulesTrust <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/PUtilityProcess.ipdl#60-61>`_
+
+- Provide an implementation on the `parent side <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/ipc/glue/UtilityProcessParent.cpp#69-81>`_
+
+- Expose your new process type as supported in ``UntrustedModulesProcessor::IsSupportedProcessType()`` `like others <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/toolkit/xre/dllservices/UntrustedModulesProcessor.cpp#76-91>`_
+
+- Update ``UntrustedModulesProcessor::SendGetModulesTrust()`` to call `your new child process <https://searchfox.org/mozilla-central/rev/2ce39261ea6a69e49d87f76a119494b2a7a7e42a/toolkit/xre/dllservices/UntrustedModulesProcessor.cpp#757-761>`_
 
 Sandboxing
 ##########
@@ -560,7 +589,8 @@ behavior is fairly clear:
               return;
             }
 
-            new DemoParent(std::move(host));
+            auto actor = MakeRefPtr<DemoParent>(std::move(host));
+            actor->Init();
           });
     }
 
@@ -579,20 +609,21 @@ the new host, if successful.
 
 In this sample, the ``DemoParent`` is owned (in the reference-counting sense)
 by IPDL, which is why it doesn't get assigned to anything.  This simplifies the
-design dramatically.  IPDL takes ownership when the actor calls ``Open`` in its
-constructor:
+design dramatically.  IPDL takes ownership when the actor calls ``Bind`` from
+the ``Init`` method:
 
 .. code-block:: c++
 
     DemoParent::DemoParent(UniqueHost&& aHost)
-        : mHost(std::move(aHost)) {
-      Open(mHost->TakeInitialPort(),
-           base::GetProcId(mHost->GetChildProcessHandle()));
+        : mHost(std::move(aHost)) {}
+
+    DemoParent::Init() {
+      mHost->TakeInitialEndpoint().Bind(this);
       // ...
       mHost->MakeBridgeAndResolve();
     }
 
-After the ``Open`` call, the actor is live and communication with the new
+After the ``Bind`` call, the actor is live and communication with the new
 process can begin.  The constructor concludes by initiating the process of
 connecting the ``PDemoHelpline`` actors; ``Host::MakeBridgeAndResolve`` will be
 covered in `Creating a New Top Level Actor`_.  However, before we get into
@@ -643,15 +674,15 @@ exists as long as the ``ProcessChild`` does -- although the message channel may
 be closed.  We will release the reference either when the process is properly
 shutting down or when an IPC error closes the channel.
 
-``Init`` is given the command line arguments constucted above so it will need
+``Init`` is given the command line arguments constructed above so it will need
 to be overridden to parse them.  It does this, binds our actor by
-calling ``Open`` as was done with the parent, then initializes a bunch of
+calling ``Bind`` as was done with the parent, then initializes a bunch of
 components that the process expects to use:
 
 .. code-block:: c++
 
     bool DemoChild::Init(int aArgc, char* aArgv[]) {
-    #if defined(MOZ_SANDBOX) && defined(OS_WIN)
+    #if defined(MOZ_SANDBOX) && defined(XP_WIN)
       mozilla::SandboxTarget::Instance()->StartSandbox();
     #elif defined(__OpenBSD__) && defined(MOZ_SANDBOX)
       StartOpenBSDSandbox(GeckoProcessType_Demo);
@@ -665,7 +696,7 @@ components that the process expects to use:
         return false;
       }
 
-      if (NS_WARN_IF(!Open(ipc::IOThreadChild::TakeInitialPort(), mParentPid))) {
+      if (NS_WARN_IF(!TakeInitialEndpoint().Bind(this))) {
         return false;
       }
 
@@ -681,7 +712,7 @@ components that the process expects to use:
 This is a slimmed down version of the real ``Init`` method.  We see that it
 establishes a sandbox (more on this later) and then reads the command line and
 preferences that we sent from the main process.  It then initializes the thread
-manager, which is required by for the subsequent ``Open`` call.
+manager, which is required by for the subsequent ``Bind`` call.
 
 Among the list of components we initialize in the sample code, XPCOM is
 special.  XPCOM includes a suite of components, including the component
@@ -711,7 +742,7 @@ Destroying the New Process
 ~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Gecko processes have a clean way for clients to request that they shutdown.
-Simply calling ``Close()`` on the top level actor at either endoint will begin
+Simply calling ``Close()`` on the top level actor at either endpoint will begin
 the shutdown procedure (so, ``PDemoParent::Close`` or ``PDemoChild::Close``).
 The only other way for a child process to terminate is to crash.  Each of these
 three options requires some special handling.
@@ -1209,7 +1240,7 @@ Set ``MOZ_DEBUG_CHILD_PROCESS=1`` to turn on process startup pausing.  You can
 also set ``MOZ_DEBUG_CHILD_PAUSE=N`` where N is the number of seconds to sleep.
 The default is 10 seconds on Windows and 30 on other platforms.
 
-Pausing for the debugger is not a panacea.  Since the environmental varaiables
+Pausing for the debugger is not a panacea.  Since the environmental variables
 are not specific to process type, you will be forced to wait for all of the
 processes Gecko creates before you wait for it to get to yours.  The pauses can
 also end up exposing unknown concurrency bugs in the browser before it even

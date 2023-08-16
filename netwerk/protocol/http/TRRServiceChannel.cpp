@@ -83,18 +83,33 @@ NS_INTERFACE_MAP_BEGIN(TRRServiceChannel)
   NS_INTERFACE_MAP_ENTRY(nsITransportEventSink)
   NS_INTERFACE_MAP_ENTRY(nsIDNSListener)
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
+  NS_INTERFACE_MAP_ENTRY(nsIUploadChannel2)
   NS_INTERFACE_MAP_ENTRY_CONCRETE(TRRServiceChannel)
 NS_INTERFACE_MAP_END_INHERITING(HttpBaseChannel)
 
 TRRServiceChannel::TRRServiceChannel()
     : HttpAsyncAborter<TRRServiceChannel>(this),
       mProxyRequest(nullptr, "TRRServiceChannel::mProxyRequest"),
-      mCurrentEventTarget(GetCurrentEventTarget()) {
+      mCurrentEventTarget(GetCurrentSerialEventTarget()) {
   LOG(("TRRServiceChannel ctor [this=%p]\n", this));
 }
 
 TRRServiceChannel::~TRRServiceChannel() {
   LOG(("TRRServiceChannel dtor [this=%p]\n", this));
+}
+
+NS_IMETHODIMP TRRServiceChannel::SetCanceledReason(const nsACString& aReason) {
+  return SetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP TRRServiceChannel::GetCanceledReason(nsACString& aReason) {
+  return GetCanceledReasonImpl(aReason);
+}
+
+NS_IMETHODIMP
+TRRServiceChannel::CancelWithReason(nsresult aStatus,
+                                    const nsACString& aReason) {
+  return CancelWithReasonImpl(aStatus, aReason);
 }
 
 NS_IMETHODIMP
@@ -160,7 +175,7 @@ TRRServiceChannel::Resume() {
 }
 
 NS_IMETHODIMP
-TRRServiceChannel::GetSecurityInfo(nsISupports** securityInfo) {
+TRRServiceChannel::GetSecurityInfo(nsITransportSecurityInfo** securityInfo) {
   NS_ENSURE_ARG_POINTER(securityInfo);
   *securityInfo = do_AddRef(mSecurityInfo).take();
   return NS_OK;
@@ -665,7 +680,7 @@ nsresult TRRServiceChannel::SetupTransaction() {
   rv = mTransaction->Init(
       mCaps, mConnectionInfo, &mRequestHead, mUploadStream, mReqContentLength,
       LoadUploadStreamHasHeaders(), mCurrentEventTarget, callbacks, this,
-      mTopBrowsingContextId, HttpTrafficCategory::eInvalid, mRequestContext,
+      mBrowserId, HttpTrafficCategory::eInvalid, mRequestContext,
       mClassOfService, mInitialRwin, LoadResponseTimeoutEnabled(), mChannelId,
       nullptr, std::move(pushCallback), mTransWithPushedStream,
       mPushedStreamId);
@@ -765,7 +780,12 @@ void TRRServiceChannel::MaybeStartDNSPrefetch() {
   mDNSPrefetch =
       new nsDNSPrefetch(mURI, originAttributes, nsIRequest::GetTRRMode(), this,
                         LoadTimingEnabled());
-  mDNSPrefetch->PrefetchHigh(mCaps & NS_HTTP_REFRESH_DNS);
+  nsIDNSService::DNSFlags dnsFlags = nsIDNSService::RESOLVE_DEFAULT_FLAGS;
+  if (mCaps & NS_HTTP_REFRESH_DNS) {
+    dnsFlags |= nsIDNSService::RESOLVE_BYPASS_CACHE;
+  }
+  nsresult rv = mDNSPrefetch->PrefetchHigh(dnsFlags);
+  NS_ENSURE_SUCCESS_VOID(rv);
 }
 
 NS_IMETHODIMP
@@ -1008,6 +1028,17 @@ TRRServiceChannel::OnStartRequest(nsIRequest* request) {
     mResponseHead = mTransaction->TakeResponseHead();
     if (mResponseHead) {
       uint32_t httpStatus = mResponseHead->Status();
+      if (mTransaction->ProxyConnectFailed()) {
+        LOG(("TRRServiceChannel proxy connect failed httpStatus: %d",
+             httpStatus));
+        MOZ_ASSERT(mConnectionInfo->UsingConnect(),
+                   "proxy connect failed but not using CONNECT?");
+        nsresult rv = HttpProxyResponseToErrorCode(httpStatus);
+        mTransaction->DontReuseConnection();
+        Cancel(rv);
+        return CallOnStartRequest();
+      }
+
       if ((httpStatus < 500) && (httpStatus != 421) && (httpStatus != 407)) {
         ProcessAltService();
       }
@@ -1149,18 +1180,15 @@ nsresult TRRServiceChannel::SetupReplacementChannel(nsIURI* aNewURI,
     encodedChannel->SetApplyConversion(LoadApplyConversion());
   }
 
-  // mContentTypeHint is empty when this channel is used to download
-  // ODoHConfigs.
   if (mContentTypeHint.IsEmpty()) {
     return NS_OK;
   }
 
   // Make sure we set content-type on the old channel properly.
-  MOZ_ASSERT(mContentTypeHint.Equals("application/dns-message") ||
-             mContentTypeHint.Equals("application/oblivious-dns-message"));
+  MOZ_ASSERT(mContentTypeHint.Equals("application/dns-message"));
 
   // Apply TRR specific settings. Note that we already know mContentTypeHint is
-  // "application/dns-message" or "application/oblivious-dns-message" here.
+  // "application/dns-message" here.
   return TRR::SetupTRRServiceChannelInternal(
       httpChannel,
       mRequestHead.ParsedMethod() == nsHttpRequestHead::kMethod_Get,
@@ -1257,7 +1285,8 @@ TRRServiceChannel::OnLookupComplete(nsICancelable* request, nsIDNSRecord* rec,
 
 NS_IMETHODIMP
 TRRServiceChannel::LogBlockedCORSRequest(const nsAString& aMessage,
-                                         const nsACString& aCategory) {
+                                         const nsACString& aCategory,
+                                         bool aIsWarning) {
   return NS_ERROR_NOT_IMPLEMENTED;
 }
 

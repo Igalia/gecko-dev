@@ -16,6 +16,7 @@
 #include "mozilla/SandboxLaunch.h"
 #include "mozilla/SandboxSettings.h"
 #include "mozilla/StaticPrefs_security.h"
+#include "mozilla/StaticMutex.h"
 #include "mozilla/UniquePtr.h"
 #include "mozilla/UniquePtrExtensions.h"
 #include "nsComponentManagerUtils.h"
@@ -43,6 +44,12 @@
 #  include <glib.h>
 #endif
 
+#ifdef MOZ_ENABLE_V4L2
+#  include <linux/videodev2.h>
+#  include <sys/ioctl.h>
+#  include <fcntl.h>
+#endif  // MOZ_ENABLE_V4L2
+
 #include <dirent.h>
 #include <sys/stat.h>
 #include <sys/sysmacros.h>
@@ -61,6 +68,9 @@ static const int rdwrcr = rdwr | SandboxBroker::MAY_CREATE;
 static const int access = SandboxBroker::MAY_ACCESS;
 static const int deny = SandboxBroker::FORCE_DENY;
 }  // namespace
+
+using CacheE = std::pair<nsCString, int>;
+using FileCacheT = nsTArray<CacheE>;
 
 static void AddDriPaths(SandboxBroker::Policy* aPolicy) {
   // Bug 1401666: Mesa driver loader part 2: Mesa <= 12 using libudev
@@ -157,12 +167,11 @@ static void JoinPathIfRelative(const nsACString& aCwd, const nsACString& inPath,
   }
 }
 
-static void AddPathsFromFile(SandboxBroker::Policy* aPolicy,
-                             const nsACString& aPath);
+static void CachePathsFromFile(FileCacheT& aCache, const nsACString& aPath);
 
-static void AddPathsFromFileInternal(SandboxBroker::Policy* aPolicy,
-                                     const nsACString& aCwd,
-                                     const nsACString& aPath) {
+static void CachePathsFromFileInternal(FileCacheT& aCache,
+                                       const nsACString& aCwd,
+                                       const nsACString& aPath) {
   nsresult rv;
   nsCOMPtr<nsIFile> ldconfig(do_CreateInstance(NS_LOCAL_FILE_CONTRACTID, &rv));
   if (NS_FAILED(rv)) {
@@ -223,7 +232,7 @@ static void AddPathsFromFileInternal(SandboxBroker::Policy* aPolicy,
                   &globbuf)) {
           for (size_t fileIdx = 0; fileIdx < globbuf.gl_pathc; fileIdx++) {
             nsAutoCString filePath(globbuf.gl_pathv[fileIdx]);
-            AddPathsFromFile(aPolicy, filePath);
+            CachePathsFromFile(aCache, filePath);
           }
           globfree(&globbuf);
         }
@@ -237,14 +246,13 @@ static void AddPathsFromFileInternal(SandboxBroker::Policy* aPolicy,
     }
     char* resolvedPath = realpath(line.get(), nullptr);
     if (resolvedPath) {
-      aPolicy->AddDir(rdonly, resolvedPath);
+      aCache.AppendElement(std::make_pair(nsCString(resolvedPath), rdonly));
       free(resolvedPath);
     }
   } while (more);
 }
 
-static void AddPathsFromFile(SandboxBroker::Policy* aPolicy,
-                             const nsACString& aPath) {
+static void CachePathsFromFile(FileCacheT& aCache, const nsACString& aPath) {
   // Find the new base path where that file sits in.
   nsresult rv;
   nsCOMPtr<nsIFile> includeFile(
@@ -275,12 +283,26 @@ static void AddPathsFromFile(SandboxBroker::Policy* aPolicy,
   if (SandboxInfo::Get().Test(SandboxInfo::kVerbose)) {
     SANDBOX_LOG("Parent path is %s", PromiseFlatCString(parentPath).get());
   }
-  AddPathsFromFileInternal(aPolicy, parentPath, aPath);
+  CachePathsFromFileInternal(aCache, parentPath, aPath);
 }
 
 static void AddLdconfigPaths(SandboxBroker::Policy* aPolicy) {
-  nsAutoCString ldConfig("/etc/ld.so.conf"_ns);
-  AddPathsFromFile(aPolicy, ldConfig);
+  static StaticMutex sMutex;
+  StaticMutexAutoLock lock(sMutex);
+
+  static FileCacheT ldConfigCache{};
+  static bool ldConfigCachePopulated = false;
+  if (!ldConfigCachePopulated) {
+    CachePathsFromFile(ldConfigCache, "/etc/ld.so.conf"_ns);
+    ldConfigCachePopulated = true;
+    RunOnShutdown([&] {
+      ldConfigCache.Clear();
+      MOZ_ASSERT(ldConfigCache.IsEmpty(), "ldconfig cache should be empty");
+    });
+  }
+  for (const CacheE& e : ldConfigCache) {
+    aPolicy->AddDir(e.second, e.first.get());
+  }
 }
 
 static void AddLdLibraryEnvPaths(SandboxBroker::Policy* aPolicy) {
@@ -605,10 +627,10 @@ void SandboxBrokerPolicyFactory::InitContentPolicy() {
     }
   }
 
-  if (mozilla::IsDevelopmentBuild()) {
-    // If this is a developer build the resources are symlinks to outside the
-    // binary dir. Therefore in non-release builds we allow reads from the whole
-    // repository. MOZ_DEVELOPER_REPO_DIR is set by mach run.
+  if (!mozilla::IsPackagedBuild()) {
+    // If this is not a packaged build the resources are likely symlinks to
+    // outside the binary dir. Therefore in non-release builds we allow reads
+    // from the whole repository. MOZ_DEVELOPER_REPO_DIR is set by mach run.
     const char* developer_repo_dir = PR_GetEnv("MOZ_DEVELOPER_REPO_DIR");
     if (developer_repo_dir) {
       policy->AddDir(rdonly, developer_repo_dir);
@@ -654,6 +676,7 @@ void SandboxBrokerPolicyFactory::InitContentPolicy() {
   AddDynamicPathList(policy, "security.sandbox.content.read_path_whitelist",
                      rdonly);
 
+#if defined(MOZ_CONTENT_TEMP_DIR)
   // Add write permissions on the content process specific temporary dir.
   nsCOMPtr<nsIFile> tmpDir;
   rv = NS_GetSpecialDirectory(NS_APP_CONTENT_PROCESS_TEMP_DIR,
@@ -665,6 +688,7 @@ void SandboxBrokerPolicyFactory::InitContentPolicy() {
       policy->AddDir(rdwrcr, tmpPath.get());
     }
   }
+#endif
 
   // userContent.css and the extensions dir sit in the profile, which is
   // normally blocked.
@@ -771,6 +795,8 @@ UniquePtr<SandboxBroker::Policy> SandboxBrokerPolicyFactory::GetContentPolicy(
   const int level = GetEffectiveContentSandboxLevel();
   // The file broker is used at level 2 and up.
   if (level <= 1) {
+    // Level 1 has been removed.
+    MOZ_ASSERT(level == 0);
     return nullptr;
   }
 
@@ -812,12 +838,66 @@ UniquePtr<SandboxBroker::Policy> SandboxBrokerPolicyFactory::GetContentPolicy(
   return policy;
 }
 
+#ifdef MOZ_ENABLE_V4L2
+static void AddV4l2Dependencies(SandboxBroker::Policy* policy) {
+  // For V4L2 hardware-accelerated video decode, RDD needs access to certain
+  // /dev/video* devices but don't want to allow it access to webcams etc.
+  // So we only allow it access to M2M video devices (encoders and decoders).
+  DIR* dir = opendir("/dev");
+  if (!dir) {
+    SANDBOX_LOG("Couldn't list /dev");
+    return;
+  }
+
+  struct dirent* dir_entry;
+  while ((dir_entry = readdir(dir))) {
+    if (strncmp(dir_entry->d_name, "video", 5)) {
+      // Not a /dev/video* device, so ignore it
+      continue;
+    }
+
+    nsCString path = "/dev/"_ns;
+    path += nsDependentCString(dir_entry->d_name);
+
+    int fd = open(path.get(), O_RDWR | O_NONBLOCK, 0);
+    if (fd < 0) {
+      // Couldn't open this device, so ignore it.
+      SANDBOX_LOG("Couldn't open video device %s", path.get());
+      continue;
+    }
+
+    // Query device capabilities
+    struct v4l2_capability cap;
+    int result = ioctl(fd, VIDIOC_QUERYCAP, &cap);
+    if (result < 0) {
+      // Couldn't query capabilities of this device, so ignore it
+      SANDBOX_LOG("Couldn't query capabilities of video device %s", path.get());
+      close(fd);
+      continue;
+    }
+
+    if ((cap.device_caps & V4L2_CAP_VIDEO_M2M) ||
+        (cap.device_caps & V4L2_CAP_VIDEO_M2M_MPLANE)) {
+      // This is an M2M device (i.e. not a webcam), so allow access
+      policy->AddPath(rdwr, path.get());
+    }
+
+    close(fd);
+  }
+  closedir(dir);
+
+  // FFmpeg V4L2 needs to list /dev to find V4L2 devices.
+  policy->AddPath(rdonly, "/dev");
+}
+#endif  // MOZ_ENABLE_V4L2
+
 /* static */ UniquePtr<SandboxBroker::Policy>
 SandboxBrokerPolicyFactory::GetRDDPolicy(int aPid) {
   auto policy = MakeUnique<SandboxBroker::Policy>();
 
   AddSharedMemoryPaths(policy.get(), aPid);
 
+  policy->AddPath(rdonly, "/dev/urandom");
   // FIXME (bug 1662321): we should fix nsSystemInfo so that every
   // child process doesn't need to re-read these files to get the info
   // the parent process already has.
@@ -855,10 +935,10 @@ SandboxBrokerPolicyFactory::GetRDDPolicy(int aPid) {
     }
   }
 
-  if (mozilla::IsDevelopmentBuild()) {
-    // If this is a developer build the resources are symlinks to outside the
-    // binary dir. Therefore in non-release builds we allow reads from the whole
-    // repository. MOZ_DEVELOPER_REPO_DIR is set by mach run.
+  if (!mozilla::IsPackagedBuild()) {
+    // If this is not a packaged build the resources are likely symlinks to
+    // outside the binary dir. Therefore in non-release builds we allow reads
+    // from the whole repository. MOZ_DEVELOPER_REPO_DIR is set by mach run.
     const char* developer_repo_dir = PR_GetEnv("MOZ_DEVELOPER_REPO_DIR");
     if (developer_repo_dir) {
       policy->AddDir(rdonly, developer_repo_dir);
@@ -872,6 +952,10 @@ SandboxBrokerPolicyFactory::GetRDDPolicy(int aPid) {
   // FFmpeg and GPU drivers may need general-case library loading
   AddLdconfigPaths(policy.get());
   AddLdLibraryEnvPaths(policy.get());
+
+#ifdef MOZ_ENABLE_V4L2
+  AddV4l2Dependencies(policy.get());
+#endif  // MOZ_ENABLE_V4L2
 
   if (policy->IsEmpty()) {
     policy = nullptr;
@@ -941,6 +1025,7 @@ SandboxBrokerPolicyFactory::GetUtilityProcessPolicy(int aPid) {
   policy->AddPath(rdonly, "/dev/urandom");
   policy->AddPath(rdonly, "/proc/cpuinfo");
   policy->AddPath(rdonly, "/proc/meminfo");
+  policy->AddPath(rdonly, nsPrintfCString("/proc/%d/exe", aPid).get());
   policy->AddDir(rdonly, "/sys/devices/cpu");
   policy->AddDir(rdonly, "/sys/devices/system/cpu");
   policy->AddDir(rdonly, "/lib");
@@ -951,6 +1036,9 @@ SandboxBrokerPolicyFactory::GetUtilityProcessPolicy(int aPid) {
   policy->AddDir(rdonly, "/usr/share");
   policy->AddDir(rdonly, "/usr/local/share");
   policy->AddDir(rdonly, "/etc");
+  // Required to make sure ffmpeg loads properly, this is already existing on
+  // Content and RDD
+  policy->AddDir(rdonly, "/nix/store");
 
   // glibc will try to stat64("/") while populating nsswitch database
   // https://sourceware.org/git/?p=glibc.git;a=blob;f=nss/nss_database.c;h=cf0306adc47f12d9bc761ab1b013629f4482b7e6;hb=9826b03b747b841f5fc6de2054bf1ef3f5c4bdf3#l396
@@ -958,6 +1046,7 @@ SandboxBrokerPolicyFactory::GetUtilityProcessPolicy(int aPid) {
   policy->AddDir(access, "/");
 
   AddLdconfigPaths(policy.get());
+  AddLdLibraryEnvPaths(policy.get());
 
   // Utility process sandbox needs to allow shmem in order to support
   // profiling.  See Bug 1626385.

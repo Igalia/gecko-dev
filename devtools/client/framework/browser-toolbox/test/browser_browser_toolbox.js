@@ -3,15 +3,15 @@
 
 // There are shutdown issues for which multiple rejections are left uncaught.
 // See bug 1018184 for resolving these issues.
-const { PromiseTestUtils } = ChromeUtils.import(
-  "resource://testing-common/PromiseTestUtils.jsm"
+const { PromiseTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/PromiseTestUtils.sys.mjs"
 );
 PromiseTestUtils.allowMatchingRejectionsGlobally(/File closed/);
 
 // On debug test machine, it takes about 50s to run the test.
 requestLongerTimeout(4);
 
-add_task(async function() {
+add_task(async function () {
   const ToolboxTask = await initBrowserToolboxTask();
   await ToolboxTask.importFunctions({});
 

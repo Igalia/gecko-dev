@@ -3,21 +3,21 @@
 // Use of this source code is governed by a BSD-style
 // license that can be found in the LICENSE file.
 
-#include "jxl/encode.h"
+#include <jxl/decode.h>
+#include <jxl/decode_cxx.h>
+#include <jxl/encode.h>
+#include <jxl/encode_cxx.h>
 
-#include "enc_color_management.h"
-#include "gtest/gtest.h"
-#include "jxl/decode.h"
-#include "jxl/decode_cxx.h"
-#include "jxl/encode_cxx.h"
 #include "lib/extras/codec.h"
 #include "lib/extras/dec/jxl.h"
-#include "lib/jxl/enc_butteraugli_pnorm.h"
+#include "lib/extras/metrics.h"
+#include "lib/jxl/enc_color_management.h"
 #include "lib/jxl/encode_internal.h"
 #include "lib/jxl/jpeg/dec_jpeg_data.h"
 #include "lib/jxl/jpeg/dec_jpeg_data_writer.h"
+#include "lib/jxl/test_image.h"
 #include "lib/jxl/test_utils.h"
-#include "lib/jxl/testdata.h"
+#include "lib/jxl/testing.h"
 
 TEST(EncodeTest, AddFrameAfterCloseInputTest) {
   JxlEncoderPtr enc = JxlEncoderMake(nullptr);
@@ -59,7 +59,7 @@ TEST(EncodeTest, AddJPEGAfterCloseTest) {
   JxlEncoderCloseInput(enc.get());
 
   const std::string jpeg_path = "jxl/flower/flower.png.im_q85_420.jpg";
-  const jxl::PaddedBytes orig = jxl::ReadTestData(jpeg_path);
+  const jxl::PaddedBytes orig = jxl::test::ReadTestData(jpeg_path);
 
   JxlEncoderFrameSettings* frame_settings =
       JxlEncoderFrameSettingsCreate(enc.get(), NULL);
@@ -213,20 +213,20 @@ void VerifyFrameEncoding(size_t xsize, size_t ysize, JxlEncoder* enc,
   jxl::CodecInOut decoded_io;
   EXPECT_TRUE(jxl::test::DecodeFile(
       {}, jxl::Span<const uint8_t>(compressed.data(), compressed.size()),
-      &decoded_io, /*pool=*/nullptr));
+      &decoded_io));
 
   EXPECT_LE(
       ComputeDistance2(input_io.Main(), decoded_io.Main(), jxl::GetJxlCms()),
 #if JXL_HIGH_PRECISION
-      1.8);
+      1.84);
 #else
-      8.0);
+      8.7);
 #endif
 }
 
 void VerifyFrameEncoding(JxlEncoder* enc,
                          const JxlEncoderFrameSettings* frame_settings) {
-  VerifyFrameEncoding(63, 129, enc, frame_settings, 2600,
+  VerifyFrameEncoding(63, 129, enc, frame_settings, 2700,
                       /*lossy_use_original_profile=*/false);
 }
 
@@ -311,7 +311,7 @@ TEST(EncodeTest, frame_settingsTest) {
     // Higher than currently supported values
     EXPECT_EQ(JXL_ENC_ERROR,
               JxlEncoderFrameSettingsSetOption(
-                  frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 10));
+                  frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 11));
   }
 
   {
@@ -321,7 +321,7 @@ TEST(EncodeTest, frame_settingsTest) {
         JxlEncoderFrameSettingsCreate(enc.get(), NULL);
     EXPECT_EQ(JXL_ENC_SUCCESS,
               JxlEncoderSetFrameLossless(frame_settings, JXL_TRUE));
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3600, false);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3000, false);
     EXPECT_EQ(true, enc->last_used_cparams.IsLossless());
   }
 
@@ -331,7 +331,7 @@ TEST(EncodeTest, frame_settingsTest) {
     JxlEncoderFrameSettings* frame_settings =
         JxlEncoderFrameSettingsCreate(enc.get(), NULL);
     EXPECT_EQ(JXL_ENC_SUCCESS, JxlEncoderSetFrameDistance(frame_settings, 0.5));
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3000, false);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3030, false);
     EXPECT_EQ(0.5, enc->last_used_cparams.butteraugli_distance);
   }
 
@@ -392,7 +392,8 @@ TEST(EncodeTest, frame_settingsTest) {
     EXPECT_EQ(JXL_ENC_SUCCESS,
               JxlEncoderFrameSettingsSetOption(
                   frame_settings, JXL_ENC_FRAME_SETTING_PROGRESSIVE_DC, 2));
-    VerifyFrameEncoding(enc.get(), frame_settings);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 2830,
+                        /*lossy_use_original_profile=*/false);
     EXPECT_EQ(false, enc->last_used_cparams.responsive);
     EXPECT_EQ(true, enc->last_used_cparams.progressive_mode);
     EXPECT_EQ(2, enc->last_used_cparams.progressive_dc);
@@ -408,7 +409,7 @@ TEST(EncodeTest, frame_settingsTest) {
         JxlEncoderFrameSettingsSetFloatOption(
             frame_settings, JXL_ENC_FRAME_SETTING_PHOTON_NOISE, 1777.777));
     VerifyFrameEncoding(enc.get(), frame_settings);
-    EXPECT_NEAR(1777.777f, enc->last_used_cparams.photon_noise_iso, 1E-6);
+    EXPECT_NEAR(1777.777f, enc->last_used_cparams.photon_noise_iso, 1E-4);
   }
 
   {
@@ -502,7 +503,7 @@ TEST(EncodeTest, LossyEncoderUseOriginalProfileTest) {
     ASSERT_NE(nullptr, enc.get());
     JxlEncoderFrameSettings* frame_settings =
         JxlEncoderFrameSettingsCreate(enc.get(), NULL);
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 4100, true);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 7897, true);
   }
   {
     JxlEncoderPtr enc = JxlEncoderMake(nullptr);
@@ -512,7 +513,7 @@ TEST(EncodeTest, LossyEncoderUseOriginalProfileTest) {
     EXPECT_EQ(JXL_ENC_SUCCESS,
               JxlEncoderFrameSettingsSetOption(
                   frame_settings, JXL_ENC_FRAME_SETTING_PROGRESSIVE_DC, 2));
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 4500, true);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 8310, true);
   }
   {
     JxlEncoderPtr enc = JxlEncoderMake(nullptr);
@@ -522,7 +523,7 @@ TEST(EncodeTest, LossyEncoderUseOriginalProfileTest) {
     ASSERT_EQ(JXL_ENC_SUCCESS,
               JxlEncoderFrameSettingsSetOption(
                   frame_settings, JXL_ENC_FRAME_SETTING_EFFORT, 8));
-    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 3700, true);
+    VerifyFrameEncoding(63, 129, enc.get(), frame_settings, 7173, true);
   }
 }
 
@@ -530,8 +531,8 @@ namespace {
 // Returns a copy of buf from offset to offset+size, or a new zeroed vector if
 // the result would have been out of bounds taking integer overflow into
 // account.
-const std::vector<uint8_t> SliceSpan(const jxl::Span<const uint8_t>& buf,
-                                     size_t offset, size_t size) {
+std::vector<uint8_t> SliceSpan(const jxl::Span<const uint8_t>& buf,
+                               size_t offset, size_t size) {
   if (offset + size >= buf.size()) {
     return std::vector<uint8_t>(size, 0);
   }
@@ -813,11 +814,52 @@ TEST(EncodeTest, CodestreamLevelVerificationTest) {
 
 TEST(EncodeTest, JXL_TRANSCODE_JPEG_TEST(JPEGReconstructionTest)) {
   const std::string jpeg_path = "jxl/flower/flower.png.im_q85_420.jpg";
-  const jxl::PaddedBytes orig = jxl::ReadTestData(jpeg_path);
+  const jxl::PaddedBytes orig = jxl::test::ReadTestData(jpeg_path);
 
   JxlEncoderPtr enc = JxlEncoderMake(nullptr);
   JxlEncoderFrameSettings* frame_settings =
       JxlEncoderFrameSettingsCreate(enc.get(), NULL);
+
+  EXPECT_EQ(JXL_ENC_SUCCESS, JxlEncoderStoreJPEGMetadata(enc.get(), JXL_TRUE));
+  EXPECT_EQ(JXL_ENC_SUCCESS,
+            JxlEncoderAddJPEGFrame(frame_settings, orig.data(), orig.size()));
+  JxlEncoderCloseInput(enc.get());
+
+  std::vector<uint8_t> compressed = std::vector<uint8_t>(64);
+  uint8_t* next_out = compressed.data();
+  size_t avail_out = compressed.size() - (next_out - compressed.data());
+  JxlEncoderStatus process_result = JXL_ENC_NEED_MORE_OUTPUT;
+  while (process_result == JXL_ENC_NEED_MORE_OUTPUT) {
+    process_result = JxlEncoderProcessOutput(enc.get(), &next_out, &avail_out);
+    if (process_result == JXL_ENC_NEED_MORE_OUTPUT) {
+      size_t offset = next_out - compressed.data();
+      compressed.resize(compressed.size() * 2);
+      next_out = compressed.data() + offset;
+      avail_out = compressed.size() - offset;
+    }
+  }
+  compressed.resize(next_out - compressed.data());
+  EXPECT_EQ(JXL_ENC_SUCCESS, process_result);
+
+  jxl::extras::JXLDecompressParams dparams;
+  std::vector<uint8_t> decoded_jpeg_bytes;
+  jxl::extras::PackedPixelFile ppf;
+  EXPECT_TRUE(DecodeImageJXL(compressed.data(), compressed.size(), dparams,
+                             nullptr, &ppf, &decoded_jpeg_bytes));
+
+  EXPECT_EQ(decoded_jpeg_bytes.size(), orig.size());
+  EXPECT_EQ(0, memcmp(decoded_jpeg_bytes.data(), orig.data(), orig.size()));
+}
+
+TEST(EncodeTest, JXL_TRANSCODE_JPEG_TEST(ProgressiveJPEGReconstructionTest)) {
+  const std::string jpeg_path = "jxl/flower/flower.png.im_q85_420.jpg";
+  const jxl::PaddedBytes orig = jxl::test::ReadTestData(jpeg_path);
+
+  JxlEncoderPtr enc = JxlEncoderMake(nullptr);
+  JxlEncoderFrameSettings* frame_settings =
+      JxlEncoderFrameSettingsCreate(enc.get(), NULL);
+
+  frame_settings->values.cparams.progressive_mode = true;
 
   EXPECT_EQ(JXL_ENC_SUCCESS, JxlEncoderStoreJPEGMetadata(enc.get(), JXL_TRUE));
   EXPECT_EQ(JXL_ENC_SUCCESS,
@@ -889,6 +931,8 @@ TEST(EncodeTest, BasicInfoTest) {
   basic_info.min_nits = 5.0;
   basic_info.linear_below = 12.7;
   basic_info.orientation = JXL_ORIENT_ROTATE_90_CW;
+  basic_info.intrinsic_xsize = 88;
+  basic_info.intrinsic_ysize = 99;
   basic_info.animation.tps_numerator = 55;
   basic_info.animation.tps_denominator = 77;
   basic_info.animation.num_loops = 10;
@@ -944,6 +988,8 @@ TEST(EncodeTest, BasicInfoTest) {
       EXPECT_EQ(basic_info.uses_original_profile,
                 basic_info2.uses_original_profile);
       EXPECT_EQ(basic_info.orientation, basic_info2.orientation);
+      EXPECT_EQ(basic_info.intrinsic_xsize, basic_info2.intrinsic_xsize);
+      EXPECT_EQ(basic_info.intrinsic_ysize, basic_info2.intrinsic_ysize);
       EXPECT_EQ(basic_info.num_color_channels, basic_info2.num_color_channels);
       // TODO(lode): also test num_extra_channels, but currently there may be a
       // mismatch between 0 and 1 if there is alpha, until encoder support for
@@ -1166,7 +1212,7 @@ TEST(EncodeTest, CroppedFrameTest) {
   EXPECT_EQ(true, seen_frame);
 }
 
-TEST(EncodeTest, BoxTest) {
+TEST(EncodeTest, JXL_BOXES_TEST(BoxTest)) {
   // Test with uncompressed boxes and with brob boxes
   for (int compress_box = 0; compress_box <= 1; ++compress_box) {
     // Tests adding two metadata boxes with the encoder: an exif box before the
@@ -1291,15 +1337,15 @@ TEST(EncodeTest, BoxTest) {
   }
 }
 
-#if JPEGXL_ENABLE_JPEG  // Loading .jpg files requires libjpeg support.
 TEST(EncodeTest, JXL_TRANSCODE_JPEG_TEST(JPEGFrameTest)) {
+  TEST_LIBJPEG_SUPPORT();
   for (int skip_basic_info = 0; skip_basic_info < 2; skip_basic_info++) {
     for (int skip_color_encoding = 0; skip_color_encoding < 2;
          skip_color_encoding++) {
       // cannot set color encoding if basic info is not set
       if (skip_basic_info && !skip_color_encoding) continue;
       const std::string jpeg_path = "jxl/flower/flower_cropped.jpg";
-      const jxl::PaddedBytes orig = jxl::ReadTestData(jpeg_path);
+      const jxl::PaddedBytes orig = jxl::test::ReadTestData(jpeg_path);
       jxl::CodecInOut orig_io;
       ASSERT_TRUE(SetFromBytes(jxl::Span<const uint8_t>(orig), &orig_io,
                                /*pool=*/nullptr));
@@ -1348,7 +1394,7 @@ TEST(EncodeTest, JXL_TRANSCODE_JPEG_TEST(JPEGFrameTest)) {
       jxl::CodecInOut decoded_io;
       EXPECT_TRUE(jxl::test::DecodeFile(
           {}, jxl::Span<const uint8_t>(compressed.data(), compressed.size()),
-          &decoded_io, /*pool=*/nullptr));
+          &decoded_io));
 
       EXPECT_LE(
           ComputeDistance2(orig_io.Main(), decoded_io.Main(), jxl::GetJxlCms()),
@@ -1356,4 +1402,3 @@ TEST(EncodeTest, JXL_TRANSCODE_JPEG_TEST(JPEGFrameTest)) {
     }
   }
 }
-#endif  // JPEGXL_ENABLE_JPEG

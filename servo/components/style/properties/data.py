@@ -29,13 +29,7 @@ ALL_AXES = [(axis, False) for axis in PHYSICAL_AXES] + [
 ]
 
 SYSTEM_FONT_LONGHANDS = """font_family font_size font_style
-                           font_variant_caps font_stretch font_kerning
-                           font_variant_position font_weight
-                           font_size_adjust font_variant_alternates
-                           font_variant_ligatures font_variant_east_asian
-                           font_variant_numeric font_language_override
-                           font_feature_settings font_variation_settings
-                           font_optical_sizing""".split()
+                           font_stretch font_weight""".split()
 
 # Bitfield values for all rule types which can have property declarations.
 STYLE_RULE = 1 << 0
@@ -453,6 +447,7 @@ class Longhand(Property):
                 "AlignSelf",
                 "Appearance",
                 "AspectRatio",
+                "BaselineSource",
                 "BreakBetween",
                 "BreakWithin",
                 "BackgroundRepeat",
@@ -467,10 +462,10 @@ class Longhand(Property):
                 "Display",
                 "FillRule",
                 "Float",
+                "FontLanguageOverride",
                 "FontSizeAdjust",
                 "FontStretch",
                 "FontStyle",
-                "FontStyleAdjust",
                 "FontSynthesis",
                 "FontVariantEastAsian",
                 "FontVariantLigatures",
@@ -485,8 +480,10 @@ class Longhand(Property):
                 "JustifyItems",
                 "JustifySelf",
                 "LineBreak",
+                "LineClamp",
                 "MasonryAutoFlow",
-                "MozForceBrokenImageIcon",
+                "ui::MozTheme",
+                "BoolInteger",
                 "text::MozControlCharacterVisibility",
                 "MathDepth",
                 "MozScriptMinSize",
@@ -501,9 +498,10 @@ class Longhand(Property):
                 "OverflowClipBox",
                 "OverflowWrap",
                 "OverscrollBehavior",
+                "PageOrientation",
                 "Percentage",
-                "PositiveIntegerOrNone",
                 "PrintColorAdjust",
+                "ForcedColorAdjust",
                 "Resize",
                 "RubyPosition",
                 "SVGOpacity",
@@ -526,7 +524,7 @@ class Longhand(Property):
                 "UserSelect",
                 "WordBreak",
                 "XSpan",
-                "XTextZoom",
+                "XTextScale",
                 "ZIndex",
             }
         if self.name == "overflow-y":
@@ -676,6 +674,7 @@ class StyleStruct(object):
         self.gecko_name = gecko_name or name
         self.gecko_ffi_name = "nsStyle" + self.gecko_name
         self.additional_methods = additional_methods or []
+        self.document_dependent = self.gecko_name in ["Font", "Visibility", "Text"]
 
 
 class PropertiesData(object):
@@ -813,6 +812,8 @@ class PropertyRestrictions:
                 "-webkit-text-fill-color",
                 "-webkit-text-stroke-color",
                 "vertical-align",
+                # Will become shorthand of vertical-align (Bug 1830771)
+                "baseline-source",
                 "line-height",
                 # Kinda like css-backgrounds?
                 "background-blend-mode",
@@ -846,6 +847,8 @@ class PropertyRestrictions:
                 "-webkit-text-fill-color",
                 "-webkit-text-stroke-color",
                 "vertical-align",
+                # Will become shorthand of vertical-align (Bug 1830771)
+                "baseline-source",
                 "line-height",
                 # Kinda like css-backgrounds?
                 "background-blend-mode",
@@ -914,7 +917,6 @@ class PropertyRestrictions:
                 "text-combine-upright",
                 "ruby-position",
                 # XXX Should these really apply to cue?
-                "font-synthesis",
                 "-moz-osx-font-smoothing",
                 # FIXME(emilio): background-blend-mode should be part of the
                 # background shorthand, and get reset, per
@@ -925,6 +927,7 @@ class PropertyRestrictions:
             + PropertyRestrictions.shorthand(data, "background")
             + PropertyRestrictions.shorthand(data, "outline")
             + PropertyRestrictions.shorthand(data, "font")
+            + PropertyRestrictions.shorthand(data, "font-synthesis")
         )
 
 

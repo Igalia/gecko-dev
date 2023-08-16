@@ -71,6 +71,7 @@ class nsDOMCSSAttributeDeclaration;
 class nsDOMStringMap;
 class nsDOMTokenList;
 class nsFocusManager;
+class nsGenericHTMLFormControlElementWithState;
 class nsGlobalWindowInner;
 class nsGlobalWindowOuter;
 class nsIAutoCompletePopup;
@@ -89,9 +90,9 @@ class nsIFrame;
 class nsIHTMLCollection;
 class nsIMozBrowserFrame;
 class nsIPrincipal;
+class nsIScreen;
 class nsIScrollableFrame;
 class nsIURI;
-class nsMappedAttributes;
 class nsPresContext;
 class nsWindowSizes;
 struct JSContext;
@@ -103,6 +104,7 @@ class nsGetterAddRefs;
 
 namespace mozilla {
 class DeclarationBlock;
+class MappedDeclarationsBuilder;
 class ErrorResult;
 class OOMReporter;
 class SMILAttr;
@@ -112,6 +114,7 @@ namespace css {
 struct URLValue;
 }  // namespace css
 namespace dom {
+struct CheckVisibilityOptions;
 struct CustomElementData;
 struct SetHTMLOptions;
 struct GetAnimationsOptions;
@@ -127,6 +130,7 @@ class DOMIntersectionObserver;
 class DOMMatrixReadOnly;
 class Element;
 class ElementOrCSSPseudoElement;
+class PopoverData;
 class Promise;
 class Sanitizer;
 class ShadowRoot;
@@ -140,6 +144,8 @@ typedef nsTHashMap<nsRefPtrHashKey<DOMIntersectionObserver>, int32_t>
 }  // namespace dom
 }  // namespace mozilla
 
+using nsMapRuleToAttributesFunc = void (*)(mozilla::MappedDeclarationsBuilder&);
+
 // Declared here because of include hell.
 extern "C" bool Servo_Element_IsDisplayContents(const mozilla::dom::Element*);
 
@@ -151,7 +157,7 @@ already_AddRefed<nsContentList> NS_GetContentList(nsINode* aRootNode,
   NODE_FLAG_BIT(NODE_TYPE_SPECIFIC_BITS_OFFSET + (n_))
 
 // Element-specific flags
-enum {
+enum : uint32_t {
   // Whether this node has dirty descendants for Servo's style system.
   ELEMENT_HAS_DIRTY_DESCENDANTS_FOR_SERVO = ELEMENT_FLAG_BIT(0),
   // Whether this node has dirty descendants for animation-only restyle for
@@ -298,6 +304,11 @@ class Element : public FragmentOrElement {
    */
   void SetShadowRoot(ShadowRoot* aShadowRoot);
 
+  void SetLastRememberedBSize(float aBSize);
+  void SetLastRememberedISize(float aISize);
+  void RemoveLastRememberedBSize();
+  void RemoveLastRememberedISize();
+
   /**
    * Make focus on this element.
    */
@@ -378,9 +389,15 @@ class Element : public FragmentOrElement {
   /**
    * Get the mapped attributes, if any, for this element.
    */
-  const nsMappedAttributes* GetMappedAttributes() const;
+  StyleLockedDeclarationBlock* GetMappedAttributeStyle() const {
+    return mAttrs.GetMappedDeclarationBlock();
+  }
 
-  void ClearMappedServoStyle() { mAttrs.ClearMappedServoStyle(); }
+  bool IsPendingMappedAttributeEvaluation() const {
+    return mAttrs.IsPendingMappedAttributeEvaluation();
+  }
+
+  void SetMappedDeclarationBlock(already_AddRefed<StyleLockedDeclarationBlock>);
 
   /**
    * InlineStyleDeclarationWillChange is called before SetInlineStyleDeclaration
@@ -446,13 +463,15 @@ class Element : public FragmentOrElement {
   virtual nsIMozBrowserFrame* GetAsMozBrowserFrame() { return nullptr; }
 
   /**
-   * Is the attribute named stored in the mapped attributes?
-   *
-   * // XXXbz we use this method in HasAttributeDependentStyle, so svg
-   *    returns true here even though it stores nothing in the mapped
-   *    attributes.
+   * Is the attribute named aAttribute a mapped attribute?
    */
   NS_IMETHOD_(bool) IsAttributeMapped(const nsAtom* aAttribute) const;
+
+  nsresult BindToTree(BindContext&, nsINode& aParent) override;
+  void UnbindFromTree(bool aNullParent = true) override;
+
+  virtual nsMapRuleToAttributesFunc GetAttributeMappingFunction() const;
+  static void MapNoAttributesInto(mozilla::MappedDeclarationsBuilder&);
 
   /**
    * Get a hint that tells the style system what to do when
@@ -560,13 +579,55 @@ class Element : public FragmentOrElement {
   void ClearServoData() { ClearServoData(GetComposedDoc()); }
   void ClearServoData(Document* aDocument);
 
+  PopoverData* GetPopoverData() const {
+    const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mPopoverData.get() : nullptr;
+  }
+
+  PopoverData& EnsurePopoverData() {
+    if (auto* popoverData = GetPopoverData()) {
+      return *popoverData;
+    }
+    return CreatePopoverData();
+  }
+
+  bool IsAutoPopover() const;
+  bool IsPopoverOpen() const;
+
+  /**
+   * https://html.spec.whatwg.org/multipage/popover.html#topmost-popover-ancestor
+   */
+  Element* GetTopmostPopoverAncestor(const Element* aInvoker) const;
+
+  ElementAnimationData* GetAnimationData() const {
+    if (!MayHaveAnimations()) {
+      return nullptr;
+    }
+    const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mAnimations.get() : nullptr;
+  }
+
+  ElementAnimationData& EnsureAnimationData() {
+    if (auto* anim = GetAnimationData()) {
+      return *anim;
+    }
+    return CreateAnimationData();
+  }
+
+ private:
+  ElementAnimationData& CreateAnimationData();
+  PopoverData& CreatePopoverData();
+
+ public:
+  void ClearPopoverData();
+
   /**
    * Gets the custom element data used by web components custom element.
    * Custom element data is created at the first attempt to enqueue a callback.
    *
    * @return The custom element data or null if none.
    */
-  inline CustomElementData* GetCustomElementData() const {
+  CustomElementData* GetCustomElementData() const {
     if (!HasCustomElementData()) {
       return nullptr;
     }
@@ -598,6 +659,8 @@ class Element : public FragmentOrElement {
    * @param aDefinition The custom element definition.
    */
   virtual void SetCustomElementDefinition(CustomElementDefinition* aDefinition);
+
+  const AttrArray& GetAttrs() const { return mAttrs; }
 
   void SetDefined(bool aSet) {
     if (aSet) {
@@ -751,10 +814,6 @@ class Element : public FragmentOrElement {
 
   void UpdateEditableState(bool aNotify) override;
 
-  nsresult BindToTree(BindContext&, nsINode& aParent) override;
-
-  void UnbindFromTree(bool aNullParent = true) override;
-
   /**
    * Normalizes an attribute name and returns it as a nodeinfo if an attribute
    * with that name exists. This method is intended for character case
@@ -844,10 +903,7 @@ class Element : public FragmentOrElement {
    */
   bool GetAttr(int32_t aNameSpaceID, const nsAtom* aName,
                nsAString& aResult) const;
-
-  bool GetAttr(const nsAtom* aName, nsAString& aResult) const {
-    return GetAttr(kNameSpaceID_None, aName, aResult);
-  }
+  bool GetAttr(const nsAtom* aName, nsAString& aResult) const;
 
   /**
    * Determine if an attribute has been set (empty string or otherwise).
@@ -857,11 +913,11 @@ class Element : public FragmentOrElement {
    * @param aAttr the attribute name
    * @return whether an attribute exists
    */
-  inline bool HasAttr(int32_t aNameSpaceID, const nsAtom* aName) const;
-
-  bool HasAttr(const nsAtom* aAttr) const {
-    return HasAttr(kNameSpaceID_None, aAttr);
+  inline bool HasAttr(int32_t aNameSpaceID, const nsAtom* aName) const {
+    return mAttrs.HasAttr(aNameSpaceID, aName);
   }
+
+  bool HasAttr(const nsAtom* aAttr) const { return mAttrs.HasAttr(aAttr); }
 
   /**
    * Determine if an attribute has been set to a non-empty string value. If the
@@ -904,7 +960,6 @@ class Element : public FragmentOrElement {
   bool AttrValueIs(int32_t aNameSpaceID, const nsAtom* aName,
                    const nsAtom* aValue, nsCaseTreatment aCaseSensitive) const;
 
-  enum { ATTR_MISSING = -1, ATTR_VALUE_NO_MATCH = -2 };
   /**
    * Check whether this Element's given attribute has one of a given list of
    * values. If there is a match, we return the index in the list of the first
@@ -921,9 +976,9 @@ class Element : public FragmentOrElement {
    * @return ATTR_MISSING, ATTR_VALUE_NO_MATCH or the non-negative index
    * indicating the first value of aValues that matched
    */
-  typedef nsStaticAtom* const AttrValuesArray;
+  using AttrValuesArray = AttrArray::AttrValuesArray;
   int32_t FindAttrValueIn(int32_t aNameSpaceID, const nsAtom* aName,
-                          AttrValuesArray* aValues,
+                          AttrArray::AttrValuesArray* aValues,
                           nsCaseTreatment aCaseSensitive) const;
 
   /**
@@ -981,11 +1036,11 @@ class Element : public FragmentOrElement {
    * Remove an attribute so that it is no longer explicitly specified.
    *
    * @param aNameSpaceID the namespace id of the attribute
-   * @param aAttr the name of the attribute to unset
+   * @param aName the name of the attribute to unset
    * @param aNotify specifies whether or not the document should be
    * notified of the attribute change
    */
-  nsresult UnsetAttr(int32_t aNameSpaceID, nsAtom* aAttribute, bool aNotify);
+  nsresult UnsetAttr(int32_t aNameSpaceID, nsAtom* aName, bool aNotify);
 
   /**
    * Get the namespace / name / prefix of a given attribute.
@@ -1026,8 +1081,6 @@ class Element : public FragmentOrElement {
    * @return the number of attributes
    */
   uint32_t GetAttrCount() const { return mAttrs.AttrCount(); }
-
-  virtual bool IsNodeOfType(uint32_t aFlags) const override;
 
   /**
    * Get the class list of this element (this corresponds to the value of the
@@ -1094,19 +1147,25 @@ class Element : public FragmentOrElement {
                                       uint32_t aMapCount);
 
  protected:
+  inline bool GetAttr(const nsAtom* aName, DOMString& aResult) const {
+    MOZ_ASSERT(aResult.IsEmpty(), "Should have empty string coming in");
+    const nsAttrValue* val = mAttrs.GetAttr(aName);
+    if (!val) {
+      return false;  // DOMString comes pre-emptied.
+    }
+    val->ToString(aResult);
+    return true;
+  }
+
   inline bool GetAttr(int32_t aNameSpaceID, const nsAtom* aName,
                       DOMString& aResult) const {
-    NS_ASSERTION(nullptr != aName, "must have attribute name");
-    NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown,
-                 "must have a real namespace ID!");
     MOZ_ASSERT(aResult.IsEmpty(), "Should have empty string coming in");
     const nsAttrValue* val = mAttrs.GetAttr(aName, aNameSpaceID);
-    if (val) {
-      val->ToString(aResult);
-      return true;
+    if (!val) {
+      return false;  // DOMString comes pre-emptied.
     }
-    // else DOMString comes pre-emptied.
-    return false;
+    val->ToString(aResult);
+    return true;
   }
 
  public:
@@ -1124,20 +1183,16 @@ class Element : public FragmentOrElement {
   }
 
   void GetTagName(nsAString& aTagName) const { aTagName = NodeName(); }
-  void GetId(nsAString& aId) const {
-    GetAttr(kNameSpaceID_None, nsGkAtoms::id, aId);
-  }
-  void GetId(DOMString& aId) const {
-    GetAttr(kNameSpaceID_None, nsGkAtoms::id, aId);
-  }
+  void GetId(nsAString& aId) const { GetAttr(nsGkAtoms::id, aId); }
+  void GetId(DOMString& aId) const { GetAttr(nsGkAtoms::id, aId); }
   void SetId(const nsAString& aId) {
     SetAttr(kNameSpaceID_None, nsGkAtoms::id, aId, true);
   }
   void GetClassName(nsAString& aClassName) {
-    GetAttr(kNameSpaceID_None, nsGkAtoms::_class, aClassName);
+    GetAttr(nsGkAtoms::_class, aClassName);
   }
   void GetClassName(DOMString& aClassName) {
-    GetAttr(kNameSpaceID_None, nsGkAtoms::_class, aClassName);
+    GetAttr(nsGkAtoms::_class, aClassName);
   }
   void SetClassName(const nsAString& aClassName) {
     SetAttr(kNameSpaceID_None, nsGkAtoms::_class, aClassName, true);
@@ -1202,6 +1257,18 @@ class Element : public FragmentOrElement {
       ErrorResult& aError);
   already_AddRefed<nsIHTMLCollection> GetElementsByClassName(
       const nsAString& aClassNames);
+
+  /**
+   * Returns attribute associated element for the given attribute name, see
+   * https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#attr-associated-element
+   */
+  Element* GetAttrAssociatedElement(nsAtom* aAttr) const;
+
+  /**
+   * Sets an attribute element for the given attribute.
+   * https://html.spec.whatwg.org/multipage/common-dom-interfaces.html#explicitly-set-attr-element
+   */
+  void ExplicitlySetAttrElement(nsAtom* aAttr, Element* aElement);
 
   PseudoStyleType GetPseudoElementType() const {
     nsresult rv = NS_OK;
@@ -1310,6 +1377,47 @@ class Element : public FragmentOrElement {
     const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
     return slots ? slots->mShadowRoot.get() : nullptr;
   }
+
+  const Maybe<float> GetLastRememberedBSize() const {
+    const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mLastRememberedBSize : Nothing();
+  }
+  const Maybe<float> GetLastRememberedISize() const {
+    const nsExtendedDOMSlots* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mLastRememberedISize : Nothing();
+  }
+  bool HasLastRememberedBSize() const {
+    return GetLastRememberedBSize().isSome();
+  }
+  bool HasLastRememberedISize() const {
+    return GetLastRememberedISize().isSome();
+  }
+
+  const Maybe<ContentRelevancy> GetContentRelevancy() const {
+    const auto* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mContentRelevancy : Nothing();
+  }
+  void SetContentRelevancy(ContentRelevancy relevancy) {
+    ExtendedDOMSlots()->mContentRelevancy = Some(relevancy);
+  }
+
+  const Maybe<bool> GetVisibleForContentVisibility() const {
+    const auto* slots = GetExistingExtendedDOMSlots();
+    return slots ? slots->mVisibleForContentVisibility : Nothing();
+  }
+  void SetVisibleForContentVisibility(bool visible) {
+    ExtendedDOMSlots()->mVisibleForContentVisibility = Some(visible);
+  }
+
+  void ClearContentRelevancy() {
+    if (auto* slots = GetExistingExtendedDOMSlots()) {
+      slots->mContentRelevancy.reset();
+      slots->mVisibleForContentVisibility.reset();
+    }
+  }
+
+  // https://drafts.csswg.org/cssom-view-1/#dom-element-checkvisibility
+  MOZ_CAN_RUN_SCRIPT bool CheckVisibility(const CheckVisibilityOptions&);
 
  private:
   // DO NOT USE THIS FUNCTION directly in C++. This function is supposed to be
@@ -1546,9 +1654,7 @@ class Element : public FragmentOrElement {
    * @param aAttr    name of attribute.
    * @param aValue   Boolean value of attribute.
    */
-  bool GetBoolAttr(nsAtom* aAttr) const {
-    return HasAttr(kNameSpaceID_None, aAttr);
-  }
+  bool GetBoolAttr(nsAtom* aAttr) const { return HasAttr(aAttr); }
 
   /**
    * Sets value of boolean attribute by removing attribute or setting it to
@@ -1729,7 +1835,7 @@ class Element : public FragmentOrElement {
    * @param aParsedValue  parsed new value of attribute. Replaced by the
    *                      old value of the attribute. This old value is only
    *                      useful if either it or the new value is StoresOwnData.
-   * @param aMaybeScriptedPrincipal
+   * @param aSubjectPrincipal
    *                      the principal of the scripted caller responsible for
    *                      setting the attribute, or null if no scripted caller
    *                      can be determined. A null value here does not
@@ -1743,12 +1849,15 @@ class Element : public FragmentOrElement {
    * @param aNotify       should we notify document-observers?
    * @param aCallAfterSetAttr should we call AfterSetAttr?
    * @param aComposedDocument The current composed document of the element.
+   * @param aGuard        For making sure that this is called with a
+   *                      mozAutoDocUpdate instance, this is here.  Specify
+   *                      an instance of it which you created for the call.
    */
   nsresult SetAttrAndNotify(int32_t aNamespaceID, nsAtom* aName,
                             nsAtom* aPrefix, const nsAttrValue* aOldValue,
                             nsAttrValue& aParsedValue,
-                            nsIPrincipal* aMaybeScriptedPrincipal,
-                            uint8_t aModType, bool aFireMutation, bool aNotify,
+                            nsIPrincipal* aSubjectPrincipal, uint8_t aModType,
+                            bool aFireMutation, bool aNotify,
                             bool aCallAfterSetAttr, Document* aComposedDocument,
                             const mozAutoDocUpdate& aGuard);
 
@@ -1786,27 +1895,6 @@ class Element : public FragmentOrElement {
                               nsAttrValue& aResult);
 
   /**
-   * Try to set the attribute as a mapped attribute, if applicable.  This will
-   * only be called for attributes that are in the null namespace and only on
-   * attributes that returned true when passed to IsAttributeMapped.  The
-   * caller will not try to set the attr in any other way if this method
-   * returns true (the value of aRetval does not matter for that purpose).
-   *
-   * @param aName the name of the attribute
-   * @param aValue the nsAttrValue to set. Will be swapped with the existing
-   *               value of the attribute if the attribute already exists.
-   * @param [out] aValueWasSet If the attribute was not set previously,
-   *                           aValue will be swapped with an empty attribute
-   *                           and aValueWasSet will be set to false. Otherwise,
-   *                           aValueWasSet will be set to true and aValue will
-   *                           contain the previous value set.
-   * @param [out] aRetval the nsresult status of the operation, if any.
-   * @return true if the setting was attempted, false otherwise.
-   */
-  virtual bool SetAndSwapMappedAttribute(nsAtom* aName, nsAttrValue& aValue,
-                                         bool* aValueWasSet, nsresult* aRetval);
-
-  /**
    * Hook that is called by Element::SetAttr to allow subclasses to
    * deal with attribute sets.  This will only be called after we verify that
    * we're actually doing an attr set and will be called before
@@ -1820,9 +1908,8 @@ class Element : public FragmentOrElement {
    *        will be null.
    * @param aNotify Whether we plan to notify document observers.
    */
-  virtual nsresult BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                 const nsAttrValueOrString* aValue,
-                                 bool aNotify);
+  virtual void BeforeSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                             const nsAttrValue* aValue, bool aNotify);
 
   /**
    * Hook that is called by Element::SetAttr to allow subclasses to
@@ -1846,11 +1933,11 @@ class Element : public FragmentOrElement {
    *        principal is directly responsible for the attribute change.
    * @param aNotify Whether we plan to notify document observers.
    */
-  virtual nsresult AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
-                                const nsAttrValue* aValue,
-                                const nsAttrValue* aOldValue,
-                                nsIPrincipal* aMaybeScriptedPrincipal,
-                                bool aNotify);
+  virtual void AfterSetAttr(int32_t aNamespaceID, nsAtom* aName,
+                            const nsAttrValue* aValue,
+                            const nsAttrValue* aOldValue,
+                            nsIPrincipal* aMaybeScriptedPrincipal,
+                            bool aNotify);
 
   /**
    * This function shall be called just before the id attribute changes. It will
@@ -1868,7 +1955,7 @@ class Element : public FragmentOrElement {
    * @param aValue the new id value. Will be null if the id is being unset.
    */
   void PreIdMaybeChange(int32_t aNamespaceID, nsAtom* aName,
-                        const nsAttrValueOrString* aValue);
+                        const nsAttrValue* aValue);
 
   /**
    * This function shall be called just after the id attribute changes. It will
@@ -1901,11 +1988,9 @@ class Element : public FragmentOrElement {
    *        a parsed nsAttrValue.
    * @param aNotify Whether we plan to notify document observers.
    */
-  // Note that this is inlined so that when subclasses call it it gets
-  // inlined.  Those calls don't go through a vtable.
-  virtual nsresult OnAttrSetButNotChanged(int32_t aNamespaceID, nsAtom* aName,
-                                          const nsAttrValueOrString& aValue,
-                                          bool aNotify);
+  virtual void OnAttrSetButNotChanged(int32_t aNamespaceID, nsAtom* aName,
+                                      const nsAttrValueOrString& aValue,
+                                      bool aNotify);
 
   /**
    * Hook to allow subclasses to produce a different EventListenerManager if
@@ -1994,6 +2079,8 @@ class Element : public FragmentOrElement {
    */
   virtual void GetLinkTarget(nsAString& aTarget);
 
+  virtual bool Translate() const;
+
  protected:
   enum class ReparseAttributes { No, Yes };
   /**
@@ -2060,14 +2147,6 @@ class Element : public FragmentOrElement {
 
 NS_DEFINE_STATIC_IID_ACCESSOR(Element, NS_ELEMENT_IID)
 
-inline bool Element::HasAttr(int32_t aNameSpaceID, const nsAtom* aName) const {
-  NS_ASSERTION(nullptr != aName, "must have attribute name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown,
-               "must have a real namespace ID!");
-
-  return mAttrs.IndexOfAttr(aName, aNameSpaceID) >= 0;
-}
-
 inline bool Element::HasNonEmptyAttr(int32_t aNameSpaceID,
                                      const nsAtom* aName) const {
   MOZ_ASSERT(aNameSpaceID > kNameSpaceID_Unknown, "Must have namespace");
@@ -2080,22 +2159,13 @@ inline bool Element::HasNonEmptyAttr(int32_t aNameSpaceID,
 inline bool Element::AttrValueIs(int32_t aNameSpaceID, const nsAtom* aName,
                                  const nsAString& aValue,
                                  nsCaseTreatment aCaseSensitive) const {
-  NS_ASSERTION(aName, "Must have attr name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
-
-  const nsAttrValue* val = mAttrs.GetAttr(aName, aNameSpaceID);
-  return val && val->Equals(aValue, aCaseSensitive);
+  return mAttrs.AttrValueIs(aNameSpaceID, aName, aValue, aCaseSensitive);
 }
 
 inline bool Element::AttrValueIs(int32_t aNameSpaceID, const nsAtom* aName,
                                  const nsAtom* aValue,
                                  nsCaseTreatment aCaseSensitive) const {
-  NS_ASSERTION(aName, "Must have attr name");
-  NS_ASSERTION(aNameSpaceID != kNameSpaceID_Unknown, "Must have namespace");
-  NS_ASSERTION(aValue, "Null value atom");
-
-  const nsAttrValue* val = mAttrs.GetAttr(aName, aNameSpaceID);
-  return val && val->Equals(aValue, aCaseSensitive);
+  return mAttrs.AttrValueIs(aNameSpaceID, aName, aValue, aCaseSensitive);
 }
 
 }  // namespace dom

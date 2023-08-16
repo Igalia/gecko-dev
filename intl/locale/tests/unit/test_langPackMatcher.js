@@ -8,7 +8,9 @@ const { getAddonAndLocalAPIsMocker } = ChromeUtils.importESModule(
 const { LangPackMatcher } = ChromeUtils.importESModule(
   "resource://gre/modules/LangPackMatcher.sys.mjs"
 );
-const { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
 
 const sandbox = sinon.createSandbox();
 const mockAddonAndLocaleAPIs = getAddonAndLocalAPIsMocker(this, sandbox);
@@ -193,9 +195,17 @@ add_task(async function test_negotiateLangPacks() {
       // Match with a script. zh-Hans-CN is the locale used with simplified
       // Chinese scripts, while zh-CN uses the Latin script.
       systemLocale: "zh-Hans-CN",
-      availableLangPacks: ["en", "en-US", "zh", "zh-CN", "zh-Hans-CN"],
+      availableLangPacks: ["en", "en-US", "zh", "zh-CN", "zh-TW", "zh-Hans-CN"],
       expectedLangPack: "zh-Hans-CN",
       expectedDisplayName: "Chinese (Hans, China)",
+    },
+    {
+      // Match excluding script but matching region. zh-Hant-TW should
+      // match zh-TW before zh-CN.
+      systemLocale: "zh-Hant-TW",
+      availableLangPacks: ["en", "zh", "zh-CN", "zh-TW"],
+      expectedLangPack: "zh-TW",
+      expectedDisplayName: "正體中文",
     },
     {
       // No reasonable match could be found.
@@ -260,7 +270,8 @@ add_task(async function test_ensureLangPackInstalled() {
     appLocale: "en-US",
   });
 
-  const negotiatePromise = LangPackMatcher.negotiateLangPackForLanguageMismatch();
+  const negotiatePromise =
+    LangPackMatcher.negotiateLangPackForLanguageMismatch();
   resolveLangPacks(["es-ES"]);
   const { langPack } = await negotiatePromise;
 

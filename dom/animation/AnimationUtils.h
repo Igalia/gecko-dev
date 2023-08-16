@@ -31,7 +31,7 @@ class AnimationUtils {
   using Document = dom::Document;
 
   static dom::Nullable<double> TimeDurationToDouble(
-      const dom::Nullable<TimeDuration>& aTime) {
+      const dom::Nullable<TimeDuration>& aTime, RTPCallerType aRTPCallerType) {
     dom::Nullable<double> result;
 
     if (!aTime.IsNull()) {
@@ -40,7 +40,7 @@ class AnimationUtils {
       // only clamping for RFP mode. RFP mode gives a much lower time precision,
       // so we accept the security leak here for now
       result.SetValue(nsRFPService::ReduceTimePrecisionAsMSecsRFPOnly(
-          aTime.Value().ToMilliseconds(), 0));
+          aTime.Value().ToMilliseconds(), 0, aRTPCallerType));
     }
 
     return result;
@@ -108,6 +108,25 @@ class AnimationUtils {
     TimeDuration diff = aFirst >= aSecond ? aFirst - aSecond : aSecond - aFirst;
     return diff <= TimeDuration::FromMicroseconds(1);
   }
+
+  // Returns the target element for restyling.
+  //
+  // If |aPseudoType| is ::after, ::before or ::marker, returns the generated
+  // content element of which |aElement| is the parent. If |aPseudoType| is any
+  // other pseudo type (other than PseudoStyleType::NotPseudo) returns nullptr.
+  // Otherwise, returns |aElement|.
+  static dom::Element* GetElementForRestyle(dom::Element* aElement,
+                                            PseudoStyleType aPseudoType);
+
+  // Returns the pair of |Element, PseudoStyleType| from an element which could
+  // be an element or a pseudo element (i.e. an element used for restyling and
+  // DOM tree).
+  //
+  // Animation module usually uses a pair of (Element*, PseudoStyleType) to
+  // represent the animation target, and the |Element| in the pair is the
+  // generated content container if it's a pseudo element.
+  static std::pair<const dom::Element*, PseudoStyleType> GetElementPseudoPair(
+      const dom::Element* aElementOrPseudo);
 };
 
 }  // namespace mozilla

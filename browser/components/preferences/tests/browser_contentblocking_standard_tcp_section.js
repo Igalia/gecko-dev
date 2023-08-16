@@ -5,20 +5,16 @@
  * Tests the TCP info box in the ETP standard section of about:preferences#privacy.
  */
 
-ChromeUtils.defineModuleGetter(
-  this,
-  "Preferences",
-  "resource://gre/modules/Preferences.jsm"
-);
+ChromeUtils.defineESModuleGetters(this, {
+  Preferences: "resource://gre/modules/Preferences.sys.mjs",
+});
 
 const COOKIE_BEHAVIOR_PREF = "network.cookie.cookieBehavior";
 const CAT_PREF = "browser.contentblocking.category";
 
 const LEARN_MORE_URL =
   Services.urlFormatter.formatURLPref("app.support.baseURL") +
-  Services.prefs.getStringPref(
-    "privacy.restrict3rdpartystorage.preferences.learnMoreURLSuffix"
-  );
+  "total-cookie-protection";
 
 const {
   BEHAVIOR_REJECT_TRACKER,
@@ -131,12 +127,12 @@ async function testTCPSection({ dFPIEnabled }) {
   Services.prefs.setStringPref(CAT_PREF, "standard");
 }
 
-add_setup(async function() {
+add_setup(async function () {
   // Register cleanup function to restore default cookie behavior.
   const defaultPrefs = Services.prefs.getDefaultBranch("");
   const previousDefaultCB = defaultPrefs.getIntPref(COOKIE_BEHAVIOR_PREF);
 
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     defaultPrefs.setIntPref(COOKIE_BEHAVIOR_PREF, previousDefaultCB);
   });
 });

@@ -3,11 +3,11 @@
  */
 "use strict";
 
-const { SiteDataManager } = ChromeUtils.import(
-  "resource:///modules/SiteDataManager.jsm"
+const { SiteDataManager } = ChromeUtils.importESModule(
+  "resource:///modules/SiteDataManager.sys.mjs"
 );
-const { SiteDataTestUtils } = ChromeUtils.import(
-  "resource://testing-common/SiteDataTestUtils.jsm"
+const { SiteDataTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/SiteDataTestUtils.sys.mjs"
 );
 
 const EXAMPLE_ORIGIN = "https://www.example.com";

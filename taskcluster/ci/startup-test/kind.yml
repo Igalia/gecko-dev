@@ -48,7 +48,7 @@ jobs:
             upstream_kind: build-signing
             upstream_artifact: target.tar.bz2
             binary: firefox
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: ubuntu1804-test}
         shipping-product: firefox
@@ -67,7 +67,7 @@ jobs:
             upstream_kind: build-signing
             upstream_artifact: target.tar.bz2
             binary: firefox
-        worker-type: b-linux
+        worker-type: b-linux-gcp
         worker:
             docker-image: {in-tree: ubuntu1804-test}
         shipping-product: firefox
@@ -103,7 +103,7 @@ jobs:
             upstream_kind: repackage-signing
             upstream_artifact: target.installer.exe
             binary: core/firefox.exe
-        worker-type: win10-64-2004-source
+        worker-type: win11-64-2009-source
         shipping-product: firefox
         attributes:
             build_platform: win32-shippable
@@ -120,7 +120,7 @@ jobs:
             upstream_kind: repackage-signing
             upstream_artifact: target.installer.exe
             binary: core/firefox.exe
-        worker-type: win10-64-2004-source
+        worker-type: win11-64-2009-source
         shipping-product: firefox
         attributes:
             build_platform: win64-shippable

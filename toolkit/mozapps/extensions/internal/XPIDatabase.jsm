@@ -14,14 +14,15 @@
 
 /* eslint "valid-jsdoc": [2, {requireReturn: false, requireReturnDescription: false, prefer: {return: "returns"}}] */
 
-var EXPORTED_SYMBOLS = ["AddonInternal", "XPIDatabase", "XPIDatabaseReconcile"];
+var EXPORTED_SYMBOLS = [
+  "AddonInternal",
+  "BuiltInThemesHelpers",
+  "XPIDatabase",
+  "XPIDatabaseReconcile",
+];
 
 const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
-);
-
-const { FileUtils } = ChromeUtils.import(
-  "resource://gre/modules/FileUtils.jsm"
 );
 
 const lazy = {};
@@ -30,17 +31,20 @@ XPCOMUtils.defineLazyServiceGetters(lazy, {
   ThirdPartyUtil: ["@mozilla.org/thirdpartyutil;1", "mozIThirdPartyUtil"],
 });
 
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  AddonManager: "resource://gre/modules/AddonManager.jsm",
-  AddonManagerPrivate: "resource://gre/modules/AddonManager.jsm",
-  AddonRepository: "resource://gre/modules/addons/AddonRepository.jsm",
-  AddonSettings: "resource://gre/modules/addons/AddonSettings.jsm",
-  DeferredTask: "resource://gre/modules/DeferredTask.jsm",
-  ExtensionData: "resource://gre/modules/Extension.jsm",
-  ExtensionUtils: "resource://gre/modules/ExtensionUtils.jsm",
-  PermissionsUtils: "resource://gre/modules/PermissionsUtils.jsm",
+ChromeUtils.defineESModuleGetters(lazy, {
+  AddonManager: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonManagerPrivate: "resource://gre/modules/AddonManager.sys.mjs",
+  AddonRepository: "resource://gre/modules/addons/AddonRepository.sys.mjs",
+  AddonSettings: "resource://gre/modules/addons/AddonSettings.sys.mjs",
+  Blocklist: "resource://gre/modules/Blocklist.sys.mjs",
+  DeferredTask: "resource://gre/modules/DeferredTask.sys.mjs",
+  ExtensionData: "resource://gre/modules/Extension.sys.mjs",
+  ExtensionUtils: "resource://gre/modules/ExtensionUtils.sys.mjs",
+  PermissionsUtils: "resource://gre/modules/PermissionsUtils.sys.mjs",
+  QuarantinedDomains: "resource://gre/modules/ExtensionPermissions.sys.mjs",
+});
 
-  Blocklist: "resource://gre/modules/Blocklist.jsm",
+XPCOMUtils.defineLazyModuleGetters(lazy, {
   UpdateChecker: "resource://gre/modules/addons/XPIInstall.jsm",
   XPIInstall: "resource://gre/modules/addons/XPIInstall.jsm",
   XPIInternal: "resource://gre/modules/addons/XPIProvider.jsm",
@@ -48,24 +52,79 @@ XPCOMUtils.defineLazyModuleGetters(lazy, {
   verifyBundleSignedState: "resource://gre/modules/addons/XPIInstall.jsm",
 });
 
-// WARNING: BuiltInThemes.jsm may be provided by the host application (e.g.
+// WARNING: BuiltInThemes.sys.mjs may be provided by the host application (e.g.
 // Firefox), or it might not exist at all. Use with caution, as we don't
-// want things to completely fall if that module can't be loaded.
+// want things to completely fail if that module can't be loaded.
 XPCOMUtils.defineLazyGetter(lazy, "BuiltInThemes", () => {
   try {
-    let { BuiltInThemes } = ChromeUtils.import(
-      "resource:///modules/BuiltInThemes.jsm"
+    let { BuiltInThemes } = ChromeUtils.importESModule(
+      "resource:///modules/BuiltInThemes.sys.mjs"
     );
     return BuiltInThemes;
   } catch (e) {
-    Cu.reportError(`Unable to load BuiltInThemes.jsm: ${e}`);
+    Cu.reportError(`Unable to load BuiltInThemes.sys.mjs: ${e}`);
   }
   return undefined;
 });
 
+// A set of helpers to account from a single place that in some builds
+// (e.g. GeckoView and Thunderbird) the BuiltInThemes module may either
+// not be bundled at all or not be exposing the same methods provided
+// by the module as defined in Firefox Desktop.
+const BuiltInThemesHelpers = {
+  getLocalizedColorwayGroupName(addonId) {
+    return lazy.BuiltInThemes?.getLocalizedColorwayGroupName?.(addonId);
+  },
+
+  getLocalizedColorwayDescription(addonId) {
+    return lazy.BuiltInThemes?.getLocalizedColorwayGroupDescription?.(addonId);
+  },
+
+  isActiveTheme(addonId) {
+    return lazy.BuiltInThemes?.isActiveTheme?.(addonId);
+  },
+
+  isRetainedExpiredTheme(addonId) {
+    return lazy.BuiltInThemes?.isRetainedExpiredTheme?.(addonId);
+  },
+
+  themeIsExpired(addonId) {
+    return lazy.BuiltInThemes?.themeIsExpired?.(addonId);
+  },
+
+  // Helper function called form XPInstall.jsm to remove from the retained themes
+  // list the built-in colorways theme that have been migrated to a non built-in.
+  unretainMigratedColorwayTheme(addonId) {
+    lazy.BuiltInThemes?.unretainMigratedColorwayTheme?.(addonId);
+  },
+};
+
+XPCOMUtils.defineLazyPreferenceGetter(
+  BuiltInThemesHelpers,
+  "isColorwayMigrationEnabled",
+  "browser.theme.colorway-migration",
+  false
+);
+
+// A temporary hidden pref just meant to be used as a last resort, in case
+// we need to force-disable the "per-addon quarantined domains user controls"
+// feature during the beta cycle, e.g. if unexpected issues are caught late and
+// it shouldn't  ride the train.
+//
+// TODO(Bug 1839616): remove this pref after the user controls features have been
+// released.
+XPCOMUtils.defineLazyPreferenceGetter(
+  lazy,
+  "isQuarantineUIDisabled",
+  "extensions.quarantinedDomains.uiDisabled",
+  false
+);
+
 const { nsIBlocklistService } = Ci;
 
-const { Log } = ChromeUtils.import("resource://gre/modules/Log.jsm");
+const { Log } = ChromeUtils.importESModule(
+  "resource://gre/modules/Log.sys.mjs"
+);
 const LOGGER_ID = "addons.xpi-utils";
 
 const nsIFile = Components.Constructor(
@@ -78,7 +137,6 @@ const nsIFile = Components.Constructor(
 // (Requires AddonManager.jsm)
 var logger = Log.repository.getLogger(LOGGER_ID);
 
-const KEY_PROFILEDIR = "ProfD";
 const FILE_JSON_DB = "extensions.json";
 
 const PREF_DB_SCHEMA = "extensions.databaseSchema";
@@ -175,7 +233,8 @@ const SIGNED_TYPES = new Set([
   "extension",
   "locale",
   "theme",
-  "sitepermission",
+  // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+  "sitepermission-deprecated",
 ]);
 
 // Time to wait before async save of XPI JSON database, in milliseconds
@@ -257,7 +316,7 @@ function copyProperties(aObject, aProperties, aTarget) {
   if (!aTarget) {
     aTarget = {};
   }
-  aProperties.forEach(function(aProp) {
+  aProperties.forEach(function (aProp) {
     if (aProp in aObject) {
       aTarget[aProp] = aObject[aProp];
     }
@@ -350,6 +409,14 @@ class AddonInternal {
     return lazy.XPIInternal.maybeResolveURI(Services.io.newURI(this.rootURI));
   }
 
+  get isBuiltinColorwayTheme() {
+    return (
+      this.type === "theme" &&
+      this.location.isBuiltin &&
+      this.id.endsWith("-colorway@mozilla.org")
+    );
+  }
+
   /**
    * Validate a list of origins are contained in the installOrigins array (defined in manifest.json).
    *
@@ -380,7 +447,8 @@ class AddonInternal {
       return false;
     }
 
-    if (this.type == "sitepermission") {
+    // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+    if (this.type == "sitepermission-deprecated") {
       // NOTE: This may move into a check for all addons later.
       for (let origin of installOrigins) {
         let host = new URL(origin).host;
@@ -822,6 +890,20 @@ class AddonInternal {
       if (!isSystem && !this.location.isLinkedAddon(this.id)) {
         permissions |= lazy.AddonManager.PERM_CAN_UPGRADE;
       }
+      // Allow active and retained colorways builtin themes to be updated to the same theme hosted on AMO
+      // (the PERM_CAN_UPGRADE permission will ensure we will be asking AMO for an update,
+      // then the AMO addon xpi will be installed in the profile location, overridden in
+      // the `createUpdate` defined in `XPIInstall.jsm` and called from `UpdateChecker`
+      // `onUpdateCheckComplete` method).
+      if (
+        this.isBuiltinColorwayTheme &&
+        BuiltInThemesHelpers.isColorwayMigrationEnabled &&
+        BuiltInThemesHelpers.themeIsExpired(this.id) &&
+        (BuiltInThemesHelpers.isActiveTheme(this.id) ||
+          BuiltInThemesHelpers.isRetainedExpiredTheme(this.id))
+      ) {
+        permissions |= lazy.AddonManager.PERM_CAN_UPGRADE;
+      }
     }
 
     // We allow uninstall of legacy sideloaded extensions, even when in locked locations,
@@ -840,7 +922,9 @@ class AddonInternal {
     // when the extension has opted out or it gets the permission automatically
     // on every extension startup (as system, privileged and builtin addons).
     if (
-      (this.type === "extension" || this.type == "sitepermission") &&
+      (this.type === "extension" ||
+        // TODO(Bug 1789718): Remove after the deprecated XPIProvider-based implementation is also removed.
+        this.type == "sitepermission-deprecated") &&
       this.incognito !== "not_allowed" &&
       this.signedState !== lazy.AddonManager.SIGNEDSTATE_PRIVILEGED &&
       this.signedState !== lazy.AddonManager.SIGNEDSTATE_SYSTEM &&
@@ -891,6 +975,33 @@ AddonWrapper = class {
 
   get __AddonInternal__() {
     return addonFor(this);
+  }
+
+  get quarantineIgnoredByApp() {
+    return this.isPrivileged || !!this.recommendationStates?.length;
+  }
+
+  get quarantineIgnoredByUser() {
+    // NOTE: confirm if this getter could be replaced by a
+    // lazy preference getter and the addon wrapper to not be
+    // kept around longer by the pref observer registered
+    // internally by the lazy getter.
+    return lazy.QuarantinedDomains.isUserAllowedAddonId(this.id);
+  }
+
+  set quarantineIgnoredByUser(val) {
+    lazy.QuarantinedDomains.setUserAllowedAddonIdPref(this.id, !!val);
+  }
+
+  get canChangeQuarantineIgnored() {
+    // Never show the quarantined domains user controls UI if the
+    // quarantined domains feature is disabled.
+    return (
+      WebExtensionPolicy.quarantinedDomainsEnabled &&
+      !lazy.isQuarantineUIDisabled &&
+      this.type === "extension" &&
+      !this.quarantineIgnoredByApp
+    );
   }
 
   get seen() {
@@ -1047,6 +1158,10 @@ AddonWrapper = class {
     return [];
   }
 
+  // NOTE: this boolean getter doesn't return true for all recommendation
+  // states at the moment. For the states actually supported on the autograph
+  // side see:
+  // https://github.com/mozilla-services/autograph/blob/8a34847a/autograph.yaml#L1456-L1460
   get isRecommended() {
     return this.recommendationStates.includes("recommended");
   }
@@ -1455,8 +1570,9 @@ function defineAddonWrapperProperty(name, getter) {
   "sitePermissions",
   "siteOrigin",
   "isCorrectlySigned",
-].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+  "isBuiltinColorwayTheme",
+].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
     return aProp in addon ? addon[aProp] : undefined;
   });
@@ -1471,8 +1587,8 @@ function defineAddonWrapperProperty(name, getter) {
   "reviewCount",
   "reviewURL",
   "weeklyDownloads",
-].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
     if (addon._repositoryAddon) {
       return addon._repositoryAddon[aProp];
@@ -1482,15 +1598,15 @@ function defineAddonWrapperProperty(name, getter) {
   });
 });
 
-["installDate", "updateDate"].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+["installDate", "updateDate"].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
     // installDate is always set, updateDate is sometimes missing.
     return new Date(addon[aProp] ?? addon.installDate);
   });
 });
 
-defineAddonWrapperProperty("signedDate", function() {
+defineAddonWrapperProperty("signedDate", function () {
   let addon = addonFor(this);
   let { signedDate } = addon;
   if (signedDate != null) {
@@ -1499,8 +1615,8 @@ defineAddonWrapperProperty("signedDate", function() {
   return null;
 });
 
-["sourceURI", "releaseNotesURI"].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+["sourceURI", "releaseNotesURI"].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
 
     // Temporary Installed Addons do not have a "sourceURI",
@@ -1529,8 +1645,8 @@ const updatedAddonFluentIds = new Map([
   ["extension-default-theme-name", "extension-default-theme-name-auto"],
 ]);
 
-["name", "description", "creator", "homepageURL"].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+["name", "description", "creator", "homepageURL"].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
 
     let formattedMessage;
@@ -1548,7 +1664,7 @@ const updatedAddonFluentIds = new Map([
         // FIXME: Depending on BuiltInThemes here is sort of a hack. Bug 1733466
         // would provide a more generalized way of doing this.
         if (aProp == "description") {
-          return lazy.BuiltInThemes?.getLocalizedColorwayDescription(addon.id);
+          return BuiltInThemesHelpers.getLocalizedColorwayDescription(addon.id);
         }
         // Colorway collections are usually divided into and presented as
         // "groups". A group either contains closely related colorways, e.g.
@@ -1560,9 +1676,8 @@ const updatedAddonFluentIds = new Map([
         // {colorwayGroupName}-colorway@mozilla.org). L10n for colorway group
         // names is optional and falls back on the unlocalized name from the
         // theme's manifest. The intensity part, if present, must be localized.
-        let localizedColorwayGroupName = lazy.BuiltInThemes?.getLocalizedColorwayGroupName(
-          addon.id
-        );
+        let localizedColorwayGroupName =
+          BuiltInThemesHelpers.getLocalizedColorwayGroupName(addon.id);
         let [colorwayGroupName, intensity] = addonIdPrefix.split("-", 2);
         if (intensity == colorwaySuffix) {
           // This theme doesn't have an intensity.
@@ -1614,8 +1729,8 @@ const updatedAddonFluentIds = new Map([
   });
 });
 
-["developers", "translators", "contributors"].forEach(function(aProp) {
-  defineAddonWrapperProperty(aProp, function() {
+["developers", "translators", "contributors"].forEach(function (aProp) {
+  defineAddonWrapperProperty(aProp, function () {
     let addon = addonFor(this);
 
     let [results, usedRepository] = chooseValue(
@@ -1625,7 +1740,7 @@ const updatedAddonFluentIds = new Map([
     );
 
     if (results && !usedRepository) {
-      results = results.map(function(aResult) {
+      results = results.map(function (aResult) {
         return new lazy.AddonManagerPrivate.AddonAuthor(aResult);
       });
     }
@@ -1677,7 +1792,7 @@ const XPIDatabase = {
   // true if the database connection has been opened
   initialized: false,
   // The database file
-  jsonFile: FileUtils.getFile(KEY_PROFILEDIR, [FILE_JSON_DB], true),
+  jsonFilePath: PathUtils.join(PathUtils.profileDir, FILE_JSON_DB),
   rebuildingDatabase: false,
   syncLoadingDB: false,
   // Add-ons from the database in locations which are no longer
@@ -1705,8 +1820,9 @@ const XPIDatabase = {
 
   async _saveNow() {
     try {
-      let path = this.jsonFile.path;
-      await IOUtils.writeJSON(path, this, { tmpPath: `${path}.tmp` });
+      await IOUtils.writeJSON(this.jsonFilePath, this, {
+        tmpPath: `${this.jsonFilePath}.tmp`,
+      });
 
       if (!this._schemaVersionSet) {
         // Update the XPIDB schema version preference the first time we
@@ -1920,7 +2036,7 @@ const XPIDatabase = {
    *        (if false, caller is XPIProvider.checkForChanges() which will rebuild)
    * @returns {Promise<AddonDB>}
    *        Resolves to the Map of loaded JSON data stored in
-   *        this.addonDB; never rejects.
+   *        this.addonDB; rejects in case of shutdown.
    */
   asyncLoadDB(aRebuildOnError = true) {
     // Already started (and possibly finished) loading
@@ -1928,10 +2044,27 @@ const XPIDatabase = {
       return this._dbPromise;
     }
 
-    logger.debug(`Starting async load of XPI database ${this.jsonFile.path}`);
+    if (lazy.XPIProvider._closing) {
+      // use an Error here so we get a stack trace.
+      let err = new Error(
+        "XPIDatabase.asyncLoadDB attempt after XPIProvider shutdown."
+      );
+      logger.warn("Fail to load AddonDB: ${error}", { error: err });
+      lazy.AddonManagerPrivate.recordSimpleMeasure(
+        "XPIDB_late_load",
+        Log.stackTrace(err)
+      );
+      this._dbPromise = Promise.reject(err);
+
+      lazy.XPIInternal.resolveDBReady(this._dbPromise);
+
+      return this._dbPromise;
+    }
+
+    logger.debug(`Starting async load of XPI database ${this.jsonFilePath}`);
     this._dbPromise = (async () => {
       try {
-        let json = await IOUtils.readJSON(this.jsonFile.path);
+        let json = await IOUtils.readJSON(this.jsonFilePath);
 
         logger.debug("Finished async read of XPI database, parsing...");
         await this.maybeIdleDispatch();
@@ -1943,7 +2076,7 @@ const XPIDatabase = {
           }
         } else {
           logger.warn(
-            `Extensions database ${this.jsonFile.path} exists but is not readable; rebuilding`,
+            `Extensions database ${this.jsonFilePath} exists but is not readable; rebuilding`,
             error
           );
           this._loadError = error;

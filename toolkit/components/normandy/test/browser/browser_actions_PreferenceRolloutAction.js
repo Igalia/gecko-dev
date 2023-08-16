@@ -1,19 +1,16 @@
 "use strict";
 
-const { TelemetryEnvironment } = ChromeUtils.import(
-  "resource://gre/modules/TelemetryEnvironment.jsm"
+const { BaseAction } = ChromeUtils.importESModule(
+  "resource://normandy/actions/BaseAction.sys.mjs"
 );
-const { BaseAction } = ChromeUtils.import(
-  "resource://normandy/actions/BaseAction.jsm"
+const { PreferenceRolloutAction } = ChromeUtils.importESModule(
+  "resource://normandy/actions/PreferenceRolloutAction.sys.mjs"
 );
-const { PreferenceRolloutAction } = ChromeUtils.import(
-  "resource://normandy/actions/PreferenceRolloutAction.jsm"
+const { PreferenceRollouts } = ChromeUtils.importESModule(
+  "resource://normandy/lib/PreferenceRollouts.sys.mjs"
 );
-const { PreferenceRollouts } = ChromeUtils.import(
-  "resource://normandy/lib/PreferenceRollouts.jsm"
-);
-const { NormandyTestUtils } = ChromeUtils.import(
-  "resource://testing-common/NormandyTestUtils.jsm"
+const { NormandyTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/NormandyTestUtils.sys.mjs"
 );
 
 // Test that a simple recipe enrolls as expected
@@ -570,7 +567,7 @@ decorate_task(
 decorate_task(
   PreferenceRollouts.withTestMock(),
   withSendEventSpy(),
-  async function({ sendEventSpy }) {
+  async function ({ sendEventSpy }) {
     const recipe = {
       id: 1,
       arguments: {

@@ -12,6 +12,7 @@
 #include "nsIPrincipal.h"
 #include "nsIURI.h"
 #include "nsJSUtils.h"
+#include "xpcpublic.h"
 
 #include "mozilla/BasePrincipal.h"
 #include "mozilla/StaticPrefs_dom.h"
@@ -50,13 +51,12 @@ void DOMSecurityMonitor::AuditParsingOfHTMLXMLFragments(
 
   /*
    * WARNING: Do not add any new entries to the htmlFragmentAllowlist
-   * withiout proper review from a dom:security peer!
+   * without proper review from a dom:security peer!
    */
   static nsLiteralCString htmlFragmentAllowlist[] = {
       "chrome://global/content/elements/marquee.js"_ns,
       nsLiteralCString(
           "chrome://pocket/content/panels/js/vendor/jquery-2.1.1.min.js"),
-      "chrome://browser/content/certerror/aboutNetError.js"_ns,
       nsLiteralCString("chrome://devtools/content/shared/sourceeditor/"
                        "codemirror/codemirror.bundle.js"),
       nsLiteralCString(
@@ -75,11 +75,12 @@ void DOMSecurityMonitor::AuditParsingOfHTMLXMLFragments(
       nsLiteralCString("resource://devtools/client/shared/widgets/tooltip/"
                        "inactive-css-tooltip-helper.js"),
       "resource://devtools/client/shared/widgets/Spectrum.js"_ns,
-      "resource://gre/modules/narrate/VoiceSelect.jsm"_ns,
+      "resource://gre/modules/narrate/VoiceSelect.sys.mjs"_ns,
       "resource://normandy-vendor/ReactDOM.js"_ns,
       // ------------------------------------------------------------------
       // test pages
       // ------------------------------------------------------------------
+      "chrome://mochikit/content/browser-harness.xhtml"_ns,
       "chrome://mochikit/content/harness.xhtml"_ns,
       "chrome://mochikit/content/tests/"_ns,
       "chrome://mochitests/content/"_ns,
@@ -105,6 +106,8 @@ void DOMSecurityMonitor::AuditParsingOfHTMLXMLFragments(
           "(fragment: %s)",
           uriSpec.get(), NS_ConvertUTF16toUTF8(filename).get(), lineNum,
           columnNum, NS_ConvertUTF16toUTF8(aFragment).get());
+
+  xpc_DumpJSStack(true, true, false);
   MOZ_ASSERT(false);
 }
 

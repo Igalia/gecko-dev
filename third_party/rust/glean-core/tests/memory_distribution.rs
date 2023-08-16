@@ -49,14 +49,22 @@ fn serializer_should_correctly_serialize_memory_distribution() {
     // Make a new Glean instance here, which should force reloading of the data from disk
     // so we can ensure it persisted, because it has User lifetime
     {
-        let (glean, _) = new_glean(Some(tempdir));
+        let (glean, _t) = new_glean(Some(tempdir));
         let snapshot = StorageManager
             .snapshot_as_json(glean.storage(), "store1", true)
             .unwrap();
 
+        // We check the exact format to catch changes to the serialization.
+        let expected = json!({
+            "sum": 100_000 * kb,
+            "values": {
+                "99108124": 1,
+                "103496016": 0,
+            }
+        });
         assert_eq!(
-            json!(100_000 * kb),
-            snapshot["memory_distribution"]["telemetry.distribution"]["sum"]
+            expected,
+            snapshot["memory_distribution"]["telemetry.distribution"]
         );
     }
 }
@@ -80,18 +88,22 @@ fn set_value_properly_sets_the_value_in_all_stores() {
 
     metric.accumulate_sync(&glean, 100_000);
 
+    // We check the exact format to catch changes to the serialization.
+    let expected = json!({
+        "sum": 100_000,
+        "values": {
+            "96785": 1,
+            "101070": 0,
+        }
+    });
     for store_name in store_names {
         let snapshot = StorageManager
             .snapshot_as_json(glean.storage(), &store_name, true)
             .unwrap();
 
         assert_eq!(
-            json!(100_000),
-            snapshot["memory_distribution"]["telemetry.distribution"]["sum"]
-        );
-        assert_eq!(
-            json!(1),
-            snapshot["memory_distribution"]["telemetry.distribution"]["values"]["96785"]
+            expected,
+            snapshot["memory_distribution"]["telemetry.distribution"]
         );
     }
 }

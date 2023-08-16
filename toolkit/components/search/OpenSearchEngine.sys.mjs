@@ -9,15 +9,13 @@ import {
   SearchEngine,
 } from "resource://gre/modules/SearchEngine.sys.mjs";
 
-import { XPCOMUtils } from "resource://gre/modules/XPCOMUtils.sys.mjs";
-
 const lazy = {};
 
 ChromeUtils.defineESModuleGetters(lazy, {
   SearchUtils: "resource://gre/modules/SearchUtils.sys.mjs",
 });
 
-XPCOMUtils.defineLazyGetter(lazy, "logConsole", () => {
+ChromeUtils.defineLazyGetter(lazy, "logConsole", () => {
   return console.createInstance({
     prefix: "OpenSearchEngine",
     maxLogLevel: lazy.SearchUtils.loggingEnabled ? "Debug" : "Warn",
@@ -45,6 +43,7 @@ const MOZSEARCH_LOCALNAME = "SearchPlugin";
 /**
  * Ensures an assertion is met before continuing. Should be used to indicate
  * fatal errors.
+ *
  * @param {*} assertion
  *   An assertion that must be met
  * @param {string} message
@@ -66,24 +65,53 @@ function ENSURE_WARN(assertion, message, resultCode) {
 export class OpenSearchEngine extends SearchEngine {
   // The data describing the engine, in the form of an XML document element.
   _data = null;
+  // The number of days between update checks for new versions
+  _updateInterval = null;
+  // The url to check at for a new update
+  _updateURL = null;
+  // The url to check for a new icon
+  _iconUpdateURL = null;
 
   /**
    * Creates a OpenSearchEngine.
    *
    * @param {object} [options]
+   *   The options object
    * @param {object} [options.json]
    *   An object that represents the saved JSON settings for the engine.
+   * @param {boolean} [options.shouldPersist]
+   *   A flag indicating whether the engine should be persisted to disk and made
+   *   available wherever engines are used (e.g. it can be set as the default
+   *   search engine, used for search shortcuts, etc.). Non-persisted engines
+   *   are intended for more limited or temporary use. Defaults to true.
    */
   constructor(options = {}) {
     super({
-      isAppProvided: false,
       // We don't know what this is until after it has loaded, so add a placeholder.
       loadPath: options.json?._loadPath ?? "[opensearch]loading",
     });
 
     if (options.json) {
       this._initWithJSON(options.json);
+      this._updateInterval = options.json._updateInterval ?? null;
+      this._updateURL = options.json._updateURL ?? null;
+      this._iconUpdateURL = options.json._iconUpdateURL ?? null;
     }
+
+    this._shouldPersist = options.shouldPersist ?? true;
+  }
+  /**
+   * Creates a JavaScript object that represents this engine.
+   *
+   * @returns {object}
+   *   An object suitable for serialization as JSON.
+   */
+  toJSON() {
+    let json = super.toJSON();
+    json._updateInterval = this._updateInterval;
+    json._updateURL = this._updateURL;
+    json._iconUpdateURL = this._iconUpdateURL;
+    return json;
   }
 
   /**
@@ -92,7 +120,7 @@ export class OpenSearchEngine extends SearchEngine {
    *
    * @param {string|nsIURI} uri
    *   The uri to load the search plugin from.
-   * @param {function} [callback]
+   * @param {Function} [callback]
    *   A callback to receive any details of errors.
    */
   install(uri, callback) {
@@ -138,9 +166,9 @@ export class OpenSearchEngine extends SearchEngine {
    * triggers parsing of the data. The engine is then flushed to disk. Notifies
    * the search service once initialization is complete.
    *
-   * @param {function} callback
+   * @param {Function} callback
    *   A callback to receive success or failure notifications. May be null.
-   * @param {array} bytes
+   * @param {Array} bytes
    *  The loaded search engine data.
    */
   _onLoad(callback, bytes) {
@@ -212,9 +240,14 @@ export class OpenSearchEngine extends SearchEngine {
       );
     }
 
-    // Notify the search service of the successful load. It will deal with
-    // updates by checking this._engineToUpdate.
-    lazy.SearchUtils.notifyAction(this, lazy.SearchUtils.MODIFIED_TYPE.LOADED);
+    if (this._shouldPersist) {
+      // Notify the search service of the successful load. It will deal with
+      // updates by checking this._engineToUpdate.
+      lazy.SearchUtils.notifyAction(
+        this,
+        lazy.SearchUtils.MODIFIED_TYPE.LOADED
+      );
+    }
 
     callback?.();
   }
@@ -241,7 +274,7 @@ export class OpenSearchEngine extends SearchEngine {
 
       this._parse();
     } else {
-      Cu.reportError("Invalid search plugin due to namespace not matching.");
+      console.error("Invalid search plugin due to namespace not matching.");
       throw Components.Exception(
         this._location + " is not a valid search plugin.",
         Cr.NS_ERROR_FILE_CORRUPTED
@@ -272,10 +305,7 @@ export class OpenSearchEngine extends SearchEngine {
 
     let rels = [];
     if (element.hasAttribute("rel")) {
-      rels = element
-        .getAttribute("rel")
-        .toLowerCase()
-        .split(/\s+/);
+      rels = element.getAttribute("rel").toLowerCase().split(/\s+/);
     }
 
     // Support an alternate suggestion type, see bug 1425827 for details.
@@ -408,6 +438,20 @@ export class OpenSearchEngine extends SearchEngine {
       "self"
     );
     return !!(this._updateURL || this._iconUpdateURL || selfURL);
+  }
+
+  /**
+   * Returns the engine's updateURI if it exists and returns null otherwise
+   *
+   * @returns {string?}
+   */
+  get _updateURI() {
+    let updateURL = this._getURLOfType(lazy.SearchUtils.URL_TYPE.OPENSEARCH);
+    let updateURI =
+      updateURL && updateURL._hasRelation("self")
+        ? updateURL.getSubmission("", this).uri
+        : lazy.SearchUtils.makeURI(this._updateURL);
+    return updateURI;
   }
 
   // This indicates where we found the .xml file to load the engine,

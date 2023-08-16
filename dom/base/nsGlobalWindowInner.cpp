@@ -60,6 +60,7 @@
 #include "mozilla/FlushType.h"
 #include "mozilla/Likely.h"
 #include "mozilla/LinkedList.h"
+#include "mozilla/LookAndFeel.h"
 #include "mozilla/Logging.h"
 #include "mozilla/MacroForEach.h"
 #include "mozilla/Maybe.h"
@@ -166,13 +167,11 @@
 #include "mozilla/dom/TimeoutHandler.h"
 #include "mozilla/dom/TimeoutManager.h"
 #include "mozilla/dom/ToJSValue.h"
-#include "mozilla/dom/U2F.h"
 #include "mozilla/dom/VRDisplay.h"
 #include "mozilla/dom/VRDisplayEvent.h"
 #include "mozilla/dom/VRDisplayEventBinding.h"
 #include "mozilla/dom/VREventObserver.h"
 #include "mozilla/dom/VisualViewport.h"
-#include "mozilla/dom/WakeLock.h"
 #include "mozilla/dom/WebIDLGlobalNameHash.h"
 #include "mozilla/dom/WindowBinding.h"
 #include "mozilla/dom/WindowContext.h"
@@ -193,6 +192,8 @@
 #include "mozilla/gfx/Rect.h"
 #include "mozilla/gfx/Types.h"
 #include "mozilla/intl/LocaleService.h"
+#include "mozilla/ipc/BackgroundUtils.h"
+#include "mozilla/ipc/PBackgroundSharedTypes.h"
 #include "mozilla/net/CookieJarSettings.h"
 #include "nsAtom.h"
 #include "nsBaseHashtable.h"
@@ -208,7 +209,6 @@
 #include "nsCycleCollectionNoteChild.h"
 #include "nsCycleCollectionTraversalCallback.h"
 #include "nsDOMNavigationTiming.h"
-#include "nsDOMOfflineResourceList.h"
 #include "nsDebug.h"
 #include "nsDeviceContext.h"
 #include "nsDocShell.h"
@@ -342,7 +342,7 @@ using mozilla::dom::cache::CacheStorage;
 
 #define FORWARD_TO_OUTER(method, args, err_rval)                     \
   PR_BEGIN_MACRO                                                     \
-  nsGlobalWindowOuter* outer = GetOuterWindowInternal();             \
+  RefPtr<nsGlobalWindowOuter> outer = GetOuterWindowInternal();      \
   if (!HasActiveDocument()) {                                        \
     NS_WARNING(outer ? "Inner window does not have active document." \
                      : "No outer window available!");                \
@@ -366,18 +366,18 @@ static nsGlobalWindowOuter* GetOuterWindowForForwarding(
   return nullptr;
 }
 
-#define FORWARD_TO_OUTER_OR_THROW(method, args, errorresult, err_rval)         \
-  PR_BEGIN_MACRO                                                               \
-  nsGlobalWindowOuter* outer = GetOuterWindowForForwarding(this, errorresult); \
-  if (MOZ_LIKELY(outer)) {                                                     \
-    return outer->method args;                                                 \
-  }                                                                            \
-  return err_rval;                                                             \
+#define FORWARD_TO_OUTER_OR_THROW(method, args, rv, err_rval)                \
+  PR_BEGIN_MACRO                                                             \
+  RefPtr<nsGlobalWindowOuter> outer = GetOuterWindowForForwarding(this, rv); \
+  if (MOZ_LIKELY(outer)) {                                                   \
+    return outer->method args;                                               \
+  }                                                                          \
+  return err_rval;                                                           \
   PR_END_MACRO
 
 #define FORWARD_TO_OUTER_VOID(method, args)                          \
   PR_BEGIN_MACRO                                                     \
-  nsGlobalWindowOuter* outer = GetOuterWindowInternal();             \
+  RefPtr<nsGlobalWindowOuter> outer = GetOuterWindowInternal();      \
   if (!HasActiveDocument()) {                                        \
     NS_WARNING(outer ? "Inner window does not have active document." \
                      : "No outer window available!");                \
@@ -874,7 +874,8 @@ class PromiseDocumentFlushedResolver final {
       mPromise->MaybeReject(std::move(error));
     } else if (guard.Mutated(0)) {
       // Something within the callback mutated the DOM.
-      mPromise->MaybeReject(NS_ERROR_DOM_NO_MODIFICATION_ALLOWED_ERR);
+      mPromise->MaybeRejectWithNoModificationAllowedError(
+          "DOM mutated from promiseDocumentFlushed callbacks");
     } else {
       mPromise->MaybeResolve(returnVal);
     }
@@ -1179,12 +1180,6 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   // Remove our reference to the document and the document principal.
   mFocusedElement = nullptr;
 
-  if (mApplicationCache) {
-    static_cast<nsDOMOfflineResourceList*>(mApplicationCache.get())
-        ->Disconnect();
-    mApplicationCache = nullptr;
-  }
-
   if (mIndexedDB) {
     mIndexedDB->DisconnectFromGlobal(this);
     mIndexedDB = nullptr;
@@ -1306,7 +1301,6 @@ void nsGlobalWindowInner::FreeInnerObjects() {
   if (mWindowGlobalChild && !mWindowGlobalChild->IsClosed()) {
     mWindowGlobalChild->Destroy();
   }
-  mWindowGlobalChild = nullptr;
 
   mIntlUtils = nullptr;
 
@@ -1328,7 +1322,6 @@ NS_INTERFACE_MAP_BEGIN_CYCLE_COLLECTION(nsGlobalWindowInner)
   NS_INTERFACE_MAP_ENTRY(mozilla::dom::EventTarget)
   NS_INTERFACE_MAP_ENTRY(nsPIDOMWindowInner)
   NS_INTERFACE_MAP_ENTRY(mozIDOMWindow)
-  NS_INTERFACE_MAP_ENTRY_CONDITIONAL(nsIDOMChromeWindow, IsChromeWindow())
   NS_INTERFACE_MAP_ENTRY(nsISupportsWeakReference)
   NS_INTERFACE_MAP_ENTRY(nsIInterfaceRequestor)
 NS_INTERFACE_MAP_END
@@ -1407,7 +1400,6 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSharedWorkers)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mLocalStorage)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mSessionStorage)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mApplicationCache)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIndexedDB)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentPrincipal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mDocumentCookiePrincipal)
@@ -1445,12 +1437,12 @@ NS_IMPL_CYCLE_COLLECTION_TRAVERSE_BEGIN_INTERNAL(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mStatusbar)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mScrollbars)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mCrypto)
-  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mU2F)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mConsole)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mPaintWorklet)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mExternal)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mInstallTrigger)
   NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mIntlUtils)
+  NS_IMPL_CYCLE_COLLECTION_TRAVERSE(mVisualViewport)
 
   tmp->TraverseObjectsInGlobal(cb);
 
@@ -1519,11 +1511,6 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mLocalStorage)
   }
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mSessionStorage)
-  if (tmp->mApplicationCache) {
-    static_cast<nsDOMOfflineResourceList*>(tmp->mApplicationCache.get())
-        ->Disconnect();
-    NS_IMPL_CYCLE_COLLECTION_UNLINK(mApplicationCache)
-  }
   if (tmp->mIndexedDB) {
     tmp->mIndexedDB->DisconnectFromGlobal(tmp);
     NS_IMPL_CYCLE_COLLECTION_UNLINK(mIndexedDB)
@@ -1561,12 +1548,12 @@ NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(nsGlobalWindowInner)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mStatusbar)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mScrollbars)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mCrypto)
-  NS_IMPL_CYCLE_COLLECTION_UNLINK(mU2F)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mConsole)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mPaintWorklet)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mExternal)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mInstallTrigger)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mIntlUtils)
+  NS_IMPL_CYCLE_COLLECTION_UNLINK(mVisualViewport)
 
   tmp->UnlinkObjectsInGlobal();
 
@@ -1622,30 +1609,60 @@ bool nsGlobalWindowInner::IsBlackForCC(bool aTracingNeeded) {
 // nsGlobalWindowInner::nsIScriptGlobalObject
 //*****************************************************************************
 
-bool nsGlobalWindowInner::ShouldResistFingerprinting() const {
+bool nsGlobalWindowInner::ShouldResistFingerprinting(RFPTarget aTarget) const {
   if (mDoc) {
-    return nsContentUtils::ShouldResistFingerprinting(mDoc);
+    return mDoc->ShouldResistFingerprinting(aTarget);
   }
-  return nsIScriptGlobalObject::ShouldResistFingerprinting();
+  return nsContentUtils::ShouldResistFingerprinting(
+      "If we do not have a document then we do not have any context"
+      "to make an informed RFP choice, so we fall back to the global pref",
+      aTarget);
 }
 
 OriginTrials nsGlobalWindowInner::Trials() const {
   return OriginTrials::FromWindow(this);
 }
 
-FontFaceSet* nsGlobalWindowInner::Fonts() {
+FontFaceSet* nsGlobalWindowInner::GetFonts() {
   if (mDoc) {
     return mDoc->Fonts();
   }
   return nullptr;
 }
 
-uint32_t nsGlobalWindowInner::GetPrincipalHashValue() const {
-  if (mDoc) {
-    return mDoc->NodePrincipal()->GetHashValue();
+mozilla::Result<mozilla::ipc::PrincipalInfo, nsresult>
+nsGlobalWindowInner::GetStorageKey() {
+  MOZ_ASSERT(NS_IsMainThread());
+
+  nsIPrincipal* principal = GetEffectiveStoragePrincipal();
+  if (!principal) {
+    return mozilla::Err(NS_ERROR_FAILURE);
   }
-  return 0;
+
+  mozilla::ipc::PrincipalInfo principalInfo;
+  nsresult rv = PrincipalToPrincipalInfo(principal, &principalInfo);
+  if (NS_FAILED(rv)) {
+    return mozilla::Err(rv);
+  }
+
+  // Block expanded and null principals, let content and system through.
+  if (principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TContentPrincipalInfo &&
+      principalInfo.type() !=
+          mozilla::ipc::PrincipalInfo::TSystemPrincipalInfo) {
+    return Err(NS_ERROR_DOM_SECURITY_ERR);
+  }
+
+  return std::move(principalInfo);
 }
+
+mozilla::dom::StorageManager* nsGlobalWindowInner::GetStorageManager() {
+  return Navigator()->Storage();
+}
+
+// https://html.spec.whatwg.org/multipage/web-messaging.html#eligible-for-messaging
+// * a Window object whose associated Document is fully active
+bool nsGlobalWindowInner::IsEligibleForMessaging() { return IsFullyActive(); }
 
 nsresult nsGlobalWindowInner::EnsureScriptEnvironment() {
   // NOTE: We can't use FORWARD_TO_OUTER here because we don't want to fail if
@@ -1674,7 +1691,8 @@ void nsGlobalWindowInner::UpdateAutoplayPermission() {
   if (!GetWindowContext()) {
     return;
   }
-  uint32_t perm = AutoplayPolicy::GetSiteAutoplayPermission(GetPrincipal());
+  uint32_t perm =
+      media::AutoplayPolicy::GetSiteAutoplayPermission(GetPrincipal());
   if (GetWindowContext()->GetAutoplayPermission() == perm) {
     return;
   }
@@ -1737,7 +1755,7 @@ void nsGlobalWindowInner::UpdatePermissions() {
 
   WindowContext::Transaction txn;
   txn.SetAutoplayPermission(
-      AutoplayPolicy::GetSiteAutoplayPermission(principal));
+      media::AutoplayPolicy::GetSiteAutoplayPermission(principal));
   txn.SetPopupPermission(PopupBlocker::GetPopupPermission(principal));
 
   if (windowContext->IsTop()) {
@@ -2677,12 +2695,28 @@ bool nsGlobalWindowInner::CrossOriginIsolated() const {
   return bc->CrossOriginIsolated();
 }
 
+WindowContext* TopWindowContext(nsPIDOMWindowInner& aWindow) {
+  WindowContext* wc = aWindow.GetWindowContext();
+  if (!wc) {
+    return nullptr;
+  }
+
+  return wc->TopWindowContext();
+}
+
 void nsPIDOMWindowInner::AddPeerConnection() {
   MOZ_ASSERT(NS_IsMainThread());
   ++mActivePeerConnections;
   if (mActivePeerConnections == 1 && mWindowGlobalChild) {
     mWindowGlobalChild->SendUpdateActivePeerConnectionStatus(
         /*aIsAdded*/ true);
+
+    // We need to present having active peer connections immediately. If we need
+    // to wait for the parent process to come back with this information we
+    // might start throttling.
+    if (WindowContext* top = TopWindowContext(*this)) {
+      top->TransientSetHasActivePeerConnections();
+    }
   }
 }
 
@@ -2698,12 +2732,8 @@ void nsPIDOMWindowInner::RemovePeerConnection() {
 
 bool nsPIDOMWindowInner::HasActivePeerConnections() {
   MOZ_ASSERT(NS_IsMainThread());
-  WindowContext* wc = GetWindowContext();
-  if (!wc) {
-    return false;
-  }
 
-  WindowContext* topWindowContext = wc->TopWindowContext();
+  WindowContext* topWindowContext = TopWindowContext(*this);
   return topWindowContext && topWindowContext->GetHasActivePeerConnections();
 }
 
@@ -3267,37 +3297,12 @@ bool nsGlobalWindowInner::IsPrivilegedChromeWindow(JSContext*, JSObject* aObj) {
 }
 
 /* static */
-bool nsGlobalWindowInner::IsRequestIdleCallbackEnabled(JSContext* aCx,
-                                                       JSObject*) {
-  // The requestIdleCallback should always be enabled for system code.
-  return StaticPrefs::dom_requestIdleCallback_enabled() ||
-         nsContentUtils::IsSystemCaller(aCx);
-}
-
-/* static */
 bool nsGlobalWindowInner::DeviceSensorsEnabled(JSContext*, JSObject*) {
   return Preferences::GetBool("device.sensors.enabled");
 }
 
 /* static */
-bool nsGlobalWindowInner::ContentPropertyEnabled(JSContext* aCx, JSObject*) {
-  return StaticPrefs::dom_window_content_untrusted_enabled() ||
-         nsContentUtils::IsSystemCaller(aCx);
-}
-
-/* static */
 bool nsGlobalWindowInner::CachesEnabled(JSContext* aCx, JSObject*) {
-  if (!StaticPrefs::dom_caches_enabled()) {
-    return false;
-  }
-  if (StaticPrefs::dom_caches_hide_in_pbmode_enabled()) {
-    if (const nsCOMPtr<nsIGlobalObject> global =
-            xpc::CurrentNativeGlobal(aCx)) {
-      if (global->GetStorageAccess() == StorageAccess::ePrivateBrowsing) {
-        return false;
-      }
-    }
-  }
   if (!JS::GetIsSecureContext(js::GetContextRealm(aCx))) {
     return StaticPrefs::dom_caches_testing_enabled() ||
            StaticPrefs::dom_serviceWorkers_testing_enabled();
@@ -3305,36 +3310,10 @@ bool nsGlobalWindowInner::CachesEnabled(JSContext* aCx, JSObject*) {
   return true;
 }
 
-nsDOMOfflineResourceList* nsGlobalWindowInner::GetApplicationCache(
-    ErrorResult& aError) {
-  if (!mApplicationCache) {
-    nsCOMPtr<nsIWebNavigation> webNav(do_QueryInterface(GetDocShell()));
-    if (!webNav || !mDoc) {
-      aError.Throw(NS_ERROR_FAILURE);
-      return nullptr;
-    }
-
-    nsCOMPtr<nsIURI> uri;
-    aError = webNav->GetCurrentURI(getter_AddRefs(uri));
-    if (aError.Failed()) {
-      return nullptr;
-    }
-
-    nsCOMPtr<nsIURI> manifestURI;
-    nsContentUtils::GetOfflineAppManifest(mDoc, getter_AddRefs(manifestURI));
-
-    RefPtr<nsDOMOfflineResourceList> applicationCache =
-        new nsDOMOfflineResourceList(manifestURI, uri, mDoc->NodePrincipal(),
-                                     this);
-
-    mApplicationCache = applicationCache;
-  }
-
-  return mApplicationCache;
-}
-
-nsDOMOfflineResourceList* nsGlobalWindowInner::GetApplicationCache() {
-  return GetApplicationCache(IgnoreErrors());
+/* static */
+bool nsGlobalWindowInner::IsSizeToContentEnabled(JSContext* aCx, JSObject*) {
+  return StaticPrefs::dom_window_sizeToContent_enabled() ||
+         nsContentUtils::IsSystemCaller(aCx);
 }
 
 Crypto* nsGlobalWindowInner::GetCrypto(ErrorResult& aError) {
@@ -3342,19 +3321,6 @@ Crypto* nsGlobalWindowInner::GetCrypto(ErrorResult& aError) {
     mCrypto = new Crypto(this);
   }
   return mCrypto;
-}
-
-mozilla::dom::U2F* nsGlobalWindowInner::GetU2f(ErrorResult& aError) {
-  if (!mU2F) {
-    RefPtr<U2F> u2f = new U2F(this);
-    u2f->Init(aError);
-    if (NS_WARN_IF(aError.Failed())) {
-      return nullptr;
-    }
-
-    mU2F = u2f;
-  }
-  return mU2F;
 }
 
 nsIControllers* nsGlobalWindowInner::GetControllers(ErrorResult& aError) {
@@ -3407,12 +3373,11 @@ void nsGlobalWindowInner::SetOpener(JSContext* aCx,
   RedefineProperty(aCx, "opener", aOpener, aError);
 }
 
-void nsGlobalWindowInner::GetEvent(JSContext* aCx,
-                                   JS::MutableHandle<JS::Value> aRetval) {
+void nsGlobalWindowInner::GetEvent(OwningEventOrUndefined& aRetval) {
   if (mEvent) {
-    Unused << nsContentUtils::WrapNative(aCx, mEvent, aRetval);
+    aRetval.SetAsEvent() = mEvent;
   } else {
-    aRetval.setUndefined();
+    aRetval.SetUndefined();
   }
 }
 
@@ -3434,48 +3399,18 @@ void nsGlobalWindowInner::SetName(const nsAString& aName,
   FORWARD_TO_OUTER_OR_THROW(SetNameOuter, (aName, aError), aError, );
 }
 
-double nsGlobalWindowInner::GetInnerWidth(CallerType aCallerType,
-                                          ErrorResult& aError) {
-  // We ignore aCallerType; we only have that argument because some other things
-  // called by GetReplaceableWindowCoord need it.  If this ever changes, fix
-  //   nsresult nsGlobalWindowInner::GetInnerWidth(double* aInnerWidth)
-  // to actually take a useful CallerType and pass it in here.
+double nsGlobalWindowInner::GetInnerWidth(ErrorResult& aError) {
   FORWARD_TO_OUTER_OR_THROW(GetInnerWidthOuter, (aError), aError, 0);
 }
 
-void nsGlobalWindowInner::GetInnerWidth(JSContext* aCx,
-                                        JS::MutableHandle<JS::Value> aValue,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetInnerWidth, aValue,
-                            aCallerType, aError);
-}
-
-nsresult nsGlobalWindowInner::GetInnerWidth(double* aInnerWidth) {
+nsresult nsGlobalWindowInner::GetInnerWidth(double* aWidth) {
   ErrorResult rv;
   // Callee doesn't care about the caller type, but play it safe.
-  *aInnerWidth = GetInnerWidth(CallerType::NonSystem, rv);
-
+  *aWidth = GetInnerWidth(rv);
   return rv.StealNSResult();
 }
 
-void nsGlobalWindowInner::SetInnerWidth(double aInnerWidth,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetInnerWidthOuter,
-                            (aInnerWidth, aCallerType, aError), aError, );
-}
-
-void nsGlobalWindowInner::SetInnerWidth(JSContext* aCx,
-                                        JS::Handle<JS::Value> aValue,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetInnerWidth, aValue,
-                            "innerWidth", aCallerType, aError);
-}
-
-double nsGlobalWindowInner::GetInnerHeight(CallerType aCallerType,
-                                           ErrorResult& aError) {
+double nsGlobalWindowInner::GetInnerHeight(ErrorResult& aError) {
   // We ignore aCallerType; we only have that argument because some other things
   // called by GetReplaceableWindowCoord need it.  If this ever changes, fix
   //   nsresult nsGlobalWindowInner::GetInnerHeight(double* aInnerWidth)
@@ -3483,35 +3418,11 @@ double nsGlobalWindowInner::GetInnerHeight(CallerType aCallerType,
   FORWARD_TO_OUTER_OR_THROW(GetInnerHeightOuter, (aError), aError, 0);
 }
 
-void nsGlobalWindowInner::GetInnerHeight(JSContext* aCx,
-                                         JS::MutableHandle<JS::Value> aValue,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetInnerHeight, aValue,
-                            aCallerType, aError);
-}
-
-nsresult nsGlobalWindowInner::GetInnerHeight(double* aInnerHeight) {
+nsresult nsGlobalWindowInner::GetInnerHeight(double* aHeight) {
   ErrorResult rv;
   // Callee doesn't care about the caller type, but play it safe.
-  *aInnerHeight = GetInnerHeight(CallerType::NonSystem, rv);
-
+  *aHeight = GetInnerHeight(rv);
   return rv.StealNSResult();
-}
-
-void nsGlobalWindowInner::SetInnerHeight(double aInnerHeight,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetInnerHeightOuter,
-                            (aInnerHeight, aCallerType, aError), aError, );
-}
-
-void nsGlobalWindowInner::SetInnerHeight(JSContext* aCx,
-                                         JS::Handle<JS::Value> aValue,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetInnerHeight, aValue,
-                            "innerHeight", aCallerType, aError);
 }
 
 int32_t nsGlobalWindowInner::GetOuterWidth(CallerType aCallerType,
@@ -3520,56 +3431,18 @@ int32_t nsGlobalWindowInner::GetOuterWidth(CallerType aCallerType,
                             0);
 }
 
-void nsGlobalWindowInner::GetOuterWidth(JSContext* aCx,
-                                        JS::MutableHandle<JS::Value> aValue,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetOuterWidth, aValue,
-                            aCallerType, aError);
-}
-
 int32_t nsGlobalWindowInner::GetOuterHeight(CallerType aCallerType,
                                             ErrorResult& aError) {
   FORWARD_TO_OUTER_OR_THROW(GetOuterHeightOuter, (aCallerType, aError), aError,
                             0);
 }
 
-void nsGlobalWindowInner::GetOuterHeight(JSContext* aCx,
-                                         JS::MutableHandle<JS::Value> aValue,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetOuterHeight, aValue,
-                            aCallerType, aError);
+double nsGlobalWindowInner::ScreenEdgeSlopX() const {
+  FORWARD_TO_OUTER(ScreenEdgeSlopX, (), 0);
 }
 
-void nsGlobalWindowInner::SetOuterWidth(int32_t aOuterWidth,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetOuterWidthOuter,
-                            (aOuterWidth, aCallerType, aError), aError, );
-}
-
-void nsGlobalWindowInner::SetOuterWidth(JSContext* aCx,
-                                        JS::Handle<JS::Value> aValue,
-                                        CallerType aCallerType,
-                                        ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetOuterWidth, aValue,
-                            "outerWidth", aCallerType, aError);
-}
-
-void nsGlobalWindowInner::SetOuterHeight(int32_t aOuterHeight,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetOuterHeightOuter,
-                            (aOuterHeight, aCallerType, aError), aError, );
-}
-
-void nsGlobalWindowInner::SetOuterHeight(JSContext* aCx,
-                                         JS::Handle<JS::Value> aValue,
-                                         CallerType aCallerType,
-                                         ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetOuterHeight, aValue,
-                            "outerHeight", aCallerType, aError);
+double nsGlobalWindowInner::ScreenEdgeSlopY() const {
+  FORWARD_TO_OUTER(ScreenEdgeSlopY, (), 0);
 }
 
 int32_t nsGlobalWindowInner::GetScreenX(CallerType aCallerType,
@@ -3577,12 +3450,9 @@ int32_t nsGlobalWindowInner::GetScreenX(CallerType aCallerType,
   FORWARD_TO_OUTER_OR_THROW(GetScreenXOuter, (aCallerType, aError), aError, 0);
 }
 
-void nsGlobalWindowInner::GetScreenX(JSContext* aCx,
-                                     JS::MutableHandle<JS::Value> aValue,
-                                     CallerType aCallerType,
-                                     ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetScreenX, aValue,
-                            aCallerType, aError);
+int32_t nsGlobalWindowInner::GetScreenY(CallerType aCallerType,
+                                        ErrorResult& aError) {
+  FORWARD_TO_OUTER_OR_THROW(GetScreenYOuter, (aCallerType, aError), aError, 0);
 }
 
 float nsGlobalWindowInner::GetMozInnerScreenX(CallerType aCallerType,
@@ -3622,7 +3492,8 @@ double nsGlobalWindowInner::GetDevicePixelRatio(CallerType aCallerType,
     return 1.0;
   }
 
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsIGlobalObject::ShouldResistFingerprinting(
+          aCallerType, RFPTarget::WindowDevicePixelRatio)) {
     // Spoofing the DevicePixelRatio causes blurriness in some situations
     // on HiDPI displays. pdf.js is a non-system caller; but it can't
     // expose the fingerprintable information, so we can safely disable
@@ -3692,47 +3563,6 @@ already_AddRefed<MediaQueryList> nsGlobalWindowInner::MatchMedia(
     ErrorResult& aError) {
   ENSURE_ACTIVE_DOCUMENT(aError, nullptr);
   return mDoc->MatchMedia(aMediaQueryList, aCallerType);
-}
-
-void nsGlobalWindowInner::SetScreenX(int32_t aScreenX, CallerType aCallerType,
-                                     ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetScreenXOuter, (aScreenX, aCallerType, aError),
-                            aError, );
-}
-
-void nsGlobalWindowInner::SetScreenX(JSContext* aCx,
-                                     JS::Handle<JS::Value> aValue,
-                                     CallerType aCallerType,
-                                     ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetScreenX, aValue,
-                            "screenX", aCallerType, aError);
-}
-
-int32_t nsGlobalWindowInner::GetScreenY(CallerType aCallerType,
-                                        ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(GetScreenYOuter, (aCallerType, aError), aError, 0);
-}
-
-void nsGlobalWindowInner::GetScreenY(JSContext* aCx,
-                                     JS::MutableHandle<JS::Value> aValue,
-                                     CallerType aCallerType,
-                                     ErrorResult& aError) {
-  GetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::GetScreenY, aValue,
-                            aCallerType, aError);
-}
-
-void nsGlobalWindowInner::SetScreenY(int32_t aScreenY, CallerType aCallerType,
-                                     ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SetScreenYOuter, (aScreenY, aCallerType, aError),
-                            aError, );
-}
-
-void nsGlobalWindowInner::SetScreenY(JSContext* aCx,
-                                     JS::Handle<JS::Value> aValue,
-                                     CallerType aCallerType,
-                                     ErrorResult& aError) {
-  SetReplaceableWindowCoord(aCx, &nsGlobalWindowInner::SetScreenY, aValue,
-                            "screenY", aCallerType, aError);
 }
 
 int32_t nsGlobalWindowInner::GetScrollMinX(ErrorResult& aError) {
@@ -3940,8 +3770,14 @@ void nsGlobalWindowInner::ResizeBy(int32_t aWidthDif, int32_t aHeightDif,
 
 void nsGlobalWindowInner::SizeToContent(CallerType aCallerType,
                                         ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(SizeToContentOuter, (aCallerType, aError),
+  FORWARD_TO_OUTER_OR_THROW(SizeToContentOuter, (aCallerType, {}, aError),
                             aError, );
+}
+
+void nsGlobalWindowInner::SizeToContentConstrained(
+    const SizeToContentConstraints& aConstraints, ErrorResult& aError) {
+  FORWARD_TO_OUTER_OR_THROW(
+      SizeToContentOuter, (CallerType::System, aConstraints, aError), aError, );
 }
 
 already_AddRefed<nsPIWindowRoot> nsGlobalWindowInner::GetTopWindowRoot() {
@@ -3982,10 +3818,12 @@ void nsGlobalWindowInner::ScrollTo(const ScrollToOptions& aOptions) {
   if (sf) {
     CSSIntPoint scrollPos = sf->GetScrollPositionCSSPixels();
     if (aOptions.mLeft.WasPassed()) {
-      scrollPos.x = mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value());
+      scrollPos.x = static_cast<int32_t>(
+          mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value()));
     }
     if (aOptions.mTop.WasPassed()) {
-      scrollPos.y = mozilla::ToZeroIfNonfinite(aOptions.mTop.Value());
+      scrollPos.y = static_cast<int32_t>(
+          mozilla::ToZeroIfNonfinite(aOptions.mTop.Value()));
     }
 
     ScrollTo(scrollPos, aOptions);
@@ -4054,10 +3892,12 @@ void nsGlobalWindowInner::ScrollBy(const ScrollToOptions& aOptions) {
   if (sf) {
     CSSIntPoint scrollDelta;
     if (aOptions.mLeft.WasPassed()) {
-      scrollDelta.x = mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value());
+      scrollDelta.x = static_cast<int32_t>(
+          mozilla::ToZeroIfNonfinite(aOptions.mLeft.Value()));
     }
     if (aOptions.mTop.WasPassed()) {
-      scrollDelta.y = mozilla::ToZeroIfNonfinite(aOptions.mTop.Value());
+      scrollDelta.y = static_cast<int32_t>(
+          mozilla::ToZeroIfNonfinite(aOptions.mTop.Value()));
     }
 
     ScrollMode scrollMode = sf->IsSmoothScroll(aOptions.mBehavior)
@@ -4300,7 +4140,7 @@ bool nsGlobalWindowInner::Find(const nsAString& aString, bool aCaseSensitive,
 }
 
 void nsGlobalWindowInner::GetOrigin(nsAString& aOrigin) {
-  nsContentUtils::GetUTFOrigin(GetPrincipal(), aOrigin);
+  nsContentUtils::GetWebExposedOriginSerialization(GetPrincipal(), aOrigin);
 }
 
 // See also AutoJSAPI::ReportException
@@ -4574,9 +4414,7 @@ bool nsGlobalWindowInner::ShouldShowFocusRing() {
       StaticPrefs::browser_display_always_show_rings_after_key_focus()) {
     return true;
   }
-
-  nsCOMPtr<nsPIWindowRoot> root = GetTopWindowRoot();
-  return root && root->ShowFocusRings();
+  return StaticPrefs::browser_display_show_focus_rings();
 }
 
 bool nsGlobalWindowInner::TakeFocus(bool aFocus, uint32_t aFocusMethod) {
@@ -4984,10 +4822,8 @@ Storage* nsGlobalWindowInner::GetLocalStorage(ErrorResult& aError) {
   if (mDoc) {
     cookieJarSettings = mDoc->CookieJarSettings();
   } else {
-    bool shouldResistFingerprinting =
-        nsContentUtils::ShouldResistFingerprinting(this->GetExtantDoc());
-    cookieJarSettings =
-        net::CookieJarSettings::GetBlockingAll(shouldResistFingerprinting);
+    cookieJarSettings = net::CookieJarSettings::GetBlockingAll(
+        ShouldResistFingerprinting(RFPTarget::IsAlwaysEnabledForPrecompute));
   }
 
   // Note that this behavior is observable: if we grant storage permission to a
@@ -5099,12 +4935,6 @@ Storage* nsGlobalWindowInner::GetLocalStorage(ErrorResult& aError) {
 
 IDBFactory* nsGlobalWindowInner::GetIndexedDB(JSContext* aCx,
                                               ErrorResult& aError) {
-  if (!IDBFactory::IsEnabled(aCx, AsGlobal()->GetGlobalJSObject())) {
-    // Let window.indexedDB be an attribute with a null value, to prevent
-    // undefined identifier error
-    return nullptr;
-  }
-
   if (!mIndexedDB) {
     // This may keep mIndexedDB null without setting an error.
     auto res = IDBFactory::CreateForWindow(this);
@@ -5421,18 +5251,6 @@ nsresult nsGlobalWindowInner::Observe(nsISupports* aSubject, const char* aTopic,
       mPerformance->MemoryPressure();
     }
     RemoveReportRecords();
-    return NS_OK;
-  }
-
-  if (!nsCRT::strcmp(aTopic, "offline-cache-update-added")) {
-    if (mApplicationCache) return NS_OK;
-
-    // Instantiate the application object now. It observes update belonging to
-    // this window's document and correctly updates the applicationCache object
-    // state.
-    nsCOMPtr<nsIObserver> observer = GetApplicationCache();
-    if (observer) observer->Observe(aSubject, aTopic, aData);
-
     return NS_OK;
   }
 
@@ -6128,11 +5946,6 @@ StorageAccess nsGlobalWindowInner::GetStorageAccess() {
 }
 
 nsresult nsGlobalWindowInner::FireDelayedDOMEvents(bool aIncludeSubWindows) {
-  if (mApplicationCache) {
-    static_cast<nsDOMOfflineResourceList*>(mApplicationCache.get())
-        ->FirePendingEvents();
-  }
-
   // Fires an offline status event if the offline status has changed
   FireOfflineStatusEventIfChanged();
 
@@ -6592,7 +6405,7 @@ void nsGlobalWindowInner::DisableDeviceSensor(uint32_t aType) {
 
 #if defined(MOZ_WIDGET_ANDROID)
 void nsGlobalWindowInner::EnableOrientationChangeListener() {
-  if (!nsContentUtils::ShouldResistFingerprinting(GetDocShell())) {
+  if (!ShouldResistFingerprinting(RFPTarget::ScreenOrientation)) {
     mHasOrientationChangeListeners = true;
     mOrientationAngle = Orientation(CallerType::System);
   }
@@ -6919,7 +6732,7 @@ void nsGlobalWindowInner::GetGamepads(nsTArray<RefPtr<Gamepad>>& aGamepads) {
 
   // navigator.getGamepads() always returns an empty array when
   // privacy.resistFingerprinting is true.
-  if (nsContentUtils::ShouldResistFingerprinting(GetDocShell())) {
+  if (ShouldResistFingerprinting(RFPTarget::Gamepad)) {
     return;
   }
 
@@ -7219,18 +7032,22 @@ already_AddRefed<Promise> nsGlobalWindowInner::PromiseDocumentFlushed(
   MOZ_RELEASE_ASSERT(IsChromeWindow());
 
   if (!IsCurrentInnerWindow()) {
-    aError.Throw(NS_ERROR_FAILURE);
+    aError.ThrowInvalidStateError("Not the current inner window");
+    return nullptr;
+  }
+  if (!mDoc) {
+    aError.ThrowInvalidStateError("No document");
     return nullptr;
   }
 
-  if (!mDoc || mIteratingDocumentFlushedResolvers) {
-    aError.Throw(NS_ERROR_FAILURE);
+  if (mIteratingDocumentFlushedResolvers) {
+    aError.ThrowInvalidStateError("Already iterating through resolvers");
     return nullptr;
   }
 
   PresShell* presShell = mDoc->GetPresShell();
   if (!presShell) {
-    aError.Throw(NS_ERROR_FAILURE);
+    aError.ThrowInvalidStateError("No pres shell");
     return nullptr;
   }
 
@@ -7240,7 +7057,7 @@ already_AddRefed<Promise> nsGlobalWindowInner::PromiseDocumentFlushed(
   // we can still resolve the Promise.
   nsIGlobalObject* global = GetIncumbentGlobal();
   if (!global) {
-    aError.Throw(NS_ERROR_FAILURE);
+    aError.ThrowInvalidStateError("No incumbent global");
     return nullptr;
   }
 
@@ -7258,7 +7075,7 @@ already_AddRefed<Promise> nsGlobalWindowInner::PromiseDocumentFlushed(
   }
 
   if (!TryToObserveRefresh()) {
-    aError.Throw(NS_ERROR_FAILURE);
+    aError.ThrowInvalidStateError("Couldn't observe refresh");
     return nullptr;
   }
 
@@ -7360,18 +7177,9 @@ void nsGlobalWindowInner::SetCursor(const nsACString& aCursor,
   FORWARD_TO_OUTER_OR_THROW(SetCursorOuter, (aCursor, aError), aError, );
 }
 
-NS_IMETHODIMP
-nsGlobalWindowInner::GetBrowserDOMWindow(nsIBrowserDOMWindow** aBrowserWindow) {
-  MOZ_RELEASE_ASSERT(IsChromeWindow());
-
-  ErrorResult rv;
-  NS_IF_ADDREF(*aBrowserWindow = GetBrowserDOMWindow(rv));
-  return rv.StealNSResult();
-}
-
 nsIBrowserDOMWindow* nsGlobalWindowInner::GetBrowserDOMWindow(
     ErrorResult& aError) {
-  FORWARD_TO_OUTER_OR_THROW(GetBrowserDOMWindowOuter, (), aError, nullptr);
+  FORWARD_TO_OUTER_OR_THROW(GetBrowserDOMWindow, (), aError, nullptr);
 }
 
 void nsGlobalWindowInner::SetBrowserDOMWindow(
@@ -7448,7 +7256,8 @@ void nsGlobalWindowInner::InitWasOffline() { mWasOffline = NS_IsOffline(); }
 int16_t nsGlobalWindowInner::Orientation(CallerType aCallerType) {
   // GetOrientationAngle() returns 0, 90, 180 or 270.
   // window.orientation returns -90, 0, 90 or 180.
-  if (nsContentUtils::ResistFingerprinting(aCallerType)) {
+  if (nsIGlobalObject::ShouldResistFingerprinting(
+          aCallerType, RFPTarget::ScreenOrientation)) {
     return 0;
   }
   nsScreen* s = GetScreen(IgnoreErrors());
@@ -7477,7 +7286,7 @@ bool nsGlobalWindowInner::IsSecureContext() const {
   return JS::GetIsSecureContext(realm);
 }
 
-External* nsGlobalWindowInner::GetExternal(ErrorResult& aRv) {
+External* nsGlobalWindowInner::External() {
   if (!mExternal) {
     mExternal = new dom::External(ToSupports(this));
   }
@@ -7485,8 +7294,7 @@ External* nsGlobalWindowInner::GetExternal(ErrorResult& aRv) {
   return mExternal;
 }
 
-void nsGlobalWindowInner::GetSidebar(OwningExternalOrWindowProxy& aResult,
-                                     ErrorResult& aRv) {
+void nsGlobalWindowInner::GetSidebar(OwningExternalOrWindowProxy& aResult) {
   // First check for a named frame named "sidebar"
   RefPtr<BrowsingContext> domWindow = GetChildWindow(u"sidebar"_ns);
   if (domWindow) {
@@ -7494,7 +7302,7 @@ void nsGlobalWindowInner::GetSidebar(OwningExternalOrWindowProxy& aResult,
     return;
   }
 
-  RefPtr<External> external = GetExternal(aRv);
+  RefPtr<dom::External> external = External();
   if (external) {
     aResult.SetAsExternal() = external;
   }
@@ -7530,114 +7338,6 @@ void nsGlobalWindowInner::RedefineProperty(JSContext* aCx,
   }
 }
 
-template <typename T>
-void nsGlobalWindowInner::GetReplaceableWindowCoord(
-    JSContext* aCx, nsGlobalWindowInner::WindowCoordGetter<T> aGetter,
-    JS::MutableHandle<JS::Value> aRetval, CallerType aCallerType,
-    ErrorResult& aError) {
-  T coord = (this->*aGetter)(aCallerType, aError);
-  if (!aError.Failed() && !ToJSValue(aCx, coord, aRetval)) {
-    aError.Throw(NS_ERROR_FAILURE);
-  }
-}
-
-template <typename T>
-void nsGlobalWindowInner::SetReplaceableWindowCoord(
-    JSContext* aCx, nsGlobalWindowInner::WindowCoordSetter<T> aSetter,
-    JS::Handle<JS::Value> aValue, const char* aPropName, CallerType aCallerType,
-    ErrorResult& aError) {
-  /*
-   * If caller is not chrome and the user has not explicitly exempted the site,
-   * just treat this the way we would an IDL replaceable property.
-   */
-  nsGlobalWindowOuter* outer = GetOuterWindowInternal();
-  if (!outer || !outer->CanMoveResizeWindows(aCallerType) ||
-      mBrowsingContext->IsSubframe()) {
-    RedefineProperty(aCx, aPropName, aValue, aError);
-    return;
-  }
-
-  T value;
-  if (!ValueToPrimitive<T, eDefault>(aCx, aValue, aPropName, &value)) {
-    aError.Throw(NS_ERROR_UNEXPECTED);
-    return;
-  }
-
-  if (nsContentUtils::ShouldResistFingerprinting(GetDocShell())) {
-    bool innerWidthSpecified = false;
-    bool innerHeightSpecified = false;
-    bool outerWidthSpecified = false;
-    bool outerHeightSpecified = false;
-
-    if (strcmp(aPropName, "innerWidth") == 0) {
-      innerWidthSpecified = true;
-    } else if (strcmp(aPropName, "innerHeight") == 0) {
-      innerHeightSpecified = true;
-    } else if (strcmp(aPropName, "outerWidth") == 0) {
-      outerWidthSpecified = true;
-    } else if (strcmp(aPropName, "outerHeight") == 0) {
-      outerHeightSpecified = true;
-    }
-
-    if (innerWidthSpecified || innerHeightSpecified || outerWidthSpecified ||
-        outerHeightSpecified) {
-      nsCOMPtr<nsIBaseWindow> treeOwnerAsWin = outer->GetTreeOwnerWindow();
-      nsCOMPtr<nsIScreenManager> screenMgr(
-          do_GetService("@mozilla.org/gfx/screenmanager;1"));
-
-      if (treeOwnerAsWin && screenMgr) {
-        // Acquire current window size.
-        //
-        // FIXME: This needs to account for full zoom like the outer window code
-        // does! Ideally move there?
-        auto cssScale = treeOwnerAsWin->UnscaledDevicePixelsPerCSSPixel();
-        LayoutDeviceIntRect devWinRect = treeOwnerAsWin->GetPositionAndSize();
-        CSSIntRect cssWinRect = RoundedToInt(devWinRect / cssScale);
-
-        // Acquire content window size.
-        CSSSize contentSize;
-        outer->GetInnerSize(contentSize);
-
-        nsCOMPtr<nsIScreen> screen = screenMgr->ScreenForRect(RoundedToInt(
-            devWinRect / treeOwnerAsWin->DevicePixelsPerDesktopPixel()));
-        if (screen) {
-          int32_t roundedValue = std::round(value);
-          int32_t* targetContentWidth = nullptr;
-          int32_t* targetContentHeight = nullptr;
-          int32_t inputWidth = 0;
-          int32_t inputHeight = 0;
-          int32_t unused = 0;
-
-          CSSIntSize availScreenSize =
-              RoundedToInt(screen->GetAvailRect().Size() / cssScale);
-
-          // Calculate the chrome UI size.
-          CSSIntSize chromeSize = cssWinRect.Size() - RoundedToInt(contentSize);
-
-          if (innerWidthSpecified || outerWidthSpecified) {
-            inputWidth = value;
-            targetContentWidth = &roundedValue;
-            targetContentHeight = &unused;
-          } else if (innerHeightSpecified || outerHeightSpecified) {
-            inputHeight = value;
-            targetContentWidth = &unused;
-            targetContentHeight = &roundedValue;
-          }
-
-          nsContentUtils::CalcRoundedWindowSizeForResistingFingerprinting(
-              chromeSize.width, chromeSize.height, availScreenSize.width,
-              availScreenSize.height, inputWidth, inputHeight,
-              outerWidthSpecified, outerHeightSpecified, targetContentWidth,
-              targetContentHeight);
-          value = T(roundedValue);
-        }
-      }
-    }
-  }
-
-  (this->*aSetter)(value, aCallerType, aError);
-}
-
 void nsGlobalWindowInner::FireOnNewGlobalObject() {
   // AutoEntryScript required to invoke debugger hook, which is a
   // Gecko-specific concept at present.
@@ -7648,7 +7348,7 @@ void nsGlobalWindowInner::FireOnNewGlobalObject() {
 
 #if defined(_WINDOWS_) && !defined(MOZ_WRAPPED_WINDOWS_H)
 #  pragma message( \
-      "wrapper failure reason: " MOZ_WINDOWS_WRAPPER_DISABLED_REASON)
+          "wrapper failure reason: " MOZ_WINDOWS_WRAPPER_DISABLED_REASON)
 #  error "Never include unwrapped windows.h in this file!"
 #endif
 
@@ -7963,6 +7663,7 @@ nsPIDOMWindowInner::nsPIDOMWindowInner(nsPIDOMWindowOuter* aOuterWindow,
       mMayHaveFormSelectEventListener(false),
       mMayHaveMouseEnterLeaveEventListener(false),
       mMayHavePointerEnterLeaveEventListener(false),
+      mMayHaveTransitionEventListener(false),
       mMayHaveBeforeInputEventListenerForTelemetry(false),
       mMutationObserverHasObservedNodeForTelemetry(false),
       mOuterWindow(aOuterWindow),

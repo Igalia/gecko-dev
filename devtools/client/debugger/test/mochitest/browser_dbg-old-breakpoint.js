@@ -7,7 +7,7 @@
 
 "use strict";
 
-add_task(async function() {
+add_task(async function () {
   clearDebuggerPreferences();
 
   const pending = {
@@ -70,7 +70,7 @@ add_task(async function() {
 // Test that if we show a breakpoint with an old generated location, it is
 // removed after we load the original source and find the new generated
 // location.
-add_task(async function() {
+add_task(async function () {
   clearDebuggerPreferences();
 
   const pending = {
@@ -102,7 +102,7 @@ add_task(async function() {
     const bps = dbg.selectors.getBreakpointsList(state);
     return (
       bps.length == 1 &&
-      bps[0].location.sourceUrl.includes("entry.js") &&
+      bps[0].location.source.url.includes("entry.js") &&
       bps[0].location.line == 15
     );
   });

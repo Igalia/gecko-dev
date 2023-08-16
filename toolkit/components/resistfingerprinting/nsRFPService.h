@@ -10,7 +10,9 @@
 #include "ErrorList.h"
 #include "PLDHashTable.h"
 #include "mozilla/BasicEvents.h"
+#include "mozilla/gfx/Types.h"
 #include "nsHashtablesFwd.h"
+#include "nsICookieJarSettings.h"
 #include "nsIObserver.h"
 #include "nsISupports.h"
 #include "nsStringFwd.h"
@@ -45,7 +47,6 @@
 #  define SPOOFED_PLATFORM "Linux x86_64"
 #endif
 
-#define SPOOFED_APPNAME "Netscape"
 #define LEGACY_BUILD_ID "20181001000000"
 #define LEGACY_UA_GECKO_TRAIL "20100101"
 
@@ -60,6 +61,8 @@
 #endif
 
 struct JSContext;
+
+class nsIChannel;
 
 namespace mozilla {
 class WidgetKeyboardEvent;
@@ -103,7 +106,7 @@ class KeyboardHashKey : public PLDHashEntryHdr {
 
   explicit KeyboardHashKey(KeyTypePointer aOther);
 
-  KeyboardHashKey(KeyboardHashKey&& aOther);
+  KeyboardHashKey(KeyboardHashKey&& aOther) noexcept;
 
   ~KeyboardHashKey();
 
@@ -121,6 +124,16 @@ class KeyboardHashKey : public PLDHashEntryHdr {
   nsString mKey;
 };
 
+// ============================================================================
+
+// Reduce Timer Precision (RTP) Caller Type
+enum class RTPCallerType : uint8_t {
+  Normal = 0,
+  SystemPrincipal = (1 << 0),
+  ResistFingerprinting = (1 << 1),
+  CrossOriginIsolated = (1 << 2)
+};
+
 enum TimerPrecisionType {
   DangerouslyNone = 1,
   UnconditionalAKAHighRes = 2,
@@ -128,30 +141,46 @@ enum TimerPrecisionType {
   RFP = 4,
 };
 
+// ============================================================================
+
+// NOLINTNEXTLINE(bugprone-macro-parentheses)
+#define ITEM_VALUE(name, val) name = val,
+
+enum class RFPTarget : uint64_t {
+#include "RFPTargets.inc"
+};
+
+#undef ITEM_VALUE
+
+// ============================================================================
+
 class nsRFPService final : public nsIObserver {
  public:
   NS_DECL_ISUPPORTS
   NS_DECL_NSIOBSERVER
 
   static nsRFPService* GetOrCreate();
-  static double TimerResolution();
+
+  static bool IsRFPEnabledFor(RFPTarget aTarget);
+
+  // --------------------------------------------------------------------------
+  static double TimerResolution(RTPCallerType aRTPCallerType);
 
   enum TimeScale { Seconds = 1, MilliSeconds = 1000, MicroSeconds = 1000000 };
 
   // The following Reduce methods can be called off main thread.
   static double ReduceTimePrecisionAsUSecs(double aTime, int64_t aContextMixin,
-                                           bool aIsSystemPrincipal,
-                                           bool aCrossOriginIsolated);
+                                           RTPCallerType aRTPCallerType);
   static double ReduceTimePrecisionAsMSecs(double aTime, int64_t aContextMixin,
-                                           bool aIsSystemPrincipal,
-                                           bool aCrossOriginIsolated);
+                                           RTPCallerType aRTPCallerType);
   static double ReduceTimePrecisionAsMSecsRFPOnly(double aTime,
-                                                  int64_t aContextMixin);
+                                                  int64_t aContextMixin,
+                                                  RTPCallerType aRTPCallerType);
   static double ReduceTimePrecisionAsSecs(double aTime, int64_t aContextMixin,
-                                          bool aIsSystemPrincipal,
-                                          bool aCrossOriginIsolated);
+                                          RTPCallerType aRTPCallerType);
   static double ReduceTimePrecisionAsSecsRFPOnly(double aTime,
-                                                 int64_t aContextMixin);
+                                                 int64_t aContextMixin,
+                                                 RTPCallerType aRTPCallerType);
 
   // Used by the JS Engine, as it doesn't know about the TimerPrecisionType enum
   static double ReduceTimePrecisionAsUSecsWrapper(double aTime, JSContext* aCx);
@@ -166,6 +195,8 @@ class nsRFPService final : public nsIObserver {
                                  int64_t aContextMixin, long long* aMidpointOut,
                                  uint8_t* aSecretSeed = nullptr);
 
+  // --------------------------------------------------------------------------
+
   // This method calculates the video resolution (i.e. height x width) based
   // on the video quality (480p, 720p, etc).
   static uint32_t CalculateTargetVideoResolution(uint32_t aVideoQuality);
@@ -178,8 +209,12 @@ class nsRFPService final : public nsIObserver {
   static uint32_t GetSpoofedPresentedFrames(double aTime, uint32_t aWidth,
                                             uint32_t aHeight);
 
+  // --------------------------------------------------------------------------
+
   // This method generates the spoofed value of User Agent.
   static void GetSpoofedUserAgent(nsACString& userAgent, bool isForHTTPHeader);
+
+  // --------------------------------------------------------------------------
 
   /**
    * This method for getting spoofed modifier states for the given keyboard
@@ -225,6 +260,20 @@ class nsRFPService final : public nsIObserver {
                                 const WidgetKeyboardEvent* aKeyboardEvent,
                                 uint32_t& aOut);
 
+  // --------------------------------------------------------------------------
+
+  // The method to generate the key for randomization. It can return nothing if
+  // the session key is not available due to the randomization is disabled.
+  static Maybe<nsTArray<uint8_t>> GenerateKey(nsIChannel* aChannel);
+
+  // The method to add random noises to the image data based on the random key
+  // of the given cookieJarSettings.
+  static nsresult RandomizePixels(nsICookieJarSettings* aCookieJarSettings,
+                                  uint8_t* aData, uint32_t aSize,
+                                  mozilla::gfx::SurfaceFormat aSurfaceFormat);
+
+  // --------------------------------------------------------------------------
+
  private:
   nsresult Init();
 
@@ -232,12 +281,15 @@ class nsRFPService final : public nsIObserver {
 
   ~nsRFPService() = default;
 
-  void UpdateTimers();
-  void UpdateRFPPref();
+  void UpdateFPPOverrideList();
   void StartShutdown();
 
   void PrefChanged(const char* aPref);
   static void PrefChanged(const char* aPref, void* aSelf);
+
+  static Maybe<RFPTarget> TextToRFPTarget(const nsAString& aText);
+
+  // --------------------------------------------------------------------------
 
   static void MaybeCreateSpoofingKeyCodes(const KeyboardLangs aLang,
                                           const KeyboardRegions aRegion);
@@ -253,14 +305,39 @@ class nsRFPService final : public nsIObserver {
   static nsTHashMap<KeyboardHashKey, const SpoofingKeyboardCode*>*
       sSpoofingKeyboardCodes;
 
-  static TimerPrecisionType GetTimerPrecisionType(bool aIsSystemPrincipal,
-                                                  bool aCrossOriginIsolated);
+  // --------------------------------------------------------------------------
 
-  static TimerPrecisionType GetTimerPrecisionTypeRFPOnly();
+  static TimerPrecisionType GetTimerPrecisionType(RTPCallerType aRTPCallerType);
+
+  static TimerPrecisionType GetTimerPrecisionTypeRFPOnly(
+      RTPCallerType aRTPCallerType);
 
   static void TypeToText(TimerPrecisionType aType, nsACString& aText);
 
-  nsCString mInitialTZValue;
+  // --------------------------------------------------------------------------
+
+  // A helper function to generate canvas key from the given image data and
+  // randomization key.
+  static nsresult GenerateCanvasKeyFromImageData(
+      nsICookieJarSettings* aCookieJarSettings, uint8_t* aImageData,
+      uint32_t aSize, nsTArray<uint8_t>& aCanvasKey);
+
+  // Generate the session key if it hasn't been generated.
+  nsresult EnsureSessionKey(bool aIsPrivate);
+  void ClearSessionKey(bool aIsPrivate);
+
+  // The keys that represent the browsing session. The lifetime of the key ties
+  // to the browsing session. For normal windows, the key is generated when
+  // loading the first http channel after the browser startup and persists until
+  // the browser shuts down. For private windows, the key is generated when
+  // opening a http channel on a private window and reset after all private
+  // windows close, i.e. private browsing session ends.
+  //
+  // The key will be used to generate the randomization noise used to fiddle the
+  // browser fingerprints. Note that this key lives and can only be accessed in
+  // the parent process.
+  Maybe<nsID> mBrowsingSessionKey;
+  Maybe<nsID> mPrivateBrowsingSessionKey;
 };
 
 }  // namespace mozilla

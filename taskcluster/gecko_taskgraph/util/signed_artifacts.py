@@ -9,7 +9,6 @@ from taskgraph.util.taskcluster import get_artifact_path
 
 from gecko_taskgraph.util.declarative_artifacts import get_geckoview_upstream_artifacts
 
-
 LANGPACK_SIGN_PLATFORMS = {  # set
     "linux64-shippable",
     "linux64-devedition",
@@ -26,6 +25,10 @@ def is_partner_kind(kind):
 def is_notarization_kind(kind):
     if kind and "notarization" in kind:
         return True
+
+
+def is_mac_signing_king(kind):
+    return kind and "mac-signing" in kind
 
 
 def generate_specifications_of_artifacts_to_sign(
@@ -52,23 +55,20 @@ def generate_specifications_of_artifacts_to_sign(
     # XXX: Mars aren't signed here (on any platform) because internals will be
     # signed at after this stage of the release
     elif "macosx" in build_platform:
-        if is_notarization_kind(dep_kind):
-            # This task is notarization part 3: download signed bits,
-            # and staple notarization.
+        langpack_formats = []
+        if is_notarization_kind(config.kind):
+            formats = ["apple_notarization"]
             artifacts_specifications = [
                 {
                     "artifacts": [
                         get_artifact_path(job, "{locale}/target.tar.gz"),
                         get_artifact_path(job, "{locale}/target.pkg"),
                     ],
-                    "formats": [],
+                    "formats": formats,
                 }
             ]
-            langpack_formats = []
         else:
-            # This task is either depsigning, or notarization part 1:
-            # download unsigned bits, and sign. If notarization part 1,
-            # submit for notarization and create a uuid_manifest.json
+            # This task is mac-signing
             if is_partner_kind(kind):
                 extension = "tar.gz"
             else:

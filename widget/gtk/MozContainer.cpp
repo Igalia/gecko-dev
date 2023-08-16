@@ -12,11 +12,6 @@
 #include <stdio.h>
 #include "mozilla/WidgetUtilsGtk.h"
 
-#ifdef ACCESSIBILITY
-#  include <atk/atk.h>
-#  include "maiRedundantObjectFactory.h"
-#endif
-
 #ifdef MOZ_LOGGING
 #  include "mozilla/Logging.h"
 #  include "nsTArray.h"
@@ -33,7 +28,7 @@ static void moz_container_init(MozContainer* container);
 
 /* widget class methods */
 static void moz_container_map(GtkWidget* widget);
-static void moz_container_unmap(GtkWidget* widget);
+void moz_container_unmap(GtkWidget* widget);
 static void moz_container_size_allocate(GtkWidget* widget,
                                         GtkAllocation* allocation);
 void moz_container_realize(GtkWidget* widget);
@@ -88,13 +83,6 @@ GType moz_container_get_type(void) {
     moz_container_type =
         g_type_register_static(GTK_TYPE_CONTAINER, "MozContainer",
                                &moz_container_info, static_cast<GTypeFlags>(0));
-#ifdef ACCESSIBILITY
-    /* Set a factory to return accessible object with ROLE_REDUNDANT for
-     * MozContainer, so that gail won't send focus notification for it */
-    atk_registry_set_factory_type(atk_get_default_registry(),
-                                  moz_container_type,
-                                  mai_redundant_object_factory_get_type());
-#endif
   }
 
   return moz_container_type;
@@ -136,7 +124,6 @@ void moz_container_class_init(MozContainerClass* klass) {
   GtkWidgetClass* widget_class = GTK_WIDGET_CLASS(klass);
 
   widget_class->map = moz_container_map;
-  widget_class->unmap = moz_container_unmap;
   widget_class->realize = moz_container_realize;
   widget_class->size_allocate = moz_container_size_allocate;
 

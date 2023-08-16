@@ -10,12 +10,9 @@ from urllib.parse import urlsplit
 from taskgraph.transforms.base import TransformSequence
 from taskgraph.util.schema import resolve_keyed_by
 
+from gecko_taskgraph.transforms.task import get_branch_repo, get_branch_rev
 from gecko_taskgraph.util.attributes import release_level
 from gecko_taskgraph.util.scriptworker import get_release_config
-from gecko_taskgraph.transforms.task import (
-    get_branch_repo,
-    get_branch_rev,
-)
 
 transforms = TransformSequence()
 
@@ -31,7 +28,7 @@ INCLUDE_VERSION_REGEXES = {
     # Same as nonbeta, except for the esr suffix
     "esr": r"'^\d+\.\d+(\.\d+)?esr$'",
     # Previous esr versions, for update testing before we update users to esr102
-    "esr102-next": r"'^(52|60|68|78|91)+\.\d+(\.\d+)?esr$'",
+    "esr115-next": r"'^(52|60|68|78|91|102)+\.\d+(\.\d+)?esr$'",
 }
 
 MAR_CHANNEL_ID_OVERRIDE_REGEXES = {

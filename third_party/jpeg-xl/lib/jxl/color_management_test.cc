@@ -15,12 +15,12 @@
 
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
-#include "lib/jxl/base/file_io.h"
-#include "lib/jxl/base/thread_pool_internal.h"
+#include "lib/jxl/base/random.h"
 #include "lib/jxl/enc_color_management.h"
+#include "lib/jxl/enc_xyb.h"
 #include "lib/jxl/image_test_utils.h"
 #include "lib/jxl/test_utils.h"
-#include "lib/jxl/testdata.h"
+#include "lib/jxl/testing.h"
 
 namespace jxl {
 
@@ -41,6 +41,48 @@ using ::testing::FloatNear;
 // Small enough to be fast. If changed, must update Generate*.
 static constexpr size_t kWidth = 16;
 
+static constexpr size_t kNumThreads = 1;  // only have a single row.
+
+MATCHER_P(HasSameFieldsAs, expected, "") {
+  if (arg.rendering_intent != expected.rendering_intent) {
+    *result_listener << "which has a different rendering intent: "
+                     << ToString(arg.rendering_intent) << " instead of "
+                     << ToString(expected.rendering_intent);
+    return false;
+  }
+  if (arg.GetColorSpace() != expected.GetColorSpace()) {
+    *result_listener << "which has a different color space: "
+                     << ToString(arg.GetColorSpace()) << " instead of "
+                     << ToString(expected.GetColorSpace());
+    return false;
+  }
+  if (arg.white_point != expected.white_point) {
+    *result_listener << "which has a different white point: "
+                     << ToString(arg.white_point) << " instead of "
+                     << ToString(expected.white_point);
+    return false;
+  }
+  if (arg.HasPrimaries() && arg.primaries != expected.primaries) {
+    *result_listener << "which has different primaries: "
+                     << ToString(arg.primaries) << " instead of "
+                     << ToString(expected.primaries);
+    return false;
+  }
+  if (!arg.tf.IsSame(expected.tf)) {
+    static const auto tf_to_string = [](const CustomTransferFunction& tf) {
+      if (tf.IsGamma()) {
+        return "g" + ToString(tf.GetGamma());
+      }
+      return ToString(tf.GetTransferFunction());
+    };
+    *result_listener << "which has a different transfer function: "
+                     << tf_to_string(arg.tf) << " instead of "
+                     << tf_to_string(expected.tf);
+    return false;
+  }
+  return true;
+}
+
 struct Globals {
   // TODO(deymo): Make this a const.
   static Globals* GetInstance() {
@@ -49,9 +91,7 @@ struct Globals {
   }
 
  private:
-  static constexpr size_t kNumThreads = 0;  // only have a single row.
-
-  Globals() : pool(kNumThreads) {
+  Globals() {
     in_gray = GenerateGray();
     in_color = GenerateColor();
     out_gray = ImageF(kWidth, 1);
@@ -101,8 +141,6 @@ struct Globals {
   }
 
  public:
-  ThreadPoolInternal pool;
-
   // ImageF so we can use VerifyRelativeError; all are interleaved RGB.
   ImageF in_gray;
   ImageF in_color;
@@ -115,17 +153,6 @@ struct Globals {
 class ColorManagementTest
     : public ::testing::TestWithParam<test::ColorEncodingDescriptor> {
  public:
-  static void VerifySameFields(const ColorEncoding& c,
-                               const ColorEncoding& c2) {
-    ASSERT_EQ(c.rendering_intent, c2.rendering_intent);
-    ASSERT_EQ(c.GetColorSpace(), c2.GetColorSpace());
-    ASSERT_EQ(c.white_point, c2.white_point);
-    if (c.HasPrimaries()) {
-      ASSERT_EQ(c.primaries, c2.primaries);
-    }
-    ASSERT_TRUE(c.tf.IsSame(c2.tf));
-  }
-
   // "Same" pixels after converting g->c_native -> c -> g->c_native.
   static void VerifyPixelRoundTrip(const ColorEncoding& c) {
     Globals* g = Globals::GetInstance();
@@ -135,10 +162,10 @@ class ColorManagementTest
     ColorSpaceTransform xform_rev(cms);
     const float intensity_target =
         c.tf.IsHLG() ? 1000 : kDefaultIntensityTarget;
-    ASSERT_TRUE(xform_fwd.Init(c_native, c, intensity_target, kWidth,
-                               g->pool.NumThreads()));
-    ASSERT_TRUE(xform_rev.Init(c, c_native, intensity_target, kWidth,
-                               g->pool.NumThreads()));
+    ASSERT_TRUE(
+        xform_fwd.Init(c_native, c, intensity_target, kWidth, kNumThreads));
+    ASSERT_TRUE(
+        xform_rev.Init(c, c_native, intensity_target, kWidth, kNumThreads));
 
     const size_t thread = 0;
     const ImageF& in = c.IsGray() ? g->in_gray : g->in_color;
@@ -155,7 +182,7 @@ class ColorManagementTest
     double max_rel = 4E-7;
 #endif
     if (c.IsGray()) max_rel = 2E-5;
-    VerifyRelativeError(in, *out, max_l1, max_rel);
+    JXL_ASSERT_OK(VerifyRelativeError(in, *out, max_l1, max_rel, _));
   }
 };
 JXL_GTEST_INSTANTIATE_TEST_SUITE_P(ColorManagementTestInstantiation,
@@ -173,8 +200,8 @@ TEST_P(ColorManagementTest, VerifyAllProfiles) {
 
   // Can set an equivalent ColorEncoding from the generated ICC profile.
   ColorEncoding c3;
-  ASSERT_TRUE(c3.SetICC(PaddedBytes(c.ICC())));
-  VerifySameFields(c, c3);
+  ASSERT_TRUE(c3.SetICC(PaddedBytes(c.ICC()), &GetJxlCms()));
+  EXPECT_THAT(c3, HasSameFieldsAs(c));
 
   VerifyPixelRoundTrip(c);
 }
@@ -203,9 +230,10 @@ TEST_F(ColorManagementTest, sRGBChromaticity) {
 }
 
 TEST_F(ColorManagementTest, D2700Chromaticity) {
-  PaddedBytes icc = ReadTestData("jxl/color_management/sRGB-D2700.icc");
+  PaddedBytes icc =
+      jxl::test::ReadTestData("jxl/color_management/sRGB-D2700.icc");
   ColorEncoding sRGB_D2700;
-  ASSERT_TRUE(sRGB_D2700.SetICC(std::move(icc)));
+  ASSERT_TRUE(sRGB_D2700.SetICC(std::move(icc), &GetJxlCms()));
 
   EXPECT_THAT(sRGB_D2700.GetWhitePoint(), CIExyIs(0.45986, 0.41060));
   // The illuminant-relative chromaticities of this profile's primaries are the
@@ -217,11 +245,13 @@ TEST_F(ColorManagementTest, D2700Chromaticity) {
 }
 
 TEST_F(ColorManagementTest, D2700ToSRGB) {
-  PaddedBytes icc = ReadTestData("jxl/color_management/sRGB-D2700.icc");
+  const JxlCmsInterface& cms = GetJxlCms();
+  PaddedBytes icc =
+      jxl::test::ReadTestData("jxl/color_management/sRGB-D2700.icc");
   ColorEncoding sRGB_D2700;
-  ASSERT_TRUE(sRGB_D2700.SetICC(std::move(icc)));
+  ASSERT_TRUE(sRGB_D2700.SetICC(std::move(icc), &cms));
 
-  ColorSpaceTransform transform(GetJxlCms());
+  ColorSpaceTransform transform(cms);
   ASSERT_TRUE(transform.Init(sRGB_D2700, ColorEncoding::SRGB(),
                              kDefaultIntensityTarget, 1, 1));
   const float sRGB_D2700_values[3] = {0.863, 0.737, 0.490};
@@ -313,6 +343,92 @@ TEST_F(ColorManagementTest, HlgOotf) {
   ASSERT_TRUE(grayscale_transform.Run(0, &grayscale_hlg_value,
                                       &linear_grayscale_value));
   EXPECT_THAT(linear_grayscale_value, FloatNear(0.203, 1e-3));
+}
+
+TEST_F(ColorManagementTest, XYBProfile) {
+  ColorEncoding c_xyb;
+  c_xyb.SetColorSpace(ColorSpace::kXYB);
+  c_xyb.rendering_intent = RenderingIntent::kPerceptual;
+  ASSERT_TRUE(c_xyb.CreateICC());
+  ColorEncoding c_native = ColorEncoding::LinearSRGB(false);
+
+  static const size_t kGridDim = 17;
+  static const size_t kNumColors = kGridDim * kGridDim * kGridDim;
+  const JxlCmsInterface& cms = GetJxlCms();
+  ColorSpaceTransform xform(cms);
+  ASSERT_TRUE(
+      xform.Init(c_xyb, c_native, kDefaultIntensityTarget, kNumColors, 1));
+
+  ImageMetadata metadata;
+  metadata.color_encoding = c_native;
+  ImageBundle ib(&metadata);
+  Image3F native(kNumColors, 1);
+  float mul = 1.0f / (kGridDim - 1);
+  for (size_t ir = 0, x = 0; ir < kGridDim; ++ir) {
+    for (size_t ig = 0; ig < kGridDim; ++ig) {
+      for (size_t ib = 0; ib < kGridDim; ++ib, ++x) {
+        native.PlaneRow(0, 0)[x] = ir * mul;
+        native.PlaneRow(1, 0)[x] = ig * mul;
+        native.PlaneRow(2, 0)[x] = ib * mul;
+      }
+    }
+  }
+  ib.SetFromImage(std::move(native), c_native);
+  const Image3F& in = *ib.color();
+  Image3F opsin(kNumColors, 1);
+  ToXYB(ib, nullptr, &opsin, cms, nullptr);
+
+  Image3F opsin2(kNumColors, 1);
+  CopyImageTo(opsin, &opsin2);
+  ScaleXYB(&opsin2);
+
+  float* src = xform.BufSrc(0);
+  for (size_t i = 0; i < kNumColors; ++i) {
+    for (size_t c = 0; c < 3; ++c) {
+      src[3 * i + c] = opsin2.PlaneRow(c, 0)[i];
+    }
+  }
+
+  float* dst = xform.BufDst(0);
+  ASSERT_TRUE(xform.Run(0, src, dst));
+
+  Image3F out(kNumColors, 1);
+  for (size_t i = 0; i < kNumColors; ++i) {
+    for (size_t c = 0; c < 3; ++c) {
+      out.PlaneRow(c, 0)[i] = dst[3 * i + c];
+    }
+  }
+
+  auto debug_print_color = [&](size_t i) {
+    printf(
+        "(%f, %f, %f) -> (%9.6f, %f, %f) -> (%f, %f, %f) -> "
+        "(%9.6f, %9.6f, %9.6f)",
+        in.PlaneRow(0, 0)[i], in.PlaneRow(1, 0)[i], in.PlaneRow(2, 0)[i],
+        opsin.PlaneRow(0, 0)[i], opsin.PlaneRow(1, 0)[i],
+        opsin.PlaneRow(2, 0)[i], opsin2.PlaneRow(0, 0)[i],
+        opsin2.PlaneRow(1, 0)[i], opsin2.PlaneRow(2, 0)[i],
+        out.PlaneRow(0, 0)[i], out.PlaneRow(1, 0)[i], out.PlaneRow(2, 0)[i]);
+  };
+
+  float max_err[3] = {};
+  size_t max_err_i[3] = {};
+  for (size_t i = 0; i < kNumColors; ++i) {
+    for (size_t c = 0; c < 3; ++c) {
+      // debug_print_color(i); printf("\n");
+      float err = std::abs(in.PlaneRow(c, 0)[i] - out.PlaneRow(c, 0)[i]);
+      if (err > max_err[c]) {
+        max_err[c] = err;
+        max_err_i[c] = i;
+      }
+    }
+  }
+  static float kMaxError[3] = {9e-4, 4e-4, 5e-4};
+  printf("Maximum errors:\n");
+  for (size_t c = 0; c < 3; ++c) {
+    debug_print_color(max_err_i[c]);
+    printf("    %f\n", max_err[c]);
+    EXPECT_LT(max_err[c], kMaxError[c]);
+  }
 }
 
 }  // namespace

@@ -18,7 +18,6 @@
 #include "nsGkAtoms.h"
 #include "nsIUserIdleServiceInternal.h"
 #include "nsIWindowsRegKey.h"
-#include "nsMemory.h"
 #include "nsPrintfCString.h"
 #include "nsQuickSort.h"
 #include "nsReadableUtils.h"
@@ -1399,7 +1398,6 @@ void NativeKey::InitIsSkippableForKeyOrChar(const MSG& aLastKeyMSG) {
           // by the auto-repeat feature.
           return;
       }
-      return;
     case WM_APPCOMMAND:
       MOZ_ASSERT_UNREACHABLE(
           "WM_APPCOMMAND should be handled in "

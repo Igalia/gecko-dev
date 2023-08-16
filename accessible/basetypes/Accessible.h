@@ -13,8 +13,11 @@
 #include "Units.h"
 
 class nsAtom;
+class nsStaticAtom;
 
 struct nsRoleMapEntry;
+
+class nsIURI;
 
 namespace mozilla {
 namespace a11y {
@@ -26,8 +29,8 @@ class LocalAccessible;
 class Relation;
 enum class RelationType;
 class RemoteAccessible;
-class TableAccessibleBase;
-class TableCellAccessibleBase;
+class TableAccessible;
+class TableCellAccessible;
 
 /**
  * Name type flags.
@@ -39,12 +42,6 @@ enum ENameValueFlag {
    *  b) no name (was missed): name.IsVoid()
    */
   eNameOK,
-
-  /**
-   * Name was left empty by the author on purpose:
-   * name.IsEmpty() && !name.IsVoid().
-   */
-  eNoNameOnPurpose,
 
   /**
    * Name was computed from the subtree.
@@ -136,6 +133,12 @@ class KeyBinding {
   };
 };
 
+/**
+ * The base type for an accessibility tree node. Methods and attributes in this
+ * class are available in both the content process and the parent process.
+ * Overrides for these methods live primarily in LocalAccessible and
+ * RemoteAccessibleBase.
+ */
 class Accessible {
  protected:
   Accessible();
@@ -202,6 +205,11 @@ class Accessible {
                                    EWhichChildAtPoint aWhichChild) = 0;
 
   /**
+   * Return the focused child if any.
+   */
+  virtual Accessible* FocusedChild();
+
+  /**
    * Return ARIA role map if any.
    */
   const nsRoleMapEntry* ARIARoleMap() const;
@@ -259,6 +267,7 @@ class Accessible {
   virtual double MinValue() const = 0;
   virtual double MaxValue() const = 0;
   virtual double Step() const = 0;
+  virtual bool SetCurValue(double aValue) = 0;
 
   /**
    * Return boundaries in screen coordinates in device pixels.
@@ -312,7 +321,7 @@ class Accessible {
 
   virtual already_AddRefed<nsAtom> DisplayStyle() const = 0;
 
-  virtual Maybe<float> Opacity() const = 0;
+  virtual float Opacity() const = 0;
 
   /**
    * Get the live region attributes (if any) for this single Accessible. This
@@ -322,6 +331,13 @@ class Accessible {
   virtual void LiveRegionAttributes(nsAString* aLive, nsAString* aRelevant,
                                     Maybe<bool>* aAtomic,
                                     nsAString* aBusy) const = 0;
+
+  /**
+   * Get the aria-selected state. aria-selected not being specified is not
+   * always the same as aria-selected="false". If not specified, Nothing() will
+   * be returned.
+   */
+  virtual Maybe<bool> ARIASelected() const = 0;
 
   LayoutDeviceIntSize Size() const;
 
@@ -334,6 +350,18 @@ class Accessible {
    */
   virtual Relation RelationByType(RelationType aType) const = 0;
 
+  /**
+   * Get the language associated with the accessible.
+   */
+  virtual void Language(nsAString& aLocale) = 0;
+
+  /**
+   * Get the role of this Accessible as an ARIA role token. This might have been
+   * set explicitly (e.g. role="button") or it might be implicit in native
+   * markup (e.g. <button> returns "button").
+   */
+  nsStaticAtom* ComputedARIARole() const;
+
   // Methods that interact with content.
 
   virtual void TakeFocus() const = 0;
@@ -345,14 +373,25 @@ class Accessible {
   virtual void ScrollTo(uint32_t aHow) const = 0;
 
   /**
+   * Scroll the accessible to the given point.
+   */
+  virtual void ScrollToPoint(uint32_t aCoordinateType, int32_t aX,
+                             int32_t aY) = 0;
+
+  /**
    * Return tag name of associated DOM node.
    */
   virtual nsAtom* TagName() const = 0;
 
   /**
+   * Return input `type` attribute
+   */
+  virtual already_AddRefed<nsAtom> InputType() const = 0;
+
+  /**
    * Return a landmark role if applied.
    */
-  virtual nsAtom* LandmarkRole() const;
+  nsStaticAtom* LandmarkRole() const;
 
   /**
    * Return the id of the dom node this accessible represents.
@@ -444,16 +483,15 @@ class Accessible {
 
   bool IsTableRow() const { return HasGenericType(eTableRow); }
 
-  /**
-   * Note: The eTable* types defined in the ARIA map are used in
-   * nsAccessibilityService::CreateAccessible to determine which ARIAGrid*
-   * classes to use for accessible object creation. However, an invalid table
-   * structure might cause these classes not to be used after all.
-   *
-   * To make sure we're really dealing with a table cell, only check the
-   * generic type defined by the class, not the type defined in the ARIA map.
-   */
-  bool IsTableCell() const { return mGenericTypes & eTableCell; }
+  bool IsTableCell() const {
+    // The eTableCell type defined in the ARIA map is used in
+    // nsAccessibilityService::CreateAccessible to specify when
+    // ARIAGridCellAccessible should be used for object creation. However, an
+    // invalid table structure might cause this class not to be used after all.
+    // To make sure we're really dealing with a cell, only check the generic
+    // type defined by the class, not the type defined in the ARIA map.
+    return mGenericTypes & eTableCell;
+  }
 
   bool IsTable() const { return HasGenericType(eTable); }
 
@@ -496,7 +534,10 @@ class Accessible {
 
   bool IsHTMLOptGroup() const { return mType == eHTMLOptGroupType; }
 
+  bool IsHTMLRadioButton() const { return mType == eHTMLRadioButtonType; }
+
   bool IsHTMLTable() const { return mType == eHTMLTableType; }
+  bool IsHTMLTableCell() const { return mType == eHTMLTableCellType; }
   bool IsHTMLTableRow() const { return mType == eHTMLTableRowType; }
 
   bool IsImageMap() const { return mType == eImageMapType; }
@@ -508,8 +549,6 @@ class Accessible {
   bool IsMenuButton() const { return HasGenericType(eMenuButton); }
 
   bool IsMenuPopup() const { return mType == eMenuPopupType; }
-
-  bool IsProxy() const { return mType == eProxyType; }
 
   bool IsOuterDoc() const { return mType == eOuterDocType; }
 
@@ -541,7 +580,62 @@ class Accessible {
 
   bool IsDateTimeField() const { return mType == eHTMLDateTimeFieldType; }
 
+  bool IsSearchbox() const;
+
   virtual bool HasNumericValue() const = 0;
+
+  /**
+   * Returns true if this is a generic container element that has no meaning on
+   * its own.
+   */
+  bool IsGeneric() const {
+    role accRole = Role();
+    return accRole == roles::TEXT || accRole == roles::TEXT_CONTAINER ||
+           accRole == roles::SECTION;
+  }
+
+  /**
+   * Returns the nearest ancestor which is not a generic element.
+   */
+  Accessible* GetNonGenericParent() const {
+    for (Accessible* parent = Parent(); parent; parent = parent->Parent()) {
+      if (!parent->IsGeneric()) {
+        return parent;
+      }
+    }
+    return nullptr;
+  }
+
+  /**
+   * Returns true if the accessible is non-interactive.
+   */
+  bool IsNonInteractive() const {
+    if (IsGeneric()) {
+      return true;
+    }
+    const role accRole = Role();
+    return accRole == role::LANDMARK || accRole == role::REGION;
+  }
+
+  /**
+   * Return true if the link is valid (e. g. points to a valid URL).
+   */
+  bool IsLinkValid();
+
+  /**
+   * Return the number of anchors within the link.
+   */
+  uint32_t AnchorCount();
+
+  /**
+   * Returns an anchor URI at the given index.
+   */
+  virtual already_AddRefed<nsIURI> AnchorURIAt(uint32_t aAnchorIndex) const;
+
+  /**
+   * Returns an anchor accessible at the given index.
+   */
+  Accessible* AnchorAt(uint32_t aAnchorIndex) const;
 
   // Remote/Local types
 
@@ -553,8 +647,8 @@ class Accessible {
 
   virtual HyperTextAccessibleBase* AsHyperTextBase() { return nullptr; }
 
-  virtual TableAccessibleBase* AsTableBase() { return nullptr; }
-  virtual TableCellAccessibleBase* AsTableCellBase() { return nullptr; }
+  virtual TableAccessible* AsTable() { return nullptr; }
+  virtual TableCellAccessible* AsTableCell() { return nullptr; }
 
 #ifdef A11Y_LOG
   /**
@@ -621,6 +715,12 @@ class Accessible {
    */
   virtual bool HasPrimaryAction() const = 0;
 
+  /**
+   * Apply states which are implied by other information common to both
+   * LocalAccessible and RemoteAccessible.
+   */
+  void ApplyImplicitState(uint64_t& aState) const;
+
  private:
   static const uint8_t kTypeBits = 6;
   static const uint8_t kGenericTypesBits = 18;
@@ -632,7 +732,7 @@ class Accessible {
   uint32_t mGenericTypes : kGenericTypesBits;
   uint8_t mRoleMapEntryIndex;
 
-  friend class DocAccessibleChildBase;
+  friend class DocAccessibleChild;
   friend class AccGroupInfo;
 };
 

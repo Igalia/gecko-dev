@@ -1,11 +1,11 @@
 "use strict";
 
-const { FormAutofillUtils } = ChromeUtils.import(
-  "resource://autofill/FormAutofillUtils.jsm"
+const { FormAutofillUtils } = ChromeUtils.importESModule(
+  "resource://gre/modules/shared/FormAutofillUtils.sys.mjs"
 );
 
-XPCOMUtils.defineLazyModuleGetters(this, {
-  Region: "resource://gre/modules/Region.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  Region: "resource://gre/modules/Region.sys.mjs",
 });
 
 requestLongerTimeout(6);
@@ -74,7 +74,7 @@ add_task(async function test_saveAddress() {
       "US postal-code label should be 'ZIP Code'"
     );
     // Input address info and verify move through form with tab keys
-    const keypresses = [
+    let keypresses = [
       "VK_TAB",
       TEST_ADDRESS_1["given-name"],
       "VK_TAB",
@@ -98,9 +98,12 @@ add_task(async function test_saveAddress() {
       "VK_TAB",
       TEST_ADDRESS_1.email,
       "VK_TAB",
-      "VK_TAB",
-      "VK_RETURN",
     ];
+    if (AppConstants.platform != "win") {
+      keypresses.push("VK_TAB", "VK_RETURN");
+    } else {
+      keypresses.push("VK_RETURN");
+    }
     keypresses.forEach(keypress => {
       if (
         doc.activeElement.localName == "select" &&
@@ -259,7 +262,7 @@ add_task(async function test_saveAddressCA() {
 
     // Input address info and verify move through form with tab keys
     doc.querySelector("#given-name").focus();
-    const keyInputs = [
+    let keyInputs = [
       TEST_ADDRESS_CA_1["given-name"],
       "VK_TAB",
       TEST_ADDRESS_CA_1["additional-name"],
@@ -282,9 +285,12 @@ add_task(async function test_saveAddressCA() {
       "VK_TAB",
       TEST_ADDRESS_CA_1.email,
       "VK_TAB",
-      "VK_TAB",
-      "VK_RETURN",
     ];
+    if (AppConstants.platform != "win") {
+      keyInputs.push("VK_TAB", "VK_RETURN");
+    } else {
+      keyInputs.push("VK_RETURN");
+    }
     keyInputs.forEach(input => EventUtils.synthesizeKey(input, {}, win));
   });
   let addresses = await getAddresses();
@@ -323,7 +329,7 @@ add_task(async function test_saveAddressDE() {
     );
     // Input address info and verify move through form with tab keys
     doc.querySelector("#given-name").focus();
-    const keyInputs = [
+    let keyInputs = [
       TEST_ADDRESS_DE_1["given-name"],
       "VK_TAB",
       TEST_ADDRESS_DE_1["additional-name"],
@@ -344,9 +350,12 @@ add_task(async function test_saveAddressDE() {
       "VK_TAB",
       TEST_ADDRESS_DE_1.email,
       "VK_TAB",
-      "VK_TAB",
-      "VK_RETURN",
     ];
+    if (AppConstants.platform != "win") {
+      keyInputs.push("VK_TAB", "VK_RETURN");
+    } else {
+      keyInputs.push("VK_RETURN");
+    }
     keyInputs.forEach(input => EventUtils.synthesizeKey(input, {}, win));
   });
   let addresses = await getAddresses();
@@ -404,7 +413,7 @@ add_task(async function test_saveAddress_nolibaddressinput() {
     );
     // Input address info and verify move through form with tab keys
     doc.querySelector("#given-name").focus();
-    const keyInputs = [
+    let keyInputs = [
       TEST_ADDRESS["given-name"],
       "VK_TAB",
       TEST_ADDRESS["additional-name"],
@@ -427,9 +436,12 @@ add_task(async function test_saveAddress_nolibaddressinput() {
       "VK_TAB",
       TEST_ADDRESS.email,
       "VK_TAB",
-      "VK_TAB",
-      "VK_RETURN",
     ];
+    if (AppConstants.platform != "win") {
+      keyInputs.push("VK_TAB", "VK_RETURN");
+    } else {
+      keyInputs.push("VK_RETURN");
+    }
     keyInputs.forEach(input => EventUtils.synthesizeKey(input, {}, win));
   });
   let addresses = await getAddresses();
@@ -469,7 +481,7 @@ add_task(async function test_saveAddressIE() {
 
     // Input address info and verify move through form with tab keys
     doc.querySelector("#given-name").focus();
-    const keyInputs = [
+    let keyInputs = [
       TEST_ADDRESS_IE_1["given-name"],
       "VK_TAB",
       TEST_ADDRESS_IE_1["additional-name"],
@@ -494,9 +506,12 @@ add_task(async function test_saveAddressIE() {
       "VK_TAB",
       TEST_ADDRESS_IE_1.email,
       "VK_TAB",
-      "VK_TAB",
-      "VK_RETURN",
     ];
+    if (AppConstants.platform != "win") {
+      keyInputs.push("VK_TAB", "VK_RETURN");
+    } else {
+      keyInputs.push("VK_RETURN");
+    }
     keyInputs.forEach(input => EventUtils.synthesizeKey(input, {}, win));
   });
 
@@ -528,38 +543,34 @@ add_task(async function test_countryAndStateFieldLabels() {
         continue;
       }
 
-      // Clear L10N attributes and textContent to not leave leftovers between country tests
+      // Clear L10N textContent to not leave leftovers between country tests
       for (let labelEl of mutableLabels) {
+        doc.l10n.setAttributes(labelEl, "");
         labelEl.textContent = "";
-        delete labelEl.dataset.localization;
       }
 
       info(`Selecting '${countryOption.label}' (${countryOption.value})`);
       EventUtils.synthesizeKey(countryOption.label, {}, win);
 
+      let l10nResolve;
+      let l10nReady = new Promise(resolve => {
+        l10nResolve = resolve;
+      });
+      let verifyL10n = () => {
+        if (mutableLabels.every(labelEl => labelEl.textContent)) {
+          win.removeEventListener("MozAfterPaint", verifyL10n);
+          l10nResolve();
+        }
+      };
+      win.addEventListener("MozAfterPaint", verifyL10n);
+      await l10nReady;
+
       // Check that the labels were filled
       for (let labelEl of mutableLabels) {
-        if (!labelEl.textContent) {
-          // This test used to rely on the implied initial timer of
-          // TestUtils.waitForCondition. See bug 1700685.
-          // eslint-disable-next-line mozilla/no-arbitrary-setTimeout
-          await new Promise(resolve => setTimeout(resolve, 10));
-
-          await TestUtils.waitForCondition(
-            () => labelEl.textContent,
-            "Wait for label to be populated by the mutation observer",
-            10
-          );
-        }
         isnot(
           labelEl.textContent,
           "",
           "Ensure textContent is non-empty for: " + countryOption.value
-        );
-        is(
-          labelEl.dataset.localization,
-          undefined,
-          "Ensure data-localization was removed: " + countryOption.value
         );
       }
 
@@ -571,17 +582,19 @@ add_task(async function test_countryAndStateFieldLabels() {
           keys: "Abaco~AK~Andros~BY~BI~CI~Crooked Island~Eleuthera~EX~Grand Bahama~HI~IN~LI~MG~N.P.~RI~RC~SS~SW".split(
             "~"
           ),
-          names: "Abaco Islands~Acklins~Andros Island~Berry Islands~Bimini~Cat Island~Crooked Island~Eleuthera~Exuma and Cays~Grand Bahama~Harbour Island~Inagua~Long Island~Mayaguana~New Providence~Ragged Island~Rum Cay~San Salvador~Spanish Wells".split(
-            "~"
-          ),
+          names:
+            "Abaco Islands~Acklins~Andros Island~Berry Islands~Bimini~Cat Island~Crooked Island~Eleuthera~Exuma and Cays~Grand Bahama~Harbour Island~Inagua~Long Island~Mayaguana~New Providence~Ragged Island~Rum Cay~San Salvador~Spanish Wells".split(
+              "~"
+            ),
         },
         US: {
           keys: "AL~AK~AS~AZ~AR~AA~AE~AP~CA~CO~CT~DE~DC~FL~GA~GU~HI~ID~IL~IN~IA~KS~KY~LA~ME~MH~MD~MA~MI~FM~MN~MS~MO~MT~NE~NV~NH~NJ~NM~NY~NC~ND~MP~OH~OK~OR~PW~PA~PR~RI~SC~SD~TN~TX~UT~VT~VI~VA~WA~WV~WI~WY".split(
             "~"
           ),
-          names: "Alabama~Alaska~American Samoa~Arizona~Arkansas~Armed Forces (AA)~Armed Forces (AE)~Armed Forces (AP)~California~Colorado~Connecticut~Delaware~District of Columbia~Florida~Georgia~Guam~Hawaii~Idaho~Illinois~Indiana~Iowa~Kansas~Kentucky~Louisiana~Maine~Marshall Islands~Maryland~Massachusetts~Michigan~Micronesia~Minnesota~Mississippi~Missouri~Montana~Nebraska~Nevada~New Hampshire~New Jersey~New Mexico~New York~North Carolina~North Dakota~Northern Mariana Islands~Ohio~Oklahoma~Oregon~Palau~Pennsylvania~Puerto Rico~Rhode Island~South Carolina~South Dakota~Tennessee~Texas~Utah~Vermont~Virgin Islands~Virginia~Washington~West Virginia~Wisconsin~Wyoming".split(
-            "~"
-          ),
+          names:
+            "Alabama~Alaska~American Samoa~Arizona~Arkansas~Armed Forces (AA)~Armed Forces (AE)~Armed Forces (AP)~California~Colorado~Connecticut~Delaware~District of Columbia~Florida~Georgia~Guam~Hawaii~Idaho~Illinois~Indiana~Iowa~Kansas~Kentucky~Louisiana~Maine~Marshall Islands~Maryland~Massachusetts~Michigan~Micronesia~Minnesota~Mississippi~Missouri~Montana~Nebraska~Nevada~New Hampshire~New Jersey~New Mexico~New York~North Carolina~North Dakota~Northern Mariana Islands~Ohio~Oklahoma~Oregon~Palau~Pennsylvania~Puerto Rico~Rhode Island~South Carolina~South Dakota~Tennessee~Texas~Utah~Vermont~Virgin Islands~Virginia~Washington~West Virginia~Wisconsin~Wyoming".split(
+              "~"
+            ),
         },
       };
       /* eslint-enable max-len */
@@ -607,6 +620,8 @@ add_task(async function test_countryAndStateFieldLabels() {
           );
         }
       }
+      // Dispatch a dummy key event so that <select>'s incremental search is cleared.
+      EventUtils.synthesizeKey("VK_ACCEPT", {}, win);
     }
 
     doc.querySelector("#cancel").click();
@@ -909,6 +924,9 @@ add_task(async function test_countrySpecificFieldsGetRequiredness() {
       !provinceField.disabled,
       "address-level1 should not be marked as disabled"
     );
+
+    // Dispatch a dummy key event so that <select>'s incremental search is cleared.
+    EventUtils.synthesizeKey("VK_ACCEPT", {}, win);
 
     doc.querySelector("#country").focus();
     EventUtils.synthesizeKey("Romania", {}, win);

@@ -24,6 +24,7 @@
 #include "mozilla/dom/DOMException.h"
 #include "mozilla/dom/InternalRequest.h"
 #include "mozilla/dom/Response.h"
+#include "mozilla/dom/ReferrerInfo.h"
 #include "mozilla/dom/WorkerRef.h"
 
 namespace mozilla::dom {
@@ -295,15 +296,17 @@ class WorkerStreamOwner final {
     RefPtr<WorkerStreamOwner> self =
         new WorkerStreamOwner(aStream, std::move(target));
 
-    self->mWorkerRef = StrongWorkerRef::Create(aWorker, "JSStreamConsumer", [self]() {
-      if (self->mStream) {
-        // If this Close() calls JSStreamConsumer::OnInputStreamReady and drops
-        // the last reference to the JSStreamConsumer, 'this' will not be
-        // destroyed since ~JSStreamConsumer() only enqueues a release proxy.
-        self->mStream->Close();
-        self->mStream = nullptr;
-      }
-    });
+    self->mWorkerRef =
+        StrongWorkerRef::Create(aWorker, "JSStreamConsumer", [self]() {
+          if (self->mStream) {
+            // If this Close() calls JSStreamConsumer::OnInputStreamReady and
+            // drops the last reference to the JSStreamConsumer, 'this' will not
+            // be destroyed since ~JSStreamConsumer() only enqueues a release
+            // proxy.
+            self->mStream->Close();
+            self->mStream = nullptr;
+          }
+        });
 
     if (!self->mWorkerRef) {
       return nullptr;
@@ -711,12 +714,7 @@ bool FetchUtil::StreamResponseToJS(JSContext* aCx, JS::Handle<JSObject*> aObj,
     return ThrowException(aCx, JSMSG_WASM_BAD_RESPONSE_STATUS);
   }
 
-  IgnoredErrorResult result;
-  bool used = response->GetBodyUsed(result);
-  if (NS_WARN_IF(result.Failed())) {
-    return ThrowException(aCx, JSMSG_WASM_ERROR_CONSUMING_RESPONSE);
-  }
-  if (used) {
+  if (response->BodyUsed()) {
     return ThrowException(aCx, JSMSG_WASM_RESPONSE_ALREADY_CONSUMED);
   }
 
@@ -725,6 +723,7 @@ bool FetchUtil::StreamResponseToJS(JSContext* aCx, JS::Handle<JSObject*> aObj,
       nsAutoString url;
       response->GetUrl(url);
 
+      IgnoredErrorResult result;
       nsCString sourceMapUrl;
       response->GetInternalHeaders()->Get("SourceMap"_ns, sourceMapUrl, result);
       if (NS_WARN_IF(result.Failed())) {

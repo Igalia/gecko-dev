@@ -5,8 +5,10 @@
 
 #include "HTMLEditHelpers.h"
 
+#include "CSSEditUtils.h"
 #include "EditorDOMPoint.h"
 #include "HTMLEditor.h"
+#include "PendingStyles.h"
 #include "WSRunObject.h"
 
 #include "mozilla/ContentIterator.h"
@@ -86,144 +88,89 @@ nsresult DOMSubtreeIterator::Init(nsRange& aRange) {
 }
 
 /******************************************************************************
- * mozilla::MoveNodeResult
+ * mozilla::EditorElementStyle
  *****************************************************************************/
 
-nsresult MoveNodeResult::SuggestCaretPointTo(
-    const HTMLEditor& aHTMLEditor, const SuggestCaretOptions& aOptions) const {
-  mHandledCaretPoint = true;
-  if (!mCaretPoint.IsSet()) {
-    if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion)) {
-      return NS_OK;
-    }
-    NS_WARNING("There was no suggestion to put caret");
-    return NS_ERROR_FAILURE;
-  }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return NS_OK;
-  }
-  nsresult rv = aHTMLEditor.CollapseSelectionTo(mCaretPoint);
-  if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
-    NS_WARNING(
-        "EditorBase::CollapseSelectionTo() caused destroying the editor");
-    return NS_ERROR_EDITOR_DESTROYED;
-  }
-  return aOptions.contains(SuggestCaret::AndIgnoreTrivialError) &&
-                 MOZ_UNLIKELY(NS_FAILED(rv))
-             ? NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR
-             : rv;
+bool EditorElementStyle::IsCSSSettable(const nsStaticAtom& aTagName) const {
+  return CSSEditUtils::IsCSSEditableStyle(aTagName, *this);
 }
 
-bool MoveNodeResult::MoveCaretPointTo(EditorDOMPoint& aPointToPutCaret,
-                                      const HTMLEditor& aHTMLEditor,
-                                      const SuggestCaretOptions& aOptions) {
-  MOZ_ASSERT(!aOptions.contains(SuggestCaret::AndIgnoreTrivialError));
-  mHandledCaretPoint = true;
-  if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion) &&
-      !mCaretPoint.IsSet()) {
-    return false;
-  }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return false;
-  }
-  aPointToPutCaret = UnwrapCaretPoint();
-  return true;
+bool EditorElementStyle::IsCSSSettable(const Element& aElement) const {
+  return CSSEditUtils::IsCSSEditableStyle(aElement, *this);
+}
+
+bool EditorElementStyle::IsCSSRemovable(const nsStaticAtom& aTagName) const {
+  // <font size> cannot be applied with CSS font-size for now, but it should be
+  // removable.
+  return EditorElementStyle::IsCSSSettable(aTagName) ||
+         (IsInlineStyle() && AsInlineStyle().IsStyleOfFontSize());
+}
+
+bool EditorElementStyle::IsCSSRemovable(const Element& aElement) const {
+  // <font size> cannot be applied with CSS font-size for now, but it should be
+  // removable.
+  return EditorElementStyle::IsCSSSettable(aElement) ||
+         (IsInlineStyle() && AsInlineStyle().IsStyleOfFontSize());
 }
 
 /******************************************************************************
- * mozilla::SplitNodeResult
+ * mozilla::EditorInlineStyle
  *****************************************************************************/
 
-nsresult SplitNodeResult::SuggestCaretPointTo(
-    const HTMLEditor& aHTMLEditor, const SuggestCaretOptions& aOptions) const {
-  mHandledCaretPoint = true;
-  if (!mCaretPoint.IsSet()) {
-    if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion)) {
-      return NS_OK;
+PendingStyleCache EditorInlineStyle::ToPendingStyleCache(
+    nsAString&& aValue) const {
+  return PendingStyleCache(*mHTMLProperty,
+                           mAttribute ? mAttribute->AsStatic() : nullptr,
+                           std::move(aValue));
+}
+
+bool EditorInlineStyle::IsRepresentedBy(const nsIContent& aContent) const {
+  MOZ_ASSERT(!IsStyleToClearAllInlineStyles());
+
+  if (!aContent.IsHTMLElement()) {
+    return false;
+  }
+  const Element& element = *aContent.AsElement();
+  if (mHTMLProperty == element.NodeInfo()->NameAtom() ||
+      mHTMLProperty == GetSimilarElementNameAtom()) {
+    // <a> cannot be nested.  Therefore, if we're the style of <a>, we should
+    // treat existing it even if the attribute does not match.
+    if (mHTMLProperty == nsGkAtoms::a) {
+      return true;
     }
-    NS_WARNING("There was no suggestion to put caret");
-    return NS_ERROR_FAILURE;
+    return !mAttribute || element.HasAttr(mAttribute);
   }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return NS_OK;
+  // Special case for linking or naming an <a> element.
+  if ((mHTMLProperty == nsGkAtoms::href && HTMLEditUtils::IsLink(&element)) ||
+      (mHTMLProperty == nsGkAtoms::name &&
+       HTMLEditUtils::IsNamedAnchor(&element))) {
+    return true;
   }
-  nsresult rv = aHTMLEditor.CollapseSelectionTo(mCaretPoint);
-  if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
-    NS_WARNING(
-        "EditorBase::CollapseSelectionTo() caused destroying the editor");
-    return NS_ERROR_EDITOR_DESTROYED;
+  // If the style is font size, it's also represented by <big> or <small>.
+  if (mHTMLProperty == nsGkAtoms::font && mAttribute == nsGkAtoms::size &&
+      aContent.IsAnyOfHTMLElements(nsGkAtoms::big, nsGkAtoms::small)) {
+    return true;
   }
-  return aOptions.contains(SuggestCaret::AndIgnoreTrivialError) &&
-                 MOZ_UNLIKELY(NS_FAILED(rv))
-             ? NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR
-             : rv;
+  return false;
 }
 
-bool SplitNodeResult::MoveCaretPointTo(EditorDOMPoint& aPointToPutCaret,
-                                       const HTMLEditor& aHTMLEditor,
-                                       const SuggestCaretOptions& aOptions) {
-  MOZ_ASSERT(!aOptions.contains(SuggestCaret::AndIgnoreTrivialError));
-  mHandledCaretPoint = true;
-  if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion) &&
-      !mCaretPoint.IsSet()) {
+Result<bool, nsresult> EditorInlineStyle::IsSpecifiedBy(
+    const HTMLEditor& aHTMLEditor, Element& aElement) const {
+  MOZ_ASSERT(!IsStyleToClearAllInlineStyles());
+  if (!IsCSSSettable(aElement) && !IsCSSRemovable(aElement)) {
     return false;
   }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return false;
+  // Special case in the CSS mode.  We should treat <u>, <s>, <strike>, <ins>
+  // and <del> specifies text-decoration (bug 1802668).
+  if (aHTMLEditor.IsCSSEnabled() &&
+      IsStyleOfTextDecoration(IgnoreSElement::No) &&
+      aElement.IsAnyOfHTMLElements(nsGkAtoms::u, nsGkAtoms::s,
+                                   nsGkAtoms::strike, nsGkAtoms::ins,
+                                   nsGkAtoms::del)) {
+    return true;
   }
-  aPointToPutCaret = UnwrapCaretPoint();
-  return true;
-}
-
-/******************************************************************************
- * mozilla::SplitRangeOffFromNodeResult
- *****************************************************************************/
-
-nsresult SplitRangeOffFromNodeResult::SuggestCaretPointTo(
-    const HTMLEditor& aHTMLEditor, const SuggestCaretOptions& aOptions) const {
-  mHandledCaretPoint = true;
-  if (!mCaretPoint.IsSet()) {
-    if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion)) {
-      return NS_OK;
-    }
-    NS_WARNING("There was no suggestion to put caret");
-    return NS_ERROR_FAILURE;
-  }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return NS_OK;
-  }
-  nsresult rv = aHTMLEditor.CollapseSelectionTo(mCaretPoint);
-  if (MOZ_UNLIKELY(rv == NS_ERROR_EDITOR_DESTROYED)) {
-    NS_WARNING(
-        "EditorBase::CollapseSelectionTo() caused destroying the editor");
-    return NS_ERROR_EDITOR_DESTROYED;
-  }
-  return aOptions.contains(SuggestCaret::AndIgnoreTrivialError) &&
-                 MOZ_UNLIKELY(NS_FAILED(rv))
-             ? NS_SUCCESS_EDITOR_BUT_IGNORED_TRIVIAL_ERROR
-             : rv;
-}
-
-bool SplitRangeOffFromNodeResult::MoveCaretPointTo(
-    EditorDOMPoint& aPointToPutCaret, const HTMLEditor& aHTMLEditor,
-    const SuggestCaretOptions& aOptions) {
-  MOZ_ASSERT(!aOptions.contains(SuggestCaret::AndIgnoreTrivialError));
-  mHandledCaretPoint = true;
-  if (aOptions.contains(SuggestCaret::OnlyIfHasSuggestion) &&
-      !mCaretPoint.IsSet()) {
-    return false;
-  }
-  if (aOptions.contains(SuggestCaret::OnlyIfTransactionsAllowedToDoIt) &&
-      !aHTMLEditor.AllowsTransactionsToChangeSelection()) {
-    return false;
-  }
-  aPointToPutCaret = UnwrapCaretPoint();
-  return true;
+  return CSSEditUtils::HaveSpecifiedCSSEquivalentStyles(aHTMLEditor, aElement,
+                                                        *this);
 }
 
 }  // namespace mozilla

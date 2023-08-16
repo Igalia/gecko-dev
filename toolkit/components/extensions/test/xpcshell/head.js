@@ -2,10 +2,12 @@
 /* exported createHttpServer, cleanupDir, clearCache, optionalPermissionsPromptHandler, promiseConsoleOutput,
             promiseQuotaManagerServiceReset, promiseQuotaManagerServiceClear,
             runWithPrefs, testEnv, withHandlingUserInput, resetHandlingUserInput,
-            assertPersistentListeners, promiseExtensionEvent */
+            assertPersistentListeners, promiseExtensionEvent, assertHasPersistedScriptsCachedFlag,
+            assertIsPersistedScriptsCachedFlag
+*/
 
-var { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
+var { AppConstants } = ChromeUtils.importESModule(
+  "resource://gre/modules/AppConstants.sys.mjs"
 );
 var { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
@@ -17,23 +19,23 @@ var {
   setIntervalWithTarget,
   setTimeout,
   setTimeoutWithTarget,
-} = ChromeUtils.import("resource://gre/modules/Timer.jsm");
-var { AddonTestUtils, MockAsyncShutdown } = ChromeUtils.import(
-  "resource://testing-common/AddonTestUtils.jsm"
+} = ChromeUtils.importESModule("resource://gre/modules/Timer.sys.mjs");
+var { AddonTestUtils, MockAsyncShutdown } = ChromeUtils.importESModule(
+  "resource://testing-common/AddonTestUtils.sys.mjs"
 );
 
-// eslint-disable-next-line no-unused-vars
-XPCOMUtils.defineLazyModuleGetters(this, {
-  ContentTask: "resource://testing-common/ContentTask.jsm",
-  Extension: "resource://gre/modules/Extension.jsm",
-  ExtensionData: "resource://gre/modules/Extension.jsm",
-  ExtensionParent: "resource://gre/modules/ExtensionParent.jsm",
-  ExtensionTestUtils: "resource://testing-common/ExtensionXPCShellUtils.jsm",
-  FileUtils: "resource://gre/modules/FileUtils.jsm",
-  MessageChannel: "resource://testing-common/MessageChannel.jsm",
-  NetUtil: "resource://gre/modules/NetUtil.jsm",
-  PromiseTestUtils: "resource://testing-common/PromiseTestUtils.jsm",
-  Schemas: "resource://gre/modules/Schemas.jsm",
+ChromeUtils.defineESModuleGetters(this, {
+  ContentTask: "resource://testing-common/ContentTask.sys.mjs",
+  Extension: "resource://gre/modules/Extension.sys.mjs",
+  ExtensionData: "resource://gre/modules/Extension.sys.mjs",
+  ExtensionParent: "resource://gre/modules/ExtensionParent.sys.mjs",
+  ExtensionTestUtils:
+    "resource://testing-common/ExtensionXPCShellUtils.sys.mjs",
+  FileUtils: "resource://gre/modules/FileUtils.sys.mjs",
+  MessageChannel: "resource://testing-common/MessageChannel.sys.mjs",
+  NetUtil: "resource://gre/modules/NetUtil.sys.mjs",
+  PromiseTestUtils: "resource://testing-common/PromiseTestUtils.sys.mjs",
+  Schemas: "resource://gre/modules/Schemas.sys.mjs",
 });
 
 PromiseTestUtils.allowMatchingRejectionsGlobally(
@@ -92,7 +94,7 @@ function clearCache() {
   imageCache.clearCache(false);
 }
 
-var promiseConsoleOutput = async function(task) {
+var promiseConsoleOutput = async function (task) {
   const DONE = `=== console listener ${Math.random()} done ===`;
 
   let listener;
@@ -217,8 +219,8 @@ let extensionHandlers = new WeakSet();
 function handlingUserInputFrameScript() {
   /* globals content */
   // eslint-disable-next-line no-shadow
-  const { MessageChannel } = ChromeUtils.import(
-    "resource://testing-common/MessageChannel.jsm"
+  const { MessageChannel } = ChromeUtils.importESModule(
+    "resource://testing-common/MessageChannel.sys.mjs"
   );
 
   let handle;
@@ -316,6 +318,34 @@ const optionalPermissionsPromptHandler = {
 
 function promiseExtensionEvent(wrapper, event) {
   return new Promise(resolve => {
-    wrapper.extension.once(event, resolve);
+    wrapper.extension.once(event, (...args) => resolve(args));
   });
+}
+
+async function assertHasPersistedScriptsCachedFlag(ext) {
+  const { StartupCache } = ExtensionParent;
+  const allCachedGeneral = StartupCache._data.get("general");
+  equal(
+    allCachedGeneral
+      .get(ext.id)
+      ?.get(ext.version)
+      ?.get("scripting")
+      ?.has("hasPersistedScripts"),
+    true,
+    "Expect the StartupCache to include hasPersistedScripts flag"
+  );
+}
+
+async function assertIsPersistentScriptsCachedFlag(ext, expectedValue) {
+  const { StartupCache } = ExtensionParent;
+  const allCachedGeneral = StartupCache._data.get("general");
+  equal(
+    allCachedGeneral
+      .get(ext.id)
+      ?.get(ext.version)
+      ?.get("scripting")
+      ?.get("hasPersistedScripts"),
+    expectedValue,
+    "Expected cached value set on hasPersistedScripts flag"
+  );
 }

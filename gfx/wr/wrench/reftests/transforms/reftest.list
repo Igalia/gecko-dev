@@ -8,7 +8,7 @@ platform(linux,mac) fuzzy(1,6) == rotated-image.yaml rotated-image.png
 == singular.yaml singular-ref.yaml
 platform(linux) fuzzy(1,630) == perspective.yaml perspective.png
 platform(linux,mac) fuzzy(3,8100) == prim-suite.yaml prim-suite.png
-fuzzy-if(platform(swgl),1,2) == segments-bug.yaml segments-bug-ref.yaml
+fuzzy(2,26) == segments-bug.yaml segments-bug-ref.yaml
 platform(linux,mac) == content-offset.yaml content-offset.png
 platform(linux,mac) == coord-system.yaml coord-system.png
 platform(linux,mac) fuzzy(1,15) == border-zoom.yaml border-zoom.png
@@ -56,3 +56,4 @@ skip_on(android) == raster-root-scaling-2.yaml raster-root-scaling-2-ref.yaml
 != non-inversible-world-rect.yaml blank.yaml
 == nested-local-scale.yaml nested-local-scale-ref.yaml
 platform(linux,mac) == perspective-surface-scale.yaml perspective-surface-scale.png
+fuzzy(1,8762) == computed-rotation-yflip.yaml computed-rotation-yflip.png

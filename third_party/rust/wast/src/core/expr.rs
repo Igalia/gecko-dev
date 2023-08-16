@@ -117,7 +117,7 @@ impl<'a> ExpressionParser<'a> {
             // of an `if block then we require that all sub-components are
             // s-expressions surrounded by `(` and `)`, so verify that here.
             if let Some(Level::If(_)) | Some(Level::Try(_)) = self.stack.last() {
-                if !parser.is_empty() && !parser.peek::<LParen>() {
+                if !parser.is_empty() && !parser.peek::<LParen>()? {
                     return Err(parser.error("expected `(`"));
                 }
             }
@@ -220,10 +220,10 @@ impl<'a> ExpressionParser<'a> {
     /// Parses either `(`, `)`, or nothing.
     fn paren(&self, parser: Parser<'a>) -> Result<Paren> {
         parser.step(|cursor| {
-            Ok(match cursor.lparen() {
+            Ok(match cursor.lparen()? {
                 Some(rest) => (Paren::Left, rest),
                 None if self.stack.is_empty() => (Paren::None, cursor),
-                None => match cursor.rparen() {
+                None => match cursor.rparen()? {
                     Some(rest) => (Paren::Right, rest),
                     None => (Paren::None, cursor),
                 },
@@ -265,7 +265,7 @@ impl<'a> ExpressionParser<'a> {
         if let If::Clause(if_instr) = i {
             let instr = mem::replace(if_instr, Instruction::End(None));
             *i = If::Then(instr);
-            if !parser.peek::<kw::then>() {
+            if !parser.peek::<kw::then>()? {
                 return Ok(false);
             }
         }
@@ -426,7 +426,7 @@ macro_rules! instructions {
                     }
                 )*
                 let parse_remainder = parser.step(|c| {
-                    let (kw, rest) = match c.keyword() {
+                    let (kw, rest) = match c.keyword() ?{
                         Some(pair) => pair,
                         None => return Err(c.error("expected an instruction")),
                     };
@@ -502,10 +502,10 @@ macro_rules! instructions {
 
 instructions! {
     pub enum Instruction<'a> {
-        Block(BlockType<'a>) : [0x02] : "block",
-        If(BlockType<'a>) : [0x04] : "if",
+        Block(Box<BlockType<'a>>) : [0x02] : "block",
+        If(Box<BlockType<'a>>) : [0x04] : "if",
         Else(Option<Id<'a>>) : [0x05] : "else",
-        Loop(BlockType<'a>) : [0x03] : "loop",
+        Loop(Box<BlockType<'a>>) : [0x03] : "loop",
         End(Option<Id<'a>>) : [0x0b] : "end",
 
         Unreachable : [0x00] : "unreachable",
@@ -515,15 +515,15 @@ instructions! {
         BrTable(BrTableIndices<'a>) : [0x0e] : "br_table",
         Return : [0x0f] : "return",
         Call(Index<'a>) : [0x10] : "call",
-        CallIndirect(CallIndirect<'a>) : [0x11] : "call_indirect",
+        CallIndirect(Box<CallIndirect<'a>>) : [0x11] : "call_indirect",
 
         // tail-call proposal
         ReturnCall(Index<'a>) : [0x12] : "return_call",
-        ReturnCallIndirect(CallIndirect<'a>) : [0x13] : "return_call_indirect",
+        ReturnCallIndirect(Box<CallIndirect<'a>>) : [0x13] : "return_call_indirect",
 
         // function-references proposal
-        CallRef : [0x14] : "call_ref",
-        ReturnCallRef : [0x15] : "return_call_ref",
+        CallRef(Index<'a>) : [0x14] : "call_ref",
+        ReturnCallRef(Index<'a>) : [0x15] : "return_call_ref",
         FuncBind(FuncBindType<'a>) : [0x16] : "func.bind",
         Let(LetType<'a>) : [0x17] : "let",
 
@@ -568,6 +568,7 @@ instructions! {
         MemoryInit(MemoryInit<'a>) : [0xfc, 0x08] : "memory.init",
         MemoryCopy(MemoryCopy<'a>) : [0xfc, 0x0a] : "memory.copy",
         MemoryFill(MemoryArg<'a>) : [0xfc, 0x0b] : "memory.fill",
+        MemoryDiscard(MemoryArg<'a>) : [0xfc, 0x12] : "memory.discard",
         DataDrop(Index<'a>) : [0xfc, 0x09] : "data.drop",
         ElemDrop(Index<'a>) : [0xfc, 0x0d] : "elem.drop",
         TableInit(TableInit<'a>) : [0xfc, 0x0c] : "table.init",
@@ -578,7 +579,6 @@ instructions! {
 
         RefNull(HeapType<'a>) : [0xd0] : "ref.null",
         RefIsNull : [0xd1] : "ref.is_null",
-        RefExtern(u32) : [0xff] : "ref.extern", // only used in test harness
         RefFunc(Index<'a>) : [0xd2] : "ref.func",
 
         // function-references proposal
@@ -602,13 +602,16 @@ instructions! {
         ArrayNewDefault(Index<'a>) : [0xfb, 0x1c] : "array.new_default",
         ArrayNewFixed(ArrayNewFixed<'a>) : [0xfb, 0x1a] : "array.new_fixed",
         ArrayNewData(ArrayNewData<'a>) : [0xfb, 0x1d] : "array.new_data",
-        ArrayNewElem(ArrayNewElem<'a>) : [0xfb, 0x10] : "array.new_elem",
+        ArrayNewElem(ArrayNewElem<'a>) : [0xfb, 0x1f] : "array.new_elem",
         ArrayGet(Index<'a>) : [0xfb, 0x13] : "array.get",
         ArrayGetS(Index<'a>) : [0xfb, 0x14] : "array.get_s",
         ArrayGetU(Index<'a>) : [0xfb, 0x15] : "array.get_u",
         ArraySet(Index<'a>) : [0xfb, 0x16] : "array.set",
-        ArrayLen(Index<'a>) : [0xfb, 0x17] : "array.len",
+        ArrayLen : [0xfb, 0x19] : "array.len",
+        ArrayFill(ArrayFill<'a>) : [0xfb, 0x0f] : "array.fill",
         ArrayCopy(ArrayCopy<'a>) : [0xfb, 0x18] : "array.copy",
+        ArrayInitData(ArrayInit<'a>) : [0xfb, 0x54] : "array.init_data",
+        ArrayInitElem(ArrayInit<'a>) : [0xfb, 0x55] : "array.init_elem",
 
         // gc proposal, i31
         I31New : [0xfb, 0x20] : "i31.new",
@@ -616,31 +619,14 @@ instructions! {
         I31GetU : [0xfb, 0x22] : "i31.get_u",
 
         // gc proposal, concrete casting
-        RefTest(Index<'a>) : [0xfb, 0x44] : "ref.test",
-        RefCast(Index<'a>) : [0xfb, 0x45] : "ref.cast",
-        BrOnCast(BrOnCast<'a>) : [0xfb, 0x46] : "br_on_cast",
-        BrOnCastFail(BrOnCast<'a>) : [0xfb, 0x47] : "br_on_cast_fail",
+        RefTest(RefTest<'a>) : [] : "ref.test",
+        RefCast(RefCast<'a>) : [] : "ref.cast",
+        BrOnCast(Box<BrOnCast<'a>>) : [] : "br_on_cast",
+        BrOnCastFail(Box<BrOnCastFail<'a>>) : [] : "br_on_cast_fail",
 
-        // gc proposal, heap casting
-        RefIsFunc : [0xfb, 0x50] : "ref.is_func",
-        RefIsData : [0xfb, 0x51] : "ref.is_data",
-        RefIsI31 : [0xfb, 0x52] : "ref.is_i31",
-        RefIsArray : [0xfb, 0x53] : "ref.is_array",
-
-        RefAsFunc : [0xfb, 0x58] : "ref.as_func",
-        RefAsData : [0xfb, 0x59] : "ref.as_data",
-        RefAsI31 : [0xfb, 0x5a] : "ref.as_i31",
-        RefAsArray : [0xfb, 0x5b] : "ref.as_array",
-
-        BrOnFunc(Index<'a>) : [0xfb, 0x60] : "br_on_func",
-        BrOnData(Index<'a>) : [0xfb, 0x61] : "br_on_data",
-        BrOnI31(Index<'a>) : [0xfb, 0x62] : "br_on_i31",
-        BrOnArray(Index<'a>) : [0xfb, 0x66] : "br_on_array",
-
-        BrOnNonFunc(Index<'a>) : [0xfb, 0x63] : "br_on_non_func",
-        BrOnNonData(Index<'a>) : [0xfb, 0x64] : "br_on_non_data",
-        BrOnNonI31(Index<'a>) : [0xfb, 0x65] : "br_on_non_i31",
-        BrOnNonArray(Index<'a>) : [0xfb, 0x67] : "br_on_non_array",
+        // gc proposal extern/any coercion operations
+        ExternInternalize : [0xfb, 0x70] : "extern.internalize",
+        ExternExternalize : [0xfb, 0x71] : "extern.externalize",
 
         I32Const(i32) : [0x41] : "i32.const",
         I64Const(i64) : [0x42] : "i64.const",
@@ -1132,7 +1118,7 @@ instructions! {
         F64x2PromoteLowF32x4 : [0xfd, 95] : "f64x2.promote_low_f32x4",
 
         // Exception handling proposal
-        Try(BlockType<'a>) : [0x06] : "try",
+        Try(Box<BlockType<'a>>) : [0x06] : "try",
         Catch(Index<'a>) : [0x07] : "catch",
         Throw(Index<'a>) : [0x08] : "throw",
         Rethrow(Index<'a>) : [0x09] : "rethrow",
@@ -1140,23 +1126,47 @@ instructions! {
         CatchAll : [0x19] : "catch_all",
 
         // Relaxed SIMD proposal
-        I8x16RelaxedSwizzle : [0xfd, 0xa2]: "i8x16.relaxed_swizzle",
-        I32x4RelaxedTruncSatF32x4S : [0xfd, 0xa5]: "i32x4.relaxed_trunc_f32x4_s",
-        I32x4RelaxedTruncSatF32x4U : [0xfd, 0xa6]: "i32x4.relaxed_trunc_f32x4_u",
-        I32x4RelaxedTruncSatF64x2SZero : [0xfd, 0xc5]: "i32x4.relaxed_trunc_f64x2_s_zero",
-        I32x4RelaxedTruncSatF64x2UZero : [0xfd, 0xc6]: "i32x4.relaxed_trunc_f64x2_u_zero",
-        F32x4Fma : [0xfd, 0xaf]: "f32x4.fma",
-        F32x4Fms : [0xfd, 0xb0]: "f32x4.fms",
-        F64x4Fma : [0xfd, 0xcf]: "f64x2.fma",
-        F64x4Fms : [0xfd, 0xd0]: "f64x2.fms",
-        I8x16LaneSelect : [0xfd, 0xb2]: "i8x16.laneselect",
-        I16x8LaneSelect : [0xfd, 0xb3]: "i16x8.laneselect",
-        I32x4LaneSelect : [0xfd, 0xd2]: "i32x4.laneselect",
-        I64x2LaneSelect : [0xfd, 0xd3]: "i64x2.laneselect",
-        F32x4RelaxedMin : [0xfd, 0xb4]: "f32x4.relaxed_min",
-        F32x4RelaxedMax : [0xfd, 0xe2]: "f32x4.relaxed_max",
-        F64x2RelaxedMin : [0xfd, 0xd4]: "f64x2.relaxed_min",
-        F64x2RelaxedMax : [0xfd, 0xee]: "f64x2.relaxed_max",
+        I8x16RelaxedSwizzle : [0xfd, 0x100]: "i8x16.relaxed_swizzle",
+        I32x4RelaxedTruncF32x4S : [0xfd, 0x101]: "i32x4.relaxed_trunc_f32x4_s",
+        I32x4RelaxedTruncF32x4U : [0xfd, 0x102]: "i32x4.relaxed_trunc_f32x4_u",
+        I32x4RelaxedTruncF64x2SZero : [0xfd, 0x103]: "i32x4.relaxed_trunc_f64x2_s_zero",
+        I32x4RelaxedTruncF64x2UZero : [0xfd, 0x104]: "i32x4.relaxed_trunc_f64x2_u_zero",
+        F32x4RelaxedMadd : [0xfd, 0x105]: "f32x4.relaxed_madd",
+        F32x4RelaxedNmadd : [0xfd, 0x106]: "f32x4.relaxed_nmadd",
+        F64x2RelaxedMadd : [0xfd, 0x107]: "f64x2.relaxed_madd",
+        F64x2RelaxedNmadd : [0xfd, 0x108]: "f64x2.relaxed_nmadd",
+        I8x16RelaxedLaneselect : [0xfd, 0x109]: "i8x16.relaxed_laneselect",
+        I16x8RelaxedLaneselect : [0xfd, 0x10A]: "i16x8.relaxed_laneselect",
+        I32x4RelaxedLaneselect : [0xfd, 0x10B]: "i32x4.relaxed_laneselect",
+        I64x2RelaxedLaneselect : [0xfd, 0x10C]: "i64x2.relaxed_laneselect",
+        F32x4RelaxedMin : [0xfd, 0x10D]: "f32x4.relaxed_min",
+        F32x4RelaxedMax : [0xfd, 0x10E]: "f32x4.relaxed_max",
+        F64x2RelaxedMin : [0xfd, 0x10F]: "f64x2.relaxed_min",
+        F64x2RelaxedMax : [0xfd, 0x110]: "f64x2.relaxed_max",
+        I16x8RelaxedQ15mulrS: [0xfd, 0x111]: "i16x8.relaxed_q15mulr_s",
+        I16x8RelaxedDotI8x16I7x16S: [0xfd, 0x112]: "i16x8.relaxed_dot_i8x16_i7x16_s",
+        I32x4RelaxedDotI8x16I7x16AddS: [0xfd, 0x113]: "i32x4.relaxed_dot_i8x16_i7x16_add_s",
+    }
+}
+
+// As shown in #1095 the size of this variant is somewhat performance-sensitive
+// since big `*.wat` files will have a lot of these. This is a small ratchet to
+// make sure that this enum doesn't become larger than it already is, although
+// ideally it also wouldn't be as large as it is now.
+const _: () = {
+    let size = std::mem::size_of::<Instruction<'_>>();
+    let pointer = std::mem::size_of::<u64>();
+    assert!(size <= pointer * 10);
+};
+
+impl<'a> Instruction<'a> {
+    pub(crate) fn needs_data_count(&self) -> bool {
+        match self {
+            Instruction::MemoryInit(_)
+            | Instruction::DataDrop(_)
+            | Instruction::ArrayNewData(_) => true,
+            _ => false,
+        }
     }
 }
 
@@ -1205,15 +1215,15 @@ impl<'a> Parse<'a> for FuncBindType<'a> {
 #[derive(Debug)]
 #[allow(missing_docs)]
 pub struct LetType<'a> {
-    pub block: BlockType<'a>,
-    pub locals: Vec<Local<'a>>,
+    pub block: Box<BlockType<'a>>,
+    pub locals: Box<[Local<'a>]>,
 }
 
 impl<'a> Parse<'a> for LetType<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         Ok(LetType {
             block: parser.parse()?,
-            locals: Local::parse_remainder(parser)?,
+            locals: Local::parse_remainder(parser)?.into(),
         })
     }
 }
@@ -1229,7 +1239,7 @@ pub struct BrTableIndices<'a> {
 impl<'a> Parse<'a> for BrTableIndices<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut labels = vec![parser.parse()?];
-        while parser.peek::<Index>() {
+        while parser.peek::<Index>()? {
             labels.push(parser.parse()?);
         }
         let default = labels.pop().unwrap();
@@ -1247,7 +1257,7 @@ pub struct LaneArg {
 impl<'a> Parse<'a> for LaneArg {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let lane = parser.step(|c| {
-            if let Some((i, rest)) = c.integer() {
+            if let Some((i, rest)) = c.integer()? {
                 if i.sign() == None {
                     let (src, radix) = i.val();
                     let val = u8::from_str_radix(src, radix)
@@ -1287,7 +1297,7 @@ impl<'a> MemArg<'a> {
             f: impl FnOnce(Cursor<'_>, &str, u32) -> Result<T>,
         ) -> Result<Option<T>> {
             parser.step(|c| {
-                let (kw, rest) = match c.keyword() {
+                let (kw, rest) = match c.keyword()? {
                     Some(p) => p,
                     None => return Ok((None, c)),
                 };
@@ -1354,17 +1364,17 @@ impl<'a> LoadOrStoreLane<'a> {
         // This is sort of funky. The first integer we see could be the lane
         // index, but it could also be the memory index. To determine what it is
         // then if we see a second integer we need to look further.
-        let has_memarg = parser.step(|c| match c.integer() {
+        let has_memarg = parser.step(|c| match c.integer()? {
             Some((_, after_int)) => {
                 // Two integers in a row? That means that the first one is the
                 // memory index and the second must be the lane index.
-                if after_int.integer().is_some() {
+                if after_int.integer()?.is_some() {
                     return Ok((true, c));
                 }
 
                 // If the first integer is trailed by `offset=...` or
                 // `align=...` then this is definitely a memarg.
-                if let Some((kw, _)) = after_int.keyword() {
+                if let Some((kw, _)) = after_int.keyword()? {
                     if kw.starts_with("offset=") || kw.starts_with("align=") {
                         return Ok((true, c));
                     }
@@ -1427,7 +1437,7 @@ pub struct TableInit<'a> {
 impl<'a> Parse<'a> for TableInit<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let prev_span = parser.prev_span();
-        let (elem, table) = if parser.peek2::<Index>() {
+        let (elem, table) = if parser.peek2::<Index>()? {
             let table = parser.parse()?;
             (parser.parse()?, table)
         } else {
@@ -1507,7 +1517,7 @@ pub struct MemoryInit<'a> {
 impl<'a> Parse<'a> for MemoryInit<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let prev_span = parser.prev_span();
-        let (data, mem) = if parser.peek2::<Index>() {
+        let (data, mem) = if parser.peek2::<Index>()? {
             let memory = parser.parse()?;
             (parser.parse()?, memory)
         } else {
@@ -1557,6 +1567,21 @@ impl<'a> Parse<'a> for StructAccess<'a> {
     }
 }
 
+/// Extra data associated with the `array.fill` instruction
+#[derive(Debug)]
+pub struct ArrayFill<'a> {
+    /// The index of the array type we're filling.
+    pub array: Index<'a>,
+}
+
+impl<'a> Parse<'a> for ArrayFill<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        Ok(ArrayFill {
+            array: parser.parse()?,
+        })
+    }
+}
+
 /// Extra data associated with the `array.copy` instruction
 #[derive(Debug)]
 pub struct ArrayCopy<'a> {
@@ -1571,6 +1596,24 @@ impl<'a> Parse<'a> for ArrayCopy<'a> {
         Ok(ArrayCopy {
             dest_array: parser.parse()?,
             src_array: parser.parse()?,
+        })
+    }
+}
+
+/// Extra data associated with the `array.init_[data/elem]` instruction
+#[derive(Debug)]
+pub struct ArrayInit<'a> {
+    /// The index of the array type we're initializing.
+    pub array: Index<'a>,
+    /// The index of the data or elem segment we're reading from.
+    pub segment: Index<'a>,
+}
+
+impl<'a> Parse<'a> for ArrayInit<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        Ok(ArrayInit {
+            array: parser.parse()?,
+            segment: parser.parse()?,
         })
     }
 }
@@ -1629,27 +1672,80 @@ impl<'a> Parse<'a> for ArrayNewElem<'a> {
     }
 }
 
+/// Extra data associated with the `ref.cast` instruction
+#[derive(Debug)]
+pub struct RefCast<'a> {
+    /// The type to cast to.
+    pub r#type: RefType<'a>,
+}
+
+impl<'a> Parse<'a> for RefCast<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        Ok(RefCast {
+            r#type: parser.parse()?,
+        })
+    }
+}
+
+/// Extra data associated with the `ref.test` instruction
+#[derive(Debug)]
+pub struct RefTest<'a> {
+    /// The type to test for.
+    pub r#type: RefType<'a>,
+}
+
+impl<'a> Parse<'a> for RefTest<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        Ok(RefTest {
+            r#type: parser.parse()?,
+        })
+    }
+}
+
 /// Extra data associated with the `br_on_cast` instruction
 #[derive(Debug)]
 pub struct BrOnCast<'a> {
     /// The label to branch to.
     pub label: Index<'a>,
-    /// The index of the type we're casting.
-    pub r#type: Index<'a>,
+    /// The type we're casting from.
+    pub from_type: RefType<'a>,
+    /// The type we're casting to.
+    pub to_type: RefType<'a>,
 }
 
 impl<'a> Parse<'a> for BrOnCast<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         Ok(BrOnCast {
             label: parser.parse()?,
-            r#type: parser.parse()?,
+            from_type: parser.parse()?,
+            to_type: parser.parse()?,
+        })
+    }
+}
+
+/// Extra data associated with the `br_on_cast_fail` instruction
+#[derive(Debug)]
+pub struct BrOnCastFail<'a> {
+    /// The label to branch to.
+    pub label: Index<'a>,
+    /// The type we're casting from.
+    pub from_type: RefType<'a>,
+    /// The type we're casting to.
+    pub to_type: RefType<'a>,
+}
+
+impl<'a> Parse<'a> for BrOnCastFail<'a> {
+    fn parse(parser: Parser<'a>) -> Result<Self> {
+        Ok(BrOnCastFail {
+            label: parser.parse()?,
+            from_type: parser.parse()?,
+            to_type: parser.parse()?,
         })
     }
 }
 
 /// Different ways to specify a `v128.const` instruction
 #[derive(Debug)]
-#[rustfmt::skip]
 #[allow(missing_docs)]
 pub enum V128Const {
     I8x16([i8; 16]),
@@ -1754,7 +1850,7 @@ impl V128Const {
 impl<'a> Parse<'a> for V128Const {
     fn parse(parser: Parser<'a>) -> Result<Self> {
         let mut l = parser.lookahead1();
-        if l.peek::<kw::i8x16>() {
+        if l.peek::<kw::i8x16>()? {
             parser.parse::<kw::i8x16>()?;
             Ok(V128Const::I8x16([
                 parser.parse()?,
@@ -1774,7 +1870,7 @@ impl<'a> Parse<'a> for V128Const {
                 parser.parse()?,
                 parser.parse()?,
             ]))
-        } else if l.peek::<kw::i16x8>() {
+        } else if l.peek::<kw::i16x8>()? {
             parser.parse::<kw::i16x8>()?;
             Ok(V128Const::I16x8([
                 parser.parse()?,
@@ -1786,7 +1882,7 @@ impl<'a> Parse<'a> for V128Const {
                 parser.parse()?,
                 parser.parse()?,
             ]))
-        } else if l.peek::<kw::i32x4>() {
+        } else if l.peek::<kw::i32x4>()? {
             parser.parse::<kw::i32x4>()?;
             Ok(V128Const::I32x4([
                 parser.parse()?,
@@ -1794,10 +1890,10 @@ impl<'a> Parse<'a> for V128Const {
                 parser.parse()?,
                 parser.parse()?,
             ]))
-        } else if l.peek::<kw::i64x2>() {
+        } else if l.peek::<kw::i64x2>()? {
             parser.parse::<kw::i64x2>()?;
             Ok(V128Const::I64x2([parser.parse()?, parser.parse()?]))
-        } else if l.peek::<kw::f32x4>() {
+        } else if l.peek::<kw::f32x4>()? {
             parser.parse::<kw::f32x4>()?;
             Ok(V128Const::F32x4([
                 parser.parse()?,
@@ -1805,7 +1901,7 @@ impl<'a> Parse<'a> for V128Const {
                 parser.parse()?,
                 parser.parse()?,
             ]))
-        } else if l.peek::<kw::f64x2>() {
+        } else if l.peek::<kw::f64x2>()? {
             parser.parse::<kw::f64x2>()?;
             Ok(V128Const::F64x2([parser.parse()?, parser.parse()?]))
         } else {
@@ -1855,9 +1951,10 @@ pub struct SelectTypes<'a> {
 
 impl<'a> Parse<'a> for SelectTypes<'a> {
     fn parse(parser: Parser<'a>) -> Result<Self> {
-        let mut tys = None;
-        while parser.peek2::<kw::result>() {
-            let mut list = Vec::new();
+        let mut found = false;
+        let mut list = Vec::new();
+        while parser.peek2::<kw::result>()? {
+            found = true;
             parser.parens(|p| {
                 p.parse::<kw::result>()?;
                 while !p.is_empty() {
@@ -1865,8 +1962,9 @@ impl<'a> Parse<'a> for SelectTypes<'a> {
                 }
                 Ok(())
             })?;
-            tys = Some(list);
         }
-        Ok(SelectTypes { tys })
+        Ok(SelectTypes {
+            tys: if found { Some(list) } else { None },
+        })
     }
 }

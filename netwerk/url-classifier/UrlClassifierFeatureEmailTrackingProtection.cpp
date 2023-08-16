@@ -15,6 +15,7 @@
 #include "nsILoadContext.h"
 #include "nsIHttpChannelInternal.h"
 #include "nsIWebProgressListener.h"
+#include "nsNetUtil.h"
 
 namespace mozilla::net {
 
@@ -91,7 +92,10 @@ UrlClassifierFeatureEmailTrackingProtection::MaybeCreate(nsIChannel* aChannel) {
        aChannel));
 
   // Check if the email tracking protection is enabled.
-  if (!StaticPrefs::privacy_trackingprotection_emailtracking_enabled()) {
+  if (!StaticPrefs::privacy_trackingprotection_emailtracking_enabled() &&
+      !(NS_UsePrivateBrowsing(aChannel) &&
+        StaticPrefs::
+            privacy_trackingprotection_emailtracking_pbmode_enabled())) {
     return nullptr;
   }
 
@@ -158,7 +162,16 @@ UrlClassifierFeatureEmailTrackingProtection::ProcessChannel(
         decision == ChannelBlockDecision::Replaced
             ? nsIWebProgressListener::STATE_REPLACED_TRACKING_CONTENT
             : nsIWebProgressListener::STATE_ALLOWED_TRACKING_CONTENT;
-    ContentBlockingNotifier::OnEvent(aChannel, event, false);
+
+    // Need to set aBlocked to True if we replace the Email Tracker with a shim,
+    //  since the shim is treated as a blocked event
+    // Note: If we need to account for which kind of tracker was replaced,
+    //  we need to create a new event type in nsIWebProgressListener
+    if (event == nsIWebProgressListener::STATE_REPLACED_TRACKING_CONTENT) {
+      ContentBlockingNotifier::OnEvent(aChannel, event, true);
+    } else {
+      ContentBlockingNotifier::OnEvent(aChannel, event, false);
+    }
 
     *aShouldContinue = true;
     return NS_OK;

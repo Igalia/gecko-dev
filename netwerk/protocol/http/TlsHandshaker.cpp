@@ -8,11 +8,11 @@
 #include "HttpLog.h"
 
 #include "TlsHandshaker.h"
-#include "nsHttpConnectionInfo.h"
-#include "nsHttpConnection.h"
-#include "nsHttpHandler.h"
-#include "nsISSLSocketControl.h"
 #include "mozilla/StaticPrefs_network.h"
+#include "nsHttpConnection.h"
+#include "nsHttpConnectionInfo.h"
+#include "nsHttpHandler.h"
+#include "nsITLSSocketControl.h"
 
 #define TLS_EARLY_DATA_NOT_AVAILABLE 0
 #define TLS_EARLY_DATA_AVAILABLE_BUT_NOT_USED 1
@@ -97,16 +97,10 @@ nsresult TlsHandshaker::InitSSLParams(bool connectingToProxy,
     return NS_ERROR_ABORT;
   }
 
-  nsresult rv;
-  nsCOMPtr<nsISupports> securityInfo;
-  mOwner->GetSecurityInfo(getter_AddRefs(securityInfo));
-  if (!securityInfo) {
+  nsCOMPtr<nsITLSSocketControl> ssl;
+  mOwner->GetTLSSocketControl(getter_AddRefs(ssl));
+  if (!ssl) {
     return NS_ERROR_FAILURE;
-  }
-
-  nsCOMPtr<nsISSLSocketControl> ssl = do_QueryInterface(securityInfo, &rv);
-  if (NS_FAILED(rv)) {
-    return rv;
   }
 
   // If proxy is use or 0RTT is excluded for a origin, don't use early-data.
@@ -115,13 +109,14 @@ nsresult TlsHandshaker::InitSSLParams(bool connectingToProxy,
   }
 
   if (proxyStartSSL) {
-    rv = ssl->ProxyStartSSL();
+    nsresult rv = ssl->ProxyStartSSL();
     if (NS_FAILED(rv)) {
       return rv;
     }
   }
 
-  if (NS_SUCCEEDED(SetupNPNList(ssl, mOwner->TransactionCaps())) &&
+  if (NS_SUCCEEDED(
+          SetupNPNList(ssl, mOwner->TransactionCaps(), connectingToProxy)) &&
       NS_SUCCEEDED(ssl->SetHandshakeCallbackListener(this))) {
     LOG(("InitSSLParams Setting up SPDY Negotiation OK mOwner=%p",
          mOwner.get()));
@@ -135,7 +130,8 @@ nsresult TlsHandshaker::InitSSLParams(bool connectingToProxy,
 // offer list for both NPN and ALPN. ALPN validation callbacks are made
 // now before the handshake is complete, and NPN validation callbacks
 // are made during the handshake.
-nsresult TlsHandshaker::SetupNPNList(nsISSLSocketControl* ssl, uint32_t caps) {
+nsresult TlsHandshaker::SetupNPNList(nsITLSSocketControl* ssl, uint32_t caps,
+                                     bool connectingToProxy) {
   nsTArray<nsCString> protocolArray;
 
   // The first protocol is used as the fallback if none of the
@@ -148,12 +144,15 @@ nsresult TlsHandshaker::SetupNPNList(nsISSLSocketControl* ssl, uint32_t caps) {
   protocolArray.AppendElement("http/1.1"_ns);
 
   if (StaticPrefs::network_http_http2_enabled() &&
-      !(caps & NS_HTTP_DISALLOW_SPDY)) {
+      (connectingToProxy || !(caps & NS_HTTP_DISALLOW_SPDY)) &&
+      !(connectingToProxy && (caps & NS_HTTP_DISALLOW_HTTP2_PROXY))) {
     LOG(("nsHttpConnection::SetupSSL Allow SPDY NPN selection"));
     const SpdyInformation* info = gHttpHandler->SpdyInfo();
     if (info->ALPNCallbacks(ssl)) {
       protocolArray.AppendElement(info->VersionString);
     }
+  } else {
+    LOG(("nsHttpConnection::SetupSSL Disallow SPDY NPN selection"));
   }
 
   nsresult rv = ssl->SetNPNList(protocolArray);
@@ -185,16 +184,9 @@ bool TlsHandshaker::EnsureNPNComplete() {
     return false;
   }
 
-  nsresult rv = NS_OK;
-  nsCOMPtr<nsISupports> securityInfo;
-  mOwner->GetSecurityInfo(getter_AddRefs(securityInfo));
-  if (!securityInfo) {
-    FinishNPNSetup(false, false);
-    return true;
-  }
-
-  nsCOMPtr<nsISSLSocketControl> ssl = do_QueryInterface(securityInfo, &rv);
-  if (NS_FAILED(rv)) {
+  nsCOMPtr<nsITLSSocketControl> ssl;
+  mOwner->GetTLSSocketControl(getter_AddRefs(ssl));
+  if (!ssl) {
     FinishNPNSetup(false, false);
     return true;
   }
@@ -211,7 +203,7 @@ bool TlsHandshaker::EnsureNPNComplete() {
 
   LOG(("TlsHandshaker::EnsureNPNComplete [mOwner=%p] drive TLS handshake",
        mOwner.get()));
-  rv = ssl->DriveHandshake();
+  nsresult rv = ssl->DriveHandshake();
   if (NS_FAILED(rv) && rv != NS_BASE_STREAM_WOULD_BLOCK) {
     FinishNPNSetup(false, true);
     return true;
@@ -241,7 +233,7 @@ void TlsHandshaker::FinishNPNSetup(bool handshakeSucceeded,
   EarlyDataDone();
 }
 
-void TlsHandshaker::Check0RttEnabled(nsISSLSocketControl* ssl) {
+void TlsHandshaker::Check0RttEnabled(nsITLSSocketControl* ssl) {
   if (!mOwner) {
     return;
   }
@@ -304,7 +296,7 @@ void TlsHandshaker::EarlyDataTelemetry(int16_t tlsVersion,
                                        bool earlyDataAccepted,
                                        int64_t aContentBytesWritten0RTT) {
   // Send the 0RTT telemetry only for tls1.3
-  if (tlsVersion > nsISSLSocketControl::TLS_VERSION_1_2) {
+  if (tlsVersion > nsITLSSocketControl::TLS_VERSION_1_2) {
     Telemetry::Accumulate(Telemetry::TLS_EARLY_DATA_NEGOTIATED,
                           (mEarlyDataState == EarlyData::NOT_AVAILABLE)
                               ? TLS_EARLY_DATA_NOT_AVAILABLE

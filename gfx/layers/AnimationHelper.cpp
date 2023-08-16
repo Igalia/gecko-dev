@@ -20,9 +20,11 @@
 #include "mozilla/layers/APZSampler.h"        // for APZSampler
 #include "mozilla/layers/CompositorThread.h"  // for CompositorThreadHolder
 #include "mozilla/LayerAnimationInfo.h"       // for GetCSSPropertiesFor()
+#include "mozilla/Maybe.h"                    // for Maybe<>
 #include "mozilla/MotionPathUtils.h"          // for ResolveMotionPath()
 #include "mozilla/ServoBindings.h"  // for Servo_ComposeAnimationSegment, etc
 #include "mozilla/StyleAnimationValue.h"  // for StyleAnimationValue, etc
+#include "nsCSSPropertyID.h"              // for eCSSProperty_offset_path, etc
 #include "nsDeviceContext.h"              // for AppUnitsPerCSSPixel
 #include "nsDisplayList.h"                // for nsDisplayTransform, etc
 
@@ -147,14 +149,20 @@ enum class CanSkipCompose {
   IfPossible,
   No,
 };
+// This function samples the animation for a specific property. We may have
+// multiple animations for a single property, and the later animations override
+// the eariler ones. This function returns the sampled animation value,
+// |aAnimationValue| for a single CSS property.
 static AnimationHelper::SampleResult SampleAnimationForProperty(
     const APZSampler* aAPZSampler, const LayersId& aLayersId,
     const MutexAutoLock& aProofOfMapLock, TimeStamp aPreviousFrameTime,
     TimeStamp aCurrentFrameTime, const AnimatedValue* aPreviousValue,
     CanSkipCompose aCanSkipCompose,
     nsTArray<PropertyAnimation>& aPropertyAnimations,
-    RefPtr<RawServoAnimationValue>& aAnimationValue) {
+    RefPtr<StyleAnimationValue>& aAnimationValue) {
   MOZ_ASSERT(!aPropertyAnimations.IsEmpty(), "Should have animations");
+
+  auto reason = AnimationHelper::SampleResult::Reason::None;
   bool hasInEffectAnimations = false;
 #ifdef DEBUG
   // In cases where this function returns a SampleResult::Skipped, we actually
@@ -183,12 +191,30 @@ static AnimationHelper::SampleResult SampleAnimationForProperty(
         elapsedDuration, animation.mTiming, animation.mPlaybackRate,
         progressTimelinePosition);
 
-    // FIXME: Bug 1776077, for the scroll-linked animations, it's possible to
-    // let it go from the active phase to the before phase, and its progress
-    // becomes null. In this case, we shouldn't just skip this animation.
-    // Instead, we have to reset the sampled result to that without this
-    // animation.
     if (computedTiming.mProgress.IsNull()) {
+      // For the scroll-driven animations, it's possible to let it go between
+      // the active phase and the before/after phase, and so its progress
+      // becomes null. In this case, we shouldn't just skip this animation.
+      // Instead, we have to reset the previous sampled result. Basically, we
+      // use |mProgressOnLastCompose| to check if it goes from the active phase.
+      // If so, we set the returned |mReason| to ScrollToDelayPhase to let the
+      // caller know we need to use the base style for this property.
+      //
+      // If there are any other animations which need to be sampled together
+      // (in the same property animation group), this |reason| will be ignored.
+      if (animation.mScrollTimelineOptions &&
+          !animation.mProgressOnLastCompose.IsNull() &&
+          (computedTiming.mPhase == ComputedTiming::AnimationPhase::Before ||
+           computedTiming.mPhase == ComputedTiming::AnimationPhase::After)) {
+        // Appearally, we go back to delay, so need to reset the last
+        // composition meta data. This is necessary because
+        // 1. this animation is in delay so it shouldn't have any composition
+        //    meta data, and
+        // 2. we will not go into this condition multiple times during delay
+        //    phase because we rely on |mProgressOnLastCompose|.
+        animation.ResetLastCompositionValues();
+        reason = AnimationHelper::SampleResult::Reason::ScrollToDelayPhase;
+      }
       continue;
     }
 
@@ -211,7 +237,7 @@ static AnimationHelper::SampleResult SampleAnimationForProperty(
 #ifdef DEBUG
       shouldBeSkipped = true;
 #else
-      return AnimationHelper::SampleResult::Skipped;
+      return AnimationHelper::SampleResult::Skipped();
 #endif
     }
 
@@ -246,7 +272,7 @@ static AnimationHelper::SampleResult SampleAnimationForProperty(
 #ifdef DEBUG
       shouldBeSkipped = true;
 #else
-      return AnimationHelper::SampleResult::Skipped;
+      return AnimationHelper::SampleResult::Skipped();
 #endif
     }
 
@@ -268,7 +294,7 @@ static AnimationHelper::SampleResult SampleAnimationForProperty(
 
 #ifdef DEBUG
     if (shouldBeSkipped) {
-      return AnimationHelper::SampleResult::Skipped;
+      return AnimationHelper::SampleResult::Skipped();
     }
 #endif
 
@@ -279,25 +305,32 @@ static AnimationHelper::SampleResult SampleAnimationForProperty(
     animation.mPortionInSegmentOnLastCompose.SetValue(portion);
   }
 
-  return hasInEffectAnimations ? AnimationHelper::SampleResult::Sampled
-                               : AnimationHelper::SampleResult::None;
+  auto rv = hasInEffectAnimations ? AnimationHelper::SampleResult::Sampled()
+                                  : AnimationHelper::SampleResult();
+  rv.mReason = reason;
+  return rv;
 }
 
+// This function samples the animations for a group of CSS properties. We may
+// have multiple CSS properties in a group (e.g. transform-like properties).
+// So the returned animation array, |aAnimationValues|, include all the
+// animation values of these CSS properties.
 AnimationHelper::SampleResult AnimationHelper::SampleAnimationForEachNode(
     const APZSampler* aAPZSampler, const LayersId& aLayersId,
     const MutexAutoLock& aProofOfMapLock, TimeStamp aPreviousFrameTime,
     TimeStamp aCurrentFrameTime, const AnimatedValue* aPreviousValue,
     nsTArray<PropertyAnimationGroup>& aPropertyAnimationGroups,
-    nsTArray<RefPtr<RawServoAnimationValue>>& aAnimationValues /* out */) {
+    nsTArray<RefPtr<StyleAnimationValue>>& aAnimationValues /* out */) {
   MOZ_ASSERT(!aPropertyAnimationGroups.IsEmpty(),
              "Should be called with animation data");
   MOZ_ASSERT(aAnimationValues.IsEmpty(),
              "Should be called with empty aAnimationValues");
 
-  nsTArray<RefPtr<RawServoAnimationValue>> nonAnimatingValues;
+  nsTArray<RefPtr<StyleAnimationValue>> baseStyleOfDelayAnimations;
+  nsTArray<RefPtr<StyleAnimationValue>> nonAnimatingValues;
   for (PropertyAnimationGroup& group : aPropertyAnimationGroups) {
     // Initialize animation value with base style.
-    RefPtr<RawServoAnimationValue> currValue = group.mBaseStyle;
+    RefPtr<StyleAnimationValue> currValue = group.mBaseStyle;
 
     CanSkipCompose canSkipCompose =
         aPreviousValue && aPropertyAnimationGroups.Length() == 1 &&
@@ -328,14 +361,18 @@ AnimationHelper::SampleResult AnimationHelper::SampleAnimationForEachNode(
 
     // FIXME: Bug 1455476: Do optimization for multiple properties. For now,
     // the result is skipped only if the property count == 1.
-    if (result == SampleResult::Skipped) {
+    if (result.IsSkipped()) {
 #ifdef DEBUG
       aAnimationValues.AppendElement(std::move(currValue));
 #endif
-      return SampleResult::Skipped;
+      return result;
     }
 
-    if (result != SampleResult::Sampled) {
+    if (!result.IsSampled()) {
+      if (result.mReason == SampleResult::Reason::ScrollToDelayPhase) {
+        MOZ_ASSERT(currValue && currValue == group.mBaseStyle);
+        baseStyleOfDelayAnimations.AppendElement(std::move(currValue));
+      }
       continue;
     }
 
@@ -345,8 +382,17 @@ AnimationHelper::SampleResult AnimationHelper::SampleAnimationForEachNode(
   }
 
   SampleResult rv =
-      aAnimationValues.IsEmpty() ? SampleResult::None : SampleResult::Sampled;
-  if (rv == SampleResult::Sampled) {
+      aAnimationValues.IsEmpty() ? SampleResult() : SampleResult::Sampled();
+
+  // If there is no other sampled result, we may store these base styles
+  // (together with the non-animating values) to the webrenderer before it gets
+  // sync with the main thread.
+  if (rv.IsNone() && !baseStyleOfDelayAnimations.IsEmpty()) {
+    aAnimationValues.AppendElements(std::move(baseStyleOfDelayAnimations));
+    rv.mReason = SampleResult::Reason::ScrollToDelayPhase;
+  }
+
+  if (!aAnimationValues.IsEmpty()) {
     aAnimationValues.AppendElements(std::move(nonAnimatingValues));
   }
   return rv;
@@ -454,16 +500,17 @@ AnimationStorageData AnimationHelper::ExtractAnimations(
                    "Fixed offset-path should have base style");
         MOZ_ASSERT(HasTransformLikeAnimations(aAnimations));
 
-        AnimationValue value{currData->mBaseStyle};
-        const StyleOffsetPath& offsetPath = value.GetOffsetPathProperty();
+        const StyleOffsetPath& offsetPath =
+            animation.baseStyle().get_StyleOffsetPath();
+        // FIXME: Bug 1837042. Cache all basic shapes.
         if (offsetPath.IsPath()) {
           MOZ_ASSERT(!storageData.mCachedMotionPath,
                      "Only one offset-path: path() is set");
 
           RefPtr<gfx::PathBuilder> builder =
               MotionPathUtils::GetCompositorPathBuilder();
-          storageData.mCachedMotionPath =
-              MotionPathUtils::BuildPath(offsetPath.AsPath(), builder);
+          storageData.mCachedMotionPath = MotionPathUtils::BuildSVGPath(
+              offsetPath.AsSVGPathData(), builder);
         }
       }
 
@@ -556,7 +603,7 @@ uint64_t AnimationHelper::GetNextCompositorAnimationsId() {
 }
 
 gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
-    const nsTArray<RefPtr<RawServoAnimationValue>>& aValues,
+    const nsTArray<RefPtr<StyleAnimationValue>>& aValues,
     const TransformData& aTransformData, gfx::Path* aCachedMotionPath) {
   using nsStyleTransformMatrix::TransformReferenceBox;
 
@@ -571,10 +618,11 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
   const StyleRotate* rotate = nullptr;
   const StyleScale* scale = nullptr;
   const StyleTransform* transform = nullptr;
-  const StyleOffsetPath* path = nullptr;
+  Maybe<StyleOffsetPath> path;
   const StyleLengthPercentage* distance = nullptr;
   const StyleOffsetRotate* offsetRotate = nullptr;
   const StylePositionOrAuto* anchor = nullptr;
+  const StyleOffsetPosition* position = nullptr;
 
   for (const auto& value : aValues) {
     MOZ_ASSERT(value);
@@ -598,7 +646,8 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
         break;
       case eCSSProperty_offset_path:
         MOZ_ASSERT(!path);
-        path = Servo_AnimationValue_GetOffsetPath(value);
+        path.emplace(StyleOffsetPath::None());
+        Servo_AnimationValue_GetOffsetPath(value, path.ptr());
         break;
       case eCSSProperty_offset_distance:
         MOZ_ASSERT(!distance);
@@ -612,6 +661,10 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
         MOZ_ASSERT(!anchor);
         anchor = Servo_AnimationValue_GetOffsetAnchor(value);
         break;
+      case eCSSProperty_offset_position:
+        MOZ_ASSERT(!position);
+        position = Servo_AnimationValue_GetOffsetPosition(value);
+        break;
       default:
         MOZ_ASSERT_UNREACHABLE("Unsupported transform-like property");
     }
@@ -619,8 +672,8 @@ gfx::Matrix4x4 AnimationHelper::ServoAnimationValueToMatrix4x4(
 
   TransformReferenceBox refBox(nullptr, aTransformData.bounds());
   Maybe<ResolvedMotionPathData> motion = MotionPathUtils::ResolveMotionPath(
-      path, distance, offsetRotate, anchor, aTransformData.motionPathData(),
-      refBox, aCachedMotionPath);
+      path.ptrOr(nullptr), distance, offsetRotate, anchor, position,
+      aTransformData.motionPathData(), refBox, aCachedMotionPath);
 
   // We expect all our transform data to arrive in device pixels
   gfx::Point3D transformOrigin = aTransformData.transformOrigin();

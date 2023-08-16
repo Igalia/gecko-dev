@@ -100,7 +100,8 @@ impl RenderNotifier for Notifier {
 
     fn new_frame_ready(&self, _: DocumentId,
                        scrolled: bool,
-                       _composite_needed: bool) {
+                       _composite_needed: bool,
+                       _: FramePublishId) {
         self.update(!scrolled);
     }
 }
@@ -226,7 +227,6 @@ impl Wrench {
         no_scissor: bool,
         no_batch: bool,
         precache_shaders: bool,
-        disable_dual_source_blending: bool,
         dump_shader_source: Option<String>,
         notifier: Option<Box<dyn RenderNotifier>>,
     ) -> Self {
@@ -242,18 +242,17 @@ impl Wrench {
             ShaderPrecacheFlags::empty()
         };
 
-        let opts = webrender::RendererOptions {
+        let opts = webrender::WebRenderOptions {
             resource_override_path: shader_override_path,
             use_optimized_shaders,
             enable_subpixel_aa: !no_subpixel_aa,
             debug_flags,
-            enable_clear_scissor: !no_scissor,
+            enable_clear_scissor: no_scissor.then_some(false),
             max_recorded_profiles: 16,
             precache_flags,
             blob_image_handler: Some(Box::new(blob::CheckerboardRenderer::new(callbacks.clone()))),
             testing: true,
             max_internal_texture_size: Some(8196), // Needed for rawtest::test_resize_image.
-            allow_dual_source_blending: !disable_dual_source_blending,
             allow_advanced_blend_equation: window.is_software(),
             dump_shader_source,
             // SWGL doesn't support the GL_ALWAYS depth comparison function used by
@@ -274,7 +273,7 @@ impl Wrench {
             Box::new(Notifier(data))
         });
 
-        let (renderer, sender) = webrender::Renderer::new(
+        let (renderer, sender) = webrender::create_webrender_instance(
             window.clone_gl(),
             notifier,
             opts,
@@ -554,14 +553,10 @@ impl Wrench {
         display_lists: Vec<(PipelineId, BuiltDisplayList)>,
         scroll_offsets: &HashMap<ExternalScrollId, Vec<SampledScrollOffset>>,
     ) {
-        let root_background_color = Some(ColorF::new(1.0, 1.0, 1.0, 1.0));
-
         let mut txn = Transaction::new();
         for display_list in display_lists {
             txn.set_display_list(
                 Epoch(frame_number),
-                root_background_color,
-                self.window_size_f32(),
                 display_list,
             );
         }

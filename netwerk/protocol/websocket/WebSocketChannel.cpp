@@ -4,70 +4,69 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at http://mozilla.org/MPL/2.0/. */
 
-#include "WebSocketFrame.h"
-#include "WebSocketLog.h"
+#include <algorithm>
+
 #include "WebSocketChannel.h"
 
+#include "WebSocketConnectionBase.h"
+#include "WebSocketFrame.h"
+#include "WebSocketLog.h"
 #include "mozilla/Atomics.h"
 #include "mozilla/Attributes.h"
+#include "mozilla/Base64.h"
 #include "mozilla/EndianUtils.h"
 #include "mozilla/MathAlgorithms.h"
+#include "mozilla/ScopeExit.h"
+#include "mozilla/StaticMutex.h"
 #include "mozilla/StaticPrefs_privacy.h"
+#include "mozilla/Telemetry.h"
+#include "mozilla/TimeStamp.h"
 #include "mozilla/Utf8.h"
 #include "mozilla/net/WebSocketEventService.h"
-
-#include "nsIURI.h"
-#include "nsIChannel.h"
-#include "nsICryptoHash.h"
-#include "nsIRunnable.h"
-#include "nsIPrefBranch.h"
+#include "nsAlgorithm.h"
+#include "nsCRT.h"
+#include "nsCharSeparatedTokenizer.h"
+#include "nsComponentManagerUtils.h"
+#include "nsError.h"
+#include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsICancelable.h"
+#include "nsIChannel.h"
 #include "nsIClassOfService.h"
+#include "nsICryptoHash.h"
 #include "nsIDNSRecord.h"
 #include "nsIDNSService.h"
-#include "nsIIOService.h"
-#include "nsIProtocolProxyService.h"
-#include "nsIProxyInfo.h"
-#include "nsIProxiedChannel.h"
-#include "nsIAsyncVerifyRedirectCallback.h"
 #include "nsIDashboardEventNotifier.h"
 #include "nsIEventTarget.h"
 #include "nsIHttpChannel.h"
-#include "nsIProtocolHandler.h"
-#include "nsIRandomGenerator.h"
-#include "nsISocketTransport.h"
-#include "nsThreadUtils.h"
-#include "nsINetworkLinkService.h"
-#include "nsIObserverService.h"
-#include "nsCharSeparatedTokenizer.h"
-
-#include "nsComponentManagerUtils.h"
-#include "nsNetCID.h"
-#include "nsServiceManagerUtils.h"
-#include "nsCRT.h"
-#include "nsThreadUtils.h"
-#include "nsError.h"
-#include "mozilla/Base64.h"
-#include "nsStringStream.h"
-#include "nsAlgorithm.h"
-#include "nsProxyRelease.h"
-#include "nsNetUtil.h"
-#include "nsINode.h"
-#include "mozilla/ScopeExit.h"
-#include "mozilla/StaticMutex.h"
-#include "mozilla/Telemetry.h"
-#include "mozilla/TimeStamp.h"
-#include "nsSocketTransportService2.h"
+#include "nsIIOService.h"
 #include "nsINSSErrorsService.h"
-#include "WebSocketConnectionBase.h"
-#include "nsIURIMutator.h"
+#include "nsINetworkLinkService.h"
+#include "nsINode.h"
+#include "nsIObserverService.h"
+#include "nsIPrefBranch.h"
+#include "nsIProtocolHandler.h"
+#include "nsIProtocolProxyService.h"
+#include "nsIProxiedChannel.h"
+#include "nsIProxyInfo.h"
+#include "nsIRandomGenerator.h"
+#include "nsIRunnable.h"
+#include "nsISocketTransport.h"
+#include "nsITLSSocketControl.h"
 #include "nsITransportProvider.h"
-
+#include "nsITransportSecurityInfo.h"
+#include "nsIURI.h"
+#include "nsIURIMutator.h"
+#include "nsNetCID.h"
+#include "nsNetUtil.h"
+#include "nsProxyRelease.h"
+#include "nsServiceManagerUtils.h"
+#include "nsSocketTransportService2.h"
+#include "nsStringStream.h"
+#include "nsThreadUtils.h"
 #include "plbase64.h"
 #include "prmem.h"
 #include "prnetdb.h"
 #include "zlib.h"
-#include <algorithm>
 
 // rather than slurp up all of nsIWebSocket.idl, which lives outside necko, just
 // dupe one constant we need from it
@@ -519,10 +518,8 @@ class nsWSAdmissionManager {
 
   int32_t IndexOf(nsCString& aAddress, nsCString& aOriginSuffix) {
     for (uint32_t i = 0; i < mQueue.Length(); i++) {
-      bool isPartitioned =
-          (StaticPrefs::privacy_partition_network_state() ||
-           StaticPrefs::privacy_firstparty_isolate()) &&
-          StaticPrefs::privacy_partition_network_state_ws_connection_queue();
+      bool isPartitioned = StaticPrefs::privacy_partition_network_state() ||
+                           StaticPrefs::privacy_firstparty_isolate();
       if (aAddress == (mQueue[i])->mAddress &&
           (!isPartitioned || aOriginSuffix == (mQueue[i])->mOriginSuffix)) {
         return i;
@@ -1225,15 +1222,7 @@ WebSocketChannel::~WebSocketChannel() {
 
   mListenerMT = nullptr;
 
-  NS_ReleaseOnMainThread("WebSocketChannel::mLoadGroup", mLoadGroup.forget());
-  NS_ReleaseOnMainThread("WebSocketChannel::mLoadInfo", mLoadInfo.forget());
   NS_ReleaseOnMainThread("WebSocketChannel::mService", mService.forget());
-  nsCOMPtr<nsIEventTarget> target;
-  {
-    auto lock = mTargetThread.Lock();
-    target.swap(*lock);
-  }
-  NS_ReleaseOnMainThread("WebSocketChannel::mTargetThread", target.forget());
 }
 
 NS_IMETHODIMP
@@ -1359,7 +1348,7 @@ void WebSocketChannel::BeginOpenInternal() {
     return;
   }
 
-  rv = NS_MaybeOpenChannelUsingAsyncOpen(localChannel, this);
+  rv = localChannel->AsyncOpen(this);
 
   if (NS_FAILED(rv)) {
     LOG(("WebSocketChannel::BeginOpenInternal: cannot async open\n"));
@@ -2256,6 +2245,7 @@ void WebSocketChannel::CleanupConnection() {
         NewRunnableMethod("net::WebSocketChannel::CleanupConnection", this,
                           &WebSocketChannel::CleanupConnection),
         NS_DISPATCH_NORMAL);
+    return;
   }
 
   if (mLingeringCloseTimer) {
@@ -2861,11 +2851,12 @@ nsresult WebSocketChannel::DoAdmissionDNS() {
   if (mPort == -1) mPort = (mEncrypted ? kDefaultWSSPort : kDefaultWSPort);
   nsCOMPtr<nsIDNSService> dns = do_GetService(NS_DNSSERVICE_CONTRACTID, &rv);
   NS_ENSURE_SUCCESS(rv, rv);
-  nsCOMPtr<nsIEventTarget> main = GetMainThreadEventTarget();
+  nsCOMPtr<nsIEventTarget> main = GetMainThreadSerialEventTarget();
   nsCOMPtr<nsICancelable> cancelable;
-  rv = dns->AsyncResolveNative(
-      hostName, nsIDNSService::RESOLVE_TYPE_DEFAULT, 0, nullptr, this, main,
-      mLoadInfo->GetOriginAttributes(), getter_AddRefs(cancelable));
+  rv = dns->AsyncResolveNative(hostName, nsIDNSService::RESOLVE_TYPE_DEFAULT,
+                               nsIDNSService::RESOLVE_DEFAULT_FLAGS, nullptr,
+                               this, main, mLoadInfo->GetOriginAttributes(),
+                               getter_AddRefs(cancelable));
   if (NS_FAILED(rv)) {
     return rv;
   }
@@ -2933,8 +2924,6 @@ nsresult WebSocketChannel::CallStartWebsocketData() {
 }
 
 nsresult WebSocketChannel::StartWebsocketData() {
-  nsresult rv;
-
   {
     MutexAutoLock lock(mMutex);
     LOG(("WebSocketChannel::StartWebsocketData() %p", this));
@@ -2946,51 +2935,53 @@ nsresult WebSocketChannel::StartWebsocketData() {
            "starting data"));
       return NS_ERROR_NOT_AVAILABLE;
     }
-
-    mDataStarted = true;
   }
 
-  rv = mConnection ? mConnection->StartReading()
-                   : mSocketIn->AsyncWait(this, 0, 0, mIOThread);
-  if (NS_FAILED(rv)) {
-    LOG(
-        ("WebSocketChannel::StartWebsocketData mSocketIn->AsyncWait() failed "
-         "with error 0x%08" PRIx32,
-         static_cast<uint32_t>(rv)));
-    return mIOThread->Dispatch(
-        NewRunnableMethod<nsresult>("net::WebSocketChannel::AbortSession", this,
-                                    &WebSocketChannel::AbortSession, rv),
-        NS_DISPATCH_NORMAL);
-  }
+  RefPtr<WebSocketChannel> self = this;
+  mIOThread->Dispatch(NS_NewRunnableFunction(
+      "WebSocketChannel::StartWebsocketData", [self{std::move(self)}] {
+        LOG(("WebSocketChannel::DoStartWebsocketData() %p", self.get()));
 
-  if (mPingInterval) {
-    rv = mIOThread->Dispatch(
-        NewRunnableMethod("net::WebSocketChannel::StartPinging", this,
-                          &WebSocketChannel::StartPinging),
-        NS_DISPATCH_NORMAL);
-    if (NS_FAILED(rv)) {
-      LOG(
-          ("WebSocketChannel::StartWebsocketData Could not start pinging, "
-           "rv=0x%08" PRIx32,
-           static_cast<uint32_t>(rv)));
-      return rv;
-    }
-  }
+        NS_DispatchToMainThread(
+            NewRunnableMethod("net::WebSocketChannel::NotifyOnStart", self,
+                              &WebSocketChannel::NotifyOnStart),
+            NS_DISPATCH_NORMAL);
 
-  LOG(("WebSocketChannel::StartWebsocketData Notifying Listener %p",
+        nsresult rv = self->mConnection ? self->mConnection->StartReading()
+                                        : self->mSocketIn->AsyncWait(
+                                              self, 0, 0, self->mIOThread);
+        if (NS_FAILED(rv)) {
+          self->AbortSession(rv);
+        }
+
+        if (self->mPingInterval) {
+          rv = self->StartPinging();
+          if (NS_FAILED(rv)) {
+            LOG((
+                "WebSocketChannel::StartWebsocketData Could not start pinging, "
+                "rv=0x%08" PRIx32,
+                static_cast<uint32_t>(rv)));
+            self->AbortSession(rv);
+          }
+        }
+      }));
+
+  return NS_OK;
+}
+
+void WebSocketChannel::NotifyOnStart() {
+  LOG(("WebSocketChannel::NotifyOnStart Notifying Listener %p",
        mListenerMT ? mListenerMT->mListener.get() : nullptr));
-
+  mDataStarted = true;
   if (mListenerMT) {
-    rv = mListenerMT->mListener->OnStart(mListenerMT->mContext);
+    nsresult rv = mListenerMT->mListener->OnStart(mListenerMT->mContext);
     if (NS_FAILED(rv)) {
       LOG(
-          ("WebSocketChannel::StartWebsocketData "
+          ("WebSocketChannel::NotifyOnStart "
            "mListenerMT->mListener->OnStart() failed with error 0x%08" PRIx32,
            static_cast<uint32_t>(rv)));
     }
   }
-
-  return NS_OK;
 }
 
 nsresult WebSocketChannel::StartPinging() {
@@ -3004,7 +2995,7 @@ nsresult WebSocketChannel::StartPinging() {
                                nsITimer::TYPE_ONE_SHOT);
   if (NS_SUCCEEDED(rv)) {
     LOG(("WebSocketChannel will generate ping after %d ms of receive silence\n",
-         mPingInterval));
+         (uint32_t)mPingInterval));
   } else {
     NS_WARNING("unable to create ping timer. Carrying on.");
   }
@@ -3113,6 +3104,22 @@ WebSocketChannel::OnProxyAvailable(nsICancelable* aRequest,
       LOG(("WebSocket OnProxyAvailable [%p] DNS lookup failed\n", this));
       // call DNS callback directly without DNS resolver
       OnLookupComplete(nullptr, nullptr, NS_ERROR_FAILURE);
+    }
+  }
+
+  // notify listener of OnProxyAvailable
+  LOG(("WebSocketChannel::OnProxyAvailable Notifying Listener %p",
+       mListenerMT ? mListenerMT->mListener.get() : nullptr));
+  nsresult rv;
+  nsCOMPtr<nsIProtocolProxyCallback> ppc(
+      do_QueryInterface(mListenerMT->mListener, &rv));
+  if (NS_SUCCEEDED(rv)) {
+    rv = ppc->OnProxyAvailable(aRequest, aChannel, pi, status);
+    if (NS_FAILED(rv)) {
+      LOG(
+          ("WebSocketChannel::OnProxyAvailable notify"
+           " failed with error 0x%08" PRIx32,
+           static_cast<uint32_t>(rv)));
     }
   }
 
@@ -3323,20 +3330,31 @@ WebSocketChannel::GetName(nsACString& aName) {
 // nsIWebSocketChannel
 
 NS_IMETHODIMP
-WebSocketChannel::GetSecurityInfo(nsISupports** aSecurityInfo) {
+WebSocketChannel::GetSecurityInfo(nsITransportSecurityInfo** aSecurityInfo) {
   LOG(("WebSocketChannel::GetSecurityInfo() %p\n", this));
   MOZ_ASSERT(NS_IsMainThread(), "not main thread");
 
+  *aSecurityInfo = nullptr;
+
   if (mConnection) {
-    if (NS_FAILED(mConnection->GetSecurityInfo(aSecurityInfo))) {
-      *aSecurityInfo = nullptr;
+    nsresult rv = mConnection->GetSecurityInfo(aSecurityInfo);
+    if (NS_FAILED(rv)) {
+      return rv;
     }
     return NS_OK;
   }
 
   if (mTransport) {
-    if (NS_FAILED(mTransport->GetSecurityInfo(aSecurityInfo))) {
-      *aSecurityInfo = nullptr;
+    nsCOMPtr<nsITLSSocketControl> tlsSocketControl;
+    nsresult rv =
+        mTransport->GetTlsSocketControl(getter_AddRefs(tlsSocketControl));
+    if (NS_FAILED(rv)) {
+      return rv;
+    }
+    nsCOMPtr<nsITransportSecurityInfo> securityInfo(
+        do_QueryInterface(tlsSocketControl));
+    if (securityInfo) {
+      securityInfo.forget(aSecurityInfo);
     }
   }
   return NS_OK;
@@ -3385,7 +3403,7 @@ WebSocketChannel::AsyncOpenNative(nsIURI* aURI, const nsACString& aOrigin,
   {
     auto lock = mTargetThread.Lock();
     if (!lock.ref()) {
-      lock.ref() = GetMainThreadEventTarget();
+      lock.ref() = GetMainThreadSerialEventTarget();
     }
   }
 
@@ -4060,7 +4078,7 @@ WebSocketChannel::OnStopRequest(nsIRequest* aRequest, nsresult aStatusCode) {
 NS_IMETHODIMP
 WebSocketChannel::OnInputStreamReady(nsIAsyncInputStream* aStream) {
   LOG(("WebSocketChannel::OnInputStreamReady() %p\n", this));
-  MOZ_ASSERT(mIOThread->IsOnCurrentThread(), "not on right thread");
+  MOZ_DIAGNOSTIC_ASSERT(mIOThread->IsOnCurrentThread(), "not on right thread");
 
   if (!mSocketIn) {  // did we we clean up the socket after scheduling
                      // InputReady?
@@ -4111,7 +4129,7 @@ WebSocketChannel::OnInputStreamReady(nsIAsyncInputStream* aStream) {
 NS_IMETHODIMP
 WebSocketChannel::OnOutputStreamReady(nsIAsyncOutputStream* aStream) {
   LOG(("WebSocketChannel::OnOutputStreamReady() %p\n", this));
-  MOZ_ASSERT(mIOThread->IsOnCurrentThread(), "not on right thread");
+  MOZ_DIAGNOSTIC_ASSERT(mIOThread->IsOnCurrentThread(), "not on right thread");
   nsresult rv;
 
   if (!mCurrentOut) PrimeNewOutgoingMessage();
@@ -4133,9 +4151,9 @@ WebSocketChannel::OnOutputStreamReady(nsIAsyncOutputStream* aStream) {
       toSend = mCurrentOut->Length() - mCurrentOutSent;
       if (toSend > 0) {
         LOG(
-            ("WebSocketChannel::OnOutputStreamReady: "
+            ("WebSocketChannel::OnOutputStreamReady [%p]: "
              "Try to send %u of data\n",
-             toSend));
+             this, toSend));
       }
     }
 
@@ -4143,8 +4161,9 @@ WebSocketChannel::OnOutputStreamReady(nsIAsyncOutputStream* aStream) {
       amtSent = 0;
     } else {
       rv = mSocketOut->Write(sndBuf, toSend, &amtSent);
-      LOG(("WebSocketChannel::OnOutputStreamReady: write %u rv %" PRIx32 "\n",
-           amtSent, static_cast<uint32_t>(rv)));
+      LOG(("WebSocketChannel::OnOutputStreamReady [%p]: write %u rv %" PRIx32
+           "\n",
+           this, amtSent, static_cast<uint32_t>(rv)));
 
       if (rv == NS_BASE_STREAM_WOULD_BLOCK) {
         mSocketOut->AsyncWait(this, 0, 0, mIOThread);

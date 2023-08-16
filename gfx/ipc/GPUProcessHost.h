@@ -101,7 +101,6 @@ class GPUProcessHost final : public mozilla::ipc::GeckoChildProcessHost {
 
   // Called on the IO thread.
   void OnChannelConnected(base::ProcessId peer_pid) override;
-  void OnChannelError() override;
 
   void SetListener(Listener* aListener);
 
@@ -141,7 +140,7 @@ class GPUProcessHost final : public mozilla::ipc::GeckoChildProcessHost {
   enum class LaunchPhase { Unlaunched, Waiting, Complete };
   LaunchPhase mLaunchPhase;
 
-  UniquePtr<GPUChild> mGPUChild;
+  RefPtr<GPUChild> mGPUChild;
   uint64_t mProcessToken;
 
   UniquePtr<mozilla::ipc::SharedPreferenceSerializer> mPrefSerializer;

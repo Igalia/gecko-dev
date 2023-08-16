@@ -20,11 +20,12 @@
 //! - A '_' token to start a new row.
 
 use api::{ColorF, ColorU};
+use glyph_rasterizer::profiler::GlyphRasterizeProfiler;
 use crate::renderer::DebugRenderer;
 use crate::device::query::GpuTimer;
 use euclid::{Point2D, Rect, Size2D, vec2, default};
 use crate::internal_types::FastHashMap;
-use crate::renderer::{FullFrameStats, MAX_VERTEX_TEXTURE_WIDTH, wr_has_been_initialized};
+use crate::renderer::{FullFrameStats, MAX_VERTEX_TEXTURE_WIDTH, init::wr_has_been_initialized};
 use api::units::DeviceIntSize;
 use std::collections::vec_deque::VecDeque;
 use std::fmt::{Write, Debug};
@@ -252,7 +253,10 @@ pub const RENDER_REASON_TESTING: usize = 117;
 pub const RENDER_REASON_OTHER: usize = 118;
 pub const RENDER_REASON_VSYNC: usize = 119;
 
-pub const NUM_PROFILER_EVENTS: usize = 120;
+pub const TEXTURES_CREATED: usize = 120;
+pub const TEXTURES_DELETED: usize = 121;
+
+pub const NUM_PROFILER_EVENTS: usize = 122;
 
 pub struct Profiler {
     counters: Vec<Counter>,
@@ -427,6 +431,8 @@ impl Profiler {
             float("Reason other", "", RENDER_REASON_OTHER, expected(0.0..0.01)),
             float("On vsync", "", RENDER_REASON_VSYNC, expected(0.0..0.01)),
 
+            int("Textures created", "", TEXTURES_CREATED, expected(0..5)),
+            int("Textures deleted", "", TEXTURES_DELETED, Expected::none()),
         ];
 
         let mut counters = Vec::with_capacity(profile_counters.len());
@@ -1684,6 +1690,24 @@ impl TransactionProfile {
         for evt in &mut self.events {
             *evt = Event::None;
         }
+    }
+}
+
+impl GlyphRasterizeProfiler for TransactionProfile {
+    fn start_time(&mut self) {
+        let id = GLYPH_RESOLVE_TIME;
+        let ns = precise_time_ns();
+        self.events[id] = Event::Start(ns);
+    }
+
+    fn end_time(&mut self) -> f64 {
+        let id = GLYPH_RESOLVE_TIME;
+        self.end_time_if_started(id).unwrap()
+    }
+
+    fn set(&mut self, value: f64) {
+        let id = RASTERIZED_GLYPHS;
+        self.set_f64(id, value);
     }
 }
 

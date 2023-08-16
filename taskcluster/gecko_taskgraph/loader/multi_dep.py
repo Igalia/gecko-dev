@@ -3,11 +3,12 @@
 # file, You can obtain one at http://mozilla.org/MPL/2.0/.
 
 
-import copy
-
 from taskgraph.task import Task
+from taskgraph.util.dependencies import group_by as tg_group_by
 from taskgraph.util.schema import Schema
 from voluptuous import Required
+
+from gecko_taskgraph.util.copy_task import copy_task
 
 from ..util.attributes import sorted_unique_list
 
@@ -61,7 +62,7 @@ def loader(kind, path, config, params, loaded_tasks):
         job = {"dependent-tasks": dep_tasks}
         job["primary-dependency"] = get_primary_dep(config, dep_tasks)
         if job_template:
-            job.update(copy.deepcopy(job_template))
+            job.update(copy_task(job_template))
         # copy shipping_product from upstream
         product = job["primary-dependency"].attributes.get(
             "shipping_product", job["primary-dependency"].task.get("shipping-product")
@@ -79,7 +80,7 @@ def loader(kind, path, config, params, loaded_tasks):
 
 
 def skip_only_or_not(config, task):
-    """Return True if we should skip this task based on only_ or not_ config."""
+    """Return True if we should skip this task based on `only_` or `not_` config."""
     only_platforms = config.get("only-for-build-platforms")
     not_platforms = config.get("not-for-build-platforms")
     only_attributes = config.get("only-for-attributes")
@@ -93,7 +94,7 @@ def skip_only_or_not(config, task):
         combined_platform = f"{platform}/{build_type}"
         if only_platforms and combined_platform not in only_platforms:
             return True
-        elif not_platforms and combined_platform in not_platforms:
+        if not_platforms and combined_platform in not_platforms:
             return True
     if only_attributes:
         if not set(only_attributes) & set(task_attrs):
@@ -116,8 +117,16 @@ def group_tasks(config, tasks):
             kinds,
             error_msg=("Multi_dep.py should have filtered down to one task per kind"),
         )
-        dependencies = {t.kind: copy.deepcopy(t) for t in combinations}
+        dependencies = {t.kind: copy_task(t) for t in combinations}
         yield dependencies
+
+
+@tg_group_by("single")
+def single_grouping(config, tasks):
+    for task in tasks:
+        if skip_only_or_not(config.config, task):
+            continue
+        yield [task]
 
 
 @group_by("platform")
@@ -136,6 +145,13 @@ def platform_grouping(config, tasks):
 
         groups.setdefault((platform, build_type, product), []).append(task)
     return groups
+
+
+# Temporary shim function
+@tg_group_by("platform")
+def tg_platform_grouping(config, tasks):
+    groups = platform_grouping(config.config, tasks)
+    return groups.values()
 
 
 @group_by("single-locale")
@@ -175,6 +191,13 @@ def single_locale_grouping(config, tasks):
     return groups
 
 
+# Temporary shim function
+@tg_group_by("single-locale")
+def tg_locale_grouping(config, tasks):
+    groups = single_locale_grouping(config.config, tasks)
+    return groups.values()
+
+
 @group_by("chunk-locales")
 def chunk_locale_grouping(config, tasks):
     """Split by a chunk_locale (but also by platform, build-type, product)
@@ -203,6 +226,13 @@ def chunk_locale_grouping(config, tasks):
             groups[chunk_locale_key].append(task)
 
     return groups
+
+
+# Temporary shim function
+@tg_group_by("chunk-locales")
+def tg_chunk_locale_grouping(config, tasks):
+    groups = chunk_locale_grouping(config.config, tasks)
+    return groups.values()
 
 
 @group_by("partner-repack-ids")
@@ -234,6 +264,13 @@ def partner_repack_ids_grouping(config, tasks):
             groups[partner_repack_ids_key].append(task)
 
     return groups
+
+
+# Temporary shim function
+@tg_group_by("partner-repack-ids")
+def tg_partner_repack_ids_grouping(config, tasks):
+    groups = partner_repack_ids_grouping(config.config, tasks)
+    return groups.values()
 
 
 def assert_unique_members(kinds, error_msg=None):

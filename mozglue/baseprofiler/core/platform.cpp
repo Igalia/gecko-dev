@@ -17,7 +17,7 @@
 //   call (profiler_get_backtrace()). It involves writing a stack trace and
 //   little else into a temporary ProfileBuffer, and wrapping that up in a
 //   ProfilerBacktrace that can be subsequently used in a marker. The sampling
-//   is done on-thread, and so Registers::SyncPopulate() is used to get the
+//   is done on-thread, and so REGISTERS_SYNC_POPULATE() is used to get the
 //   register values.
 //
 // - A "backtrace" sample is the simplest kind. It is done in response to an
@@ -43,6 +43,7 @@
 #include "mozilla/BaseProfilerDetail.h"
 #include "mozilla/DoubleConversion.h"
 #include "mozilla/Printf.h"
+#include "mozilla/ProfilerBufferSize.h"
 #include "mozilla/ProfileBufferChunkManagerSingle.h"
 #include "mozilla/ProfileBufferChunkManagerWithLocalLimit.h"
 #include "mozilla/ProfileChunkedBuffer.h"
@@ -55,7 +56,7 @@
 #include "mozilla/StaticPtr.h"
 #include "mozilla/ThreadLocal.h"
 #include "mozilla/TimeStamp.h"
-#include "mozilla/Tuple.h"
+
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Vector.h"
 #include "prdtoa.h"
@@ -105,7 +106,7 @@
 // No stack-walking in baseprofiler on linux, android, bsd.
 // APIs now make it easier to capture backtraces from the Base Profiler, which
 // is currently not supported on these platform, and would lead to a MOZ_CRASH
-// in Registers::SyncPopulate(). `#if 0` added in bug 1658232, follow-up bugs
+// in REGISTERS_SYNC_POPULATE(). `#if 0` added in bug 1658232, follow-up bugs
 // should be referenced in meta bug 1557568.
 #if 0
 // Android builds use the ARM Exception Handling ABI to unwind.
@@ -535,52 +536,6 @@ constexpr static uint32_t scBytesPerEntry = 8;
 // CorePS.
 //
 class ActivePS {
- private:
-  // We need to decide how many chunks of what size we want to fit in the given
-  // total maximum capacity for this process, in the (likely) context of
-  // multiple processes doing the same choice and having an inter-process
-  // mechanism to control the overal memory limit.
-
-  // Minimum chunk size allowed, enough for at least one stack.
-  constexpr static uint32_t scMinimumChunkSize =
-      2 * ProfileBufferChunkManager::scExpectedMaximumStackSize;
-
-  // Ideally we want at least 2 unreleased chunks to work with (1 current and 1
-  // next), and 2 released chunks (so that one can be recycled when old, leaving
-  // one with some data).
-  constexpr static uint32_t scMinimumNumberOfChunks = 4;
-
-  // And we want to limit chunks to a maximum size, which is a compromise
-  // between:
-  // - A big size, which helps with reducing the rate of allocations and IPCs.
-  // - A small size, which helps with equalizing the duration of recorded data
-  //   (as the inter-process controller will discard the oldest chunks in all
-  //   Firefox processes).
-  constexpr static uint32_t scMaximumChunkSize = 1024 * 1024;
-
- public:
-  // We should be able to store at least the minimum number of the smallest-
-  // possible chunks.
-  constexpr static uint32_t scMinimumBufferSize =
-      scMinimumNumberOfChunks * scMinimumChunkSize;
-  constexpr static uint32_t scMinimumBufferEntries =
-      scMinimumBufferSize / scBytesPerEntry;
-
-  // Limit to 2GiB.
-  constexpr static uint32_t scMaximumBufferSize = 2u * 1024u * 1024u * 1024u;
-  constexpr static uint32_t scMaximumBufferEntries =
-      scMaximumBufferSize / scBytesPerEntry;
-
-  constexpr static uint32_t ClampToAllowedEntries(uint32_t aEntries) {
-    if (aEntries <= scMinimumBufferEntries) {
-      return scMinimumBufferEntries;
-    }
-    if (aEntries >= scMaximumBufferEntries) {
-      return scMaximumBufferEntries;
-    }
-    return aEntries;
-  }
-
  private:
   constexpr static uint32_t ChunkSizeForEntries(uint32_t aEntries) {
     return uint32_t(std::min(size_t(ClampToAllowedEntries(aEntries)) *
@@ -1127,6 +1082,12 @@ bool RacyFeatures::IsActiveWithFeature(uint32_t aFeature) {
 }
 
 /* static */
+bool RacyFeatures::IsActiveWithoutFeature(uint32_t aFeature) {
+  uint32_t af = sActiveAndFeatures;  // copy it first
+  return (af & Active) && !(af & aFeature);
+}
+
+/* static */
 bool RacyFeatures::IsActiveAndUnpaused() {
   uint32_t af = sActiveAndFeatures;  // copy it first
   return (af & Active) && !(af & Paused);
@@ -1240,16 +1201,11 @@ class Registers {
  public:
   Registers() : mPC{nullptr}, mSP{nullptr}, mFP{nullptr}, mLR{nullptr} {}
 
-#if defined(HAVE_NATIVE_UNWIND)
-  // Fills in mPC, mSP, mFP, mLR, and mContext for a synchronous sample.
-  void SyncPopulate();
-#endif
-
   void Clear() { memset(this, 0, sizeof(*this)); }
 
   // These fields are filled in by
   // Sampler::SuspendAndSampleAndResumeThread() for periodic and backtrace
-  // samples, and by SyncPopulate() for synchronous samples.
+  // samples, and by REGISTERS_SYNC_POPULATE for synchronous samples.
   Address mPC;  // Instruction pointer.
   Address mSP;  // Stack pointer.
   Address mFP;  // Frame pointer.
@@ -1472,9 +1428,9 @@ static void DoEHABIBacktrace(PSLockRef aLock,
 #ifdef USE_LUL_STACKWALK
 
 // See the comment at the callsite for why this function is necessary.
-#  if defined(MOZ_HAVE_ASAN_BLACKLIST)
-MOZ_ASAN_BLACKLIST static void ASAN_memcpy(void* aDst, const void* aSrc,
-                                           size_t aLen) {
+#  if defined(MOZ_HAVE_ASAN_IGNORE)
+MOZ_ASAN_IGNORE static void ASAN_memcpy(void* aDst, const void* aSrc,
+                                        size_t aLen) {
   // The obvious thing to do here is call memcpy(). However, although
   // ASAN_memcpy() is not instrumented by ASAN, memcpy() still is, and the
   // false positive still manifests! So we must implement memcpy() ourselves
@@ -1613,7 +1569,7 @@ static void DoLULBacktrace(PSLockRef aLock,
       //
       // This code is very much a custom stack unwind mechanism! So we use an
       // alternative memcpy() implementation that is ignored by ASAN.
-#  if defined(MOZ_HAVE_ASAN_BLACKLIST)
+#  if defined(MOZ_HAVE_ASAN_IGNORE)
       ASAN_memcpy(&stackImg.mContents[0], (void*)start, nToCopy);
 #  else
       memcpy(&stackImg.mContents[0], (void*)start, nToCopy);
@@ -1762,6 +1718,7 @@ static void AddSharedLibraryInfoToStream(JSONWriter& aWriter,
   aWriter.StringProperty("debugName", aLib.GetDebugName());
   aWriter.StringProperty("debugPath", aLib.GetDebugPath());
   aWriter.StringProperty("breakpadId", aLib.GetBreakpadId());
+  aWriter.StringProperty("codeId", aLib.GetCodeId());
   aWriter.StringProperty("arch", aLib.GetArch());
   aWriter.EndObject();
 }
@@ -1816,9 +1773,8 @@ static void StreamCategories(SpliceableJSONWriter& aWriter) {
 
 static void StreamMarkerSchema(SpliceableJSONWriter& aWriter) {
   // Get an array view with all registered marker-type-specific functions.
-  Span<const base_profiler_markers_detail::Streaming::MarkerTypeFunctions>
-      markerTypeFunctionsArray =
-          base_profiler_markers_detail::Streaming::MarkerTypeFunctionsArray();
+  base_profiler_markers_detail::Streaming::LockedMarkerTypeFunctionsList
+      markerTypeFunctionsArray;
   // List of streamed marker names, this is used to spot duplicates.
   std::set<std::string> names;
   // Stream the display schema for each different one. (Duplications may come
@@ -1842,7 +1798,7 @@ static void StreamMetaJSCustomObject(PSLockRef aLock,
                                      bool aIsShuttingDown) {
   MOZ_RELEASE_ASSERT(CorePS::Exists() && ActivePS::Exists(aLock));
 
-  aWriter.IntProperty("version", 25);
+  aWriter.IntProperty("version", GECKO_PROFILER_FORMAT_VERSION);
 
   // The "startTime" field holds the number of milliseconds since midnight
   // January 1, 1970 GMT. This grotty code computes (Now - (Now -
@@ -2096,8 +2052,7 @@ static void PrintUsage() {
       "    Features: (x=unavailable, D/d=default/unavailable,\n"
       "               S/s=MOZ_PROFILER_STARTUP extra "
       "default/unavailable)\n",
-      unsigned(ActivePS::scMinimumBufferEntries),
-      unsigned(ActivePS::scMaximumBufferEntries),
+      unsigned(scMinimumBufferEntries), unsigned(scMaximumBufferEntries),
       unsigned(BASE_PROFILER_DEFAULT_ENTRIES.Value()),
       unsigned(BASE_PROFILER_DEFAULT_STARTUP_ENTRIES.Value()),
       unsigned(scBytesPerEntry),
@@ -2716,8 +2671,8 @@ void profiler_init(void* aStackTop) {
       if (errno == 0 && capacityLong > 0 &&
           static_cast<uint64_t>(capacityLong) <=
               static_cast<uint64_t>(INT32_MAX)) {
-        capacity = PowerOfTwo32(ActivePS::ClampToAllowedEntries(
-            static_cast<uint32_t>(capacityLong)));
+        capacity = PowerOfTwo32(
+            ClampToAllowedEntries(static_cast<uint32_t>(capacityLong)));
         LOG("- MOZ_PROFILER_STARTUP_ENTRIES = %u", unsigned(capacity.Value()));
       } else {
         PrintToConsole("- MOZ_PROFILER_STARTUP_ENTRIES not a valid integer: %s",
@@ -2910,24 +2865,11 @@ UniquePtr<char[]> profiler_get_profile(double aSinceTime, bool aIsShuttingDown,
                                        bool aOnlyThreads) {
   LOG("profiler_get_profile");
 
-  SpliceableChunkedJSONWriter b;
+  SpliceableChunkedJSONWriter b{FailureLatchInfallibleSource::Singleton()};
   if (!WriteProfileToJSONWriter(b, aSinceTime, aIsShuttingDown, aOnlyThreads)) {
     return nullptr;
   }
   return b.ChunkedWriteFunc().CopyData();
-}
-
-void profiler_get_profile_json_into_lazily_allocated_buffer(
-    const std::function<char*(size_t)>& aAllocator, double aSinceTime,
-    bool aIsShuttingDown) {
-  LOG("profiler_get_profile_json_into_lazily_allocated_buffer");
-
-  SpliceableChunkedJSONWriter b;
-  if (!WriteProfileToJSONWriter(b, aSinceTime, aIsShuttingDown)) {
-    return;
-  }
-
-  b.ChunkedWriteFunc().CopyDataIntoLazilyAllocatedBuffer(aAllocator);
 }
 
 void profiler_get_start_params(int* aCapacity, Maybe<double>* aDuration,
@@ -3028,7 +2970,8 @@ static void locked_profiler_save_profile_to_file(PSLockRef aLock,
   std::ofstream stream;
   stream.open(aFilename);
   if (stream.is_open()) {
-    SpliceableJSONWriter w(MakeUnique<OStreamJSONWriteFunc>(stream));
+    OStreamJSONWriteFunc jw(stream);
+    SpliceableJSONWriter w(jw, FailureLatchInfallibleSource::Singleton());
     w.Start();
     {
       locked_profiler_stream_json_for_this_process(aLock, w, /* sinceTime */ 0,
@@ -3429,6 +3372,13 @@ bool profiler_feature_active(uint32_t aFeature) {
   return RacyFeatures::IsActiveWithFeature(aFeature);
 }
 
+bool profiler_active_without_feature(uint32_t aFeature) {
+  // This function runs both on and off the main thread.
+
+  // This function is hot enough that we use RacyFeatures, not ActivePS.
+  return RacyFeatures::IsActiveWithoutFeature(aFeature);
+}
+
 void profiler_add_sampled_counter(BaseProfilerCount* aCounter) {
   DEBUG_LOG("profiler_add_sampled_counter(%s)", aCounter->mLabel);
   PSAutoLock lock;
@@ -3666,7 +3616,7 @@ bool profiler_capture_backtrace_into(ProfileChunkedBuffer& aChunkedBuffer,
 
   Registers regs;
 #if defined(HAVE_NATIVE_UNWIND)
-  regs.SyncPopulate();
+  REGISTERS_SYNC_POPULATE(regs);
 #else
   regs.Clear();
 #endif
@@ -3683,7 +3633,8 @@ UniquePtr<ProfileChunkedBuffer> profiler_capture_backtrace() {
                            PROFILER);
 
   // Quick is-active check before allocating a buffer.
-  if (!profiler_is_active()) {
+  // If NoMarkerStacks is set, we don't want to capture a backtrace.
+  if (!profiler_active_without_feature(ProfilerFeature::NoMarkerStacks)) {
     return nullptr;
   }
 
@@ -3799,7 +3750,7 @@ void profiler_suspend_and_sample_thread(BaseProfilerThreadId aThreadId,
         // Sampling the current thread, do NOT suspend it!
         Registers regs;
 #if defined(HAVE_NATIVE_UNWIND)
-        regs.SyncPopulate();
+        REGISTERS_SYNC_POPULATE(regs);
 #else
         regs.Clear();
 #endif

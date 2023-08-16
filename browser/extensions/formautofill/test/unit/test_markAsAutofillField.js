@@ -1,9 +1,5 @@
 "use strict";
 
-const { AppConstants } = ChromeUtils.import(
-  "resource://gre/modules/AppConstants.jsm"
-);
-
 const TESTCASES = [
   {
     description: "Form containing 8 fields with autocomplete attribute.",
@@ -90,20 +86,24 @@ const TESTCASES = [
   },
   {
     description:
-      "Valid form containing three consecutive cc-number fields without autocomplete attributes.",
+      "Invalid form containing three consecutive cc-number fields without autocomplete attributes.",
     document: `<form>
                 <input id="cc-number1" maxlength="4">
                 <input id="cc-number2" maxlength="4">
                 <input id="cc-number3" maxlength="4">
                </form>`,
     targetElementId: "cc-number1",
-    expectedResult: AppConstants.EARLY_BETA_OR_EARLIER
-      ? ["cc-number1", "cc-number2", "cc-number3"]
-      : [],
+    expectedResult: [],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.fathom.testConfidence",
+        "1.0",
+      ],
+    ],
   },
   {
     description:
-      "Valid form containing five consecutive cc-number fields without autocomplete attributes.",
+      "Invalid form containing five consecutive cc-number fields without autocomplete attributes.",
     document: `<form>
                 <input id="cc-number1" maxlength="4">
                 <input id="cc-number2" maxlength="4">
@@ -112,9 +112,13 @@ const TESTCASES = [
                 <input id="cc-number5" maxlength="4">
                </form>`,
     targetElementId: "cc-number1",
-    expectedResult: AppConstants.EARLY_BETA_OR_EARLIER
-      ? ["cc-number1", "cc-number2", "cc-number3", "cc-number4", "cc-number5"]
-      : [],
+    expectedResult: [],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.fathom.testConfidence",
+        "1.0",
+      ],
+    ],
   },
   {
     description:
@@ -128,16 +132,13 @@ const TESTCASES = [
                 <input id="cc-exp-year">
                </form>`,
     targetElementId: "cc-number1",
-    expectedResult: AppConstants.EARLY_BETA_OR_EARLIER
-      ? [
-          "cc-number1",
-          "cc-number2",
-          "cc-number3",
-          "cc-name",
-          "cc-exp-month",
-          "cc-exp-year",
-        ]
-      : ["cc-number3", "cc-name", "cc-exp-month", "cc-exp-year"],
+    expectedResult: ["cc-number3", "cc-name", "cc-exp-month", "cc-exp-year"],
+    prefs: [
+      [
+        "extensions.formautofill.creditCards.heuristics.fathom.testConfidence",
+        "1.0",
+      ],
+    ],
   },
   {
     description:
@@ -153,18 +154,7 @@ const TESTCASES = [
                 <input id="cc-exp-year">
                </form>`,
     targetElementId: "cc-number1",
-    expectedResult: AppConstants.EARLY_BETA_OR_EARLIER
-      ? [
-          "cc-number1",
-          "cc-number2",
-          "cc-number3",
-          "cc-number4",
-          "cc-number5",
-          "cc-name",
-          "cc-exp-month",
-          "cc-exp-year",
-        ]
-      : ["cc-number5", "cc-name", "cc-exp-month", "cc-exp-year"],
+    expectedResult: ["cc-number5", "cc-name", "cc-exp-month", "cc-exp-year"],
   },
 ];
 
@@ -172,18 +162,22 @@ let markedFieldId = [];
 
 var FormAutofillContent;
 add_setup(async () => {
-  ({ FormAutofillContent } = ChromeUtils.import(
-    "resource://autofill/FormAutofillContent.jsm"
+  ({ FormAutofillContent } = ChromeUtils.importESModule(
+    "resource://autofill/FormAutofillContent.sys.mjs"
   ));
 
-  FormAutofillContent._markAsAutofillField = function(field) {
+  FormAutofillContent._markAsAutofillField = function (field) {
     markedFieldId.push(field.id);
   };
 });
 
 TESTCASES.forEach(testcase => {
-  add_task(async function() {
+  add_task(async function () {
     info("Starting testcase: " + testcase.description);
+
+    if (testcase.prefs) {
+      testcase.prefs.forEach(pref => SetPref(pref[0], pref[1]));
+    }
 
     markedFieldId = [];
 
@@ -199,5 +193,9 @@ TESTCASES.forEach(testcase => {
       testcase.expectedResult,
       "Check the fields were marked correctly."
     );
+
+    if (testcase.prefs) {
+      testcase.prefs.forEach(pref => Services.prefs.clearUserPref(pref[0]));
+    }
   });
 });

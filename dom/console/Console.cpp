@@ -14,6 +14,7 @@
 #include "mozilla/dom/BlobBinding.h"
 #include "mozilla/dom/BlobImpl.h"
 #include "mozilla/dom/Document.h"
+#include "mozilla/dom/ElementBinding.h"
 #include "mozilla/dom/Exceptions.h"
 #include "mozilla/dom/File.h"
 #include "mozilla/dom/FunctionBinding.h"
@@ -113,7 +114,7 @@ class ConsoleCallData final {
       : mConsoleID(aConsole->mConsoleID),
         mPrefix(aConsole->mPrefix),
         mMethodName(aName),
-        mTimeStamp(JS_Now() / PR_USEC_PER_MSEC),
+        mMicroSecondTimeStamp(JS_Now()),
         mStartTimerValue(0),
         mStartTimerStatus(Console::eTimerUnknown),
         mLogTimerDuration(0),
@@ -159,7 +160,7 @@ class ConsoleCallData final {
   const nsString mPrefix;
 
   const Console::MethodName mMethodName;
-  int64_t mTimeStamp;
+  int64_t mMicroSecondTimeStamp;
 
   // These values are set in the owning thread and they contain the timestamp of
   // when the new timer has started, the name of it and the status of the
@@ -195,7 +196,7 @@ class ConsoleCallData final {
   // when the object is created from a SharedWorker, a ServiceWorker or a
   // subworker of a ChromeWorker these IDs are the type of worker and the
   // filename of the callee.
-  // In Console.jsm the ID is 'jsm'.
+  // In Console.sys.mjs the ID is 'jsm'.
   enum { eString, eNumber, eUnknown } mIDType;
 
   uint64_t mOuterIDNumber;
@@ -793,7 +794,7 @@ class ConsoleProfileWorkerRunnable final : public ConsoleWorkerRunnable {
   nsString mAction;
 };
 
-NS_IMPL_CYCLE_COLLECTION_MULTI_ZONE_JSHOLDER_CLASS(Console)
+NS_IMPL_CYCLE_COLLECTION_CLASS(Console)
 
 NS_IMPL_CYCLE_COLLECTION_UNLINK_BEGIN(Console)
   NS_IMPL_CYCLE_COLLECTION_UNLINK(mGlobal)
@@ -1613,7 +1614,8 @@ bool Console::PopulateConsoleNotificationInTheTargetScope(
   event.mLineNumber = frame.mLineNumber;
   event.mColumnNumber = frame.mColumnNumber;
   event.mFunctionName = frame.mFunctionName;
-  event.mTimeStamp = aData->mTimeStamp;
+  event.mTimeStamp = aData->mMicroSecondTimeStamp / PR_USEC_PER_MSEC;
+  event.mMicroSecondTimeStamp = aData->mMicroSecondTimeStamp;
   event.mPrivate = !!aData->mOriginAttributes.mPrivateBrowsingId;
 
   switch (aData->mMethodName) {
@@ -1978,6 +1980,20 @@ static bool ProcessArguments(JSContext* aCx, const Sequence<JS::Value>& aData,
       case 'i':
         if (index < aData.Length()) {
           JS::Rooted<JS::Value> value(aCx, aData[index++]);
+
+          if (value.isBigInt()) {
+            JS::Rooted<JSString*> jsString(aCx, JS::ToString(aCx, value));
+            if (NS_WARN_IF(!jsString)) {
+              return false;
+            }
+
+            nsAutoJSString v;
+            if (NS_WARN_IF(!v.init(aCx, jsString))) {
+              return false;
+            }
+            output.Append(v);
+            break;
+          }
 
           int32_t v;
           if (NS_WARN_IF(!JS::ToInt32(aCx, value, &v))) {
@@ -2667,6 +2683,57 @@ already_AddRefed<ConsoleInstance> Console::CreateInstance(
   return console.forget();
 }
 
+void Console::StringifyElement(Element* aElement, nsAString& aOut) {
+  aOut.AppendLiteral("<");
+  aOut.Append(aElement->LocalName());
+  uint32_t attrCount = aElement->GetAttrCount();
+  nsAutoString idAttr;
+  nsAutoString classAttr;
+  nsAutoString nameAttr;
+  nsAutoString otherAttrs;
+  for (uint32_t i = 0; i < attrCount; i++) {
+    BorrowedAttrInfo attrInfo = aElement->GetAttrInfoAt(i);
+    nsAutoString attrValue;
+    attrInfo.mValue->ToString(attrValue);
+
+    const nsAttrName* attrName = attrInfo.mName;
+    if (attrName->Equals(nsGkAtoms::id)) {
+      idAttr.AppendLiteral(" id=\"");
+      idAttr.Append(attrValue);
+      idAttr.AppendLiteral("\"");
+    } else if (attrName->Equals(nsGkAtoms::_class)) {
+      classAttr.AppendLiteral(" class=\"");
+      classAttr.Append(attrValue);
+      classAttr.AppendLiteral("\"");
+    } else if (attrName->Equals(nsGkAtoms::name)) {
+      nameAttr.AppendLiteral(" name=\"");
+      nameAttr.Append(attrValue);
+      nameAttr.AppendLiteral("\"");
+    } else {
+      nsAutoString attrNameStr;
+      attrName->GetQualifiedName(attrNameStr);
+      otherAttrs.AppendLiteral(" ");
+      otherAttrs.Append(attrNameStr);
+      otherAttrs.AppendLiteral("=\"");
+      otherAttrs.Append(attrValue);
+      otherAttrs.AppendLiteral("\"");
+    }
+  }
+  if (!idAttr.IsEmpty()) {
+    aOut.Append(idAttr);
+  }
+  if (!classAttr.IsEmpty()) {
+    aOut.Append(classAttr);
+  }
+  if (!nameAttr.IsEmpty()) {
+    aOut.Append(nameAttr);
+  }
+  if (!otherAttrs.IsEmpty()) {
+    aOut.Append(otherAttrs);
+  }
+  aOut.AppendLiteral(">");
+}
+
 void Console::MaybeExecuteDumpFunction(JSContext* aCx,
                                        const nsAString& aMethodName,
                                        const Sequence<JS::Value>& aData,
@@ -2687,6 +2754,17 @@ void Console::MaybeExecuteDumpFunction(JSContext* aCx,
 
   for (uint32_t i = 0; i < aData.Length(); ++i) {
     JS::Rooted<JS::Value> v(aCx, aData[i]);
+    if (v.isObject()) {
+      Element* element = nullptr;
+      if (NS_SUCCEEDED(UNWRAP_OBJECT(Element, &v, element))) {
+        if (i != 0) {
+          message.AppendLiteral(" ");
+        }
+        StringifyElement(element, message);
+        continue;
+      }
+    }
+
     JS::Rooted<JSString*> jsString(aCx, JS_ValueToSource(aCx, v));
     if (!jsString) {
       continue;

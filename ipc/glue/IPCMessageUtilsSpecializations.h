@@ -29,7 +29,7 @@
 #ifdef XP_WIN
 #  include "mozilla/TimeStamp_windows.h"
 #endif
-#include "mozilla/Tuple.h"
+
 #include "mozilla/UniquePtr.h"
 #include "mozilla/Unused.h"
 #include "mozilla/Vector.h"
@@ -41,6 +41,7 @@
 #include "nsILoadInfo.h"
 #include "nsIThread.h"
 #include "nsLiteralString.h"
+#include "nsNetUtil.h"
 #include "nsString.h"
 #include "nsTArray.h"
 #include "nsTHashSet.h"
@@ -74,158 +75,53 @@ class nsAtom;
 
 namespace IPC {
 
-template <>
-struct ParamTraits<nsACString> {
-  typedef nsACString paramType;
+template <class T>
+struct ParamTraits<nsTSubstring<T>> {
+  typedef nsTSubstring<T> paramType;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
     bool isVoid = aParam.IsVoid();
     aWriter->WriteBool(isVoid);
 
-    if (isVoid)
+    if (isVoid) {
       // represents a nullptr pointer
       return;
+    }
 
-    uint32_t length = aParam.Length();
-    WriteParam(aWriter, length);
-    aWriter->WriteBytes(aParam.BeginReading(), length);
+    WriteSequenceParam<const T&>(aWriter, aParam.BeginReading(),
+                                 aParam.Length());
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
     bool isVoid;
-    if (!aReader->ReadBool(&isVoid)) return false;
+    if (!aReader->ReadBool(&isVoid)) {
+      return false;
+    }
 
     if (isVoid) {
       aResult->SetIsVoid(true);
       return true;
     }
 
-    uint32_t length;
-    if (!ReadParam(aReader, &length)) {
-      return false;
-    }
-    if (!aReader->HasBytesAvailable(length)) {
-      return false;
-    }
-    aResult->SetLength(length);
-
-    return aReader->ReadBytesInto(aResult->BeginWriting(), length);
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    if (aParam.IsVoid())
-      aLog->append(L"(NULL)");
-    else
-      aLog->append(UTF8ToWide(aParam.BeginReading()));
+    return ReadSequenceParam<T>(aReader, [&](uint32_t aLength) -> T* {
+      T* data = nullptr;
+      aResult->GetMutableData(&data, aLength);
+      return data;
+    });
   }
 };
 
-template <>
-struct ParamTraits<nsAString> {
-  typedef nsAString paramType;
+template <class T>
+struct ParamTraits<nsTString<T>> : ParamTraits<nsTSubstring<T>> {};
 
-  static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    bool isVoid = aParam.IsVoid();
-    aWriter->WriteBool(isVoid);
+template <class T>
+struct ParamTraits<nsTLiteralString<T>> : ParamTraits<nsTSubstring<T>> {};
 
-    if (isVoid)
-      // represents a nullptr pointer
-      return;
+template <class T, size_t N>
+struct ParamTraits<nsTAutoStringN<T, N>> : ParamTraits<nsTSubstring<T>> {};
 
-    uint32_t length = aParam.Length();
-    WriteParam(aWriter, length);
-    aWriter->WriteBytes(aParam.BeginReading(), length * sizeof(char16_t));
-  }
-
-  static bool Read(MessageReader* aReader, paramType* aResult) {
-    bool isVoid;
-    if (!aReader->ReadBool(&isVoid)) return false;
-
-    if (isVoid) {
-      aResult->SetIsVoid(true);
-      return true;
-    }
-
-    uint32_t length;
-    if (!ReadParam(aReader, &length)) {
-      return false;
-    }
-
-    mozilla::CheckedInt<uint32_t> byteLength =
-        mozilla::CheckedInt<uint32_t>(length) * sizeof(char16_t);
-    if (!byteLength.isValid() ||
-        !aReader->HasBytesAvailable(byteLength.value())) {
-      return false;
-    }
-
-    aResult->SetLength(length);
-
-    return aReader->ReadBytesInto(aResult->BeginWriting(), byteLength.value());
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    if (aParam.IsVoid())
-      aLog->append(L"(NULL)");
-    else {
-#ifdef WCHAR_T_IS_UTF16
-      aLog->append(reinterpret_cast<const wchar_t*>(aParam.BeginReading()));
-#else
-      uint32_t length = aParam.Length();
-      for (uint32_t index = 0; index < length; index++) {
-        aLog->push_back(std::wstring::value_type(aParam[index]));
-      }
-#endif
-    }
-  }
-};
-
-template <>
-struct ParamTraits<nsCString> : ParamTraits<nsACString> {
-  typedef nsCString paramType;
-};
-
-template <>
-struct ParamTraits<nsLiteralCString> : ParamTraits<nsACString> {
-  typedef nsLiteralCString paramType;
-};
-
-#ifdef MOZILLA_INTERNAL_API
-
-template <>
-struct ParamTraits<nsAutoCString> : ParamTraits<nsCString> {
-  typedef nsAutoCString paramType;
-};
-
-#endif  // MOZILLA_INTERNAL_API
-
-template <>
-struct ParamTraits<nsString> : ParamTraits<nsAString> {
-  typedef nsString paramType;
-};
-
-template <>
-struct ParamTraits<nsLiteralString> : ParamTraits<nsAString> {
-  typedef nsLiteralString paramType;
-};
-
-template <>
-struct ParamTraits<nsDependentSubstring> : ParamTraits<nsAString> {
-  typedef nsDependentSubstring paramType;
-};
-
-template <>
-struct ParamTraits<nsDependentCSubstring> : ParamTraits<nsACString> {
-  typedef nsDependentCSubstring paramType;
-};
-
-#ifdef MOZILLA_INTERNAL_API
-
-template <>
-struct ParamTraits<nsAutoString> : ParamTraits<nsString> {
-  typedef nsAutoString paramType;
-};
-
-#endif  // MOZILLA_INTERNAL_API
+template <class T>
+struct ParamTraits<nsTDependentString<T>> : ParamTraits<nsTSubstring<T>> {};
 
 // XXX While this has no special dependencies, it's currently only used in
 // GfxMessageUtils and could be moved there, or generalized to potentially work
@@ -260,105 +156,27 @@ struct ParamTraits<nsTHashSet<uint64_t>> {
   }
 };
 
-// Pickle::ReadBytes and ::WriteBytes take the length in ints, so we must
-// ensure there is no overflow. This returns |false| if it would overflow.
-// Otherwise, it returns |true| and places the byte length in |aByteLength|.
-bool ByteLengthIsValid(uint32_t aNumElements, size_t aElementSize,
-                       int* aByteLength);
-
 template <typename E>
 struct ParamTraits<nsTArray<E>> {
   typedef nsTArray<E> paramType;
 
-  // We write arrays of integer or floating-point data using a single pickling
-  // call, rather than writing each element individually.  We deliberately do
-  // not use mozilla::IsPod here because it is perfectly reasonable to have
-  // a data structure T for which IsPod<T>::value is true, yet also have a
-  // ParamTraits<T> specialization.
-  static constexpr bool sUseWriteBytes =
-      (std::is_integral_v<E> || std::is_floating_point_v<E>);
-  // Some serializers need to take a mutable reference to their backing object,
-  // such as Shmem segments and Byte Buffers. These serializers take the
-  // backing data and move it into the IPC layer for efficiency. `Write` uses a
-  // forwarding reference as occasionally these types appear inside of IPDL
-  // arrays.
-  template <typename U>
-  static void Write(MessageWriter* aWriter, U&& aParam) {
-    uint32_t length = aParam.Length();
-    WriteParam(aWriter, length);
-
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      MOZ_RELEASE_ASSERT(ByteLengthIsValid(length, sizeof(E), &pickledLength));
-      aWriter->WriteBytes(aParam.Elements(), pickledLength);
-    } else {
-      WriteValues(aWriter, std::forward<U>(aParam));
-    }
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteSequenceParam<const E&>(aWriter, aParam.Elements(), aParam.Length());
   }
 
-  // This method uses infallible allocation so that an OOM failure will
-  // show up as an OOM crash rather than an IPC FatalError.
+  static void Write(MessageWriter* aWriter, paramType&& aParam) {
+    WriteSequenceParam<E&&>(aWriter, aParam.Elements(), aParam.Length());
+  }
+
   static bool Read(MessageReader* aReader, paramType* aResult) {
-    uint32_t length;
-    if (!ReadParam(aReader, &length)) {
-      return false;
-    }
-
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      if (!ByteLengthIsValid(length, sizeof(E), &pickledLength)) {
-        return false;
+    return ReadSequenceParam<E>(aReader, [&](uint32_t aLength) {
+      if constexpr (std::is_trivially_default_constructible_v<E>) {
+        return aResult->AppendElements(aLength);
+      } else {
+        aResult->SetCapacity(aLength);
+        return mozilla::Some(MakeBackInserter(*aResult));
       }
-
-      E* elements = aResult->AppendElements(length);
-      return aReader->ReadBytesInto(elements, pickledLength);
-    } else {
-      // Each ReadParam<E> may read more than 1 byte each; this is an attempt
-      // to minimally validate that the length isn't much larger than what's
-      // actually available in aReader.
-      if (!aReader->HasBytesAvailable(length)) {
-        return false;
-      }
-
-      aResult->SetCapacity(length);
-
-      for (uint32_t index = 0; index < length; index++) {
-        E* element = aResult->AppendElement();
-        if (!ReadParam(aReader, element)) {
-          return false;
-        }
-      }
-      return true;
-    }
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    for (uint32_t index = 0; index < aParam.Length(); index++) {
-      if (index) {
-        aLog->append(L" ");
-      }
-      LogParam(aParam[index], aLog);
-    }
-  }
-
- private:
-  // Length has already been written. Const overload.
-  static void WriteValues(MessageWriter* aWriter, const paramType& aParam) {
-    for (auto& elt : aParam) {
-      WriteParam(aWriter, elt);
-    }
-  }
-
-  // Length has already been written. Rvalue overload.
-  static void WriteValues(MessageWriter* aWriter, paramType&& aParam) {
-    for (auto& elt : aParam) {
-      WriteParam(aWriter, std::move(elt));
-    }
-
-    // As we just moved all of our values out, let's clean up after ourselves &
-    // clear the input array. This means our move write method will act more
-    // like a traditional move constructor.
-    aParam.Clear();
+    });
   }
 };
 
@@ -370,21 +188,50 @@ struct ParamTraits<FallibleTArray<E>> {
   typedef FallibleTArray<E> paramType;
 
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    WriteParam(aWriter, static_cast<const nsTArray<E>&>(aParam));
+    WriteSequenceParam<const E&>(aWriter, aParam.Elements(), aParam.Length());
   }
 
-  // Deserialize the array infallibly, but return a FallibleTArray.
+  static void Write(MessageWriter* aWriter, paramType&& aParam) {
+    WriteSequenceParam<E&&>(aWriter, aParam.Elements(), aParam.Length());
+  }
+
   static bool Read(MessageReader* aReader, paramType* aResult) {
-    nsTArray<E> temp;
-    if (!ReadParam(aReader, &temp)) return false;
-
-    *aResult = std::move(temp);
-    return true;
+    return ReadSequenceParam<E>(aReader, [&](uint32_t aLength) {
+      if constexpr (std::is_trivially_default_constructible_v<E>) {
+        return aResult->AppendElements(aLength, mozilla::fallible);
+      } else {
+        if (!aResult->SetCapacity(aLength, mozilla::fallible)) {
+          return mozilla::Maybe<BackInserter>{};
+        }
+        return mozilla::Some(BackInserter{.mArray = aResult});
+      }
+    });
   }
 
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    LogParam(static_cast<const nsTArray<E>&>(aParam), aLog);
-  }
+ private:
+  struct BackInserter {
+    using iterator_category = std::output_iterator_tag;
+    using value_type = void;
+    using difference_type = void;
+    using pointer = void;
+    using reference = void;
+
+    struct Proxy {
+      paramType& mArray;
+
+      template <typename U>
+      void operator=(U&& aValue) {
+        // This won't fail because we've reserved capacity earlier.
+        MOZ_ALWAYS_TRUE(mArray.AppendElement(aValue, mozilla::fallible));
+      }
+    };
+    Proxy operator*() { return Proxy{.mArray = *mArray}; }
+
+    BackInserter& operator++() { return *this; }
+    BackInserter& operator++(int) { return *this; }
+
+    paramType* mArray = nullptr;
+  };
 };
 
 template <typename E, size_t N>
@@ -403,79 +250,22 @@ template <typename E, size_t N, typename AP>
 struct ParamTraits<mozilla::Vector<E, N, AP>> {
   typedef mozilla::Vector<E, N, AP> paramType;
 
-  // We write arrays of integer or floating-point data using a single pickling
-  // call, rather than writing each element individually.  We deliberately do
-  // not use mozilla::IsPod here because it is perfectly reasonable to have
-  // a data structure T for which IsPod<T>::value is true, yet also have a
-  // ParamTraits<T> specialization.
-  static const bool sUseWriteBytes =
-      (std::is_integral_v<E> || std::is_floating_point_v<E>);
-
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    uint32_t length = aParam.length();
-    WriteParam(aWriter, length);
+    WriteSequenceParam<const E&>(aWriter, aParam.Elements(), aParam.Length());
+  }
 
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      MOZ_RELEASE_ASSERT(ByteLengthIsValid(length, sizeof(E), &pickledLength));
-      aWriter->WriteBytes(aParam.begin(), pickledLength);
-      return;
-    }
-
-    for (const E& elem : aParam) {
-      WriteParam(aWriter, elem);
-    }
+  static void Write(MessageWriter* aWriter, paramType&& aParam) {
+    WriteSequenceParam<E&&>(aWriter, aParam.Elements(), aParam.Length());
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
-    uint32_t length;
-    if (!ReadParam(aReader, &length)) {
-      return false;
-    }
-
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      if (!ByteLengthIsValid(length, sizeof(E), &pickledLength)) {
-        return false;
-      }
-
-      if (!aResult->resizeUninitialized(length)) {
+    return ReadSequenceParam<E>(aReader, [&](uint32_t aLength) -> E* {
+      if (!aResult->resize(aLength)) {
         // So that OOM failure shows up as OOM crash instead of IPC FatalError.
-        NS_ABORT_OOM(length * sizeof(E));
+        NS_ABORT_OOM(aLength * sizeof(E));
       }
-
-      E* elements = aResult->begin();
-      return aReader->ReadBytesInto(elements, pickledLength);
-    }
-
-    // Each ReadParam<E> may read more than 1 byte each; this is an attempt
-    // to minimally validate that the length isn't much larger than what's
-    // actually available in aReader.
-    if (!aReader->HasBytesAvailable(length)) {
-      return false;
-    }
-
-    if (!aResult->resize(length)) {
-      // So that OOM failure shows up as OOM crash instead of IPC FatalError.
-      NS_ABORT_OOM(length * sizeof(E));
-    }
-
-    for (uint32_t index = 0; index < length; ++index) {
-      if (!ReadParam(aReader, &((*aResult)[index]))) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    for (uint32_t index = 0, len = aParam.length(); index < len; ++index) {
-      if (index) {
-        aLog->append(L" ");
-      }
-      LogParam(aParam[index], aLog);
-    }
+      return aResult->begin();
+    });
   }
 };
 
@@ -483,73 +273,23 @@ template <typename E>
 struct ParamTraits<std::vector<E>> {
   typedef std::vector<E> paramType;
 
-  // We write arrays of integer or floating-point data using a single pickling
-  // call, rather than writing each element individually.  We deliberately do
-  // not use mozilla::IsPod here because it is perfectly reasonable to have
-  // a data structure T for which IsPod<T>::value is true, yet also have a
-  // ParamTraits<T> specialization.
-  static const bool sUseWriteBytes =
-      (std::is_integral_v<E> || std::is_floating_point_v<E>);
-
   static void Write(MessageWriter* aWriter, const paramType& aParam) {
-    uint32_t length = aParam.size();
-    WriteParam(aWriter, length);
-
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      MOZ_RELEASE_ASSERT(ByteLengthIsValid(length, sizeof(E), &pickledLength));
-      aWriter->WriteBytes(aParam.data(), pickledLength);
-      return;
-    }
-
-    for (const E& elem : aParam) {
-      WriteParam(aWriter, elem);
-    }
+    WriteSequenceParam<const E&>(aWriter, aParam.data(), aParam.size());
+  }
+  static void Write(MessageWriter* aWriter, paramType&& aParam) {
+    WriteSequenceParam<E&&>(aWriter, aParam.data(), aParam.size());
   }
 
   static bool Read(MessageReader* aReader, paramType* aResult) {
-    uint32_t length;
-    if (!ReadParam(aReader, &length)) {
-      return false;
-    }
-
-    if (sUseWriteBytes) {
-      int pickledLength = 0;
-      if (!ByteLengthIsValid(length, sizeof(E), &pickledLength)) {
-        return false;
+    return ReadSequenceParam<E>(aReader, [&](uint32_t aLength) {
+      if constexpr (std::is_trivially_default_constructible_v<E>) {
+        aResult->resize(aLength);
+        return aResult->data();
+      } else {
+        aResult->reserve(aLength);
+        return mozilla::Some(std::back_inserter(*aResult));
       }
-
-      aResult->resize(length);
-
-      E* elements = aResult->data();
-      return aReader->ReadBytesInto(elements, pickledLength);
-    }
-
-    // Each ReadParam<E> may read more than 1 byte each; this is an attempt
-    // to minimally validate that the length isn't much larger than what's
-    // actually available in aReader.
-    if (!aReader->HasBytesAvailable(length)) {
-      return false;
-    }
-
-    aResult->resize(length);
-
-    for (uint32_t index = 0; index < length; ++index) {
-      if (!ReadParam(aReader, &((*aResult)[index]))) {
-        return false;
-      }
-    }
-
-    return true;
-  }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    for (uint32_t index = 0, len = aParam.size(); index < len; ++index) {
-      if (index) {
-        aLog->append(L" ");
-      }
-      LogParam(aParam[index], aLog);
-    }
+    });
   }
 };
 
@@ -595,10 +335,6 @@ struct ParamTraits<float> {
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return aReader->ReadBytesInto(aResult, sizeof(*aResult));
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(StringPrintf(L"%g", aParam));
-  }
 };
 
 template <>
@@ -630,22 +366,13 @@ struct ParamTraits<nsID> {
 
     return true;
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    aLog->append(L"{");
-    aLog->append(
-        StringPrintf(L"%8.8X-%4.4X-%4.4X-", aParam.m0, aParam.m1, aParam.m2));
-    for (unsigned int i = 0; i < mozilla::ArrayLength(aParam.m3); i++)
-      aLog->append(StringPrintf(L"%2.2X", aParam.m3[i]));
-    aLog->append(L"}");
-  }
 };
 
 template <>
 struct ParamTraits<nsContentPolicyType>
-    : public ContiguousEnumSerializerInclusive<
-          nsContentPolicyType, nsIContentPolicy::TYPE_INVALID,
-          nsIContentPolicy::TYPE_INTERNAL_FETCH_PRELOAD> {};
+    : public ContiguousEnumSerializer<nsContentPolicyType,
+                                      nsIContentPolicy::TYPE_INVALID,
+                                      nsIContentPolicy::TYPE_END> {};
 
 template <>
 struct ParamTraits<mozilla::TimeDuration> {
@@ -701,10 +428,6 @@ struct ParamTraits<mozilla::dom::ipc::StructuredCloneData> {
   static bool Read(MessageReader* aReader, paramType* aResult) {
     return aResult->ReadIPCParams(aReader);
   }
-
-  static void Log(const paramType& aParam, std::wstring* aLog) {
-    LogParam(aParam.DataLength(), aLog);
-  }
 };
 
 template <class T>
@@ -735,11 +458,11 @@ struct ParamTraits<mozilla::Maybe<T>> {
       return false;
     }
     if (isSome) {
-      T tmp;
-      if (!ReadParam(reader, &tmp)) {
+      mozilla::Maybe<T> tmp = ReadParam<T>(reader).TakeMaybe();
+      if (!tmp) {
         return false;
       }
-      *result = mozilla::Some(std::move(tmp));
+      *result = std::move(tmp);
     } else {
       *result = mozilla::Nothing();
     }
@@ -935,6 +658,12 @@ struct ParamTraits<nsILoadInfo::CrossOriginEmbedderPolicy>
     : EnumSerializer<nsILoadInfo::CrossOriginEmbedderPolicy,
                      CrossOriginEmbedderPolicyValidator> {};
 
+template <>
+struct ParamTraits<nsIThread::QoSPriority>
+    : public ContiguousEnumSerializerInclusive<nsIThread::QoSPriority,
+                                               nsIThread::QOS_PRIORITY_NORMAL,
+                                               nsIThread::QOS_PRIORITY_LOW> {};
+
 template <size_t N, typename Word>
 struct ParamTraits<mozilla::BitSet<N, Word>> {
   typedef mozilla::BitSet<N, Word> paramType;
@@ -987,8 +716,8 @@ struct ParamTraits<mozilla::UniquePtr<T>> {
 };
 
 template <typename... Ts>
-struct ParamTraits<mozilla::Tuple<Ts...>> {
-  typedef mozilla::Tuple<Ts...> paramType;
+struct ParamTraits<std::tuple<Ts...>> {
+  typedef std::tuple<Ts...> paramType;
 
   template <typename U>
   static void Write(IPC::MessageWriter* aWriter, U&& aParam) {
@@ -996,32 +725,82 @@ struct ParamTraits<mozilla::Tuple<Ts...>> {
                   std::index_sequence_for<Ts...>{});
   }
 
-  static bool Read(IPC::MessageReader* aReader,
-                   mozilla::Tuple<Ts...>* aResult) {
+  static bool Read(IPC::MessageReader* aReader, std::tuple<Ts...>* aResult) {
     return ReadInternal(aReader, *aResult, std::index_sequence_for<Ts...>{});
   }
 
  private:
   template <size_t... Is>
   static void WriteInternal(IPC::MessageWriter* aWriter,
-                            const mozilla::Tuple<Ts...>& aParam,
+                            const std::tuple<Ts...>& aParam,
                             std::index_sequence<Is...>) {
-    WriteParams(aWriter, mozilla::Get<Is>(aParam)...);
+    WriteParams(aWriter, std::get<Is>(aParam)...);
   }
 
   template <size_t... Is>
   static void WriteInternal(IPC::MessageWriter* aWriter,
-                            mozilla::Tuple<Ts...>&& aParam,
+                            std::tuple<Ts...>&& aParam,
                             std::index_sequence<Is...>) {
-    WriteParams(aWriter, std::move(mozilla::Get<Is>(aParam))...);
+    WriteParams(aWriter, std::move(std::get<Is>(aParam))...);
   }
 
   template <size_t... Is>
   static bool ReadInternal(IPC::MessageReader* aReader,
-                           mozilla::Tuple<Ts...>& aResult,
+                           std::tuple<Ts...>& aResult,
                            std::index_sequence<Is...>) {
-    return ReadParams(aReader, mozilla::Get<Is>(aResult)...);
+    return ReadParams(aReader, std::get<Is>(aResult)...);
   }
+};
+
+template <>
+struct ParamTraits<mozilla::net::LinkHeader> {
+  typedef mozilla::net::LinkHeader paramType;
+  static void Write(MessageWriter* aWriter, const paramType& aParam) {
+    WriteParam(aWriter, aParam.mHref);
+    WriteParam(aWriter, aParam.mRel);
+    WriteParam(aWriter, aParam.mTitle);
+    WriteParam(aWriter, aParam.mIntegrity);
+    WriteParam(aWriter, aParam.mSrcset);
+    WriteParam(aWriter, aParam.mSizes);
+    WriteParam(aWriter, aParam.mType);
+    WriteParam(aWriter, aParam.mMedia);
+    WriteParam(aWriter, aParam.mCrossOrigin);
+    WriteParam(aWriter, aParam.mReferrerPolicy);
+    WriteParam(aWriter, aParam.mAs);
+  }
+  static bool Read(MessageReader* aReader, paramType* aResult) {
+    if (!ReadParam(aReader, &aResult->mHref)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mRel)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mTitle)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mIntegrity)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mSrcset)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mSizes)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mType)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mMedia)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mCrossOrigin)) {
+      return false;
+    }
+    if (!ReadParam(aReader, &aResult->mReferrerPolicy)) {
+      return false;
+    }
+    return ReadParam(aReader, &aResult->mAs);
+  };
 };
 
 } /* namespace IPC */

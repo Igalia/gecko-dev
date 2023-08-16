@@ -291,14 +291,10 @@ nscoord nsComboboxControlFrame::DropDownButtonISize() {
     return 0;
   }
 
-  LayoutDeviceIntSize dropdownButtonSize;
-  bool canOverride = true;
-  nsPresContext* presContext = PresContext();
-  presContext->Theme()->GetMinimumWidgetSize(
-      presContext, this, StyleAppearance::MozMenulistArrowButton,
-      &dropdownButtonSize, &canOverride);
-
-  return presContext->DevPixelsToAppUnits(dropdownButtonSize.width);
+  nsPresContext* pc = PresContext();
+  LayoutDeviceIntSize dropdownButtonSize = pc->Theme()->GetMinimumWidgetSize(
+      pc, this, StyleAppearance::MozMenulistArrowButton);
+  return pc->DevPixelsToAppUnits(dropdownButtonSize.width);
 }
 
 int32_t nsComboboxControlFrame::CharCountOfLargestOptionForInflation() const {
@@ -317,54 +313,64 @@ int32_t nsComboboxControlFrame::CharCountOfLargestOptionForInflation() const {
   return int32_t(maxLength);
 }
 
+nscoord nsComboboxControlFrame::GetLongestOptionISize(
+    gfxContext* aRenderingContext) const {
+  // Compute the width of each option's (potentially text-transformed) text,
+  // and use the widest one as part of our intrinsic size.
+  nscoord maxOptionSize = 0;
+  nsAutoString label;
+  nsAutoString transformedLabel;
+  RefPtr<nsFontMetrics> fm =
+      nsLayoutUtils::GetInflatedFontMetricsForFrame(this);
+  const nsStyleText* textStyle = StyleText();
+  auto textTransform = textStyle->mTextTransform.IsNone()
+                           ? Nothing()
+                           : Some(textStyle->mTextTransform);
+  nsAtom* language = StyleFont()->mLanguage;
+  AutoTArray<bool, 50> charsToMergeArray;
+  AutoTArray<bool, 50> deletedCharsArray;
+  for (auto i : IntegerRange(Select().Options()->Length())) {
+    GetOptionText(i, label);
+    const nsAutoString* stringToUse = &label;
+    if (textTransform ||
+        textStyle->mWebkitTextSecurity != StyleTextSecurity::None) {
+      transformedLabel.Truncate();
+      charsToMergeArray.SetLengthAndRetainStorage(0);
+      deletedCharsArray.SetLengthAndRetainStorage(0);
+      nsCaseTransformTextRunFactory::TransformString(
+          label, transformedLabel, textTransform,
+          textStyle->TextSecurityMaskChar(),
+          /* aCaseTransformsOnly = */ false, language, charsToMergeArray,
+          deletedCharsArray);
+      stringToUse = &transformedLabel;
+    }
+    maxOptionSize = std::max(maxOptionSize,
+                             nsLayoutUtils::AppUnitWidthOfStringBidi(
+                                 *stringToUse, this, *fm, *aRenderingContext));
+  }
+  if (maxOptionSize) {
+    // HACK: Add one app unit to workaround silly Netgear router styling, see
+    // bug 1769580. In practice since this comes from font metrics is unlikely
+    // to be perceivable.
+    maxOptionSize += 1;
+  }
+  return maxOptionSize;
+}
+
 nscoord nsComboboxControlFrame::GetIntrinsicISize(gfxContext* aRenderingContext,
                                                   IntrinsicISizeType aType) {
-  nscoord displayISize = mDisplayFrame->IntrinsicISizeOffsets().padding;
+  Maybe<nscoord> containISize = ContainIntrinsicISize(NS_UNCONSTRAINEDSIZE);
+  if (containISize && *containISize != NS_UNCONSTRAINEDSIZE) {
+    return *containISize;
+  }
 
-  if (!StyleDisplay()->GetContainSizeAxes().mIContained &&
-      !StyleContent()->mContent.IsNone()) {
-    // Compute the width of each option's (potentially text-transformed) text,
-    // and use the widest one as part of our intrinsic size.
-    nscoord maxOptionSize = 0;
-    nsAutoString label;
-    nsAutoString transformedLabel;
-    RefPtr<nsFontMetrics> fm =
-        nsLayoutUtils::GetInflatedFontMetricsForFrame(this);
-    auto textTransform = StyleText()->mTextTransform.IsNone()
-                             ? Nothing()
-                             : Some(StyleText()->mTextTransform);
-    nsAtom* language = StyleFont()->mLanguage;
-    AutoTArray<bool, 50> charsToMergeArray;
-    AutoTArray<bool, 50> deletedCharsArray;
-    for (auto i : IntegerRange(Select().Options()->Length())) {
-      GetOptionText(i, label);
-      const nsAutoString* stringToUse = &label;
-      if (textTransform) {
-        transformedLabel.Truncate();
-        charsToMergeArray.SetLengthAndRetainStorage(0);
-        deletedCharsArray.SetLengthAndRetainStorage(0);
-        nsCaseTransformTextRunFactory::TransformString(
-            label, transformedLabel, textTransform,
-            /* aCaseTransformsOnly = */ false, language, charsToMergeArray,
-            deletedCharsArray);
-        stringToUse = &transformedLabel;
-      }
-      maxOptionSize = std::max(
-          maxOptionSize, nsLayoutUtils::AppUnitWidthOfStringBidi(
-                             *stringToUse, this, *fm, *aRenderingContext));
-    }
-    if (maxOptionSize) {
-      // HACK: Add one app unit to workaround silly Netgear router styling, see
-      // bug 1769580. In practice since this comes from font metrics is unlikely
-      // to be perceivable.
-      maxOptionSize += 1;
-    }
-    displayISize += maxOptionSize;
+  nscoord displayISize = mDisplayFrame->IntrinsicISizeOffsets().padding;
+  if (!containISize && !StyleContent()->mContent.IsNone()) {
+    displayISize += GetLongestOptionISize(aRenderingContext);
   }
 
   // Add room for the dropmarker button (if there is one).
   displayISize += DropDownButtonISize();
-
   return displayISize;
 }
 
@@ -545,8 +551,9 @@ void nsComboboxControlFrame::HandleRedisplayTextEvent() {
     return;
   }
 
-  // XXXbz This should perhaps be eResize.  Check.
-  PresShell()->FrameNeedsReflow(mDisplayFrame, IntrinsicDirty::StyleChange,
+  // XXXbz This should perhaps be IntrinsicDirty::None. Check.
+  PresShell()->FrameNeedsReflow(mDisplayFrame,
+                                IntrinsicDirty::FrameAncestorsAndDescendants,
                                 NS_FRAME_IS_DIRTY);
 
   mInRedisplayText = false;
@@ -833,8 +840,8 @@ nsIFrame* nsComboboxControlFrame::CreateFrameForDisplayNode() {
   textFrame->Init(mDisplayContent, mDisplayFrame, nullptr);
   mDisplayContent->SetPrimaryFrame(textFrame);
 
-  nsFrameList textList(textFrame, textFrame);
-  mDisplayFrame->SetInitialChildList(kPrincipalList, textList);
+  mDisplayFrame->SetInitialChildList(FrameChildListID::Principal,
+                                     nsFrameList(textFrame, textFrame));
   return mDisplayFrame;
 }
 
@@ -861,22 +868,17 @@ void nsComboboxControlFrame::GetChildLists(nsTArray<ChildList>* aLists) const {
 }
 
 void nsComboboxControlFrame::SetInitialChildList(ChildListID aListID,
-                                                 nsFrameList& aChildList) {
-#ifdef DEBUG
+                                                 nsFrameList&& aChildList) {
   for (nsIFrame* f : aChildList) {
     MOZ_ASSERT(f->GetParent() == this, "Unexpected parent");
-  }
-#endif
-  for (nsFrameList::Enumerator e(aChildList); !e.AtEnd(); e.Next()) {
-    nsCOMPtr<nsIFormControl> formControl =
-        do_QueryInterface(e.get()->GetContent());
+    nsCOMPtr<nsIFormControl> formControl = do_QueryInterface(f->GetContent());
     if (formControl &&
         formControl->ControlType() == FormControlType::ButtonButton) {
-      mButtonFrame = e.get();
+      mButtonFrame = f;
       break;
     }
   }
-  nsBlockFrame::SetInitialChildList(aListID, aChildList);
+  nsBlockFrame::SetInitialChildList(aListID, std::move(aChildList));
 }
 
 namespace mozilla {

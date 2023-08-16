@@ -7,19 +7,17 @@ const { XPCOMUtils } = ChromeUtils.importESModule(
   "resource://gre/modules/XPCOMUtils.sys.mjs"
 );
 const lazy = {};
-XPCOMUtils.defineLazyModuleGetters(lazy, {
-  EveryWindow: "resource:///modules/EveryWindow.jsm",
-  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.jsm",
-  Preferences: "resource://gre/modules/Preferences.jsm",
+
+ChromeUtils.defineESModuleGetters(lazy, {
+  EveryWindow: "resource:///modules/EveryWindow.sys.mjs",
+  PanelMultiView: "resource:///modules/PanelMultiView.sys.mjs",
+  PrivateBrowsingUtils: "resource://gre/modules/PrivateBrowsingUtils.sys.mjs",
+  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.sys.mjs",
+
   SpecialMessageActions:
-    "resource://messaging-system/lib/SpecialMessageActions.jsm",
-  RemoteL10n: "resource://activity-stream/lib/RemoteL10n.jsm",
+    "resource://messaging-system/lib/SpecialMessageActions.sys.mjs",
 });
-ChromeUtils.defineModuleGetter(
-  lazy,
-  "PanelMultiView",
-  "resource:///modules/PanelMultiView.jsm"
-);
+
 XPCOMUtils.defineLazyServiceGetter(
   lazy,
   "TrackingDBService",
@@ -52,9 +50,8 @@ class _ToolbarPanelHub {
     this._hideAppmenuButton = this._hideAppmenuButton.bind(this);
     this._showToolbarButton = this._showToolbarButton.bind(this);
     this._hideToolbarButton = this._hideToolbarButton.bind(this);
-    this.insertProtectionPanelMessage = this.insertProtectionPanelMessage.bind(
-      this
-    );
+    this.insertProtectionPanelMessage =
+      this.insertProtectionPanelMessage.bind(this);
 
     this.state = {};
     this._initialized = false;
@@ -101,7 +98,7 @@ class _ToolbarPanelHub {
     // Checkbox onclick handler gets called before the checkbox state gets toggled,
     // so we have to call it with the opposite value.
     let newValue = !event.target.checked;
-    lazy.Preferences.set(WHATSNEW_ENABLED_PREF, newValue);
+    Services.prefs.setBoolPref(WHATSNEW_ENABLED_PREF, newValue);
 
     this.sendUserEventTelemetry(
       event.target.ownerGlobal,
@@ -115,8 +112,8 @@ class _ToolbarPanelHub {
 
   maybeInsertFTL(win) {
     win.MozXULElement.insertFTLIfNeeded("browser/newtab/asrouter.ftl");
-    win.MozXULElement.insertFTLIfNeeded("browser/branding/brandings.ftl");
-    win.MozXULElement.insertFTLIfNeeded("browser/branding/sync-brand.ftl");
+    win.MozXULElement.insertFTLIfNeeded("toolkit/branding/brandings.ftl");
+    win.MozXULElement.insertFTLIfNeeded("toolkit/branding/accounts.ftl");
   }
 
   maybeLoadCustomElement(win) {
@@ -191,7 +188,7 @@ class _ToolbarPanelHub {
   // Render what's new messages into the panel.
   async renderMessages(win, doc, containerId, options = {}) {
     // Set the checked status of the footer checkbox
-    let value = lazy.Preferences.get(WHATSNEW_ENABLED_PREF);
+    let value = Services.prefs.getBoolPref(WHATSNEW_ENABLED_PREF);
     let checkbox = win.document.getElementById("panelMenu-toggleWhatsNew");
 
     checkbox.checked = value;
@@ -257,7 +254,7 @@ class _ToolbarPanelHub {
       // Set platform specific path variables for SUMO articles
       url = Services.urlFormatter.formatURL(message.content.cta_url);
     } catch (e) {
-      Cu.reportError(e);
+      console.error(e);
       url = message.content.cta_url;
     }
     lazy.SpecialMessageActions.handleAction(
@@ -279,7 +276,7 @@ class _ToolbarPanelHub {
    */
   _attachCommandListener(win, element, message) {
     // Add event listener for `mouseup` not to overlap with the
-    // `mousedown` & `click` events dispatched from PanelMultiView.jsm
+    // `mousedown` & `click` events dispatched from PanelMultiView.sys.mjs
     // https://searchfox.org/mozilla-central/rev/7531325c8660cfa61bf71725f83501028178cbb9/browser/components/customizableui/PanelMultiView.jsm#1830-1837
     element.addEventListener("mouseup", () => {
       this._dispatchUserAction(win, message);
@@ -582,10 +579,14 @@ class _ToolbarPanelHub {
   }
 
   /**
-   * @param {object} browser MessageChannel target argument as a response to a user action
+   * @param {object} [browser] MessageChannel target argument as a response to a
+   *   user action. No message is shown if undefined.
    * @param {object[]} messages Messages selected from devtools page
    */
   forceShowMessage(browser, messages) {
+    if (!browser) {
+      return;
+    }
     const win = browser.ownerGlobal;
     const doc = browser.ownerDocument;
     this.removeMessages(win, WHATS_NEW_PANEL_SELECTOR);

@@ -1,12 +1,65 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { UIState } = ChromeUtils.import("resource://services-sync/UIState.jsm");
-const { sinon } = ChromeUtils.import("resource://testing-common/Sinon.jsm");
-
-const { TelemetryTestUtils } = ChromeUtils.import(
-  "resource://testing-common/TelemetryTestUtils.jsm"
+const {
+  withFirefoxView,
+  assertFirefoxViewTab,
+  assertFirefoxViewTabSelected,
+  openFirefoxViewTab,
+  closeFirefoxViewTab,
+  isFirefoxViewTabSelectedInWindow,
+} = ChromeUtils.importESModule(
+  "resource://testing-common/FirefoxViewTestUtils.sys.mjs"
 );
+
+/* exported testVisibility */
+
+const { ASRouter } = ChromeUtils.import(
+  "resource://activity-stream/lib/ASRouter.jsm"
+);
+const { UIState } = ChromeUtils.importESModule(
+  "resource://services-sync/UIState.sys.mjs"
+);
+const { sinon } = ChromeUtils.importESModule(
+  "resource://testing-common/Sinon.sys.mjs"
+);
+const { FeatureCalloutMessages } = ChromeUtils.importESModule(
+  "resource://activity-stream/lib/FeatureCalloutMessages.sys.mjs"
+);
+const { TelemetryTestUtils } = ChromeUtils.importESModule(
+  "resource://testing-common/TelemetryTestUtils.sys.mjs"
+);
+
+ChromeUtils.defineESModuleGetters(this, {
+  BrowserWindowTracker: "resource:///modules/BrowserWindowTracker.sys.mjs",
+  SyncedTabs: "resource://services-sync/SyncedTabs.sys.mjs",
+});
+
+XPCOMUtils.defineLazyModuleGetters(this, {
+  AboutWelcomeParent: "resource:///actors/AboutWelcomeParent.jsm",
+});
+
+const MOBILE_PROMO_DISMISSED_PREF =
+  "browser.tabs.firefox-view.mobilePromo.dismissed";
+const RECENTLY_CLOSED_STATE_PREF =
+  "browser.tabs.firefox-view.ui-state.recently-closed-tabs.open";
+const TAB_PICKUP_STATE_PREF =
+  "browser.tabs.firefox-view.ui-state.tab-pickup.open";
+
+const calloutId = "multi-stage-message-root";
+const calloutSelector = `#${calloutId}.featureCallout`;
+const CTASelector = `#${calloutId} :is(.primary, .secondary)`;
+
+/**
+ * URLs used for browser_recently_closed_tabs_keyboard and
+ * browser_firefoxview_accessibility
+ */
+const URLs = [
+  "http://mochi.test:8888/browser/",
+  "https://www.example.com/",
+  "https://example.net/",
+  "https://example.org/",
+];
 
 const syncedTabsData1 = [
   {
@@ -27,8 +80,7 @@ const syncedTabsData1 = [
         type: "tab",
         title: "Internet for people, not profits - Mozilla",
         url: "https://www.mozilla.org/",
-        icon:
-          "https://www.mozilla.org/media/img/favicons/mozilla/favicon.d25d81d39065.ico",
+        icon: "https://www.mozilla.org/media/img/favicons/mozilla/favicon.d25d81d39065.ico",
         lastUsed: 1655730486, // Mon Jun 20 2022 13:08:06 GMT+0000
       },
     ],
@@ -37,7 +89,7 @@ const syncedTabsData1 = [
     id: 2,
     type: "client",
     name: "My iphone",
-    clientType: "mobile",
+    clientType: "phone",
     lastModified: 1655727832930,
     tabs: [
       {
@@ -70,7 +122,6 @@ async function clearAllParentTelemetryEvents() {
   });
 }
 
-/* eslint-disable no-unused-vars */
 function testVisibility(browser, expected) {
   const { document } = browser.contentWindow;
   for (let [selector, shouldBeVisible] of Object.entries(
@@ -109,90 +160,61 @@ async function waitForElementVisible(browser, selector, isVisible = true) {
   );
 }
 
-function assertFirefoxViewTab(w = window) {
-  ok(w.FirefoxViewHandler.tab, "Firefox View tab exists");
-  ok(w.FirefoxViewHandler.tab?.hidden, "Firefox View tab is hidden");
-  is(
-    w.gBrowser.tabs.indexOf(w.FirefoxViewHandler.tab),
-    0,
-    "Firefox View tab is the first tab"
-  );
-  is(
-    w.gBrowser.visibleTabs.indexOf(w.FirefoxViewHandler.tab),
-    -1,
-    "Firefox View tab is not in the list of visible tabs"
-  );
-}
+async function waitForVisibleSetupStep(browser, expected) {
+  const { document } = browser.contentWindow;
 
-async function openFirefoxViewTab(w = window) {
-  ok(
-    !w.FirefoxViewHandler.tab,
-    "Firefox View tab doesn't exist prior to clicking the button"
-  );
-  info("Clicking the Firefox View button");
-  await EventUtils.synthesizeMouseAtCenter(
-    w.document.getElementById("firefox-view-button"),
-    { type: "mousedown" },
-    w
-  );
-  assertFirefoxViewTab(w);
-  is(w.gBrowser.tabContainer.selectedIndex, 0, "Firefox View tab is selected");
-  await BrowserTestUtils.browserLoaded(w.FirefoxViewHandler.tab.linkedBrowser);
-  return w.FirefoxViewHandler.tab;
-}
+  const deck = document.querySelector(".sync-setup-container");
+  const nextStepElem = deck.querySelector(expected.expectedVisible);
+  const stepElems = deck.querySelectorAll(".setup-step");
 
-function closeFirefoxViewTab(w = window) {
-  w.gBrowser.removeTab(w.FirefoxViewHandler.tab);
-  ok(
-    !w.FirefoxViewHandler.tab,
-    "Reference to Firefox View tab got removed when closing the tab"
+  await BrowserTestUtils.waitForMutationCondition(
+    deck,
+    {
+      attributeFilter: ["selected-view"],
+    },
+    () => {
+      return BrowserTestUtils.is_visible(nextStepElem);
+    }
   );
-}
 
-async function withFirefoxView(
-  { resetFlowManager = true, win = window },
-  taskFn
-) {
-  if (resetFlowManager) {
-    const { TabsSetupFlowManager } = ChromeUtils.importESModule(
-      "resource:///modules/firefox-view-tabs-setup-manager.sys.mjs"
-    );
-    // reset internal state so we aren't reacting to whatever state the last invocation left behind
-    TabsSetupFlowManager.resetInternalState();
+  for (let elem of stepElems) {
+    if (elem == nextStepElem) {
+      ok(
+        BrowserTestUtils.is_visible(elem),
+        `Expected ${elem.id || elem.className} to be visible`
+      );
+    } else {
+      ok(
+        BrowserTestUtils.is_hidden(elem),
+        `Expected ${elem.id || elem.className} to be hidden`
+      );
+    }
   }
-  let tab = await openFirefoxViewTab(win);
-  let originalWindow = tab.ownerGlobal;
-  let result = await taskFn(tab.linkedBrowser);
-  let finalWindow = tab.ownerGlobal;
-  if (originalWindow == finalWindow && !tab.closing && tab.linkedBrowser) {
-    // taskFn may resolve within a tick after opening a new tab.
-    // We shouldn't remove the newly opened tab in the same tick.
-    // Wait for the next tick here.
-    await TestUtils.waitForTick();
-    BrowserTestUtils.removeTab(tab);
-  } else {
-    Services.console.logStringMessage(
-      "withFirefoxView: Tab was already closed before " +
-        "removeTab would have been called"
-    );
-  }
-  return Promise.resolve(result);
 }
 
-async function addFirefoxViewButtonToToolbar() {
-  await SpecialPowers.pushPrefEnv({
-    set: [["browser.tabs.firefox-view", true]],
+var gMockFxaDevices = null;
+var gUIStateStatus;
+var gSandbox;
+function setupSyncFxAMocks({ fxaDevices = null, state, syncEnabled = true }) {
+  gUIStateStatus = state || UIState.STATUS_SIGNED_IN;
+  if (gSandbox) {
+    gSandbox.restore();
+  }
+  const sandbox = (gSandbox = sinon.createSandbox());
+  gMockFxaDevices = fxaDevices;
+  sandbox.stub(fxAccounts.device, "recentDeviceList").get(() => fxaDevices);
+  sandbox.stub(UIState, "get").callsFake(() => {
+    return {
+      status: gUIStateStatus,
+      syncEnabled,
+      email:
+        gUIStateStatus === UIState.STATUS_NOT_CONFIGURED
+          ? undefined
+          : "email@example.com",
+    };
   });
-  info(Services.prefs.getBoolPref("browser.tabs.firefox-view", false));
-  CustomizableUI.addWidgetToArea(
-    "firefox-view-button",
-    CustomizableUI.AREA_TABSTRIP,
-    0
-  );
-}
 
-function removeFirefoxViewButtonFromToolbar() {
-  CustomizableUI.removeWidgetFromArea("firefox-view-button");
+  return sandbox;
 }
 
 function setupRecentDeviceListMocks() {
@@ -214,24 +236,14 @@ function setupRecentDeviceListMocks() {
   sandbox.stub(UIState, "get").returns({
     status: UIState.STATUS_SIGNED_IN,
     syncEnabled: true,
+    email: "email@example.com",
   });
 
   return sandbox;
 }
 
 function getMockTabData(clients) {
-  let tabs = [];
-
-  for (let client of clients) {
-    for (let tab of client.tabs) {
-      tab.device = client.name;
-      tab.deviceType = client.clientType;
-    }
-    tabs = [...tabs, ...client.tabs.reverse()];
-  }
-  tabs = tabs.sort((a, b) => b.lastUsed - a.lastUsed).slice(0, 3);
-
-  return tabs;
+  return SyncedTabs._internal._createRecentTabsList(clients, 10);
 }
 
 async function setupListState(browser) {
@@ -240,10 +252,12 @@ async function setupListState(browser) {
     set: [["services.sync.engine.tabs", true]],
   });
 
-  Services.obs.notifyObservers(null, UIState.ON_UPDATE);
+  UIState.refresh();
   const recentFetchTime = Math.floor(Date.now() / 1000);
   info("updating lastFetch:" + recentFetchTime);
   Services.prefs.setIntPref("services.sync.lastTabFetch", recentFetchTime);
+
+  Services.obs.notifyObservers(null, UIState.ON_UPDATE);
 
   await waitForElementVisible(browser, "#tabpickup-steps", false);
   await waitForElementVisible(browser, "#tabpickup-tabs-container", true);
@@ -251,6 +265,7 @@ async function setupListState(browser) {
   const tabsContainer = browser.contentWindow.document.querySelector(
     "#tabpickup-tabs-container"
   );
+  await tabsContainer.tabListAdded;
   await BrowserTestUtils.waitForMutationCondition(
     tabsContainer,
     { attributeFilter: ["class"], attributes: true },
@@ -258,4 +273,316 @@ async function setupListState(browser) {
       return !tabsContainer.classList.contains("loading");
     }
   );
+  info("tabsContainer isn't loading anymore, returning");
+}
+
+function checkMobilePromo(browser, expected = {}) {
+  const { document } = browser.contentWindow;
+  const promoElem = document.querySelector(
+    "#tab-pickup-container > .promo-box"
+  );
+  const successElem = document.querySelector(
+    "#tab-pickup-container > .confirmation-message-box"
+  );
+
+  info("checkMobilePromo: " + JSON.stringify(expected));
+  if (expected.mobilePromo) {
+    ok(BrowserTestUtils.is_visible(promoElem), "Mobile promo is visible");
+  } else {
+    ok(
+      !promoElem || BrowserTestUtils.is_hidden(promoElem),
+      "Mobile promo is hidden"
+    );
+  }
+  if (expected.mobileConfirmation) {
+    ok(
+      BrowserTestUtils.is_visible(successElem),
+      "Success confirmation is visible"
+    );
+  } else {
+    ok(
+      !successElem || BrowserTestUtils.is_hidden(successElem),
+      "Success confirmation is hidden"
+    );
+  }
+}
+
+async function touchLastTabFetch() {
+  // lastTabFetch stores a timestamp in *seconds*.
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  info("updating lastFetch:" + nowSeconds);
+  Services.prefs.setIntPref("services.sync.lastTabFetch", nowSeconds);
+  // wait so all pref observers can complete
+  await TestUtils.waitForTick();
+}
+
+let gUIStateSyncEnabled;
+function setupMocks({ fxaDevices = null, state, syncEnabled = true }) {
+  gUIStateStatus = state || UIState.STATUS_SIGNED_IN;
+  gUIStateSyncEnabled = syncEnabled;
+  if (gSandbox) {
+    gSandbox.restore();
+  }
+  const sandbox = (gSandbox = sinon.createSandbox());
+  gMockFxaDevices = fxaDevices;
+  sandbox.stub(fxAccounts.device, "recentDeviceList").get(() => fxaDevices);
+  sandbox.stub(UIState, "get").callsFake(() => {
+    return {
+      status: gUIStateStatus,
+      // Sometimes syncEnabled is not present on UIState, for example when the user signs
+      // out the state is just { status: "not_configured" }
+      ...(gUIStateSyncEnabled != undefined && {
+        syncEnabled: gUIStateSyncEnabled,
+      }),
+    };
+  });
+  sandbox.stub(SyncedTabs, "getTabClients").callsFake(() => {
+    // The real getTabClients does not return the current device
+    return Promise.resolve(
+      fxaDevices.filter(device => !device.isCurrentDevice)
+    );
+  });
+  return sandbox;
+}
+
+async function tearDown(sandbox) {
+  sandbox?.restore();
+  Services.prefs.clearUserPref("services.sync.lastTabFetch");
+  Services.prefs.clearUserPref(MOBILE_PROMO_DISMISSED_PREF);
+}
+
+const featureTourPref = "browser.firefox-view.feature-tour";
+const launchFeatureTourIn = win => {
+  const { FeatureCallout } = ChromeUtils.importESModule(
+    "resource:///modules/FeatureCallout.sys.mjs"
+  );
+  let callout = new FeatureCallout({
+    win,
+    pref: { name: featureTourPref },
+    location: "about:firefoxview",
+    context: "content",
+    theme: { preset: "themed-content" },
+  });
+  callout.showFeatureCallout();
+  return callout;
+};
+
+/**
+ * Returns a value that can be used to set
+ * `browser.firefox-view.feature-tour` to change the feature tour's
+ * UI state.
+ *
+ * @see FeatureCalloutMessages.sys.mjs for valid values of "screen"
+ *
+ * @param {number} screen The full ID of the feature callout screen
+ * @return {string} JSON string used to set
+ * `browser.firefox-view.feature-tour`
+ */
+const getPrefValueByScreen = screen => {
+  return JSON.stringify({
+    screen: `FEATURE_CALLOUT_${screen}`,
+    complete: false,
+  });
+};
+
+/**
+ * Wait for a feature callout screen of given parameters to be shown
+ * @param {Document} doc the document where the callout appears.
+ * @param {String} screenPostfix The full ID of the feature callout screen.
+ */
+const waitForCalloutScreen = async (doc, screenPostfix) => {
+  await BrowserTestUtils.waitForCondition(() =>
+    doc.querySelector(`${calloutSelector}:not(.hidden) .${screenPostfix}`)
+  );
+};
+
+/**
+ * Waits for the feature callout screen to be removed.
+ *
+ * @param {Document} doc The document where the callout appears.
+ */
+const waitForCalloutRemoved = async doc => {
+  await BrowserTestUtils.waitForCondition(() => {
+    return !doc.body.querySelector(calloutSelector);
+  });
+};
+
+/**
+ * NOTE: Should be replaced with synthesizeMouseAtCenter for
+ * simulating user input. See Bug 1798322
+ *
+ * Clicks the primary button in the feature callout dialog
+ *
+ * @param {document} doc Firefox View document
+ */
+const clickCTA = async doc => {
+  doc.querySelector(CTASelector).click();
+};
+
+/**
+ * Closes a feature callout via a click to the dismiss button.
+ *
+ * @param {Document} doc The document where the callout appears.
+ */
+const closeCallout = async doc => {
+  // close the callout dialog
+  const dismissBtn = doc.querySelector(`${calloutSelector} .dismiss-button`);
+  if (!dismissBtn) {
+    return;
+  }
+  doc.querySelector(`${calloutSelector} .dismiss-button`).click();
+  await BrowserTestUtils.waitForCondition(() => {
+    return !document.querySelector(calloutSelector);
+  });
+};
+
+/**
+ * Get a Feature Callout message by id.
+ *
+ * @param {string} Message id
+ */
+const getCalloutMessageById = id => {
+  return {
+    message: FeatureCalloutMessages.getMessages().find(m => m.id === id),
+  };
+};
+
+/**
+ * Create a sinon sandbox with `sendTriggerMessage` stubbed
+ * to return a specified test message for featureCalloutCheck.
+ *
+ * @param {object} testMessage
+ * @param {string} [source="about:firefoxview"]
+ */
+const createSandboxWithCalloutTriggerStub = (
+  testMessage,
+  source = "about:firefoxview"
+) => {
+  const firefoxViewMatch = sinon.match({
+    id: "featureCalloutCheck",
+    context: { source },
+  });
+  const sandbox = sinon.createSandbox();
+  const sendTriggerStub = sandbox.stub(ASRouter, "sendTriggerMessage");
+  sendTriggerStub.withArgs(firefoxViewMatch).resolves(testMessage);
+  sendTriggerStub.callThrough();
+  return sandbox;
+};
+
+/**
+ * A helper to check that correct telemetry was sent by AWSendEventTelemetry.
+ * This is a wrapper around sinon's spy functionality.
+ *
+ * @example
+ *  let spy = new TelemetrySpy();
+ *  element.click();
+ *  spy.assertCalledWith({ event: "CLICK" });
+ *  spy.restore();
+ */
+class TelemetrySpy {
+  /**
+   * @param {object} [sandbox] A pre-existing sinon sandbox to build the spy in.
+   *                           If not provided, a new sandbox will be created.
+   */
+  constructor(sandbox = sinon.createSandbox()) {
+    this.sandbox = sandbox;
+    this.spy = this.sandbox
+      .spy(AboutWelcomeParent.prototype, "onContentMessage")
+      .withArgs("AWPage:TELEMETRY_EVENT");
+    registerCleanupFunction(() => this.restore());
+  }
+  /**
+   * Assert that AWSendEventTelemetry sent the expected telemetry object.
+   * @param {Object} expectedData
+   */
+  assertCalledWith(expectedData) {
+    let match = this.spy.calledWith("AWPage:TELEMETRY_EVENT", expectedData);
+    if (match) {
+      ok(true, "Expected telemetry sent");
+    } else if (this.spy.called) {
+      ok(
+        false,
+        "Wrong telemetry sent: " + JSON.stringify(this.spy.lastCall.args)
+      );
+    } else {
+      ok(false, "No telemetry sent");
+    }
+  }
+  reset() {
+    this.spy.resetHistory();
+  }
+  restore() {
+    this.sandbox.restore();
+  }
+}
+
+/**
+ * Helper function to open and close a tab so the recently
+ * closed tabs list can have data.
+ *
+ * @param {string} url
+ * @return {Promise} Promise that resolves when the session store
+ * has been updated after closing the tab.
+ */
+async function open_then_close(url, win = window) {
+  let { updatePromise } = await BrowserTestUtils.withNewTab(
+    { url, gBrowser: win.gBrowser },
+    async browser => {
+      return {
+        updatePromise: BrowserTestUtils.waitForSessionStoreUpdate({
+          linkedBrowser: browser,
+        }),
+      };
+    }
+  );
+  await updatePromise;
+  return TestUtils.topicObserved("sessionstore-closed-objects-changed");
+}
+
+/**
+ * Clears session history. Used to clear out the recently closed tabs list.
+ *
+ */
+function clearHistory() {
+  Services.obs.notifyObservers(null, "browser:purge-session-history");
+}
+
+/**
+ * Cleanup function for tab pickup tests.
+ *
+ */
+function cleanup_tab_pickup() {
+  Services.prefs.clearUserPref("services.sync.engine.tabs");
+  Services.prefs.clearUserPref("services.sync.lastTabFetch");
+  Services.prefs.clearUserPref(TAB_PICKUP_STATE_PREF);
+}
+
+function isFirefoxViewTabSelected(win = window) {
+  return isFirefoxViewTabSelectedInWindow(win);
+}
+
+function promiseAllButPrimaryWindowClosed() {
+  let windows = [];
+  for (let win of BrowserWindowTracker.orderedWindows) {
+    if (win != window) {
+      windows.push(win);
+    }
+  }
+  return Promise.all(windows.map(BrowserTestUtils.closeWindow));
+}
+
+registerCleanupFunction(() => {
+  // ensure all the stubs are restored, regardless of any exceptions
+  // that might have prevented it
+  gSandbox?.restore();
+});
+
+function navigateToCategory(document, category) {
+  const navigation = document.querySelector("fxview-category-navigation");
+  let navButton = Array.from(navigation.categoryButtons).filter(
+    categoryButton => {
+      return categoryButton.name === category;
+    }
+  )[0];
+  navButton.buttonEl.click();
 }

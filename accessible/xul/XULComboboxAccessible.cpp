@@ -9,7 +9,7 @@
 #include "nsAccessibilityService.h"
 #include "DocAccessible.h"
 #include "nsCoreUtils.h"
-#include "Role.h"
+#include "mozilla/a11y/Role.h"
 #include "States.h"
 
 #include "mozilla/dom/Element.h"
@@ -52,6 +52,10 @@ uint64_t XULComboboxAccessible::NativeState() const {
   }
 
   return state | states::HASPOPUP;
+}
+
+bool XULComboboxAccessible::IsAcceptableChild(nsIContent* aContent) const {
+  return AccessibleWrap::IsAcceptableChild(aContent) && !aContent->IsText();
 }
 
 void XULComboboxAccessible::Description(nsString& aDescription) const {

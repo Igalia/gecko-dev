@@ -12,6 +12,7 @@
 #include "jit/VMFunctions.h"
 #include "util/DiagnosticAssertions.h"
 #include "vm/EqualityOperations.h"
+#include "vm/Iteration.h"
 
 #include "vm/Interpreter-inl.h"
 #include "vm/JSScript-inl.h"
@@ -392,7 +393,12 @@ JSObject* IonGetIteratorIC::update(JSContext* cx, HandleScript outerScript,
 
   TryAttachIonStub<GetIteratorIRGenerator>(cx, ic, ionScript, value);
 
-  return ValueToIterator(cx, value);
+  PropertyIteratorObject* iterObj = ValueToIterator(cx, value);
+  if (!iterObj) {
+    return nullptr;
+  }
+
+  return iterObj;
 }
 
 /* static */

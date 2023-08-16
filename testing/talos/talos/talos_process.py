@@ -1,21 +1,20 @@
 # This Source Code Form is subject to the terms of the Mozilla Public
 # License, v. 2.0. If a copy of the MPL was not distributed with this file,
 # You can obtain one at http://mozilla.org/MPL/2.0/.
-from __future__ import absolute_import
-
 import pprint
 import signal
-import six
+import subprocess
 import sys
 import time
 import traceback
-import subprocess
 from threading import Event
 
 import mozcrash
 import psutil
+import six
 from mozlog import get_proxy_logger
 from mozprocess import ProcessHandler
+
 from talos.utils import TalosError
 
 LOG = get_proxy_logger()
@@ -96,8 +95,10 @@ class Reader(object):
             self.event.set()
 
         if not (
-            line.startswith("JavaScript error:")
-            or line.startswith("JavaScript warning:")
+            "JavaScript error:" in line
+            or "JavaScript warning:" in line
+            or "SyntaxError:" in line
+            or "TypeError:" in line
         ):
             LOG.process_output(self.proc.pid, line)
             self.output.append(line)

@@ -7,8 +7,8 @@ function delay(time) {
   });
 }
 
-const { Extension } = ChromeUtils.import(
-  "resource://gre/modules/Extension.jsm"
+const { Extension } = ChromeUtils.importESModule(
+  "resource://gre/modules/Extension.sys.mjs"
 );
 
 add_task(async function test_startup_request_handler() {
@@ -16,7 +16,7 @@ add_task(async function test_startup_request_handler() {
 
   let extension = ExtensionTestUtils.loadExtension({
     manifest: {
-      applications: { gecko: { id: ID } },
+      browser_specific_settings: { gecko: { id: ID } },
     },
 
     files: {

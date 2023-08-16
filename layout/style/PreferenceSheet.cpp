@@ -65,7 +65,7 @@ auto PreferenceSheet::PrefsKindFor(const Document& aDoc) -> PrefsKind {
     return PrefsKind::Chrome;
   }
 
-  if (aDoc.IsBeingUsedAsImage() && aDoc.IsDocumentURISchemeChrome()) {
+  if (aDoc.IsBeingUsedAsImage() && aDoc.ChromeRulesEnabled()) {
     return PrefsKind::Chrome;
   }
 
@@ -92,7 +92,8 @@ static bool UseStandinsForNativeColors() {
              "we want to have consistent colors across the browser if RFP is "
              "enabled, so we check the global preference"
              "not excluding chrome browsers or webpages, so we call the legacy "
-             "RFP function to prevent that") ||
+             "RFP function to prevent that",
+             RFPTarget::UseStandinsForNativeColors) ||
          StaticPrefs::ui_use_standins_for_native_colors();
 }
 
@@ -285,6 +286,8 @@ void PreferenceSheet::Initialize() {
 
   Telemetry::ScalarSet(Telemetry::ScalarID::A11Y_BACKPLATE,
                        StaticPrefs::browser_display_permit_backplate());
+  Telemetry::ScalarSet(Telemetry::ScalarID::A11Y_USE_SYSTEM_COLORS,
+                       StaticPrefs::browser_display_use_system_colors());
 }
 
 bool PreferenceSheet::AffectedByPref(const nsACString& aPref) {

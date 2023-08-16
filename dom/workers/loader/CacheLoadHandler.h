@@ -22,6 +22,7 @@
 #include "mozilla/dom/cache/Cache.h"
 #include "mozilla/dom/cache/CacheStorage.h"
 #include "mozilla/dom/WorkerCommon.h"
+#include "mozilla/dom/WorkerRef.h"
 
 #include "mozilla/dom/workerinternals/ScriptLoader.h"
 
@@ -79,8 +80,8 @@ class CacheLoadHandler final : public PromiseNativeHandler,
   NS_DECL_ISUPPORTS
   NS_DECL_NSISTREAMLOADEROBSERVER
 
-  CacheLoadHandler(WorkerPrivate* aWorkerPrivate,
-                   JS::loader::ScriptLoadRequest* aRequest,
+  CacheLoadHandler(ThreadSafeWorkerRef* aWorkerRef,
+                   ThreadSafeRequestHandle* aRequestHandle,
                    bool aIsWorkerScript, WorkerScriptLoader* aLoader);
 
   void Fail(nsresult aRv);
@@ -104,9 +105,9 @@ class CacheLoadHandler final : public PromiseNativeHandler,
                                  const nsACString& aReferrerPolicyHeaderValue);
   void DataReceived();
 
-  WorkerLoadContext* mLoadContext;
+  RefPtr<ThreadSafeRequestHandle> mRequestHandle;
   const RefPtr<WorkerScriptLoader> mLoader;
-  WorkerPrivate* const mWorkerPrivate;
+  RefPtr<ThreadSafeWorkerRef> mWorkerRef;
   const bool mIsWorkerScript;
   bool mFailed;
   const ServiceWorkerState mState;
@@ -118,7 +119,7 @@ class CacheLoadHandler final : public PromiseNativeHandler,
   nsCString mCSPHeaderValue;
   nsCString mCSPReportOnlyHeaderValue;
   nsCString mReferrerPolicyHeaderValue;
-  nsCOMPtr<nsIEventTarget> mMainThreadEventTarget;
+  nsCOMPtr<nsISerialEventTarget> mMainThreadEventTarget;
 };
 
 /*
@@ -197,7 +198,7 @@ class CachePromiseHandler final : public PromiseNativeHandler {
   NS_DECL_ISUPPORTS
 
   CachePromiseHandler(WorkerScriptLoader* aLoader,
-                      JS::loader::ScriptLoadRequest* aRequest);
+                      ThreadSafeRequestHandle* aRequestHandle);
 
   virtual void ResolvedCallback(JSContext* aCx, JS::Handle<JS::Value> aValue,
                                 ErrorResult& aRv) override;
@@ -209,7 +210,7 @@ class CachePromiseHandler final : public PromiseNativeHandler {
   ~CachePromiseHandler() { AssertIsOnMainThread(); }
 
   RefPtr<WorkerScriptLoader> mLoader;
-  WorkerLoadContext* mLoadContext;
+  RefPtr<ThreadSafeRequestHandle> mRequestHandle;
 };
 
 }  // namespace workerinternals::loader

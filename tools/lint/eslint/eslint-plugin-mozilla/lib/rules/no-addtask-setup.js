@@ -9,32 +9,38 @@
 
 "use strict";
 
-// -----------------------------------------------------------------------------
-// Rule Definition
-// -----------------------------------------------------------------------------
+function isNamedLikeSetup(name) {
+  return /^(init|setup)$/i.test(name);
+}
 
 module.exports = {
   meta: {
-    type: "suggestion",
+    docs: {
+      url: "https://firefox-source-docs.mozilla.org/code-quality/lint/linters/eslint-plugin-mozilla/no-addtask-setup.html",
+    },
     fixable: "code",
+    messages: {
+      useAddSetup: "Do not use add_task() for setup, use add_setup() instead.",
+    },
+    schema: [],
+    type: "suggestion",
   },
   create(context) {
     return {
-      "Program > ExpressionStatement > CallExpression": function(node) {
+      "Program > ExpressionStatement > CallExpression": function (node) {
         let callee = node.callee;
         if (callee.type === "Identifier" && callee.name === "add_task") {
           let arg = node.arguments[0];
           if (
             arg.type !== "FunctionExpression" ||
             !arg.id ||
-            arg.id.name !== "setup"
+            !isNamedLikeSetup(arg.id.name)
           ) {
             return;
           }
           context.report({
             node,
-            message:
-              "Do not use add_task() for setup, use add_setup() instead.",
+            messageId: "useAddSetup",
             fix: fixer => {
               let range = [node.callee.range[0], arg.id.range[1]];
               let asyncOrNot = arg.async ? "async " : "";

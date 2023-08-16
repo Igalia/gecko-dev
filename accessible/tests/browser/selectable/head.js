@@ -7,7 +7,6 @@
 /* exported testMultiSelectable */
 
 // Load the shared-head file first.
-/* import-globals-from ../shared-head.js */
 Services.scriptloader.loadSubScript(
   "chrome://mochitests/content/browser/accessible/tests/browser/shared-head.js",
   this
@@ -66,7 +65,7 @@ async function testMultiSelectable(widget, selectableChildren, msg = "") {
   let success = widget.selectAll();
   ok(success, `${msg}: selectAll success`);
   await promise;
-  if (isRemote && isCacheEnabled) {
+  if (isRemote) {
     await untilCacheIs(
       () => widget.selectedItemCount,
       selectableChildren.length,
@@ -78,7 +77,7 @@ async function testMultiSelectable(widget, selectableChildren, msg = "") {
   promise = multipleSelectionChanged(widget, selectableChildren, false);
   widget.unselectAll();
   await promise;
-  if (isRemote && isCacheEnabled) {
+  if (isRemote) {
     await untilCacheIs(
       () => widget.selectedItemCount,
       0,

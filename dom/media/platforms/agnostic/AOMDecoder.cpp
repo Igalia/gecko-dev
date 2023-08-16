@@ -90,7 +90,8 @@ AOMDecoder::AOMDecoder(const CreateDecoderParams& aParams)
     : mImageContainer(aParams.mImageContainer),
       mTaskQueue(TaskQueue::Create(
           GetMediaThreadPool(MediaThreadType::PLATFORM_DECODER), "AOMDecoder")),
-      mInfo(aParams.VideoConfig()) {
+      mInfo(aParams.VideoConfig()),
+      mTrackingId(aParams.mTrackingId) {
   PodZero(&mCodec);
 }
 
@@ -117,7 +118,8 @@ RefPtr<MediaDataDecoder::InitPromise> AOMDecoder::Init() {
 }
 
 RefPtr<MediaDataDecoder::FlushPromise> AOMDecoder::Flush() {
-  return InvokeAsync(mTaskQueue, __func__, []() {
+  return InvokeAsync(mTaskQueue, __func__, [this, self = RefPtr(this)]() {
+    mPerformanceRecorder.Record(std::numeric_limits<int64_t>::max());
     return FlushPromise::CreateAndResolve(true, __func__);
   });
 }
@@ -136,6 +138,17 @@ RefPtr<MediaDataDecoder::DecodePromise> AOMDecoder::ProcessDecode(
       IsKeyframe(*aSample) == aSample->mKeyframe,
       "AOM Decode Keyframe error sample->mKeyframe and si.si_kf out of sync");
 #endif
+
+  MediaInfoFlag flag = MediaInfoFlag::None;
+  flag |= (aSample->mKeyframe ? MediaInfoFlag::KeyFrame
+                              : MediaInfoFlag::NonKeyFrame);
+  flag |= MediaInfoFlag::SoftwareDecoding;
+  flag |= MediaInfoFlag::VIDEO_AV1;
+
+  mTrackingId.apply([&](const auto& aId) {
+    mPerformanceRecorder.Start(aSample->mTimecode.ToMicroseconds(),
+                               "AOMDecoder"_ns, aId, flag);
+  });
 
   if (aom_codec_err_t r = aom_codec_decode(&mCodec, aSample->Data(),
                                            aSample->Size(), nullptr)) {
@@ -220,6 +233,18 @@ RefPtr<MediaDataDecoder::DecodePromise> AOMDecoder::ProcessDecode(
     b.mColorRange = img->range == AOM_CR_FULL_RANGE ? ColorRange::FULL
                                                     : ColorRange::LIMITED;
 
+    switch (img->cp) {
+      case AOM_CICP_CP_BT_709:
+        b.mColorPrimaries = ColorSpace2::BT709;
+        break;
+      case AOM_CICP_CP_BT_2020:
+        b.mColorPrimaries = ColorSpace2::BT2020;
+        break;
+      default:
+        b.mColorPrimaries = ColorSpace2::BT709;
+        break;
+    }
+
     RefPtr<VideoData> v;
     v = VideoData::CreateAndCopyData(
         mInfo, mImageContainer, aSample->mOffset, aSample->mTime,
@@ -233,6 +258,26 @@ RefPtr<MediaDataDecoder::DecodePromise> AOMDecoder::ProcessDecode(
       return DecodePromise::CreateAndReject(
           MediaResult(NS_ERROR_OUT_OF_MEMORY, __func__), __func__);
     }
+    mPerformanceRecorder.Record(
+        aSample->mTimecode.ToMicroseconds(), [&](DecodeStage& aStage) {
+          aStage.SetResolution(mInfo.mImage.width, mInfo.mImage.height);
+          auto format = [&]() -> Maybe<DecodeStage::ImageFormat> {
+            switch (img->fmt) {
+              case AOM_IMG_FMT_I420:
+              case AOM_IMG_FMT_I42016:
+                return Some(DecodeStage::YUV420P);
+              case AOM_IMG_FMT_I444:
+              case AOM_IMG_FMT_I44416:
+                return Some(DecodeStage::YUV444P);
+              default:
+                return Nothing();
+            }
+          }();
+          format.apply([&](auto& aFmt) { aStage.SetImageFormat(aFmt); });
+          aStage.SetYUVColorSpace(b.mYUVColorSpace);
+          aStage.SetColorRange(b.mColorRange);
+          aStage.SetColorDepth(b.mColorDepth);
+        });
     results.AppendElement(std::move(v));
   }
   return DecodePromise::CreateAndResolve(std::move(results), __func__);
@@ -539,38 +584,46 @@ MediaResult AOMDecoder::ReadSequenceHeaderInfo(
   br.ReadBit();  // enable_intra_edge_filter
 
   if (reducedStillPicture) {
-    aDestInfo = tempInfo;
-    return NS_OK;
-  }
-
-  br.ReadBit();  // enable_interintra_compound
-  br.ReadBit();  // enable_masked_compound
-  br.ReadBit();  // enable_warped_motion
-  br.ReadBit();  // enable_dual_filter
-
-  const bool enableOrderHint = br.ReadBit();
-
-  if (enableOrderHint) {
-    br.ReadBit();  // enable_jnt_comp
-    br.ReadBit();  // enable_ref_frame_mvs
-  }
-
-  uint8_t forceScreenContentTools;
-
-  if (br.ReadBit()) {             // seq_choose_screen_content_tools
-    forceScreenContentTools = 2;  // SELECT_SCREEN_CONTENT_TOOLS
+    // enable_interintra_compound = 0
+    // enable_masked_compound = 0
+    // enable_warped_motion = 0
+    // enable_dual_filter = 0
+    // enable_order_hint = 0
+    // enable_jnt_comp = 0
+    // enable_ref_frame_mvs = 0
+    // seq_force_screen_content_tools = SELECT_SCREEN_CONTENT_TOOLS
+    // seq_force_integer_mv = SELECT_INTEGER_MV
+    // OrderHintBits = 0
   } else {
-    forceScreenContentTools = br.ReadBits(1);
-  }
+    br.ReadBit();  // enable_interintra_compound
+    br.ReadBit();  // enable_masked_compound
+    br.ReadBit();  // enable_warped_motion
+    br.ReadBit();  // enable_dual_filter
 
-  if (forceScreenContentTools > 0) {
-    if (!br.ReadBit()) {  // seq_choose_integer_mv
-      br.ReadBit();       // seq_force_integer_mv
+    const bool enableOrderHint = br.ReadBit();
+
+    if (enableOrderHint) {
+      br.ReadBit();  // enable_jnt_comp
+      br.ReadBit();  // enable_ref_frame_mvs
     }
-  }
 
-  if (enableOrderHint) {
-    br.ReadBits(3);  // order_hint_bits_minus_1
+    uint8_t forceScreenContentTools;
+
+    if (br.ReadBit()) {             // seq_choose_screen_content_tools
+      forceScreenContentTools = 2;  // SELECT_SCREEN_CONTENT_TOOLS
+    } else {
+      forceScreenContentTools = br.ReadBits(1);
+    }
+
+    if (forceScreenContentTools > 0) {
+      if (!br.ReadBit()) {  // seq_choose_integer_mv
+        br.ReadBit();       // seq_force_integer_mv
+      }
+    }
+
+    if (enableOrderHint) {
+      br.ReadBits(3);  // order_hint_bits_minus_1
+    }
   }
 
   br.ReadBit();  // enable_superres
@@ -661,7 +714,7 @@ MediaResult AOMDecoder::ReadSequenceHeaderInfo(
   }
   if (!correct) {
     return MediaResult(NS_ERROR_DOM_MEDIA_DECODE_ERR,
-                       "AV1 sequence header was parsed incorrectly");
+                       "AV1 sequence header was corrupted");
   }
   // end trailing_bits( )
 
@@ -708,7 +761,7 @@ already_AddRefed<MediaByteBuffer> AOMDecoder::CreateSequenceHeader(
     // if ( initial_display_delay_present_flag ) {...}
   }
 
-  if (!aInfo.mImage.IsEmpty() <= 0) {
+  if (aInfo.mImage.IsEmpty()) {
     NS_WARNING("Sequence header requires a valid image size");
     return nullptr;
   }

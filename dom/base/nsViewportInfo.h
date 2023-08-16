@@ -59,10 +59,11 @@ class MOZ_STACK_CLASS nsViewportInfo {
   };
   nsViewportInfo(const mozilla::ScreenIntSize& aDisplaySize,
                  const mozilla::CSSToScreenScale& aDefaultZoom,
-                 ZoomFlag aZoomFlag, ZoomBehaviour aBehaviour)
+                 ZoomFlag aZoomFlag, ZoomBehaviour aBehaviour,
+                 AutoScaleFlag aAutoScaleFlag = AutoScaleFlag::FixedScale)
       : mDefaultZoom(aDefaultZoom),
         mViewportFit(mozilla::dom::ViewportFitType::Auto),
-        mDefaultZoomValid(true),
+        mDefaultZoomValid(aAutoScaleFlag != AutoScaleFlag::AutoScale),
         mAutoSize(true),
         mAllowZoom(aZoomFlag == ZoomFlag::AllowZoom) {
     mSize = mozilla::ScreenSize(aDisplaySize) / mDefaultZoom;
@@ -105,11 +106,11 @@ class MOZ_STACK_CLASS nsViewportInfo {
 
   mozilla::dom::ViewportFitType GetViewportFit() const { return mViewportFit; }
 
-  enum {
-    Auto = -1,
-    ExtendToZoom = -2,
-    DeviceSize = -3,  // for device-width or device-height
-  };
+  static constexpr float kAuto = -1.0f;
+  static constexpr float kExtendToZoom = -2.0f;
+  static constexpr float kDeviceSize =
+      -3.0f;  // for device-width or device-height
+
   // MIN/MAX computations where one of the arguments is auto resolve to the
   // other argument. For instance, MIN(0.25, auto) = 0.25, and
   // MAX(5, auto) = 5.

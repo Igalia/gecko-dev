@@ -53,10 +53,21 @@ class Encoder {
     options_[std::move(name)] = std::move(value);
   }
 
+  static Status VerifyBasicInfo(const JxlBasicInfo& info);
+  static Status VerifyImageSize(const PackedImage& image,
+                                const JxlBasicInfo& info);
+  static Status VerifyBitDepth(JxlDataType data_type, uint32_t bits_per_sample,
+                               uint32_t exponent_bits);
+
  protected:
   const std::unordered_map<std::string, std::string>& options() const {
     return options_;
   }
+
+  Status VerifyFormat(const JxlPixelFormat& format) const;
+
+  Status VerifyPackedImage(const PackedImage& image,
+                           const JxlBasicInfo& info) const;
 
  private:
   std::unordered_map<std::string, std::string> options_;

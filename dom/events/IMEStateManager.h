@@ -37,12 +37,12 @@ class Selection;
  */
 
 class IMEStateManager {
-  typedef dom::BrowserParent BrowserParent;
-  typedef widget::IMEMessage IMEMessage;
-  typedef widget::IMENotification IMENotification;
-  typedef widget::IMEState IMEState;
-  typedef widget::InputContext InputContext;
-  typedef widget::InputContextAction InputContextAction;
+  using BrowserParent = dom::BrowserParent;
+  using IMEMessage = widget::IMEMessage;
+  using IMENotification = widget::IMENotification;
+  using IMEState = widget::IMEState;
+  using InputContext = widget::InputContext;
+  using InputContextAction = widget::InputContextAction;
 
  public:
   static void Init();
@@ -158,7 +158,11 @@ class IMEStateManager {
   /**
    * OnChangeFocus() should be called when focused content is changed or
    * IME enabled state is changed.  If nobody has focus, set both aPresContext
-   * and aContent nullptr.  E.g., all windows are deactivated.
+   * and aContent nullptr.  E.g., all windows are deactivated.  Otherwise,
+   * set focused element (even if it won't receive `focus`event) and
+   * corresponding nsPresContext for it.  Then, IMEStateManager can avoid
+   * handling delayed notifications from the others with verifying the
+   * focused element.
    */
   MOZ_CAN_RUN_SCRIPT static nsresult OnChangeFocus(
       nsPresContext* aPresContext, dom::Element* aElement,
@@ -235,6 +239,12 @@ class IMEStateManager {
   MOZ_CAN_RUN_SCRIPT static void OnReFocus(nsPresContext& aPresContext,
                                            dom::Element& aElement);
 
+  // This method is called when designMode is set to "off" or an editing host
+  // becomes not editable due to removing `contenteditable` attribute or setting
+  // it to "false".
+  MOZ_CAN_RUN_SCRIPT static void MaybeOnEditableStateDisabled(
+      nsPresContext& aPresContext, dom::Element* aElement);
+
   /**
    * All composition events must be dispatched via DispatchCompositionEvent()
    * for storing the composition target and ensuring a set of composition
@@ -267,13 +277,12 @@ class IMEStateManager {
   /**
    * Get TextComposition from widget.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
-      nsIWidget* aWidget);
+  static TextComposition* GetTextCompositionFor(nsIWidget* aWidget);
 
   /**
    * Returns TextComposition instance for the event.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
+  static TextComposition* GetTextCompositionFor(
       const WidgetCompositionEvent* aCompositionEvent);
 
   /**
@@ -281,8 +290,7 @@ class IMEStateManager {
    * Be aware, even if another pres context which shares native IME context with
    * specified pres context has composition, this returns nullptr.
    */
-  static already_AddRefed<TextComposition> GetTextCompositionFor(
-      nsPresContext* aPresContext);
+  static TextComposition* GetTextCompositionFor(nsPresContext* aPresContext);
 
   /**
    * Send a notification to IME.  It depends on the IME or platform spec what
@@ -304,6 +312,11 @@ class IMEStateManager {
    * isn't editable or focus in a remote process.
    */
   static IMEContentObserver* GetActiveContentObserver();
+
+  /**
+   * Return focused element which was notified by a OnChangeFocus() call.
+   */
+  static dom::Element* GetFocusedElement();
 
  protected:
   MOZ_CAN_RUN_SCRIPT static nsresult OnChangeFocusInternal(

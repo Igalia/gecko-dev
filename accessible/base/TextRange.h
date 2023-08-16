@@ -95,28 +95,10 @@ class TextRange final {
   Accessible* Container() const;
 
   /**
-   * Return a list of embedded objects enclosed by the text range (includes
-   * partially overlapped objects).
-   */
-  void EmbeddedChildren(nsTArray<Accessible*>* aChildren) const;
-
-  /**
-   * Return text enclosed by the range.
-   */
-  void Text(nsAString& aText) const;
-
-  /**
    * Crops the range if it overlaps the given accessible element boundaries,
    * returns true if the range was cropped successfully.
    */
   bool Crop(Accessible* aContainer);
-
-  MOZ_CAN_RUN_SCRIPT bool SetSelectionAt(int32_t aSelectionNum) const;
-
-  /**
-   * Scroll the text range into view.
-   */
-  void ScrollIntoView(uint32_t aScrollType) const;
 
   /**
    * Convert stored hypertext offsets into DOM offsets and assign it to DOM
@@ -159,16 +141,6 @@ class TextRange final {
 
   void Set(Accessible* aRoot, Accessible* aStartContainer, int32_t aStartOffset,
            Accessible* aEndContainer, int32_t aEndOffset);
-
-  /**
-   * Text() method helper.
-   * @param  aText            [in,out] calculated text
-   * @param  aCurrent         [in] currently traversed node
-   * @param  aStartIntlOffset [in] start offset if current node is a text node
-   * @return                   true if calculation is not finished yet
-   */
-  bool TextInternal(nsAString& aText, Accessible* aCurrent,
-                    uint32_t aStartIntlOffset) const;
 
   /**
    * A helper method returning a common parent for two given accessible

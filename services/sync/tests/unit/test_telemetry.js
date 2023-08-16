@@ -1,39 +1,38 @@
 /* Any copyright is dedicated to the Public Domain.
    http://creativecommons.org/publicdomain/zero/1.0/ */
 
-const { Service } = ChromeUtils.import("resource://services-sync/service.js");
-const { WBORecord } = ChromeUtils.import("resource://services-sync/record.js");
-const { Resource } = ChromeUtils.import("resource://services-sync/resource.js");
-const { RotaryEngine } = ChromeUtils.import(
-  "resource://testing-common/services/sync/rotaryengine.js"
+const { Service } = ChromeUtils.importESModule(
+  "resource://services-sync/service.sys.mjs"
 );
-const { getFxAccountsSingleton } = ChromeUtils.import(
-  "resource://gre/modules/FxAccounts.jsm"
+const { WBORecord } = ChromeUtils.importESModule(
+  "resource://services-sync/record.sys.mjs"
+);
+const { Resource } = ChromeUtils.importESModule(
+  "resource://services-sync/resource.sys.mjs"
+);
+const { RotaryEngine } = ChromeUtils.importESModule(
+  "resource://testing-common/services/sync/rotaryengine.sys.mjs"
+);
+const { getFxAccountsSingleton } = ChromeUtils.importESModule(
+  "resource://gre/modules/FxAccounts.sys.mjs"
 );
 const fxAccounts = getFxAccountsSingleton();
 
 function SteamStore(engine) {
   Store.call(this, "Steam", engine);
 }
-
-SteamStore.prototype = {
-  __proto__: Store.prototype,
-};
+Object.setPrototypeOf(SteamStore.prototype, Store.prototype);
 
 function SteamTracker(name, engine) {
   LegacyTracker.call(this, name || "Steam", engine);
 }
-
-SteamTracker.prototype = {
-  __proto__: LegacyTracker.prototype,
-};
+Object.setPrototypeOf(SteamTracker.prototype, LegacyTracker.prototype);
 
 function SteamEngine(service) {
   SyncEngine.call(this, "steam", service);
 }
 
 SteamEngine.prototype = {
-  __proto__: SyncEngine.prototype,
   _storeObj: SteamStore,
   _trackerObj: SteamTracker,
   _errToThrow: null,
@@ -47,6 +46,7 @@ SteamEngine.prototype = {
     return new SteamValidator();
   },
 };
+Object.setPrototypeOf(SteamEngine.prototype, SyncEngine.prototype);
 
 function BogusEngine(service) {
   SyncEngine.call(this, "bogus", service);
@@ -81,7 +81,9 @@ class SteamValidationProblemData {
 
 async function cleanAndGo(engine, server) {
   await engine._tracker.clearChangedIDs();
-  Svc.Prefs.resetBranch("");
+  for (const pref of Svc.PrefBranch.getChildList("")) {
+    Svc.PrefBranch.clearUserPref(pref);
+  }
   syncTestLogging();
   Service.recordManager.clearCache();
   await promiseStopServer(server);
@@ -140,7 +142,9 @@ add_task(async function test_basic() {
   ok("version" in ping.os, "there is an OS version");
   ok("locale" in ping.os, "there is an OS locale");
 
-  Svc.Prefs.resetBranch("");
+  for (const pref of Svc.PrefBranch.getChildList("")) {
+    Svc.PrefBranch.clearUserPref(pref);
+  }
   await promiseStopServer(server);
 });
 
@@ -288,7 +292,16 @@ add_task(async function test_upload_failed() {
     ok(!!ping);
     equal(ping.engines.length, 1);
     equal(ping.engines[0].incoming, null);
-    deepEqual(ping.engines[0].outgoing, [{ sent: 3, failed: 2 }]);
+    deepEqual(ping.engines[0].outgoing, [
+      {
+        sent: 3,
+        failed: 2,
+        failedReasons: [
+          { name: "scotsman", count: 1 },
+          { name: "peppercorn", count: 1 },
+        ],
+      },
+    ]);
     await engine.setLastSync(123);
 
     changes = await engine._tracker.getChangedIDs();
@@ -300,7 +313,16 @@ add_task(async function test_upload_failed() {
     ping = await sync_engine_and_validate_telem(engine, true);
     ok(!!ping);
     equal(ping.engines.length, 1);
-    deepEqual(ping.engines[0].outgoing, [{ sent: 2, failed: 2 }]);
+    deepEqual(ping.engines[0].outgoing, [
+      {
+        sent: 2,
+        failed: 2,
+        failedReasons: [
+          { name: "scotsman", count: 1 },
+          { name: "peppercorn", count: 1 },
+        ],
+      },
+    ]);
   } finally {
     await cleanAndGo(engine, server);
     await engine.finalize();
@@ -352,9 +374,17 @@ add_task(async function test_sync_partialUpload() {
     equal(ping.engines[0].name, "rotary");
     ok(!ping.engines[0].incoming);
     ok(!ping.engines[0].failureReason);
-    deepEqual(ping.engines[0].outgoing, [{ sent: 234, failed: 2 }]);
-
-    collection.post = function() {
+    deepEqual(ping.engines[0].outgoing, [
+      {
+        sent: 234,
+        failed: 2,
+        failedReasons: [
+          { name: "record-no-23", count: 1 },
+          { name: "record-no-42", count: 1 },
+        ],
+      },
+    ]);
+    collection.post = function () {
       throw new Error("Failure");
     };
 
@@ -391,6 +421,7 @@ add_task(async function test_sync_partialUpload() {
     equal(ping.engines[0].name, "rotary");
     deepEqual(ping.engines[0].incoming, {
       failed: 1,
+      failedReasons: [{ name: "No ciphertext: nothing to decrypt?", count: 1 }],
     });
     ok(!ping.engines[0].outgoing);
     deepEqual(ping.engines[0].failureReason, uploadFailureError);
@@ -540,8 +571,9 @@ add_task(async function test_engine_fail_ioerror() {
     );
     await sync_and_validate_telem(ping => {
       equal(ping.status.service, SYNC_FAILED_PARTIAL);
-      let failureReason = ping.engines.find(e => e.name === "steam")
-        .failureReason;
+      let failureReason = ping.engines.find(
+        e => e.name === "steam"
+      ).failureReason;
       equal(failureReason.name, "unexpectederror");
       // ensure the profile dir in the exception message has been stripped.
       ok(
@@ -594,8 +626,9 @@ add_task(async function test_clean_urls() {
     _(`test_clean_urls: Steam tracker contents: ${JSON.stringify(changes)}`);
     await sync_and_validate_telem(ping => {
       equal(ping.status.service, SYNC_FAILED_PARTIAL);
-      let failureReason = ping.engines.find(e => e.name === "steam")
-        .failureReason;
+      let failureReason = ping.engines.find(
+        e => e.name === "steam"
+      ).failureReason;
       equal(failureReason.name, "unexpectederror");
       equal(failureReason.error, "<URL> is not a valid URL.");
     });
@@ -604,8 +637,9 @@ add_task(async function test_clean_urls() {
       "Other error message that includes some:url/foo/bar/ in it.";
     await sync_and_validate_telem(ping => {
       equal(ping.status.service, SYNC_FAILED_PARTIAL);
-      let failureReason = ping.engines.find(e => e.name === "steam")
-        .failureReason;
+      let failureReason = ping.engines.find(
+        e => e.name === "steam"
+      ).failureReason;
       equal(failureReason.name, "unexpectederror");
       equal(
         failureReason.error,
@@ -620,8 +654,8 @@ add_task(async function test_clean_urls() {
 
 // Test sanitizing guid-related errors with the pattern of <guid: {guid}>
 add_task(async function test_sanitize_bookmarks_guid() {
-  let { ErrorSanitizer } = ChromeUtils.import(
-    "resource://services-sync/telemetry.js"
+  let { ErrorSanitizer } = ChromeUtils.importESModule(
+    "resource://services-sync/telemetry.sys.mjs"
   );
 
   for (let [original, expected] of [
@@ -641,21 +675,32 @@ add_task(async function test_sanitize_bookmarks_guid() {
 
 // Test sanitization of some hard-coded error strings.
 add_task(async function test_clean_errors() {
-  let { ErrorSanitizer } = ChromeUtils.import(
-    "resource://services-sync/telemetry.js"
+  let { ErrorSanitizer } = ChromeUtils.importESModule(
+    "resource://services-sync/telemetry.sys.mjs"
   );
 
-  for (let [original, expected] of [
+  for (let [message, name, expected] of [
     [
-      "Win error 112 during operation write on file [profileDir]\\weave\\addonsreconciler.json (Espacio en disco insuficiente. )",
-      "OS error [No space left on device] during operation write on file [profileDir]/weave/addonsreconciler.json",
+      `Could not open the file at ${PathUtils.join(
+        PathUtils.profileDir,
+        "weave",
+        "addonsreconciler.json"
+      )} for writing`,
+      "NotFoundError",
+      "OS error [File/Path not found] Could not open the file at [profileDir]/weave/addonsreconciler.json for writing",
     ],
     [
-      "Unix error 28 during operation write on file [profileDir]/weave/addonsreconciler.json (No space left on device)",
-      "OS error [No space left on device] during operation write on file [profileDir]/weave/addonsreconciler.json",
+      `Could not get info for the file at ${PathUtils.join(
+        PathUtils.profileDir,
+        "weave",
+        "addonsreconciler.json"
+      )}`,
+      "NotAllowedError",
+      "OS error [Permission denied] Could not get info for the file at [profileDir]/weave/addonsreconciler.json",
     ],
   ]) {
-    const sanitized = ErrorSanitizer.cleanErrorMessage(original);
+    const error = new DOMException(message, name);
+    const sanitized = ErrorSanitizer.cleanErrorMessage(message, error);
     Assert.equal(sanitized, expected);
   }
 });
@@ -683,8 +728,9 @@ add_task(async function test_clean_real_os_error() {
     _(`test_clean_urls: Steam tracker contents: ${JSON.stringify(changes)}`);
     await sync_and_validate_telem(ping => {
       equal(ping.status.service, SYNC_FAILED_PARTIAL);
-      let failureReason = ping.engines.find(e => e.name === "steam")
-        .failureReason;
+      let failureReason = ping.engines.find(
+        e => e.name === "steam"
+      ).failureReason;
       equal(failureReason.name, "unexpectederror");
       equal(
         failureReason.error,
@@ -732,6 +778,7 @@ add_task(async function test_initial_sync_engines() {
       equal(e.outgoing.length, 1);
       notEqual(e.outgoing[0].sent, undefined);
       equal(e.outgoing[0].failed, undefined);
+      equal(e.outgoing[0].failedReasons, undefined);
     }
   } finally {
     await cleanAndGo(engine, server);
@@ -873,7 +920,7 @@ add_task(async function test_submit_interval() {
   let telem = get_sync_test_telemetry();
   let oldSubmit = telem.submit;
   let numSubmissions = 0;
-  telem.submit = function() {
+  telem.submit = function () {
     numSubmissions += 1;
   };
 
@@ -1101,7 +1148,7 @@ add_task(async function test_no_ping_for_self_hosters() {
   await SyncTestingInfrastructure(server);
   try {
     let submitPromise = new Promise(resolve => {
-      telem.submit = function() {
+      telem.submit = function () {
         let result = oldSubmit.apply(this, arguments);
         resolve(result);
       };

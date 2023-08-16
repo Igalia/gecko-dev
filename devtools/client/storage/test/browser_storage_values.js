@@ -211,7 +211,7 @@ const testCases = [
           id2: 1,
           name: "foo",
           email: "foo@bar.com",
-          extra: "baz",
+          extra: "baz".repeat(10000),
         }),
       },
     ],
@@ -222,13 +222,13 @@ const testCases = [
       { name: "1.id2", value: "1" },
       { name: "1.name", value: "foo" },
       { name: "1.email", value: "foo@bar.com" },
-      { name: "1.extra", value: "baz" },
+      { name: "1.extra", value: "baz".repeat(10000) },
     ],
     true,
   ],
 ];
 
-add_task(async function() {
+add_task(async function () {
   await SpecialPowers.pushPrefEnv({
     set: [["privacy.documentCookies.maxage", 0]],
   });

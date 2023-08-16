@@ -9,24 +9,31 @@
 #include "MFMediaSource.h"
 #include "MFMediaEngineUtils.h"
 #include "TimeUnits.h"
+#include "mozilla/ProfilerLabels.h"
+#include "mozilla/ProfilerMarkerTypes.h"
+#include "WMF.h"
+#include "WMFUtils.h"
 
 namespace mozilla {
 
 // Don't use this log on the task queue, because it would be racy for `mStream`.
-#define WLOGV(msg, ...)                                           \
-  MOZ_LOG(gMFMediaEngineLog, LogLevel::Verbose,                   \
-          ("MFMediaEngineStreamWrapper for stream %p (%s), " msg, \
-           mStream.Get(), mStream->GetDescriptionName().get(), ##__VA_ARGS__))
+#define WLOGV(msg, ...)                                                   \
+  MOZ_LOG(gMFMediaEngineLog, LogLevel::Verbose,                           \
+          ("MFMediaEngineStreamWrapper for stream %p (%s, id=%lu), " msg, \
+           mStream.Get(), mStream->GetDescriptionName().get(),            \
+           mStream->DescriptorId(), ##__VA_ARGS__))
 
-#define SLOG(msg, ...)                          \
-  MOZ_LOG(gMFMediaEngineLog, LogLevel::Debug,   \
-          ("MFMediaStream=%p (%s), " msg, this, \
-           this->GetDescriptionName().get(), ##__VA_ARGS__))
+#define SLOG(msg, ...)                              \
+  MOZ_LOG(                                          \
+      gMFMediaEngineLog, LogLevel::Debug,           \
+      ("MFMediaStream=%p (%s, id=%lu), " msg, this, \
+       this->GetDescriptionName().get(), this->DescriptorId(), ##__VA_ARGS__))
 
-#define SLOGV(msg, ...)                         \
-  MOZ_LOG(gMFMediaEngineLog, LogLevel::Verbose, \
-          ("MFMediaStream=%p (%s), " msg, this, \
-           this->GetDescriptionName().get(), ##__VA_ARGS__))
+#define SLOGV(msg, ...)                             \
+  MOZ_LOG(                                          \
+      gMFMediaEngineLog, LogLevel::Verbose,         \
+      ("MFMediaStream=%p (%s, id=%lu), " msg, this, \
+       this->GetDescriptionName().get(), this->DescriptorId(), ##__VA_ARGS__))
 
 using Microsoft::WRL::ComPtr;
 
@@ -44,26 +51,20 @@ RefPtr<MediaDataDecoder::DecodePromise> MFMediaEngineStreamWrapper::Decode(
         MediaResult(NS_ERROR_FAILURE, "MFMediaEngineStreamWrapper is shutdown"),
         __func__);
   }
-  Microsoft::WRL::ComPtr<MFMediaEngineStream> stream = mStream;
-  Unused << mTaskQueue->Dispatch(NS_NewRunnableFunction(
-      "MFMediaEngineStreamWrapper::Decode",
-      [sample = RefPtr{aSample}, stream]() { stream->NotifyNewData(sample); }));
-
-  // We don't return a real data, all data would be processed inside the media
-  // engine. We return an empty data back instead.
-  MOZ_ASSERT(mFakeDataCreator->Type() == mStream->TrackType());
-  return mFakeDataCreator->Decode(aSample);
+  RefPtr<MediaRawData> sample = aSample;
+  return InvokeAsync(mTaskQueue, mStream.Get(), __func__,
+                     &MFMediaEngineStream::OutputData, std::move(sample));
 }
 
 RefPtr<MediaDataDecoder::DecodePromise> MFMediaEngineStreamWrapper::Drain() {
-  // Nothing to drain, because we're not able to control real outputs.
   WLOGV("Drain");
   if (!mStream || mStream->IsShutdown()) {
     return DecodePromise::CreateAndReject(
         MediaResult(NS_ERROR_FAILURE, "MFMediaEngineStreamWrapper is shutdown"),
         __func__);
   }
-  return DecodePromise::CreateAndResolve(DecodedData(), __func__);
+  return InvokeAsync(mTaskQueue, mStream.Get(), __func__,
+                     &MFMediaEngineStream::Drain);
 }
 
 RefPtr<MediaDataDecoder::FlushPromise> MFMediaEngineStreamWrapper::Flush() {
@@ -73,7 +74,6 @@ RefPtr<MediaDataDecoder::FlushPromise> MFMediaEngineStreamWrapper::Flush() {
         MediaResult(NS_ERROR_FAILURE, "MFMediaEngineStreamWrapper is shutdown"),
         __func__);
   }
-  mFakeDataCreator->Flush();
   return InvokeAsync(mTaskQueue, mStream.Get(), __func__,
                      &MFMediaEngineStream::Flush);
 }
@@ -89,7 +89,6 @@ RefPtr<ShutdownPromise> MFMediaEngineStreamWrapper::Shutdown() {
   }
   mStream = nullptr;
   mTaskQueue = nullptr;
-  mFakeDataCreator = nullptr;
   return ShutdownPromise::CreateAndResolve(true, __func__);
 }
 
@@ -97,58 +96,53 @@ nsCString MFMediaEngineStreamWrapper::GetDescriptionName() const {
   return mStream ? mStream->GetDescriptionName() : nsLiteralCString("none");
 }
 
-MFMediaEngineStreamWrapper::FakeDecodedDataCreator::FakeDecodedDataCreator(
-    const CreateDecoderParams& aParams) {
-  if (aParams.mConfig.IsVideo()) {
-    const VideoInfo& config = aParams.VideoConfig();
-    mDummyDecoder = new DummyMediaDataDecoder(
-        MakeUnique<BlankVideoDataCreator>(config.mDisplay.width,
-                                          config.mDisplay.height,
-                                          aParams.mImageContainer),
-        "blank video data decoder for media engine"_ns, aParams);
-    mType = TrackInfo::TrackType::kVideoTrack;
-  } else if (aParams.mConfig.IsAudio()) {
-    const AudioInfo& config = aParams.AudioConfig();
-    mDummyDecoder = new DummyMediaDataDecoder(
-        MakeUnique<BlankAudioDataCreator>(config.mChannels, config.mRate),
-        "blank audio data decoder for media engine"_ns, aParams);
-    mType = TrackInfo::TrackType::kAudioTrack;
-  } else {
-    MOZ_ASSERT_UNREACHABLE("unexpected config type");
-  }
+nsCString MFMediaEngineStreamWrapper::GetCodecName() const {
+  return mStream ? mStream->GetCodecName() : nsLiteralCString("none");
+}
+
+MediaDataDecoder::ConversionRequired
+MFMediaEngineStreamWrapper::NeedsConversion() const {
+  return mStream ? mStream->NeedsConversion()
+                 : MediaDataDecoder::ConversionRequired::kNeedNone;
 }
 
 MFMediaEngineStream::MFMediaEngineStream()
-    : mIsShutdown(false),
-      mIsSelected(false),
-      mReceivedEOS(false),
-      mShouldServeSmamples(false) {}
+    : mIsShutdown(false), mIsSelected(false), mReceivedEOS(false) {
+  MOZ_COUNT_CTOR(MFMediaEngineStream);
+}
 
-MFMediaEngineStream::~MFMediaEngineStream() { MOZ_ASSERT(IsShutdown()); }
+MFMediaEngineStream::~MFMediaEngineStream() {
+  MOZ_ASSERT(IsShutdown());
+  MOZ_COUNT_DTOR(MFMediaEngineStream);
+}
 
 HRESULT MFMediaEngineStream::RuntimeClassInitialize(
     uint64_t aStreamId, const TrackInfo& aInfo, MFMediaSource* aParentSource) {
   mParentSource = aParentSource;
   mTaskQueue = aParentSource->GetTaskQueue();
+  MOZ_ASSERT(mTaskQueue);
+  mStreamId = aStreamId;
   RETURN_IF_FAILED(wmf::MFCreateEventQueue(&mMediaEventQueue));
-  RETURN_IF_FAILED(GenerateStreamDescriptor(aStreamId, aInfo));
+
+  ComPtr<IMFMediaType> mediaType;
+  // The inherited stream would return different type based on their media info.
+  RETURN_IF_FAILED(CreateMediaType(aInfo, mediaType.GetAddressOf()));
+  RETURN_IF_FAILED(GenerateStreamDescriptor(mediaType));
   SLOG("Initialized %s (id=%" PRIu64 ", descriptorId=%lu)",
        GetDescriptionName().get(), aStreamId, mStreamDescriptorId);
   return S_OK;
 }
 
-HRESULT MFMediaEngineStream::GenerateStreamDescriptor(uint64_t aStreamId,
-                                                      const TrackInfo& aInfo) {
-  ComPtr<IMFMediaType> mediaType;
-  // The inherited stream would return different type based on their media info.
-  RETURN_IF_FAILED(CreateMediaType(aInfo, mediaType.GetAddressOf()));
+HRESULT MFMediaEngineStream::GenerateStreamDescriptor(
+    ComPtr<IMFMediaType>& aMediaType) {
   RETURN_IF_FAILED(wmf::MFCreateStreamDescriptor(
-      aStreamId, 1 /* stream amount */, mediaType.GetAddressOf(),
+      mStreamId, 1 /* stream amount */, aMediaType.GetAddressOf(),
       &mStreamDescriptor));
   RETURN_IF_FAILED(
       mStreamDescriptor->GetStreamIdentifier(&mStreamDescriptorId));
-
-  // TODO : set MF_SD_PROTECTED on descriptor when it's encrypted
+  if (IsEncrypted()) {
+    RETURN_IF_FAILED(mStreamDescriptor->SetUINT32(MF_SD_PROTECTED, 1));
+  }
   return S_OK;
 }
 
@@ -158,9 +152,25 @@ HRESULT MFMediaEngineStream::Start(const PROPVARIANT* aPosition) {
     SLOG("No need to start non-selected stream");
     return S_OK;
   }
+  if (IsShutdown()) {
+    return MF_E_SHUTDOWN;
+  }
   SLOG("Start");
+  const bool isFromCurrentPosition = aPosition->vt == VT_EMPTY;
   RETURN_IF_FAILED(QueueEvent(MEStreamStarted, GUID_NULL, S_OK, aPosition));
-  mShouldServeSmamples = true;
+  MOZ_ASSERT(mTaskQueue);
+  Unused << mTaskQueue->Dispatch(NS_NewRunnableFunction(
+      "MFMediaEngineStream::Start",
+      [self = RefPtr{this}, isFromCurrentPosition, this]() {
+        if (!isFromCurrentPosition && IsEnded()) {
+          SLOG("Stream restarts again from a new position, reset EOS");
+          mReceivedEOS = false;
+        }
+        // Process pending requests (if any) which happened when the stream
+        // wasn't allowed to serve samples. Eg. stream is paused. Or resend the
+        // ended event if the stream is ended already.
+        ReplySampleRequestIfPossible();
+      }));
   return S_OK;
 }
 
@@ -172,7 +182,6 @@ HRESULT MFMediaEngineStream::Seek(const PROPVARIANT* aPosition) {
   }
   SLOG("Seek");
   RETURN_IF_FAILED(QueueEvent(MEStreamSeeked, GUID_NULL, S_OK, aPosition));
-  mShouldServeSmamples = true;
   return S_OK;
 }
 
@@ -184,7 +193,6 @@ HRESULT MFMediaEngineStream::Stop() {
   }
   SLOG("Stop");
   RETURN_IF_FAILED(QueueEvent(MEStreamStopped, GUID_NULL, S_OK, nullptr));
-  mShouldServeSmamples = false;
   return S_OK;
 }
 
@@ -196,7 +204,6 @@ HRESULT MFMediaEngineStream::Pause() {
   }
   SLOG("Pause");
   RETURN_IF_FAILED(QueueEvent(MEStreamPaused, GUID_NULL, S_OK, nullptr));
-  mShouldServeSmamples = false;
   return S_OK;
 }
 
@@ -211,10 +218,14 @@ void MFMediaEngineStream::Shutdown() {
   // MF_E_SHUTDOWN.
   RETURN_VOID_IF_FAILED(mMediaEventQueue->Shutdown());
   ComPtr<MFMediaEngineStream> self = this;
+  MOZ_ASSERT(mTaskQueue);
   Unused << mTaskQueue->Dispatch(
       NS_NewRunnableFunction("MFMediaEngineStream::Shutdown", [self]() {
         self->mParentSource = nullptr;
-        self->mRawDataQueue.Reset();
+        self->mRawDataQueueForFeedingEngine.Reset();
+        self->mRawDataQueueForGeneratingOutput.Reset();
+        self->ShutdownCleanUpOnTaskQueue();
+        self->mTaskQueue = nullptr;
       }));
 }
 
@@ -224,7 +235,6 @@ MFMediaEngineStream::GetMediaSource(IMFMediaSource** aMediaSource) {
   if (IsShutdown()) {
     return MF_E_SHUTDOWN;
   }
-  SLOG("GetMediaSource");
   RETURN_IF_FAILED(mParentSource.CopyTo(aMediaSource));
   return S_OK;
 }
@@ -235,8 +245,6 @@ IFACEMETHODIMP MFMediaEngineStream::GetStreamDescriptor(
   if (IsShutdown()) {
     return MF_E_SHUTDOWN;
   }
-  SLOG("GetStreamDescriptor");
-
   if (!mStreamDescriptor) {
     SLOG("Hasn't initialized stream descriptor");
     return MF_E_NOT_INITIALIZED;
@@ -251,28 +259,17 @@ IFACEMETHODIMP MFMediaEngineStream::RequestSample(IUnknown* aToken) {
     return MF_E_SHUTDOWN;
   }
 
-  if (IsEnded()) {
-    SLOG("RequestSample, EOS");
-    MOZ_ASSERT(mRawDataQueue.GetSize() == 0);
-    RETURN_IF_FAILED(mMediaEventQueue->QueueEventParamUnk(
-        MEEndOfStream, GUID_NULL, S_OK, nullptr));
-    mEndedEvent.Notify(TrackType());
-    return S_OK;
-  }
-
   ComPtr<IUnknown> token = aToken;
   ComPtr<MFMediaEngineStream> self = this;
+  MOZ_ASSERT(mTaskQueue);
   Unused << mTaskQueue->Dispatch(NS_NewRunnableFunction(
       "MFMediaEngineStream::RequestSample", [token, self, this]() {
         AssertOnTaskQueue();
         mSampleRequestTokens.push(token);
         SLOGV("RequestSample, token amount=%zu", mSampleRequestTokens.size());
         ReplySampleRequestIfPossible();
-        if (!HasEnoughRawData() && mParentSource) {
-          SLOGV("Dispatch a sample request, queue duration=%" PRId64,
-                mRawDataQueue.Duration());
-          mParentSource->mRequestSampleEvent.Notify(
-              SampleRequest{TrackType(), false /* isEnough */});
+        if (!HasEnoughRawData() && mParentSource && !IsEnded()) {
+          SendRequestSampleEvent(false /* isEnough */);
         }
       }));
   return S_OK;
@@ -280,7 +277,27 @@ IFACEMETHODIMP MFMediaEngineStream::RequestSample(IUnknown* aToken) {
 
 void MFMediaEngineStream::ReplySampleRequestIfPossible() {
   AssertOnTaskQueue();
-  if (mSampleRequestTokens.empty() || mRawDataQueue.GetSize() == 0) {
+  if (IsEnded()) {
+    // We have no more sample to return, clean all pending requests.
+    while (!mSampleRequestTokens.empty()) {
+      mSampleRequestTokens.pop();
+    }
+
+    SLOG("Notify end events");
+    MOZ_ASSERT(mRawDataQueueForFeedingEngine.GetSize() == 0);
+    MOZ_ASSERT(mSampleRequestTokens.empty());
+    RETURN_VOID_IF_FAILED(mMediaEventQueue->QueueEventParamUnk(
+        MEEndOfStream, GUID_NULL, S_OK, nullptr));
+    mEndedEvent.Notify(TrackType());
+    PROFILER_MARKER_TEXT(
+        "MFMediaEngineStream:NotifyEnd", MEDIA_PLAYBACK, {},
+        nsPrintfCString("stream=%s, id=%" PRIu64, GetDescriptionName().get(),
+                        mStreamId));
+    return;
+  }
+
+  if (mSampleRequestTokens.empty() ||
+      mRawDataQueueForFeedingEngine.GetSize() == 0) {
     return;
   }
 
@@ -314,13 +331,21 @@ HRESULT MFMediaEngineStream::CreateInputSample(IMFSample** aSample) {
   ComPtr<IMFSample> sample;
   RETURN_IF_FAILED(wmf::MFCreateSample(&sample));
 
-  MOZ_ASSERT(mRawDataQueue.GetSize() != 0);
-  RefPtr<MediaRawData> data = mRawDataQueue.PopFront();
+  MOZ_ASSERT(mRawDataQueueForFeedingEngine.GetSize() != 0);
+  RefPtr<MediaRawData> data = mRawDataQueueForFeedingEngine.PopFront();
   SLOGV("CreateInputSample, pop data [%" PRId64 ", %" PRId64
         "] (duration=%" PRId64 ", kf=%d), queue size=%zu",
         data->mTime.ToMicroseconds(), data->GetEndTime().ToMicroseconds(),
         data->mDuration.ToMicroseconds(), data->mKeyframe,
-        mRawDataQueue.GetSize());
+        mRawDataQueueForFeedingEngine.GetSize());
+  PROFILER_MARKER(
+      nsPrintfCString(
+          "pop %s (stream=%" PRIu64 ")",
+          TrackType() == TrackInfo::TrackType::kVideoTrack ? "video" : "audio",
+          mStreamId),
+      MEDIA_PLAYBACK, {}, MediaSampleMarker, data->mTime.ToMicroseconds(),
+      data->GetEndTime().ToMicroseconds(),
+      mRawDataQueueForFeedingEngine.GetSize());
 
   // Copy data into IMFMediaBuffer
   ComPtr<IMFMediaBuffer> buffer;
@@ -343,8 +368,67 @@ HRESULT MFMediaEngineStream::CreateInputSample(IMFSample** aSample) {
     RETURN_IF_FAILED(sample->SetUINT32(MFSampleExtension_CleanPoint, 1));
   }
 
-  // TODO : set up encrypt attributes
+  // Setup encrypt attributes
+  if (data->mCrypto.IsEncrypted()) {
+    RETURN_IF_FAILED(AddEncryptAttributes(sample.Get(), data->mCrypto));
+  }
+
   *aSample = sample.Detach();
+  return S_OK;
+}
+
+HRESULT MFMediaEngineStream::AddEncryptAttributes(
+    IMFSample* aSample, const CryptoSample& aCryptoConfig) {
+  // Scheme
+  MFSampleEncryptionProtectionScheme protectionScheme;
+  if (aCryptoConfig.mCryptoScheme == CryptoScheme::Cenc) {
+    protectionScheme = MFSampleEncryptionProtectionScheme::
+        MF_SAMPLE_ENCRYPTION_PROTECTION_SCHEME_AES_CTR;
+  } else if (aCryptoConfig.mCryptoScheme == CryptoScheme::Cbcs) {
+    protectionScheme = MFSampleEncryptionProtectionScheme::
+        MF_SAMPLE_ENCRYPTION_PROTECTION_SCHEME_AES_CBC;
+  } else {
+    SLOG("Unexpected encryption scheme");
+    return MF_E_UNEXPECTED;
+  }
+  RETURN_IF_FAILED(aSample->SetUINT32(
+      MFSampleExtension_Encryption_ProtectionScheme, protectionScheme));
+
+  // KID
+  if (aCryptoConfig.mKeyId.Length() != sizeof(GUID)) {
+    SLOG("Unsupported key ID size (%zu)", aCryptoConfig.mKeyId.Length());
+    return MF_E_UNEXPECTED;
+  }
+  GUID keyId;
+  GUIDFromByteArray(aCryptoConfig.mKeyId, keyId);
+  RETURN_IF_FAILED(aSample->SetGUID(MFSampleExtension_Content_KeyID, keyId));
+  // TODO : if we want to suspend/resume the media engine, then we can consider
+  // to store last key id and set it in CDM to refresh the decryptor.
+
+  // IV
+  RETURN_IF_FAILED(aSample->SetBlob(
+      MFSampleExtension_Encryption_SampleID,
+      reinterpret_cast<const uint8_t*>(aCryptoConfig.mIV.Elements()),
+      aCryptoConfig.mIVSize));
+
+  // Subsample entries.
+  MOZ_ASSERT(aCryptoConfig.mEncryptedSizes.Length() ==
+             aCryptoConfig.mPlainSizes.Length());
+  size_t numSubsamples = aCryptoConfig.mEncryptedSizes.Length();
+  if (numSubsamples != 0) {
+    std::vector<MediaFoundationSubsampleEntry> subsampleEntries;
+    for (size_t idx = 0; idx < numSubsamples; idx++) {
+      subsampleEntries.push_back(MediaFoundationSubsampleEntry{
+          aCryptoConfig.mPlainSizes[idx], aCryptoConfig.mEncryptedSizes[idx]});
+    }
+    const uint32_t entriesSize =
+        sizeof(MediaFoundationSubsampleEntry) * numSubsamples;
+    RETURN_IF_FAILED(aSample->SetBlob(
+        MFSampleExtension_Encryption_SubSample_Mapping,
+        reinterpret_cast<const uint8_t*>(subsampleEntries.data()),
+        entriesSize));
+  }
+
   return S_OK;
 }
 
@@ -352,7 +436,6 @@ IFACEMETHODIMP MFMediaEngineStream::GetEvent(DWORD aFlags,
                                              IMFMediaEvent** aEvent) {
   AssertOnMFThreadPool();
   MOZ_ASSERT(mMediaEventQueue);
-  SLOG("GetEvent");
   RETURN_IF_FAILED(mMediaEventQueue->GetEvent(aFlags, aEvent));
   return S_OK;
 }
@@ -361,7 +444,6 @@ IFACEMETHODIMP MFMediaEngineStream::BeginGetEvent(IMFAsyncCallback* aCallback,
                                                   IUnknown* aState) {
   AssertOnMFThreadPool();
   MOZ_ASSERT(mMediaEventQueue);
-  SLOG("BeginGetEvent");
   RETURN_IF_FAILED(mMediaEventQueue->BeginGetEvent(aCallback, aState));
   return S_OK;
 }
@@ -370,7 +452,6 @@ IFACEMETHODIMP MFMediaEngineStream::EndGetEvent(IMFAsyncResult* aResult,
                                                 IMFMediaEvent** aEvent) {
   AssertOnMFThreadPool();
   MOZ_ASSERT(mMediaEventQueue);
-  SLOG("EndGetEvent");
   RETURN_IF_FAILED(mMediaEventQueue->EndGetEvent(aResult, aEvent));
   return S_OK;
 }
@@ -398,59 +479,114 @@ void MFMediaEngineStream::NotifyNewData(MediaRawData* aSample) {
   if (IsShutdown()) {
     return;
   }
-  bool wasEnough = HasEnoughRawData();
-  mRawDataQueue.Push(aSample);
+  const bool wasEnough = HasEnoughRawData();
+  mRawDataQueueForFeedingEngine.Push(aSample);
+  mRawDataQueueForGeneratingOutput.Push(aSample);
   SLOGV("NotifyNewData, push data [%" PRId64 ", %" PRId64
         "], queue size=%zu, queue duration=%" PRId64,
         aSample->mTime.ToMicroseconds(), aSample->GetEndTime().ToMicroseconds(),
-        mRawDataQueue.GetSize(), mRawDataQueue.Duration());
+        mRawDataQueueForFeedingEngine.GetSize(),
+        mRawDataQueueForFeedingEngine.Duration());
   if (mReceivedEOS) {
     SLOG("Receive a new data, cancel old EOS flag");
     mReceivedEOS = false;
   }
   ReplySampleRequestIfPossible();
   if (!wasEnough && HasEnoughRawData()) {
-    SLOGV("data is enough");
-    mParentSource->mRequestSampleEvent.Notify(
-        SampleRequest{TrackType(), true /* isEnough */});
+    SendRequestSampleEvent(true /* isEnough */);
   }
 }
 
-void MFMediaEngineStream::NotifyEndOfStream() {
+void MFMediaEngineStream::SendRequestSampleEvent(bool aIsEnough) {
+  AssertOnTaskQueue();
+  SLOGV("data is %s, queue duration=%" PRId64,
+        aIsEnough ? "enough" : "not enough",
+        mRawDataQueueForFeedingEngine.Duration());
+  mParentSource->mRequestSampleEvent.Notify(
+      SampleRequest{TrackType(), aIsEnough});
+}
+
+void MFMediaEngineStream::NotifyEndOfStreamInternal() {
   AssertOnTaskQueue();
   if (mReceivedEOS) {
     return;
   }
   SLOG("EOS");
   mReceivedEOS = true;
+  ReplySampleRequestIfPossible();
 }
 
 bool MFMediaEngineStream::IsEnded() const {
-  return mReceivedEOS && mRawDataQueue.GetSize() == 0;
+  AssertOnTaskQueue();
+  return mReceivedEOS && mRawDataQueueForFeedingEngine.GetSize() == 0;
 }
 
 RefPtr<MediaDataDecoder::FlushPromise> MFMediaEngineStream::Flush() {
-  AssertOnTaskQueue();
   if (IsShutdown()) {
     return MediaDataDecoder::FlushPromise::CreateAndReject(
         MediaResult(NS_ERROR_FAILURE,
                     RESULT_DETAIL("MFMediaEngineStream is shutdown")),
         __func__);
   }
+  AssertOnTaskQueue();
   SLOG("Flush");
-  mRawDataQueue.Reset();
+  mRawDataQueueForFeedingEngine.Reset();
+  mRawDataQueueForGeneratingOutput.Reset();
+  mReceivedEOS = false;
   return MediaDataDecoder::FlushPromise::CreateAndResolve(true, __func__);
 }
 
+RefPtr<MediaDataDecoder::DecodePromise> MFMediaEngineStream::OutputData(
+    RefPtr<MediaRawData> aSample) {
+  if (IsShutdown()) {
+    return MediaDataDecoder::DecodePromise::CreateAndReject(
+        MediaResult(NS_ERROR_FAILURE,
+                    RESULT_DETAIL("MFMediaEngineStream is shutdown")),
+        __func__);
+  }
+  AssertOnTaskQueue();
+  NotifyNewData(aSample);
+  MediaDataDecoder::DecodedData outputs;
+  if (RefPtr<MediaData> outputData = OutputDataInternal()) {
+    outputs.AppendElement(outputData);
+    SLOGV("Output data [%" PRId64 ",%" PRId64 "]",
+          outputData->mTime.ToMicroseconds(),
+          outputData->GetEndTime().ToMicroseconds());
+  }
+  return MediaDataDecoder::DecodePromise::CreateAndResolve(std::move(outputs),
+                                                           __func__);
+};
+
+RefPtr<MediaDataDecoder::DecodePromise> MFMediaEngineStream::Drain() {
+  if (IsShutdown()) {
+    return MediaDataDecoder::DecodePromise::CreateAndReject(
+        MediaResult(NS_ERROR_FAILURE,
+                    RESULT_DETAIL("MFMediaEngineStream is shutdown")),
+        __func__);
+  }
+  AssertOnTaskQueue();
+  MediaDataDecoder::DecodedData outputs;
+  while (RefPtr<MediaData> outputData = OutputDataInternal()) {
+    outputs.AppendElement(outputData);
+    SLOGV("Output data [%" PRId64 ",%" PRId64 "]",
+          outputData->mTime.ToMicroseconds(),
+          outputData->GetEndTime().ToMicroseconds());
+  }
+  return MediaDataDecoder::DecodePromise::CreateAndResolve(std::move(outputs),
+                                                           __func__);
+}
+
 void MFMediaEngineStream::AssertOnTaskQueue() const {
-  MOZ_ASSERT(mTaskQueue->IsCurrentThreadIn());
+  MOZ_ASSERT(mTaskQueue && mTaskQueue->IsCurrentThreadIn());
 }
 
 void MFMediaEngineStream::AssertOnMFThreadPool() const {
   // We can't really assert the thread id from thread pool, because it would
   // change any time. So we just assert this is not the task queue, and use the
   // explicit function name to indicate what thread we should run on.
-  MOZ_ASSERT(!mTaskQueue->IsCurrentThreadIn());
+  // TODO : this assertion is not precise, because the running thread could be
+  // the stream wrapper thread as well,
+  MOZ_ASSERT(!mTaskQueue || !mTaskQueue->IsCurrentThreadIn());
 }
 
 #undef WLOGV

@@ -11,13 +11,10 @@
 #include <array>
 #include <utility>
 
-#include "gtest/gtest.h"
-#include "lib/jxl/aux_out.h"
 #include "lib/jxl/base/compiler_specific.h"
 #include "lib/jxl/base/data_parallel.h"
 #include "lib/jxl/base/override.h"
 #include "lib/jxl/base/padded_bytes.h"
-#include "lib/jxl/base/thread_pool_internal.h"
 #include "lib/jxl/codec_in_out.h"
 #include "lib/jxl/color_encoding_internal.h"
 #include "lib/jxl/color_management.h"
@@ -30,8 +27,12 @@
 #include "lib/jxl/image_bundle.h"
 #include "lib/jxl/image_ops.h"
 #include "lib/jxl/test_utils.h"
+#include "lib/jxl/testing.h"
 
 namespace jxl {
+
+struct AuxOut;
+
 namespace {
 
 // Returns distance of point p to line p0..p1, the result is signed and is not
@@ -164,7 +165,8 @@ void TestGradient(ThreadPool* pool, uint32_t color0, uint32_t color1,
   PassesEncoderState enc_state;
   EXPECT_TRUE(EncodeFile(cparams, &io, &enc_state, &compressed, GetJxlCms(),
                          aux_out, pool));
-  EXPECT_TRUE(test::DecodeFile({}, compressed, &io2, pool));
+  EXPECT_TRUE(
+      test::DecodeFile({}, Span<const uint8_t>(compressed), &io2, pool));
   EXPECT_TRUE(
       io2.Main().TransformTo(io2.metadata.m.color_encoding, GetJxlCms(), pool));
 
@@ -190,13 +192,13 @@ void TestGradient(ThreadPool* pool, uint32_t color0, uint32_t color1,
 static constexpr bool fast_mode = true;
 
 TEST(GradientTest, SteepGradient) {
-  ThreadPoolInternal pool(8);
+  test::ThreadPoolForTests pool(8);
   // Relatively steep gradients, colors from the sky of stp.png
   TestGradient(&pool, 0xd99d58, 0x889ab1, 512, 512, 90, fast_mode, 3.0);
 }
 
 TEST(GradientTest, SubtleGradient) {
-  ThreadPoolInternal pool(8);
+  test::ThreadPoolForTests pool(8);
   // Very subtle gradient
   TestGradient(&pool, 0xb89b7b, 0xa89b8d, 512, 512, 90, fast_mode, 4.0);
 }

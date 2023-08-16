@@ -14,22 +14,26 @@ var data = [
     // upgrade protocol.
     wrong: "http://www.example.com/",
     fixed: "https://www.example.com/",
+    noAlternateURI: true,
   },
   {
     // no difference.
     wrong: "https://www.example.com/",
     fixed: "https://www.example.com/",
     noProtocolFixup: true,
+    noAlternateURI: true,
   },
   {
     // don't add prefix when there's more than one dot.
     wrong: "http://www.example.abc.def/",
     fixed: "https://www.example.abc.def/",
+    noAlternateURI: true,
   },
   {
     // http -> https.
     wrong: "http://www.example/",
     fixed: "https://www.example/",
+    noAlternateURI: true,
   },
   {
     // domain.com -> https://www.domain.com.
@@ -121,7 +125,7 @@ add_task(async function setup() {
   Services.prefs.setStringPref("browser.fixup.alternate.prefix", "www.");
   Services.prefs.setStringPref("browser.fixup.alternate.suffix", ".com");
   Services.prefs.setStringPref("browser.fixup.alternate.protocol", "https");
-  registerCleanupFunction(function() {
+  registerCleanupFunction(function () {
     Services.prefs.clearUserPref("browser.fixup.alternate.prefix");
     Services.prefs.clearUserPref("browser.fixup.alternate.suffix");
     Services.prefs.clearUserPref("browser.fixup.alternate.protocol");
@@ -137,11 +141,8 @@ add_task(function test_default_https_pref() {
         item.comment
       );
     } else {
-      let {
-        fixupChangedProtocol,
-        fixupCreatedAlternateURI,
-        fixedURI,
-      } = Services.uriFixup.forceHttpFixup(item.wrong);
+      let { fixupChangedProtocol, fixupCreatedAlternateURI, fixedURI } =
+        Services.uriFixup.forceHttpFixup(item.wrong);
       Assert.equal(fixedURI.spec, item.fixed, "Specs should be the same");
       Assert.equal(
         fixupChangedProtocol,

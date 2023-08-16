@@ -10,6 +10,8 @@
 #include "prenv.h"
 
 #include "IMContextWrapper.h"
+
+#include "GRefPtr.h"
 #include "nsGtkKeyUtils.h"
 #include "nsWindow.h"
 #include "mozilla/AutoRestore.h"
@@ -543,6 +545,8 @@ void IMContextWrapper::Init() {
 void IMContextWrapper::Shutdown() { SelectionStyleProvider::Shutdown(); }
 
 IMContextWrapper::~IMContextWrapper() {
+  MOZ_ASSERT(!mContext);
+  MOZ_ASSERT(!mComposingContext);
   if (this == sLastFocusedContext) {
     sLastFocusedContext = nullptr;
   }
@@ -645,7 +649,7 @@ void IMContextWrapper::OnDestroyWindow(nsWindow* aWindow) {
 
   /**
    * NOTE:
-   *   The given window is the owner of this, so, we must release the
+   *   The given window is the owner of this, so, we must disconnect from the
    *   contexts now.  But that might be referred from other nsWindows
    *   (they are children of this.  But we don't know why there are the
    *   cases).  So, we need to clear the pointers that refers to contexts
@@ -654,12 +658,14 @@ void IMContextWrapper::OnDestroyWindow(nsWindow* aWindow) {
   if (mContext) {
     PrepareToDestroyContext(mContext);
     gtk_im_context_set_client_window(mContext, nullptr);
+    g_signal_handlers_disconnect_by_data(mContext, this);
     g_object_unref(mContext);
     mContext = nullptr;
   }
 
   if (mSimpleContext) {
     gtk_im_context_set_client_window(mSimpleContext, nullptr);
+    g_signal_handlers_disconnect_by_data(mSimpleContext, this);
     g_object_unref(mSimpleContext);
     mSimpleContext = nullptr;
   }
@@ -1059,6 +1065,17 @@ KeyHandlingState IMContextWrapper::OnKeyEvent(
     mMaybeInDeadKeySequence = false;
   }
 
+  if (aEvent->type == GDK_KEY_RELEASE) {
+    if (const GdkEventKey* pendingKeyPressEvent =
+            mPostingKeyEvents.GetCorrespondingKeyPressEvent(aEvent)) {
+      MOZ_LOG(gIMELog, LogLevel::Warning,
+              ("0x%p   OnKeyEvent(), forgetting a pending GDK_KEY_PRESS event "
+               "because GDK_KEY_RELEASE for the event is handled",
+               this));
+      mPostingKeyEvents.RemoveEvent(pendingKeyPressEvent);
+    }
+  }
+
   MOZ_LOG(
       gIMELog, LogLevel::Debug,
       ("0x%p   OnKeyEvent(), succeeded, filterThisEvent=%s "
@@ -1348,15 +1365,15 @@ void IMContextWrapper::SetInputPurposeAndInputHints() {
     purpose = GTK_INPUT_PURPOSE_PHONE;
   } else if (inputType.EqualsLiteral("number")) {
     purpose = GTK_INPUT_PURPOSE_NUMBER;
-  } else if (mInputContext.mHTMLInputInputmode.EqualsLiteral("decimal")) {
+  } else if (mInputContext.mHTMLInputMode.EqualsLiteral("decimal")) {
     purpose = GTK_INPUT_PURPOSE_NUMBER;
-  } else if (mInputContext.mHTMLInputInputmode.EqualsLiteral("email")) {
+  } else if (mInputContext.mHTMLInputMode.EqualsLiteral("email")) {
     purpose = GTK_INPUT_PURPOSE_EMAIL;
-  } else if (mInputContext.mHTMLInputInputmode.EqualsLiteral("numeric")) {
+  } else if (mInputContext.mHTMLInputMode.EqualsLiteral("numeric")) {
     purpose = GTK_INPUT_PURPOSE_DIGITS;
-  } else if (mInputContext.mHTMLInputInputmode.EqualsLiteral("tel")) {
+  } else if (mInputContext.mHTMLInputMode.EqualsLiteral("tel")) {
     purpose = GTK_INPUT_PURPOSE_PHONE;
-  } else if (mInputContext.mHTMLInputInputmode.EqualsLiteral("url")) {
+  } else if (mInputContext.mHTMLInputMode.EqualsLiteral("url")) {
     purpose = GTK_INPUT_PURPOSE_URL;
   }
   // Search by type and inputmode isn't supported on GTK.
@@ -1365,7 +1382,7 @@ void IMContextWrapper::SetInputPurposeAndInputHints() {
 
   // Although GtkInputHints is enum type, value is bit field.
   gint hints = GTK_INPUT_HINT_NONE;
-  if (mInputContext.mHTMLInputInputmode.EqualsLiteral("none")) {
+  if (mInputContext.mHTMLInputMode.EqualsLiteral("none")) {
     hints |= GTK_INPUT_HINT_INHIBIT_OSK;
   }
 
@@ -1615,6 +1632,21 @@ void IMContextWrapper::OnStartCompositionCallback(GtkIMContext* aContext,
 }
 
 void IMContextWrapper::OnStartCompositionNative(GtkIMContext* aContext) {
+  // IME may synthesize composition asynchronously after filtering a
+  // GDK_KEY_PRESS event.  In that case, we should handle composition with
+  // emulating the usual case, i.e., this is called in the stack of
+  // OnKeyEvent().
+  Maybe<AutoRestore<GdkEventKey*>> maybeRestoreProcessingKeyEvent;
+  if (!mProcessingKeyEvent && !mPostingKeyEvents.IsEmpty()) {
+    GdkEventKey* keyEvent = mPostingKeyEvents.GetFirstEvent();
+    if (keyEvent && keyEvent->type == GDK_KEY_PRESS &&
+        KeymapWrapper::ComputeDOMKeyNameIndex(keyEvent) ==
+            KEY_NAME_INDEX_USE_STRING) {
+      maybeRestoreProcessingKeyEvent.emplace(mProcessingKeyEvent);
+      mProcessingKeyEvent = mPostingKeyEvents.GetFirstEvent();
+    }
+  }
+
   MOZ_LOG(gIMELog, LogLevel::Info,
           ("0x%p OnStartCompositionNative(aContext=0x%p), "
            "current context=0x%p, mComposingContext=0x%p",
@@ -1698,10 +1730,35 @@ void IMContextWrapper::OnEndCompositionNative(GtkIMContext* aContext) {
 /* static */
 void IMContextWrapper::OnChangeCompositionCallback(GtkIMContext* aContext,
                                                    IMContextWrapper* aModule) {
-  aModule->OnChangeCompositionNative(aContext);
+  RefPtr module = aModule;
+  module->OnChangeCompositionNative(aContext);
+
+  if (module->IsDestroyed()) {
+    // A strong reference is already held during "preedit-changed" emission,
+    // but _ibus_context_destroy_cb() in ibus 1.5.28 and
+    // _fcitx_im_context_close_im_cb() in fcitx 4.2.9.9 want their
+    // GtkIMContexts to live a little longer.  See bug 1824634.
+    NS_DispatchToMainThread(
+        NS_NewRunnableFunction(__func__, [context = RefPtr{aContext}]() {}));
+  }
 }
 
 void IMContextWrapper::OnChangeCompositionNative(GtkIMContext* aContext) {
+  // IME may synthesize composition asynchronously after filtering a
+  // GDK_KEY_PRESS event.  In that case, we should handle composition with
+  // emulating the usual case, i.e., this is called in the stack of
+  // OnKeyEvent().
+  Maybe<AutoRestore<GdkEventKey*>> maybeRestoreProcessingKeyEvent;
+  if (!mProcessingKeyEvent && !mPostingKeyEvents.IsEmpty()) {
+    GdkEventKey* keyEvent = mPostingKeyEvents.GetFirstEvent();
+    if (keyEvent && keyEvent->type == GDK_KEY_PRESS &&
+        KeymapWrapper::ComputeDOMKeyNameIndex(keyEvent) ==
+            KEY_NAME_INDEX_USE_STRING) {
+      maybeRestoreProcessingKeyEvent.emplace(mProcessingKeyEvent);
+      mProcessingKeyEvent = mPostingKeyEvents.GetFirstEvent();
+    }
+  }
+
   MOZ_LOG(gIMELog, LogLevel::Info,
           ("0x%p OnChangeCompositionNative(aContext=0x%p), "
            "mComposingContext=0x%p",
@@ -1832,6 +1889,21 @@ void IMContextWrapper::OnCommitCompositionNative(GtkIMContext* aContext,
   const gchar emptyStr = 0;
   const gchar* commitString = aUTF8Char ? aUTF8Char : &emptyStr;
   NS_ConvertUTF8toUTF16 utf16CommitString(commitString);
+
+  // IME may synthesize composition asynchronously after filtering a
+  // GDK_KEY_PRESS event.  In that case, we should handle composition with
+  // emulating the usual case, i.e., this is called in the stack of
+  // OnKeyEvent().
+  Maybe<AutoRestore<GdkEventKey*>> maybeRestoreProcessingKeyEvent;
+  if (!mProcessingKeyEvent && !mPostingKeyEvents.IsEmpty()) {
+    GdkEventKey* keyEvent = mPostingKeyEvents.GetFirstEvent();
+    if (keyEvent && keyEvent->type == GDK_KEY_PRESS &&
+        KeymapWrapper::ComputeDOMKeyNameIndex(keyEvent) ==
+            KEY_NAME_INDEX_USE_STRING) {
+      maybeRestoreProcessingKeyEvent.emplace(mProcessingKeyEvent);
+      mProcessingKeyEvent = mPostingKeyEvents.GetFirstEvent();
+    }
+  }
 
   MOZ_LOG(gIMELog, LogLevel::Info,
           ("0x%p OnCommitCompositionNative(aContext=0x%p), "
@@ -2925,7 +2997,6 @@ void IMContextWrapper::SetCursorPosition(GtkIMContext* aContext) {
           mCompositionTargetRange.mOffset, 1);
     }
   }
-  InitEvent(queryCaretOrTextRectEvent);
   nsEventStatus status;
   mLastFocusedWindow->DispatchEvent(&queryCaretOrTextRectEvent, status);
   if (queryCaretOrTextRectEvent.Failed()) {
@@ -3235,10 +3306,6 @@ nsresult IMContextWrapper::DeleteText(GtkIMContext* aContext, int32_t aOffset,
   return NS_OK;
 }
 
-void IMContextWrapper::InitEvent(WidgetGUIEvent& aEvent) {
-  aEvent.mTime = PR_Now() / 1000;
-}
-
 bool IMContextWrapper::EnsureToCacheContentSelection(
     nsAString* aSelectedString) {
   if (aSelectedString) {
@@ -3265,7 +3332,6 @@ bool IMContextWrapper::EnsureToCacheContentSelection(
   nsEventStatus status;
   WidgetQueryContentEvent querySelectedTextEvent(true, eQuerySelectedText,
                                                  dispatcherWindow);
-  InitEvent(querySelectedTextEvent);
   dispatcherWindow->DispatchEvent(&querySelectedTextEvent, status);
   if (NS_WARN_IF(querySelectedTextEvent.Failed())) {
     MOZ_LOG(gIMELog, LogLevel::Error,

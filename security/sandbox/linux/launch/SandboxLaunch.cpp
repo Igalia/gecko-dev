@@ -35,6 +35,7 @@
 #include "mozilla/StaticPrefs_media.h"
 #include "mozilla/StaticPrefs_security.h"
 #include "mozilla/Unused.h"
+#include "mozilla/ipc/UtilityProcessSandboxing.h"
 #include "nsCOMPtr.h"
 #include "nsDebug.h"
 #include "nsIGfxInfo.h"
@@ -238,7 +239,8 @@ class SandboxFork : public base::LaunchOptions::ForkDelegate {
   SandboxFork& operator=(const SandboxFork&) = delete;
 };
 
-static int GetEffectiveSandboxLevel(GeckoProcessType aType) {
+static int GetEffectiveSandboxLevel(GeckoProcessType aType,
+                                    ipc::SandboxingKind aKind) {
   auto info = SandboxInfo::Get();
   switch (aType) {
     case GeckoProcessType_GMPlugin:
@@ -266,14 +268,14 @@ static int GetEffectiveSandboxLevel(GeckoProcessType aType) {
       MOZ_ASSERT(NS_IsMainThread());
       return GetEffectiveSocketProcessSandboxLevel();
     case GeckoProcessType_Utility:
-      return PR_GetEnv("MOZ_DISABLE_UTILITY_SANDBOX") == nullptr ? 1 : 0;
+      return IsUtilitySandboxEnabled(aKind);
     default:
       return 0;
   }
 }
 
-void SandboxLaunchPrepare(GeckoProcessType aType,
-                          base::LaunchOptions* aOptions) {
+void SandboxLaunchPrepare(GeckoProcessType aType, base::LaunchOptions* aOptions,
+                          ipc::SandboxingKind aKind) {
   auto info = SandboxInfo::Get();
 
   // We won't try any kind of sandboxing without seccomp-bpf.
@@ -282,7 +284,7 @@ void SandboxLaunchPrepare(GeckoProcessType aType,
   }
 
   // Check prefs (and env vars) controlling sandbox use.
-  int level = GetEffectiveSandboxLevel(aType);
+  int level = GetEffectiveSandboxLevel(aType, aKind);
   if (level == 0) {
     return;
   }
@@ -524,8 +526,8 @@ static int CloneCallee(void* aPtr) {
 // Valgrind would disapprove of using clone() without CLONE_VM;
 // Chromium uses the raw syscall as a workaround in that case, but
 // we don't currently support sandboxing under valgrind.
-MOZ_NEVER_INLINE MOZ_ASAN_BLACKLIST static pid_t DoClone(int aFlags,
-                                                         jmp_buf* aCtx) {
+MOZ_NEVER_INLINE MOZ_ASAN_IGNORE static pid_t DoClone(int aFlags,
+                                                      jmp_buf* aCtx) {
   static constexpr size_t kStackAlignment = 16;
   uint8_t miniStack[4096] __attribute__((aligned(kStackAlignment)));
 #ifdef __hppa__
